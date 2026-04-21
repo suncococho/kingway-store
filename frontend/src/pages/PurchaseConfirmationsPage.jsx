@@ -44,34 +44,10 @@ const linkColumns = [
   }
 ];
 
-const debugColumns = [
-  { key: "id", label: "ID" },
-  { key: "customer_id", label: "Customer ID" },
-  { key: "order_id", label: "Order ID" },
-  { key: "token", label: "Token" },
-  { key: "status", label: "Status" },
-  { key: "created_at", label: "Created At" },
-  { key: "submitted_at", label: "Submitted At" },
-  {
-    key: "link",
-    label: "Link",
-    render: (row) =>
-      row.link ? (
-        <a href={row.link} target="_blank" rel="noreferrer">
-          Open
-        </a>
-      ) : (
-        "-"
-      )
-  }
-];
-
 function PurchaseConfirmationsPage() {
   const confirmations = useFetchList("/api/purchase-confirmations");
   const [customerId, setCustomerId] = useState("");
   const [pendingLinks, setPendingLinks] = useState([]);
-  const [debugAllRecords, setDebugAllRecords] = useState([]);
-  const [rawPendingPayload, setRawPendingPayload] = useState(null);
 
   async function loadPendingLinks() {
     try {
@@ -81,17 +57,9 @@ function PurchaseConfirmationsPage() {
         : Array.isArray(data.pendingLinks)
           ? data.pendingLinks
           : [];
-      const allRecords = Array.isArray(data.debugAllRecords)
-        ? data.debugAllRecords
-        : Array.isArray(data.allRecords)
-          ? data.allRecords
-          : [];
 
       setPendingLinks(pending);
-      setDebugAllRecords(allRecords);
-      setRawPendingPayload(data);
     } catch (error) {
-      setRawPendingPayload({ error: error.message });
       alert(error.message);
     }
   }
@@ -144,14 +112,6 @@ function PurchaseConfirmationsPage() {
       <section className="page-section">
         <h2>Pending Links</h2>
         <DataTable columns={linkColumns} rows={pendingLinks} emptyText="No pending links." />
-      </section>
-      <section className="page-section">
-        <h2>Debug All Records</h2>
-        <DataTable columns={debugColumns} rows={debugAllRecords} emptyText="No purchase confirmation records found." />
-      </section>
-      <section className="page-section">
-        <h2>Raw Pending API Payload</h2>
-        <pre className="debug-json-block">{JSON.stringify(rawPendingPayload, null, 2)}</pre>
       </section>
     </div>
   );
