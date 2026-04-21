@@ -187,19 +187,18 @@ router.post("/generate-link", async (req, res, next) => {
           c.id AS customerId,
           c.name AS customerName,
           c.phone AS customerPhone,
-          c.line_user_id AS lineUserId
+          c.line_user_id AS lineUserId,
+          GROUP_CONCAT(DISTINCT p.id ORDER BY p.id) AS matchedProductIds,
+          GROUP_CONCAT(DISTINCT p.category ORDER BY p.category) AS matchedProductCategories
         FROM orders o
         INNER JOIN customers c ON c.id = o.customer_id
+        INNER JOIN order_items oi ON oi.order_id = o.id
+        INNER JOIN products p ON p.id = oi.product_id
         WHERE c.id = ?
-          AND c.line_user_id IS NOT NULL
           AND o.status = 'COMPLETED'
-          AND EXISTS (
-            SELECT 1
-            FROM order_items oi
-            WHERE oi.order_id = o.id
-              AND oi.product_category_snapshot = 'EBIKE'
-          )
-        ORDER BY o.id DESC
+          AND p.category = 'EBIKE'
+        GROUP BY o.id, o.order_no, c.id, c.name, c.phone, c.line_user_id
+        ORDER BY o.created_at DESC, o.id DESC
         LIMIT 1
       `,
       [customerId]
@@ -236,7 +235,12 @@ router.post("/generate-link", async (req, res, next) => {
       token,
       link,
       orderId: order.orderId,
-      customerId: order.customerId
+      customerId: order.customerId,
+      debug: {
+        matchedOrderId: order.orderId,
+        matchedProductIds: order.matchedProductIds ? order.matchedProductIds.split(",").map((value) => Number(value)) : [],
+        matchedProductCategories: order.matchedProductCategories ? order.matchedProductCategories.split(",") : []
+      }
     });
   } catch (error) {
     return next(error);
