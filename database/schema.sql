@@ -209,14 +209,6 @@ CREATE TABLE IF NOT EXISTS staff_kpi_logs (
   CONSTRAINT fk_staff_kpi_logs_staff FOREIGN KEY (staff_user_id) REFERENCES staff_users(id)
 );
 
-ALTER TABLE products ADD COLUMN IF NOT EXISTS category ENUM('EBIKE', 'REPAIR', 'ACCESSORY', 'OTHER') NOT NULL DEFAULT 'OTHER';
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_name VARCHAR(120) NULL;
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_phone VARCHAR(30) NULL;
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method ENUM('CASH', 'CARD', 'LINE_PAY', 'TRANSFER', 'OTHER') NOT NULL DEFAULT 'CASH';
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS status ENUM('PENDING', 'COMPLETED', 'CANCELED') NOT NULL DEFAULT 'COMPLETED';
-ALTER TABLE order_items ADD COLUMN IF NOT EXISTS product_category_snapshot ENUM('EBIKE', 'REPAIR', 'ACCESSORY', 'OTHER') NOT NULL DEFAULT 'OTHER';
-ALTER TABLE line_group_registrations ADD COLUMN IF NOT EXISTS registration_type ENUM('admin', 'staff', 'repair', 'inventory', 'daily') NOT NULL DEFAULT 'daily';
-
 CREATE INDEX idx_orders_business_date ON orders (business_date);
 CREATE INDEX idx_inventory_movements_product ON inventory_movements (product_id, created_at);
 CREATE INDEX idx_purchase_confirmations_order ON purchase_confirmations (order_id);
@@ -225,9 +217,3 @@ CREATE INDEX idx_repair_orders_status ON repair_orders (status, reservation_date
 CREATE INDEX idx_coupons_customer_type ON coupons (customer_id, coupon_type);
 CREATE INDEX idx_staff_attendance_staff ON staff_attendance (staff_user_id, check_in_at);
 CREATE INDEX idx_staff_kpi_logs_staff ON staff_kpi_logs (staff_user_id, created_at);
-ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS line_user_id VARCHAR(100) NULL UNIQUE;
-ALTER TABLE purchase_confirmations ADD COLUMN IF NOT EXISTS token VARCHAR(120) NULL UNIQUE;
-ALTER TABLE purchase_confirmations ADD COLUMN IF NOT EXISTS status ENUM('PENDING', 'COMPLETED', 'EXPIRED', 'CANCELED') NOT NULL DEFAULT 'PENDING';
-ALTER TABLE purchase_confirmations ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
-ALTER TABLE purchase_confirmations MODIFY COLUMN signature_data LONGTEXT NULL;
-ALTER TABLE purchase_confirmations MODIFY COLUMN submitted_at TIMESTAMP NULL DEFAULT NULL;
