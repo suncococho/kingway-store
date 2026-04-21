@@ -190,14 +190,14 @@ router.get("/pending-links", async (req, res, next) => {
           pc.id,
           pc.token,
           pc.status,
-          pc.order_id AS orderId,
-          pc.customer_id AS customerId,
-          pc.created_at AS createdAt,
-          pc.submitted_at AS submittedAt,
-          pct.expires_at AS expiresAt,
-          c.name AS customerName
+          pc.order_id AS order_id,
+          pc.customer_id AS customer_id,
+          pc.created_at AS created_at,
+          pc.submitted_at AS submitted_at,
+          pct.expires_at AS expires_at,
+          c.name AS customer_name
         FROM purchase_confirmations pc
-        INNER JOIN customers c ON c.id = pc.customer_id
+        LEFT JOIN customers c ON c.id = pc.customer_id
         LEFT JOIN purchase_confirmation_tokens pct ON pct.token = pc.token
         WHERE pc.status = 'PENDING'
         ORDER BY pc.created_at DESC
@@ -210,28 +210,48 @@ router.get("/pending-links", async (req, res, next) => {
           pc.id,
           pc.token,
           pc.status,
-          pc.order_id AS orderId,
-          pc.customer_id AS customerId,
-          pc.created_at AS createdAt,
-          pc.submitted_at AS submittedAt,
-          pct.expires_at AS expiresAt,
-          c.name AS customerName
+          pc.order_id AS order_id,
+          pc.customer_id AS customer_id,
+          pc.created_at AS created_at,
+          pc.submitted_at AS submitted_at,
+          pct.expires_at AS expires_at,
+          c.name AS customer_name
         FROM purchase_confirmations pc
-        INNER JOIN customers c ON c.id = pc.customer_id
+        LEFT JOIN customers c ON c.id = pc.customer_id
         LEFT JOIN purchase_confirmation_tokens pct ON pct.token = pc.token
         ORDER BY pc.created_at DESC
       `
     );
 
+    const pending = pendingRows.map((row) => ({
+      ...row,
+      orderId: row.order_id,
+      customerId: row.customer_id,
+      createdAt: row.created_at,
+      submittedAt: row.submitted_at,
+      expiresAt: row.expires_at,
+      customerName: row.customer_name,
+      link: row.token ? `${config.frontendBaseUrl}/purchase-confirm/${row.token}` : null
+    }));
+
+    const debugAllRecords = allRows.map((row) => ({
+      ...row,
+      orderId: row.order_id,
+      customerId: row.customer_id,
+      createdAt: row.created_at,
+      submittedAt: row.submitted_at,
+      expiresAt: row.expires_at,
+      customerName: row.customer_name,
+      link: row.token ? `${config.frontendBaseUrl}/purchase-confirm/${row.token}` : null
+    }));
+
     return res.json({
-      pending: pendingRows.map((row) => ({
-        ...row,
-        link: `${config.frontendBaseUrl}/purchase-confirm/${row.token}`
-      })),
-      debugAllRecords: allRows.map((row) => ({
-        ...row,
-        link: row.token ? `${config.frontendBaseUrl}/purchase-confirm/${row.token}` : null
-      }))
+      pending,
+      debugAllRecords,
+      counts: {
+        pending: pending.length,
+        all: debugAllRecords.length
+      }
     });
   } catch (error) {
     return next(error);

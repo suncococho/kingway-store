@@ -371,6 +371,17 @@ textarea {
   color: #b91c1c;
 }
 
+.debug-json-block {
+  margin: 0;
+  padding: 16px;
+  background: #111827;
+  color: #f9fafb;
+  border-radius: 8px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;

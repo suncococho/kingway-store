@@ -24,28 +24,34 @@ const confirmationColumns = [
 ];
 
 const linkColumns = [
-  { key: "customerName", label: "Customer" },
-  { key: "orderId", label: "Order ID" },
+  { key: "id", label: "ID" },
+  { key: "customer_id", label: "Customer ID" },
+  { key: "order_id", label: "Order ID" },
+  { key: "token", label: "Token" },
   { key: "status", label: "Status" },
-  { key: "createdAt", label: "Created At" },
-  { key: "expiresAt", label: "Expires At" },
+  { key: "created_at", label: "Created At" },
   {
     key: "link",
     label: "Link",
-    render: (row) => (
-      <a href={row.link} target="_blank" rel="noreferrer">
-        Open
-      </a>
-    )
+    render: (row) =>
+      row.link ? (
+        <a href={row.link} target="_blank" rel="noreferrer">
+          Open
+        </a>
+      ) : (
+        "-"
+      )
   }
 ];
 
 const debugColumns = [
-  { key: "customerName", label: "Customer" },
-  { key: "orderId", label: "Order ID" },
+  { key: "id", label: "ID" },
+  { key: "customer_id", label: "Customer ID" },
+  { key: "order_id", label: "Order ID" },
+  { key: "token", label: "Token" },
   { key: "status", label: "Status" },
-  { key: "createdAt", label: "Created At" },
-  { key: "submittedAt", label: "Submitted At" },
+  { key: "created_at", label: "Created At" },
+  { key: "submitted_at", label: "Submitted At" },
   {
     key: "link",
     label: "Link",
@@ -65,13 +71,27 @@ function PurchaseConfirmationsPage() {
   const [customerId, setCustomerId] = useState("");
   const [pendingLinks, setPendingLinks] = useState([]);
   const [debugAllRecords, setDebugAllRecords] = useState([]);
+  const [rawPendingPayload, setRawPendingPayload] = useState(null);
 
   async function loadPendingLinks() {
     try {
       const data = await apiRequest("/api/purchase-confirmations/pending-links");
-      setPendingLinks(Array.isArray(data.pending) ? data.pending : []);
-      setDebugAllRecords(Array.isArray(data.debugAllRecords) ? data.debugAllRecords : []);
+      const pending = Array.isArray(data.pending)
+        ? data.pending
+        : Array.isArray(data.pendingLinks)
+          ? data.pendingLinks
+          : [];
+      const allRecords = Array.isArray(data.debugAllRecords)
+        ? data.debugAllRecords
+        : Array.isArray(data.allRecords)
+          ? data.allRecords
+          : [];
+
+      setPendingLinks(pending);
+      setDebugAllRecords(allRecords);
+      setRawPendingPayload(data);
     } catch (error) {
+      setRawPendingPayload({ error: error.message });
       alert(error.message);
     }
   }
@@ -128,6 +148,10 @@ function PurchaseConfirmationsPage() {
       <section className="page-section">
         <h2>Debug All Records</h2>
         <DataTable columns={debugColumns} rows={debugAllRecords} emptyText="No purchase confirmation records found." />
+      </section>
+      <section className="page-section">
+        <h2>Raw Pending API Payload</h2>
+        <pre className="debug-json-block">{JSON.stringify(rawPendingPayload, null, 2)}</pre>
       </section>
     </div>
   );
