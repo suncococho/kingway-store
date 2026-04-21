@@ -12,7 +12,7 @@ const navItems = [
   { to: "/repairs", label: "Repairs" },
   { to: "/coupons", label: "Coupons" },
   { to: "/surveys", label: "Surveys" },
-  { to: "/attendance", label: "Staff Attendance" },
+  { to: "/staff-attendance", label: "Staff Attendance" },
   { to: "/kpi", label: "KPI" },
   { to: "/payroll", label: "Payroll" }
 ];
