@@ -99,9 +99,12 @@ CREATE TABLE IF NOT EXISTS purchase_confirmations (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   order_id BIGINT UNSIGNED NOT NULL,
   customer_id BIGINT UNSIGNED NOT NULL,
-  signature_data LONGTEXT NOT NULL,
+  token VARCHAR(120) NULL UNIQUE,
+  status ENUM('PENDING', 'COMPLETED', 'EXPIRED', 'CANCELED') NOT NULL DEFAULT 'PENDING',
+  signature_data LONGTEXT NULL,
   pdf_path VARCHAR(255) NULL,
-  submitted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  submitted_at TIMESTAMP NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   confirmed_by_line_user_id VARCHAR(100) NULL,
   CONSTRAINT fk_purchase_confirmations_order FOREIGN KEY (order_id) REFERENCES orders(id),
   CONSTRAINT fk_purchase_confirmations_customer FOREIGN KEY (customer_id) REFERENCES customers(id)
@@ -217,8 +220,14 @@ ALTER TABLE line_group_registrations ADD COLUMN IF NOT EXISTS registration_type 
 CREATE INDEX idx_orders_business_date ON orders (business_date);
 CREATE INDEX idx_inventory_movements_product ON inventory_movements (product_id, created_at);
 CREATE INDEX idx_purchase_confirmations_order ON purchase_confirmations (order_id);
+CREATE INDEX idx_purchase_confirmations_status_created ON purchase_confirmations (status, created_at);
 CREATE INDEX idx_repair_orders_status ON repair_orders (status, reservation_date);
 CREATE INDEX idx_coupons_customer_type ON coupons (customer_id, coupon_type);
 CREATE INDEX idx_staff_attendance_staff ON staff_attendance (staff_user_id, check_in_at);
 CREATE INDEX idx_staff_kpi_logs_staff ON staff_kpi_logs (staff_user_id, created_at);
 ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS line_user_id VARCHAR(100) NULL UNIQUE;
+ALTER TABLE purchase_confirmations ADD COLUMN IF NOT EXISTS token VARCHAR(120) NULL UNIQUE;
+ALTER TABLE purchase_confirmations ADD COLUMN IF NOT EXISTS status ENUM('PENDING', 'COMPLETED', 'EXPIRED', 'CANCELED') NOT NULL DEFAULT 'PENDING';
+ALTER TABLE purchase_confirmations ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE purchase_confirmations MODIFY COLUMN signature_data LONGTEXT NULL;
+ALTER TABLE purchase_confirmations MODIFY COLUMN submitted_at TIMESTAMP NULL DEFAULT NULL;

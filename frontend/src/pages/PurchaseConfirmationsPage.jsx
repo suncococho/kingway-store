@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
 import { useFetchList } from "../hooks/useFetchList";
@@ -26,6 +26,8 @@ const confirmationColumns = [
 const linkColumns = [
   { key: "customerName", label: "Customer" },
   { key: "orderId", label: "Order ID" },
+  { key: "status", label: "Status" },
+  { key: "createdAt", label: "Created At" },
   { key: "expiresAt", label: "Expires At" },
   {
     key: "link",
@@ -38,10 +40,45 @@ const linkColumns = [
   }
 ];
 
+const debugColumns = [
+  { key: "customerName", label: "Customer" },
+  { key: "orderId", label: "Order ID" },
+  { key: "status", label: "Status" },
+  { key: "createdAt", label: "Created At" },
+  { key: "submittedAt", label: "Submitted At" },
+  {
+    key: "link",
+    label: "Link",
+    render: (row) =>
+      row.link ? (
+        <a href={row.link} target="_blank" rel="noreferrer">
+          Open
+        </a>
+      ) : (
+        "-"
+      )
+  }
+];
+
 function PurchaseConfirmationsPage() {
   const confirmations = useFetchList("/api/purchase-confirmations");
-  const links = useFetchList("/api/purchase-confirmations/pending-links");
   const [customerId, setCustomerId] = useState("");
+  const [pendingLinks, setPendingLinks] = useState([]);
+  const [debugAllRecords, setDebugAllRecords] = useState([]);
+
+  async function loadPendingLinks() {
+    try {
+      const data = await apiRequest("/api/purchase-confirmations/pending-links");
+      setPendingLinks(Array.isArray(data.pending) ? data.pending : []);
+      setDebugAllRecords(Array.isArray(data.debugAllRecords) ? data.debugAllRecords : []);
+    } catch (error) {
+      alert(error.message);
+    }
+  }
+
+  useEffect(() => {
+    loadPendingLinks();
+  }, []);
 
   async function generateLink(event) {
     event.preventDefault();
@@ -55,7 +92,7 @@ function PurchaseConfirmationsPage() {
       });
       setCustomerId("");
       confirmations.refetch();
-      links.refetch();
+      loadPendingLinks();
       alert(`Link generated:\n${data.link}`);
     } catch (error) {
       alert(error.message);
@@ -86,7 +123,11 @@ function PurchaseConfirmationsPage() {
       </section>
       <section className="page-section">
         <h2>Pending Links</h2>
-        <DataTable columns={linkColumns} rows={links.items} emptyText="No pending links." />
+        <DataTable columns={linkColumns} rows={pendingLinks} emptyText="No pending links." />
+      </section>
+      <section className="page-section">
+        <h2>Debug All Records</h2>
+        <DataTable columns={debugColumns} rows={debugAllRecords} emptyText="No purchase confirmation records found." />
       </section>
     </div>
   );

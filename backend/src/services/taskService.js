@@ -4,8 +4,8 @@ async function getPendingTaskCounts() {
   const [[purchaseConfirmations]] = await pool.query(
     `
       SELECT COUNT(*) AS count
-      FROM purchase_confirmation_tokens
-      WHERE used_at IS NULL AND expires_at >= NOW()
+      FROM purchase_confirmations
+      WHERE status = 'PENDING'
     `
   );
 

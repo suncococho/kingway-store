@@ -58,13 +58,49 @@ router.post("/public/:token", async (req, res, next) => {
     }
 
     const confirmation = await withTransaction(async (connection) => {
-      const [insertResult] = await connection.query(
+      const [existingRows] = await connection.query(
         `
-          INSERT INTO purchase_confirmations (order_id, customer_id, signature_data, confirmed_by_line_user_id)
-          VALUES (?, ?, ?, ?)
+          SELECT id
+          FROM purchase_confirmations
+          WHERE token = ?
+          LIMIT 1
         `,
-        [tokenRow.orderId, tokenRow.customerId, signatureData, tokenRow.lineUserId || null]
+        [req.params.token]
       );
+
+      let confirmationId;
+      if (existingRows[0]) {
+        confirmationId = existingRows[0].id;
+        await connection.query(
+          `
+            UPDATE purchase_confirmations
+            SET
+              signature_data = ?,
+              confirmed_by_line_user_id = ?,
+              submitted_at = NOW(),
+              status = 'COMPLETED'
+            WHERE id = ?
+          `,
+          [signatureData, tokenRow.lineUserId || null, confirmationId]
+        );
+      } else {
+        const [insertResult] = await connection.query(
+          `
+            INSERT INTO purchase_confirmations (
+              token,
+              order_id,
+              customer_id,
+              status,
+              signature_data,
+              confirmed_by_line_user_id,
+              submitted_at
+            )
+            VALUES (?, ?, ?, 'COMPLETED', ?, ?, NOW())
+          `,
+          [req.params.token, tokenRow.orderId, tokenRow.customerId, signatureData, tokenRow.lineUserId || null]
+        );
+        confirmationId = insertResult.insertId;
+      }
 
       await connection.query(
         `
@@ -76,7 +112,7 @@ router.post("/public/:token", async (req, res, next) => {
       );
 
       return {
-        id: insertResult.insertId,
+        id: confirmationId,
         orderId: tokenRow.orderId,
         customerId: tokenRow.customerId,
         orderNo: tokenRow.orderNo,
@@ -122,10 +158,13 @@ router.get("/", async (req, res, next) => {
       `
         SELECT
           pc.id,
+          pc.token,
+          pc.status,
           pc.order_id AS orderId,
           pc.customer_id AS customerId,
           pc.pdf_path AS pdfPath,
           pc.submitted_at AS submittedAt,
+          pc.created_at AS createdAt,
           pc.confirmed_by_line_user_id AS confirmedByLineUserId,
           c.name AS customerName,
           c.phone AS customerPhone,
@@ -145,28 +184,55 @@ router.get("/", async (req, res, next) => {
 
 router.get("/pending-links", async (req, res, next) => {
   try {
-    const [rows] = await pool.query(
+    const [pendingRows] = await pool.query(
       `
         SELECT
-          pct.id,
-          pct.token,
-          pct.order_id AS orderId,
-          pct.customer_id AS customerId,
+          pc.id,
+          pc.token,
+          pc.status,
+          pc.order_id AS orderId,
+          pc.customer_id AS customerId,
+          pc.created_at AS createdAt,
+          pc.submitted_at AS submittedAt,
           pct.expires_at AS expiresAt,
-          pct.used_at AS usedAt,
           c.name AS customerName
-        FROM purchase_confirmation_tokens pct
-        INNER JOIN customers c ON c.id = pct.customer_id
-        ORDER BY pct.id DESC
+        FROM purchase_confirmations pc
+        INNER JOIN customers c ON c.id = pc.customer_id
+        LEFT JOIN purchase_confirmation_tokens pct ON pct.token = pc.token
+        WHERE pc.status = 'PENDING'
+        ORDER BY pc.created_at DESC
       `
     );
 
-    return res.json(
-      rows.map((row) => ({
+    const [allRows] = await pool.query(
+      `
+        SELECT
+          pc.id,
+          pc.token,
+          pc.status,
+          pc.order_id AS orderId,
+          pc.customer_id AS customerId,
+          pc.created_at AS createdAt,
+          pc.submitted_at AS submittedAt,
+          pct.expires_at AS expiresAt,
+          c.name AS customerName
+        FROM purchase_confirmations pc
+        INNER JOIN customers c ON c.id = pc.customer_id
+        LEFT JOIN purchase_confirmation_tokens pct ON pct.token = pc.token
+        ORDER BY pc.created_at DESC
+      `
+    );
+
+    return res.json({
+      pending: pendingRows.map((row) => ({
         ...row,
         link: `${config.frontendBaseUrl}/purchase-confirm/${row.token}`
+      })),
+      debugAllRecords: allRows.map((row) => ({
+        ...row,
+        link: row.token ? `${config.frontendBaseUrl}/purchase-confirm/${row.token}` : null
       }))
-    );
+    });
   } catch (error) {
     return next(error);
   }
@@ -212,13 +278,29 @@ router.post("/generate-link", async (req, res, next) => {
     const token = crypto.randomBytes(24).toString("hex");
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    await pool.query(
-      `
-        INSERT INTO purchase_confirmation_tokens (token, order_id, customer_id, expires_at)
-        VALUES (?, ?, ?, ?)
-      `,
-      [token, order.orderId, order.customerId, expiresAt]
-    );
+    await withTransaction(async (connection) => {
+      await connection.query(
+        `
+          INSERT INTO purchase_confirmation_tokens (token, order_id, customer_id, expires_at)
+          VALUES (?, ?, ?, ?)
+        `,
+        [token, order.orderId, order.customerId, expiresAt]
+      );
+
+      await connection.query(
+        `
+          INSERT INTO purchase_confirmations (
+            token,
+            customer_id,
+            order_id,
+            status,
+            created_at
+          )
+          VALUES (?, ?, ?, 'PENDING', NOW())
+        `,
+        [token, order.customerId, order.orderId]
+      );
+    });
 
     const link = `${config.frontendBaseUrl}/purchase-confirm/${token}`;
 
@@ -236,6 +318,7 @@ router.post("/generate-link", async (req, res, next) => {
       link,
       orderId: order.orderId,
       customerId: order.customerId,
+      status: "PENDING",
       debug: {
         matchedOrderId: order.orderId,
         matchedProductIds: order.matchedProductIds ? order.matchedProductIds.split(",").map((value) => Number(value)) : [],

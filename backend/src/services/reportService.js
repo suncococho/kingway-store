@@ -66,7 +66,7 @@ async function buildDailyReport(targetDate) {
     `
       SELECT
         (
-          (SELECT COUNT(*) FROM purchase_confirmation_tokens WHERE used_at IS NULL AND expires_at >= NOW())
+          (SELECT COUNT(*) FROM purchase_confirmations WHERE status = 'PENDING')
           + (SELECT COUNT(*) FROM repair_orders WHERE status IN ('reserved', 'estimate_pending_approval', 'completed_waiting_pickup'))
           + (SELECT COUNT(*) FROM coupons WHERE coupon_type = 'google_review' AND approved_by_staff_id IS NULL)
         ) AS totalPending
