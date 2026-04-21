@@ -2,7 +2,7 @@ import { Navigate, Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import { getStoredToken } from "../lib/auth";
 
-function ProtectedLayout() {
+function ProtectedLayout({ children }) {
   const token = getStoredToken();
 
   if (!token) {
@@ -13,7 +13,7 @@ function ProtectedLayout() {
     <div className="app-shell">
       <Sidebar />
       <main className="page-content">
-        <Outlet />
+        {children || <Outlet />}
       </main>
     </div>
   );
