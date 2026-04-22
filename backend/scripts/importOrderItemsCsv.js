@@ -6,7 +6,6 @@ const path = require("path");
 const {
   buildOrderNo,
   buildPlaceholderSku,
-  csvRowsToRecords,
   fail,
   mapCategory,
   mapOrderStatus,
@@ -49,61 +48,174 @@ async function resolveCreatedBy() {
 function parseSettlementCsv(filePath) {
   const text = fs.readFileSync(filePath, "utf8");
   const sourceName = path.basename(filePath);
-  const rows = csvRowsToRecords(parseCsv(text));
+  const parsedRows = parseCsv(text);
+  const headerIndex = findHeaderRowIndex(parsedRows);
 
-  return rows.map((record, index) => {
-    const sku = normalizeSku(pickField(record, ["sku", "productsku", "itemsku", "merchantsku", "model"]));
-    const productName = normalizeWhitespace(pickField(record, ["productname", "name", "itemname", "description", "product"]));
-    const quantity = Math.max(1, parseInteger(pickField(record, ["quantity", "qty", "count", "units"]), 1));
-    const unitPrice = parseNumber(pickField(record, ["unitprice", "price", "amount", "itemamount", "settlementamount"]), 0);
-    const lineTotal = parseNumber(pickField(record, ["linetotal", "total", "subtotal", "netamount"]), unitPrice * quantity);
-    const customerName = normalizeWhitespace(pickField(record, ["customername", "buyername", "customer", "buyer"]));
-    const customerPhone = normalizeWhitespace(pickField(record, ["customerphone", "phone", "mobile", "buyerphone"]));
-    const category = mapCategory(pickField(record, ["category", "productcategory", "type", "department"]) || productName);
-    const businessDate = parseDateOnly(pickField(record, ["businessdate", "date", "orderdate", "settlementdate", "createdat"]));
-    const paymentMethod = mapPaymentMethod(pickField(record, ["paymentmethod", "payment", "paidby", "paytype"]));
-    const status = mapOrderStatus(pickField(record, ["status", "orderstatus", "paymentstatus"]));
-    const notes = normalizeWhitespace(pickField(record, ["notes", "note", "remark", "remarks"]));
-    const explicitOrderSeed = pickField(record, [
-      "orderno",
-      "ordernumber",
-      "orderid",
-      "transactionid",
-      "settlementno",
-      "invoiceno",
-      "referenceno",
-      "receiptno"
-    ]);
+  if (headerIndex === -1) {
+    fail(`Unable to find a supported header row in ${filePath}`);
+  }
 
-    const fallbackSeed = [
-      sourceName,
-      businessDate,
-      customerName,
-      customerPhone,
-      sku,
-      productName,
-      lineTotal,
-      index + 1
-    ].join("|");
+  const headers = parsedRows[headerIndex].map((header, index) => mapSettlementHeader(header) || `column${index + 1}`);
+  const dataRows = parsedRows.slice(headerIndex + 1);
+  const rows = [];
+  const stats = {
+    sourceRows: dataRows.filter((row) => row.some((cell) => normalizeWhitespace(cell) !== "")).length,
+    skippedRows: 0,
+    skippedMissingIdentity: 0,
+    skippedParseIssues: 0
+  };
 
-    return {
-      rowNumber: index + 2,
-      sku,
-      productName,
-      quantity,
-      unitPrice,
-      lineTotal,
-      customerName,
-      customerPhone,
-      category,
-      businessDate,
-      paymentMethod,
-      status,
-      notes,
-      orderNo: buildOrderNo(explicitOrderSeed, fallbackSeed),
-      sourceHash: crypto.createHash("sha1").update(fallbackSeed).digest("hex").slice(0, 16)
-    };
-  });
+  for (let index = 0; index < dataRows.length; index += 1) {
+    const row = dataRows[index];
+    if (!row || row.every((cell) => normalizeWhitespace(cell) === "")) {
+      continue;
+    }
+
+    const record = {};
+    headers.forEach((header, columnIndex) => {
+      record[header] = normalizeWhitespace(row[columnIndex] || "");
+    });
+
+    try {
+      const sku = normalizeSku(
+        pickField(record, ["sku", "productsku", "itemsku", "merchantsku", "model"])
+      );
+      const productName = normalizeWhitespace(
+        pickField(record, ["productname", "name", "itemname", "description", "product"])
+      );
+
+      if (!sku && !productName) {
+        stats.skippedRows += 1;
+        stats.skippedMissingIdentity += 1;
+        continue;
+      }
+
+      const quantity = Math.max(
+        1,
+        parseInteger(pickField(record, ["quantity", "qty", "count", "units"]), 1)
+      );
+      const lineTotal = parseNumber(
+        pickField(record, ["linetotal", "total", "subtotal", "netamount", "settlementamount"]),
+        0
+      );
+      const unitPrice = parseNumber(
+        pickField(record, ["unitprice", "price", "amount", "itemamount", "wholesaleunitprice"]),
+        quantity > 0 ? lineTotal / quantity : 0
+      );
+      const customerName = normalizeWhitespace(
+        pickField(record, ["customername", "buyername", "customer", "buyer"])
+      );
+      const customerPhone = normalizeWhitespace(
+        pickField(record, ["customerphone", "phone", "mobile", "buyerphone"])
+      );
+      const category = mapCategory(
+        pickField(record, ["category", "productcategory", "type", "department", "settlementcategory"]) || productName
+      );
+      const businessDate = parseDateOnly(
+        pickField(record, ["businessdate", "date", "orderdate", "settlementdate", "createdat"])
+      );
+      const paymentMethod = mapPaymentMethod(
+        pickField(record, ["paymentmethod", "payment", "paidby", "paytype"])
+      );
+      const status = mapOrderStatus(pickField(record, ["status", "orderstatus", "paymentstatus"]));
+      const notes = normalizeWhitespace(pickField(record, ["notes", "note", "remark", "remarks"]));
+      const explicitOrderSeed = pickField(record, [
+        "orderno",
+        "ordernumber",
+        "orderid",
+        "transactionid",
+        "settlementno",
+        "invoiceno",
+        "referenceno",
+        "receiptno"
+      ]);
+
+      const fallbackSeed = [
+        sourceName,
+        businessDate,
+        customerName,
+        customerPhone,
+        sku,
+        productName,
+        lineTotal,
+        index + 1
+      ].join("|");
+
+      rows.push({
+        rowNumber: headerIndex + index + 2,
+        sku,
+        productName,
+        quantity,
+        unitPrice,
+        lineTotal,
+        customerName,
+        customerPhone,
+        category,
+        businessDate,
+        paymentMethod,
+        status,
+        notes,
+        orderNo: buildOrderNo(explicitOrderSeed, fallbackSeed),
+        sourceHash: crypto.createHash("sha1").update(fallbackSeed).digest("hex").slice(0, 16)
+      });
+    } catch (error) {
+      stats.skippedRows += 1;
+      stats.skippedParseIssues += 1;
+    }
+  }
+
+  return { rows, stats };
+}
+
+function findHeaderRowIndex(rows) {
+  const requiredHeaders = ["orderdate", "orderno", "productname", "sku", "quantity"];
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const normalizedRow = rows[index].map((cell) => mapSettlementHeader(cell));
+    const hasAllHeaders = requiredHeaders.every((header) => normalizedRow.includes(header));
+    if (hasAllHeaders) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function mapSettlementHeader(header) {
+  const normalized = normalizeWhitespace(header).toLowerCase();
+  const aliases = new Map([
+    ["訂單日期", "orderdate"],
+    ["年", "year"],
+    ["月", "month"],
+    ["訂單編號", "orderno"],
+    ["客戶", "customer"],
+    ["付款方式", "paymentmethod"],
+    ["商品名稱", "productname"],
+    ["sku", "sku"],
+    ["SKU", "sku"],
+    ["數量", "quantity"],
+    ["商品分類", "productcategory"],
+    ["結算分類", "settlementcategory"],
+    ["銷售淨額", "netamount"],
+    ["供應商", "supplier"],
+    ["單位批發價", "wholesaleunitprice"],
+    ["供應商應收", "supplieramount"],
+    ["KINGWAY 毛利", "grossprofit"],
+    ["備註", "notes"]
+  ]);
+
+  if (aliases.has(header)) {
+    return aliases.get(header);
+  }
+
+  if (aliases.has(normalized)) {
+    return aliases.get(normalized);
+  }
+
+  return normalized
+    .replace(/\uFEFF/g, "")
+    .replace(/\s+/g, "")
+    .replace(/[^a-z0-9_]/g, "");
 }
 
 async function resolveCustomer(connection, row) {
@@ -123,7 +235,7 @@ async function resolveCustomer(connection, row) {
   );
 
   if (matches[0]) {
-    return matches[0].id;
+    return { id: matches[0].id, created: false };
   }
 
   const [result] = await connection.query(
@@ -134,7 +246,7 @@ async function resolveCustomer(connection, row) {
     [row.customerName || "Migrated Customer", row.customerPhone || null, "Created by order CSV migration"]
   );
 
-  return result.insertId;
+  return { id: result.insertId, created: true };
 }
 
 async function resolveProduct(connection, row) {
@@ -307,7 +419,7 @@ async function main() {
     fail("Order item migration only supports .csv input.");
   }
 
-  const rows = parseSettlementCsv(inputPath).filter((row) => row.sku || row.productName);
+  const { rows, stats } = parseSettlementCsv(inputPath);
   if (rows.length === 0) {
     fail("No usable order rows found in the CSV file.");
   }
@@ -316,6 +428,8 @@ async function main() {
   let importedOrders = 0;
   let importedItems = 0;
   let placeholderProducts = 0;
+  let createdCustomers = 0;
+  let duplicateItemsSkipped = 0;
   const touchedOrders = new Set();
 
   const connection = await pool.getConnection();
@@ -323,7 +437,11 @@ async function main() {
     await connection.beginTransaction();
 
     for (const row of rows) {
-      const customerId = await resolveCustomer(connection, row);
+      const customer = await resolveCustomer(connection, row);
+      const customerId = customer ? customer.id : null;
+      if (customer && customer.created) {
+        createdCustomers += 1;
+      }
       const { product, created: placeholderCreated } = await resolveProduct(connection, row);
       if (placeholderCreated) {
         placeholderProducts += 1;
@@ -366,6 +484,8 @@ async function main() {
           ]
         );
         importedItems += 1;
+      } else {
+        duplicateItemsSkipped += 1;
       }
 
       await refreshOrderTotal(connection, orderId);
@@ -379,10 +499,16 @@ async function main() {
     connection.release();
   }
 
-  console.log(`Processed ${rows.length} CSV rows from ${inputPath}`);
+  console.log(`Processed ${rows.length} importable CSV rows from ${inputPath}`);
+  console.log(`Source data rows: ${stats.sourceRows}`);
+  console.log(`Skipped rows: ${stats.skippedRows}`);
+  console.log(`Skipped rows due to missing SKU and product name: ${stats.skippedMissingIdentity}`);
+  console.log(`Skipped rows due to parse issues: ${stats.skippedParseIssues}`);
   console.log(`Orders created: ${importedOrders}`);
   console.log(`Orders touched: ${touchedOrders.size}`);
   console.log(`New order_items inserted: ${importedItems}`);
+  console.log(`Duplicate-prevented existing order_items skipped: ${duplicateItemsSkipped}`);
+  console.log(`Customers created: ${createdCustomers}`);
   console.log(`Placeholder products created: ${placeholderProducts}`);
 }
 
