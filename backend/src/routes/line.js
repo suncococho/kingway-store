@@ -9,6 +9,7 @@ const { logKpi } = require("../services/kpiService");
 const router = express.Router();
 
 router.post("/webhook", async (req, res, next) => {
+console.log("LINE BODY:", JSON.stringify(req.body));
   try {
     const signature = req.headers["x-line-signature"];
     const rawBody = req.rawBody || "";
