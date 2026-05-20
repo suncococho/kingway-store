@@ -1,47 +1,26 @@
 const jwt = require("jsonwebtoken");
 const config = require("../config");
 
-function normalizeRole(role) {
-  return String(role || "").trim().toUpperCase();
-}
-
 function authenticate(req, res, next) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
 
-  if (!token) {
-    return res.status(401).json({ message: "Missing bearer token" });
-  }
+  if (!token) return res.status(401).json({ message: "Unauthorized" });
 
   try {
-    const decoded = jwt.verify(token, config.jwtSecret);
-    req.user = {
-      ...decoded,
-      role: normalizeRole(decoded.role)
-    };
+    req.user = jwt.verify(token, config.jwtSecret);
+    req.user.role = String(req.user.role || "").toUpperCase().trim();
     return next();
-  } catch (error) {
-    return res.status(401).json({ message: "Invalid token" });
+  } catch (err) {
+    return res.status(401).json({ message: "Unauthorized" });
   }
 }
 
-function authorize(roles) {
-  const allowedRoles = (Array.isArray(roles) ? roles : [roles]).map(normalizeRole);
-
+function authorize() {
   return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({ message: "Unauthenticated" });
-    }
-
-    if (!allowedRoles.includes(normalizeRole(req.user.role))) {
-      return res.status(403).json({ message: "Forbidden" });
-    }
-
+    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
     return next();
   };
 }
 
-module.exports = {
-  authenticate,
-  authorize
-};
+module.exports = { authenticate, authorize };

@@ -50,3 +50,8 @@ migration/manual_review/
 
 .DS_Store
 .env.save
+
+backend/src/storage/
+backend/src/storage/reports/
+*.xlsx
+*.csv

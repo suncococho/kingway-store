@@ -2,6 +2,18 @@ const express = require("express");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize } = require("../middleware/auth");
 const { createError } = require("../utils/errors");
+const {
+  createButtonMessage,
+  createConfirmTemplate,
+  createPostbackAction,
+  buildGroupApprovalMessage,
+  logWorkflowEvent,
+  sendToGroups
+} = require("../services/lineWorkflowService");
+const {
+  mapSupplierRequestStatusLabel,
+  mapSupplierRequestTypeLabel
+} = require("../utils/displayLabels");
 
 const router = express.Router();
 
@@ -52,24 +64,64 @@ router.get("/low-stock", async (req, res, next) => {
   }
 });
 
+router.get("/supplier-requests", async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `
+        SELECT
+          sr.id,
+          sr.request_type AS requestType,
+          sr.status,
+          sr.supplier_name AS supplierName,
+          sr.note,
+          sr.supplier_response_note AS supplierResponseNote,
+          sr.supplier_responded_at AS supplierRespondedAt,
+          sr.created_at AS createdAt,
+          su.display_name AS requestedByName,
+          GROUP_CONCAT(CONCAT(p.name, ' x', sri.quantity, IF(sri.received_quantity > 0, CONCAT(' / 已入庫 ', sri.received_quantity), '')) ORDER BY sri.id SEPARATOR '；') AS itemSummary
+        FROM supplier_requests sr
+        INNER JOIN staff_users su ON su.id = sr.requested_by_staff_id
+        LEFT JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
+        LEFT JOIN products p ON p.id = sri.product_id
+        GROUP BY sr.id, sr.request_type, sr.status, sr.supplier_name, sr.note, sr.supplier_response_note, sr.supplier_responded_at, sr.created_at, su.display_name
+        ORDER BY sr.id DESC
+      `
+    );
+
+    return res.json(rows.map((row) => ({
+      ...row,
+      requestTypeLabel: mapSupplierRequestTypeLabel(row.requestType),
+      statusLabel: mapSupplierRequestStatusLabel(row.status)
+    })));
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.post("/movements", async (req, res, next) => {
   try {
     const { productId, type, qty, note } = req.body;
     const normalizedQty = Number(qty);
 
-    if (!productId || !type || !Number.isInteger(normalizedQty) || normalizedQty <= 0) {
-      throw createError("productId, type, and positive integer qty are required", 400);
-    }
-
     const movementType = String(type).toUpperCase();
     if (!["IN", "OUT", "ADJUST"].includes(movementType)) {
-      throw createError("type must be IN, OUT, or ADJUST", 400);
+      throw createError("異動類型必須為入庫、出庫或調整", 400);
+    }
+
+    if (!productId || !type || !Number.isInteger(normalizedQty)) {
+      throw createError("請提供商品、異動類型與有效數量", 400);
+    }
+    if (movementType === "ADJUST" && normalizedQty < 0) {
+      throw createError("直接調整後的庫存不可小於 0", 400);
+    }
+    if (movementType !== "ADJUST" && normalizedQty <= 0) {
+      throw createError("入庫與出庫數量必須為正整數", 400);
     }
 
     const result = await withTransaction(async (connection) => {
       const [products] = await connection.query(
         `
-          SELECT id, stock
+          SELECT id, stock, name, sku
           FROM products
           WHERE id = ?
           FOR UPDATE
@@ -79,14 +131,15 @@ router.post("/movements", async (req, res, next) => {
 
       const product = products[0];
       if (!product) {
-        throw createError("Product not found", 404);
+        throw createError("找不到商品", 404);
       }
 
       const signedQty = movementType === "OUT" ? -normalizedQty : normalizedQty;
       const nextStock = movementType === "ADJUST" ? normalizedQty : product.stock + signedQty;
+      const movementQuantity = movementType === "ADJUST" ? nextStock - Number(product.stock || 0) : signedQty;
 
       if (nextStock < 0) {
-        throw createError("Stock cannot be negative", 409);
+        throw createError("庫存不可小於 0", 409);
       }
 
       await connection.query(
@@ -103,16 +156,202 @@ router.post("/movements", async (req, res, next) => {
           INSERT INTO inventory_movements (product_id, movement_type, quantity, notes, created_by)
           VALUES (?, ?, ?, ?, ?)
         `,
-        [productId, movementType, movementType === "ADJUST" ? nextStock : signedQty, note || null, req.user.id]
+        [
+          productId,
+          movementType,
+          movementQuantity,
+          note || (movementType === "ADJUST" ? `直接調整庫存為 ${nextStock}` : null),
+          req.user.id
+        ]
       );
 
       return {
         productId: Number(productId),
-        stock: nextStock
+        productName: product.name,
+        sku: product.sku,
+        previousStock: Number(product.stock || 0),
+        stock: nextStock,
+        movementType,
+        movementQuantity
       };
     });
 
     return res.status(201).json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/supplier-requests", async (req, res, next) => {
+  try {
+    const { requestType, supplierName, note, items } = req.body;
+    if (!["PURCHASE_ORDER", "RETURN"].includes(requestType)) {
+      throw createError("請選擇發注或退貨", 400);
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      throw createError("請至少提供一個品項", 400);
+    }
+
+    const result = await withTransaction(async (connection) => {
+      const [requestResult] = await connection.query(
+        `
+          INSERT INTO supplier_requests (request_type, status, supplier_name, note, requested_by_staff_id)
+          VALUES (?, 'PENDING_SUPPLIER', ?, ?, ?)
+        `,
+        [requestType, supplierName || null, note || null, req.user.id]
+      );
+
+      for (const item of items) {
+        const productId = Number(item.productId);
+        const quantity = Number(item.quantity);
+        if (!productId || !Number.isInteger(quantity) || quantity <= 0) {
+          throw createError("供應商流程品項需提供商品與正整數數量", 400);
+        }
+        await connection.query(
+          `
+            INSERT INTO supplier_request_items (supplier_request_id, product_id, quantity, reason, note)
+            VALUES (?, ?, ?, ?, ?)
+          `,
+          [requestResult.insertId, productId, quantity, item.reason || null, item.note || null]
+        );
+      }
+
+      await logWorkflowEvent("supplier_request_created", "SUPPLIER_REQUEST", requestResult.insertId, {
+        requestType,
+        itemCount: items.length
+      }, req.user.id, connection);
+
+      return { id: requestResult.insertId };
+    });
+
+    await sendToGroups(["inventory", "admin"], [
+      buildGroupApprovalMessage("supplier_request", {
+        id: result.id,
+        requestTypeLabel: mapSupplierRequestTypeLabel(requestType),
+        supplierName: supplierName || "-",
+        approveAction: requestType === "RETURN" ? "supplier_return_approve" : "supplier_po_approve",
+        rejectAction: requestType === "RETURN" ? "supplier_return_reject" : "supplier_po_reject"
+      })
+    ]);
+
+    return res.status(201).json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/supplier-requests/:id/respond", async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const approved = Boolean(req.body.approved);
+    const nextStatus = approved ? "APPROVED" : "REJECTED";
+    await pool.query(
+      `
+        UPDATE supplier_requests
+        SET status = ?,
+            supplier_response_note = ?,
+            supplier_responded_at = NOW()
+        WHERE id = ?
+      `,
+      [nextStatus, req.body.note || null, id]
+    );
+
+    await logWorkflowEvent("supplier_request_responded", "SUPPLIER_REQUEST", id, { approved }, req.user.id);
+    return res.json({ status: nextStatus, statusLabel: mapSupplierRequestStatusLabel(nextStatus) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/supplier-requests/:id/receive", async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const receivedItems = Array.isArray(req.body.items) ? req.body.items : [];
+    if (receivedItems.length === 0) {
+      throw createError("請提供入庫品項", 400);
+    }
+
+    const result = await withTransaction(async (connection) => {
+      for (const item of receivedItems) {
+        const itemId = Number(item.itemId);
+        const receivedQuantity = Number(item.receivedQuantity);
+        if (!itemId || !Number.isInteger(receivedQuantity) || receivedQuantity <= 0) {
+          throw createError("入庫品項與數量不正確", 400);
+        }
+
+        const [rows] = await connection.query(
+          `
+            SELECT product_id AS productId, quantity, received_quantity AS receivedQuantity
+            FROM supplier_request_items
+            WHERE id = ? AND supplier_request_id = ?
+            FOR UPDATE
+          `,
+          [itemId, id]
+        );
+        const requestItem = rows[0];
+        if (!requestItem) {
+          throw createError("找不到入庫品項", 404);
+        }
+        const nextReceived = Math.min(Number(requestItem.receivedQuantity || 0) + receivedQuantity, Number(requestItem.quantity));
+        const delta = nextReceived - Number(requestItem.receivedQuantity || 0);
+        if (delta <= 0) {
+          continue;
+        }
+
+        await connection.query("UPDATE supplier_request_items SET received_quantity = ? WHERE id = ?", [nextReceived, itemId]);
+        await connection.query("UPDATE products SET stock = stock + ? WHERE id = ?", [delta, requestItem.productId]);
+        console.log('[INVENTORY_RECEIVE]', {
+          requestId: id,
+          itemId,
+          productId: requestItem.productId,
+          delta
+        });
+
+        await connection.query(
+          `
+            INSERT INTO inventory_movements (
+              product_id,
+              movement_type,
+              quantity,
+              reference_type,
+              reference_id,
+              created_by,
+              notes
+            )
+            VALUES (?, 'RESTOCK', ?, 'SUPPLIER_REQUEST', ?, ?, ?)
+          `,
+          [
+            requestItem.productId,
+            delta,
+            id,
+            req.user.id,
+            `Supplier receive #${id}`
+          ]
+        );
+
+        console.log('[INVENTORY_RECEIVE_DONE]', {
+          requestId: id,
+          productId: requestItem.productId
+        });
+      }
+
+      const [[summary]] = await connection.query(
+        `
+          SELECT
+            SUM(received_quantity >= quantity) AS completedItems,
+            COUNT(*) AS totalItems
+          FROM supplier_request_items
+          WHERE supplier_request_id = ?
+        `,
+        [id]
+      );
+      const status = Number(summary.completedItems || 0) === Number(summary.totalItems || 0) ? "RECEIVED" : "PARTIALLY_RECEIVED";
+      await connection.query("UPDATE supplier_requests SET status = ? WHERE id = ?", [status, id]);
+      await logWorkflowEvent("supplier_request_received", "SUPPLIER_REQUEST", id, { status }, req.user.id, connection);
+      return { status };
+    });
+
+    return res.json({ status: result.status, statusLabel: mapSupplierRequestStatusLabel(result.status) });
   } catch (error) {
     return next(error);
   }

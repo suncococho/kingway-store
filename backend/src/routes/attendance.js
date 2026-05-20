@@ -45,7 +45,7 @@ router.post("/check-in", async (req, res, next) => {
     );
 
     if (openRows[0]) {
-      throw createError("You already have an active check-in", 409);
+      throw createError("目前已有尚未退勤的出勤紀錄", 409);
     }
 
     const [result] = await pool.query(
@@ -57,7 +57,7 @@ router.post("/check-in", async (req, res, next) => {
     );
 
     await logKpi(req.user.id, "CHECK_IN", "ATTENDANCE", result.insertId, 1);
-    return res.status(201).json({ id: result.insertId, message: "Checked in" });
+    return res.status(201).json({ id: result.insertId, message: "已完成上班打卡" });
   } catch (error) {
     return next(error);
   }
@@ -77,7 +77,7 @@ router.post("/check-out", async (req, res, next) => {
     );
 
     if (!rows[0]) {
-      throw createError("No active check-in found", 404);
+      throw createError("找不到尚未退勤的出勤紀錄", 404);
     }
 
     await pool.query(
@@ -89,10 +89,69 @@ router.post("/check-out", async (req, res, next) => {
       [rows[0].id]
     );
 
-    return res.json({ message: "Checked out" });
+    return res.json({ message: "已完成下班打卡" });
   } catch (error) {
     return next(error);
   }
 });
+
+router.get("/checklist/today", async (req, res, next) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    await ensureTodayChecklist(req.user.id, today);
+    const [rows] = await pool.query(
+      `
+        SELECT id, item_key AS itemKey, item_label AS itemLabel, is_done AS isDone, completed_at AS completedAt
+        FROM operational_checklists
+        WHERE staff_user_id = ? AND checklist_date = ?
+        ORDER BY id ASC
+      `,
+      [req.user.id, today]
+    );
+    return res.json(rows);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/checklist/:id/toggle", async (req, res, next) => {
+  try {
+    const done = req.body.done === undefined ? true : Boolean(req.body.done);
+    await pool.query(
+      `
+        UPDATE operational_checklists
+        SET is_done = ?,
+            completed_at = CASE WHEN ? = 1 THEN NOW() ELSE NULL END
+        WHERE id = ? AND staff_user_id = ?
+      `,
+      [done ? 1 : 0, done ? 1 : 0, req.params.id, req.user.id]
+    );
+    if (done) {
+      await logKpi(req.user.id, "CHECKLIST_DONE", "OPERATIONAL_CHECKLIST", req.params.id, 1);
+    }
+    return res.json({ message: done ? "已完成確認事項" : "已取消確認" });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+async function ensureTodayChecklist(staffUserId, date) {
+  const items = [
+    ["today_tasks", "今日工作確認"],
+    ["pending_follow_up", "客戶追蹤確認"],
+    ["repair_purchase_status", "維修 / 購買狀態確認"],
+    ["closing_check", "關店前事項確認"]
+  ];
+
+  for (const [key, label] of items) {
+    await pool.query(
+      `
+        INSERT IGNORE INTO operational_checklists (staff_user_id, checklist_date, item_key, item_label)
+        VALUES (?, ?, ?, ?)
+      `,
+      [staffUserId, date, key, label]
+    );
+  }
+}
 
 module.exports = router;

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS customers (
   name VARCHAR(120) NOT NULL,
   phone VARCHAR(30) NULL,
   line_user_id VARCHAR(100) NULL UNIQUE,
+  customer_type ENUM('LINE','OFFLINE_WITH_PHONE','OFFLINE_NO_PHONE') NOT NULL DEFAULT 'LINE',
   notes TEXT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -42,6 +43,7 @@ CREATE TABLE IF NOT EXISTS orders (
   customer_id BIGINT UNSIGNED NULL,
   customer_name VARCHAR(120) NULL,
   customer_phone VARCHAR(30) NULL,
+  customer_type ENUM('LINE','OFFLINE_WITH_PHONE','OFFLINE_NO_PHONE') NOT NULL DEFAULT 'LINE',
   total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
   payment_method ENUM('CASH', 'CARD', 'LINE_PAY', 'TRANSFER', 'OTHER') NOT NULL DEFAULT 'CASH',
   status ENUM('PENDING', 'COMPLETED', 'CANCELED') NOT NULL DEFAULT 'COMPLETED',
@@ -97,11 +99,19 @@ CREATE TABLE IF NOT EXISTS line_group_registrations (
 
 CREATE TABLE IF NOT EXISTS purchase_confirmations (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  order_id BIGINT UNSIGNED NOT NULL,
-  customer_id BIGINT UNSIGNED NOT NULL,
+  order_id BIGINT UNSIGNED NULL,
+  customer_id BIGINT UNSIGNED NULL,
   token VARCHAR(120) NULL UNIQUE,
   status ENUM('PENDING', 'COMPLETED', 'EXPIRED', 'CANCELED') NOT NULL DEFAULT 'PENDING',
+  buyer_name VARCHAR(120) NULL,
+  buyer_phone VARCHAR(40) NULL,
+  buyer_id_number VARCHAR(40) NULL,
+  delivery_checks_json LONGTEXT NULL,
+  staff_explanations_json LONGTEXT NULL,
+  terms_accepted TINYINT(1) NOT NULL DEFAULT 0,
+  final_confirmation_accepted TINYINT(1) NOT NULL DEFAULT 0,
   signature_data LONGTEXT NULL,
+  html_snapshot LONGTEXT NULL,
   pdf_path VARCHAR(255) NULL,
   submitted_at TIMESTAMP NULL DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -125,6 +135,8 @@ CREATE TABLE IF NOT EXISTS purchase_confirmation_tokens (
 CREATE TABLE IF NOT EXISTS repair_orders (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   customer_id BIGINT UNSIGNED NOT NULL,
+  customer_type ENUM('LINE','OFFLINE_WITH_PHONE','OFFLINE_NO_PHONE') NOT NULL DEFAULT 'LINE',
+  source ENUM('LINE','WEB','POS') NOT NULL DEFAULT 'WEB',
   bike_model VARCHAR(150) NOT NULL,
   issue_description TEXT NOT NULL,
   reservation_date DATE NOT NULL,
@@ -209,6 +221,14 @@ CREATE TABLE IF NOT EXISTS staff_kpi_logs (
   CONSTRAINT fk_staff_kpi_logs_staff FOREIGN KEY (staff_user_id) REFERENCES staff_users(id)
 );
 
+CREATE TABLE IF NOT EXISTS app_settings (
+  setting_scope ENUM('STORE', 'SYSTEM') NOT NULL PRIMARY KEY,
+  payload_json LONGTEXT NOT NULL,
+  updated_by_staff_id BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
 CREATE INDEX idx_orders_business_date ON orders (business_date);
 CREATE INDEX idx_inventory_movements_product ON inventory_movements (product_id, created_at);
 CREATE INDEX idx_purchase_confirmations_order ON purchase_confirmations (order_id);
@@ -217,3 +237,98 @@ CREATE INDEX idx_repair_orders_status ON repair_orders (status, reservation_date
 CREATE INDEX idx_coupons_customer_type ON coupons (customer_id, coupon_type);
 CREATE INDEX idx_staff_attendance_staff ON staff_attendance (staff_user_id, check_in_at);
 CREATE INDEX idx_staff_kpi_logs_staff ON staff_kpi_logs (staff_user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS purchase_confirmation_requests (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  order_id VARCHAR(50) NOT NULL,
+  customer_id INT NOT NULL,
+  status VARCHAR(50) DEFAULT 'REQUESTED',
+  requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  approved_at DATETIME,
+  rejected_at DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS customer_crm_events (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  customer_id BIGINT UNSIGNED NOT NULL,
+  event_type VARCHAR(80) NOT NULL,
+  stage VARCHAR(80) NULL,
+  note TEXT NULL,
+  created_by_staff_id BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_customer_crm_events_customer (customer_id, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS follow_up_tasks (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  customer_id BIGINT UNSIGNED NOT NULL,
+  action_type ENUM('3_day','7_day','14_day','manual') NOT NULL,
+  status ENUM('pending','sent','done','canceled') NOT NULL DEFAULT 'pending',
+  message TEXT NULL,
+  created_by_staff_id BIGINT UNSIGNED NULL,
+  sent_at DATETIME NULL,
+  completed_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_follow_up_tasks_customer (customer_id, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS supplier_requests (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  request_type ENUM('PURCHASE_ORDER','RETURN') NOT NULL,
+  status ENUM('PENDING_SUPPLIER','APPROVED','REJECTED','PARTIALLY_RECEIVED','RECEIVED','RETURN_CONFIRMED','CANCELED') NOT NULL DEFAULT 'PENDING_SUPPLIER',
+  supplier_name VARCHAR(150) NULL,
+  note TEXT NULL,
+  requested_by_staff_id BIGINT UNSIGNED NOT NULL,
+  supplier_response_note TEXT NULL,
+  supplier_responded_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_supplier_requests_status (status, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS supplier_request_items (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  supplier_request_id BIGINT UNSIGNED NOT NULL,
+  product_id BIGINT UNSIGNED NOT NULL,
+  quantity INT NOT NULL,
+  received_quantity INT NOT NULL DEFAULT 0,
+  reason VARCHAR(255) NULL,
+  note TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_supplier_request_items_request (supplier_request_id)
+);
+
+CREATE TABLE IF NOT EXISTS operational_checklists (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  staff_user_id BIGINT UNSIGNED NOT NULL,
+  checklist_date DATE NOT NULL,
+  item_key VARCHAR(80) NOT NULL,
+  item_label VARCHAR(150) NOT NULL,
+  is_done TINYINT(1) NOT NULL DEFAULT 0,
+  completed_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_operational_checklists_item (staff_user_id, checklist_date, item_key)
+);
+
+CREATE TABLE IF NOT EXISTS v2_workflow_events (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  event_type VARCHAR(100) NOT NULL,
+  ref_type VARCHAR(80) NULL,
+  ref_id BIGINT UNSIGNED NULL,
+  payload JSON NULL,
+  created_by_staff_id BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_v2_workflow_events_ref (ref_type, ref_id, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS line_chat_sessions (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  line_user_id VARCHAR(64) NOT NULL,
+  flow_type VARCHAR(80) NOT NULL,
+  step_key VARCHAR(80) NOT NULL,
+  payload JSON NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_line_chat_sessions_user_flow (line_user_id, flow_type),
+  INDEX idx_line_chat_sessions_flow (flow_type, updated_at)
+);

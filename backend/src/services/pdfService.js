@@ -1,73 +1,167 @@
 const fs = require("fs");
 const path = require("path");
+const PDFDocument = require("pdfkit");
+const purchaseConfirmationContent = require("../content/purchaseConfirmationContent.json");
 
 const storageDir = path.join(__dirname, "..", "..", "storage", "pdfs");
+const fontPath = path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansCJKtc-Regular.ttf");
 
-function escapePdfText(value) {
-  return String(value || "")
-    .replace(/\\/g, "\\\\")
-    .replace(/\(/g, "\\(")
-    .replace(/\)/g, "\\)")
-    .replace(/[^\x20-\x7E]/g, "?");
+function ensureFontExists() {
+  if (!fs.existsSync(fontPath)) {
+    throw new Error(`Missing purchase confirmation PDF font: ${fontPath}`);
+  }
 }
 
-function buildPdfBuffer(lines) {
-  const content = [
-    "BT",
-    "/F1 12 Tf",
-    "50 760 Td",
-    ...lines.flatMap((line, index) => {
-      const safeText = escapePdfText(line);
-      if (index === 0) {
-        return [`(${safeText}) Tj`];
-      }
-      return ["0 -18 Td", `(${safeText}) Tj`];
-    }),
-    "ET"
-  ].join("\n");
-
-  const objects = [];
-  objects.push("1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj");
-  objects.push("2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj");
-  objects.push(
-    "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj"
-  );
-  objects.push("4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj");
-  objects.push(`5 0 obj << /Length ${Buffer.byteLength(content, "utf8")} >> stream\n${content}\nendstream\nendobj`);
-
-  let pdf = "%PDF-1.4\n";
-  const offsets = [0];
-
-  for (const object of objects) {
-    offsets.push(Buffer.byteLength(pdf, "utf8"));
-    pdf += `${object}\n`;
+function parseDataUriImage(dataUri) {
+  const matched = String(dataUri || "").match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  if (!matched) {
+    return null;
   }
 
-  const xrefStart = Buffer.byteLength(pdf, "utf8");
-  pdf += `xref\n0 ${objects.length + 1}\n`;
-  pdf += "0000000000 65535 f \n";
-
-  for (let index = 1; index < offsets.length; index += 1) {
-    pdf += `${String(offsets[index]).padStart(10, "0")} 00000 n \n`;
-  }
-
-  pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
-  return Buffer.from(pdf, "utf8");
+  return {
+    mimeType: matched[1],
+    buffer: Buffer.from(matched[2], "base64")
+  };
 }
 
-async function writePurchaseConfirmationPdf({ confirmationId, orderNo, customerName, customerPhone, submittedAt }) {
+function buildChecklistLine(selectedItems, item) {
+  return `${selectedItems.includes(item) ? "[已確認]" : "[未確認]"} ${item}`;
+}
+
+function createPdfDocument() {
+  const doc = new PDFDocument({
+    size: "A4",
+    margin: 50,
+    info: {
+      Title: "KINGWAY 購買確認書",
+      Author: "KINGWAY 台南",
+      Subject: "購買確認書",
+      Creator: "KINGWAY Store"
+    }
+  });
+
+  doc.registerFont("NotoSansTC", fontPath);
+  doc.font("NotoSansTC");
+  doc.on("pageAdded", () => {
+    doc.font("NotoSansTC").fontSize(11);
+  });
+
+  return doc;
+}
+
+function writeSectionTitle(doc, title) {
+  doc.moveDown(0.6);
+  doc.font("NotoSansTC").fontSize(14).text(title, { align: "left" });
+  doc.moveDown(0.3);
+}
+
+function writeBodyText(doc, text, options = {}) {
+  doc.font("NotoSansTC").fontSize(options.fontSize || 11).text(String(text || ""), {
+    width: options.width,
+    align: options.align || "left",
+    lineGap: options.lineGap ?? 3
+  });
+}
+
+function writePurchaseConfirmationContent(doc, payload) {
+  const {
+    confirmationId,
+    orderNo,
+    customerName,
+    customerPhone,
+    buyerIdNumber,
+    deliveryChecks,
+    staffExplanations,
+    submittedAt,
+    signatureData
+  } = payload;
+
+  doc.font("NotoSansTC").fontSize(20).text("KINGWAY 購買確認書", { align: "center" });
+  doc.moveDown(0.5);
+  writeBodyText(doc, `確認書編號：${confirmationId}`);
+  writeBodyText(doc, `訂單編號：${orderNo}`);
+  writeBodyText(doc, `提交時間：${submittedAt}`);
+
+  writeSectionTitle(doc, "1. 購買者資料");
+  writeBodyText(doc, `客戶姓名：${customerName || "-"}`);
+  writeBodyText(doc, `電話：${customerPhone || "-"}`);
+  writeBodyText(doc, `證件號碼或末四碼：${buyerIdNumber || "-"}`);
+
+  writeSectionTitle(doc, "2. 自行車交付檢查");
+  purchaseConfirmationContent.deliveryChecks.forEach((item) => {
+    writeBodyText(doc, buildChecklistLine(deliveryChecks, item));
+  });
+
+  writeSectionTitle(doc, "3. 店員說明確認");
+  purchaseConfirmationContent.staffExplanations.forEach((item) => {
+    writeBodyText(doc, buildChecklistLine(staffExplanations, item));
+  });
+
+  writeSectionTitle(doc, "4. 購買條款");
+  purchaseConfirmationContent.terms.forEach((term, index) => {
+    writeBodyText(doc, `${index + 1}. ${term}`);
+    doc.moveDown(0.2);
+  });
+
+  writeSectionTitle(doc, "5. 最終確認");
+  writeBodyText(doc, purchaseConfirmationContent.finalStatement);
+  writeBodyText(doc, "簽名狀態：已完成電子簽名");
+
+  writeSectionTitle(doc, "6. 客戶簽名");
+  const signatureImage = parseDataUriImage(signatureData);
+  if (signatureImage) {
+    const startX = doc.x;
+    writeBodyText(doc, "電子簽名：");
+    const imageY = doc.y + 4;
+    doc.image(signatureImage.buffer, startX, imageY, {
+      fit: [220, 110],
+      align: "left",
+      valign: "top"
+    });
+    doc.y = imageY + 120;
+  } else {
+    writeBodyText(doc, "電子簽名：已完成");
+  }
+}
+
+async function writePurchaseConfirmationPdf({
+  confirmationId,
+  orderNo,
+  customerName,
+  customerPhone,
+  buyerIdNumber,
+  deliveryChecks,
+  staffExplanations,
+  submittedAt,
+  signatureData
+}) {
+  ensureFontExists();
   fs.mkdirSync(storageDir, { recursive: true });
   const fileName = `purchase-confirmation-${confirmationId}.pdf`;
   const absolutePath = path.join(storageDir, fileName);
-  const buffer = buildPdfBuffer([
-    "KINGWAY Purchase Confirmation",
-    `Confirmation ID: ${confirmationId}`,
-    `Order No: ${orderNo}`,
-    `Customer: ${customerName || "-"}`,
-    `Phone: ${customerPhone || "-"}`,
-    `Submitted At: ${submittedAt}`
-  ]);
-  fs.writeFileSync(absolutePath, buffer);
+
+  await new Promise((resolve, reject) => {
+    const stream = fs.createWriteStream(absolutePath);
+    const doc = createPdfDocument();
+
+    stream.on("finish", resolve);
+    stream.on("error", reject);
+    doc.on("error", reject);
+
+    doc.pipe(stream);
+    writePurchaseConfirmationContent(doc, {
+      confirmationId,
+      orderNo,
+      customerName,
+      customerPhone,
+      buyerIdNumber,
+      deliveryChecks,
+      staffExplanations,
+      submittedAt,
+      signatureData
+    });
+    doc.end();
+  });
 
   return {
     absolutePath,

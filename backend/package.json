@@ -8,16 +8,21 @@
     "dev": "node --watch src/server.js",
     "migrate:products": "node scripts/importProducts.js",
     "migrate:verify": "node scripts/verifyMigration.js",
-    "migrate:orders-csv": "node scripts/importOrderItemsCsv.js"
+    "migrate:orders-csv": "node scripts/importOrderItemsCsv.js",
+    "migrate:v2": "node scripts/applyV2Schema.js",
+    "sync:product-categories": "node scripts/syncProductCategoriesFromSku.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dayjs": "^1.11.13",
     "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
     "express": "^4.19.2",
+    "fontkit": "^2.0.4",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.11.0",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "pdfkit": "^0.18.0"
   }
 }

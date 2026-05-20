@@ -7,15 +7,407 @@ const { authenticate, authorize } = require("../middleware/auth");
 const { TAIPEI_TZ } = require("../services/reportService");
 const { createError } = require("../utils/errors");
 const { logKpi } = require("../services/kpiService");
+const { sendLineMessage } = require("../utils/line");
+const config = require("../config");
+const {
+  createFlexMessage,
+  createUriAction,
+  backfillApprovedRepairOrders,
+  createPurchaseConfirmationForOrder,
+  logWorkflowEvent,
+  sendToGroups,
+  sendToGroupsWithResult
+} = require("../services/lineWorkflowService");
+const {
+  mapFinalPaymentStatusLabel,
+  mapOrderStatusLabel,
+  mapPaymentMethodLabel,
+  mapRepairStatusLabel
+} = require("../utils/displayLabels");
+const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
+const { sendOrderCreationNotification } = require("../services/telegramService");
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
 const router = express.Router();
 
-router.use(authenticate, authorize(["ADMIN", "MANAGER", "CASHIER"]));
+router.use(authenticate, authorize(["ADMIN", "MANAGER", "CASHIER", "REPAIR"]));
+
+function normalizeCustomerType(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "OFFLINE_WITH_PHONE" || normalized === "OFFLINE_NO_PHONE") {
+    return normalized;
+  }
+  if (normalized === "OFFLINE") {
+    return "OFFLINE_WITH_PHONE";
+  }
+  return "LINE";
+}
+
+function isLineCustomerType(value) {
+  return normalizeCustomerType(value) === "LINE";
+}
+
+
+
+async function createAutoSupplierRequestForZeroStockOrder(connection, orderId, staffId) {
+  const [items] = await connection.query(
+    `
+      SELECT
+        oi.product_id AS productId,
+        oi.quantity AS quantity,
+        p.name AS productName,
+        p.sku AS sku,
+        p.stock AS stock
+      FROM order_items oi
+      JOIN products p ON p.id = oi.product_id
+      WHERE oi.order_id = ?
+        AND p.stock <= 0
+    `,
+    [orderId]
+  );
+
+  if (!items.length) {
+    return null;
+  }
+
+  const noteLines = [
+    `自動發注：訂單 #${orderId} 完成後，偵測到庫存為 0 的商品。`,
+    ...items.map((item) => `- ${item.productName} / ${item.sku || "-"} / 數量 ${item.quantity} / 目前庫存 ${item.stock}`)
+  ];
+
+  const [requestResult] = await connection.query(
+    `
+      INSERT INTO supplier_requests
+        (request_type, status, supplier_name, note, requested_by_staff_id)
+      VALUES
+        ('PO', 'PENDING_SUPPLIER', 'KINGWAY', ?, ?)
+    `,
+    [noteLines.join("\n"), staffId || null]
+  );
+
+  for (const item of items) {
+    await connection.query(
+      `
+        INSERT INTO supplier_request_items
+          (supplier_request_id, product_id, quantity, reason, note)
+        VALUES
+          (?, ?, ?, 'AUTO_ZERO_STOCK_ORDER', ?)
+      `,
+      [
+        requestResult.insertId,
+        item.productId,
+        item.quantity,
+        `訂單 #${orderId} 完成後自動發注`
+      ]
+    );
+  }
+
+  await sendToGroups(["inventory"], [
+    {
+      type: "text",
+      text:
+        `【自動發注】\n` +
+        `供應商：KINGWAY\n` +
+        `來源：訂單 #${orderId}\n` +
+        `原因：訂單完成後偵測到庫存 0 商品\n\n` +
+        items.map((item) => `・${item.productName} / ${item.sku || "-"} / 數量 ${item.quantity}`).join("\n")
+    }
+  ]);
+
+  return requestResult.insertId;
+}
+
+
+async function deductOrderStockOnce(orderId, connection = pool) {
+  const [orders] = await connection.query(
+    `
+      SELECT id, stock_deducted_at AS stockDeductedAt
+      FROM orders
+      WHERE id = ?
+      FOR UPDATE
+    `,
+    [orderId]
+  );
+
+  const order = orders[0];
+  if (!order || order.stockDeductedAt) {
+    return false;
+  }
+
+  const [items] = await connection.query(
+    `
+      SELECT product_id AS productId, quantity
+      FROM order_items
+      WHERE order_id = ?
+    `,
+    [orderId]
+  );
+
+  for (const item of items) {
+    await connection.query(
+      `
+        UPDATE products
+        SET stock = GREATEST(stock - ?, 0)
+        WHERE id = ?
+      `,
+      [Number(item.quantity || 0), item.productId]
+    );
+  }
+
+  await connection.query(
+    `
+      UPDATE orders
+      SET stock_deducted_at = NOW()
+      WHERE id = ?
+    `,
+    [orderId]
+  );
+
+  return true;
+}
+
+
+async function pushPurchaseConfirmationLineMessage(confirmation, options = {}) {
+  if (!confirmation?.lineUserId || !confirmation.link || !config.line.channelAccessToken) {
+    return false;
+  }
+  if (!options.force && confirmation.purchaseConfirmationSentAt) {
+    return false;
+  }
+
+  await sendLineMessage(config, confirmation.lineUserId, [
+    {
+      type: "text",
+      text: [
+        "您的電動自行車購買確認書已建立。",
+        "請點擊下方連結完成確認與簽名：",
+        confirmation.link
+      ].join("\n")
+    }
+  ]);
+
+  await pool.query(
+    `
+      UPDATE orders
+      SET purchase_confirmation_sent_at = COALESCE(purchase_confirmation_sent_at, NOW())
+      WHERE id = ?
+    `,
+    [confirmation.orderId]
+  );
+
+  return true;
+}
 
 router.get("/", async (req, res, next) => {
+  try {
+    await backfillApprovedRepairOrders();
+    const orderColumns = await getTableColumns(pool, "orders");
+    const repairOrderColumns = await getTableColumns(pool, "repair_orders");
+    const customerColumns = await getTableColumns(pool, "customers");
+    const staffColumns = await getTableColumns(pool, "staff_users");
+    const orderItemColumns = await getTableColumns(pool, "order_items");
+    const canClassifyRepair = hasColumn(orderItemColumns, "product_category_snapshot");
+    const repairExistsChecks = [
+      hasColumn(orderColumns, "repair_order_id") ? "o.repair_order_id IS NOT NULL" : null,
+      hasColumn(orderColumns, "source") ? "o.source = 'repair_quote'" : null,
+      hasColumn(repairOrderColumns, "order_id")
+        ? `
+            EXISTS (
+              SELECT 1
+              FROM repair_orders ro
+              WHERE ro.order_id = o.id
+            )
+          `
+        : null,
+      canClassifyRepair
+        ? `
+            EXISTS (
+              SELECT 1
+              FROM order_items oi
+              WHERE oi.order_id = o.id
+                AND oi.product_category_snapshot = 'REPAIR'
+            )
+          `
+        : null
+    ].filter(Boolean);
+    const repairExistsSql = repairExistsChecks.length > 0
+      ? `(${repairExistsChecks.join("\n OR ")})`
+      : "0";
+    const repairIdSql = hasColumn(repairOrderColumns, "id")
+      ? `
+          COALESCE(
+            ${hasColumn(orderColumns, "repair_order_id") ? "o.repair_order_id" : "NULL"},
+            (
+              SELECT ro.id
+              FROM repair_orders ro
+              WHERE ro.order_id = o.id
+              ORDER BY ro.id DESC
+              LIMIT 1
+            )
+          )
+        `
+      : "NULL";
+    const repairStatusSql = hasColumn(repairOrderColumns, "status")
+      ? `
+          COALESCE(
+            (
+              SELECT ro.status
+              FROM repair_orders ro
+              WHERE ro.id = ${hasColumn(orderColumns, "repair_order_id") ? "o.repair_order_id" : "NULL"}
+              LIMIT 1
+            ),
+            (
+              SELECT ro.status
+              FROM repair_orders ro
+              WHERE ro.order_id = o.id
+              ORDER BY ro.id DESC
+              LIMIT 1
+            )
+          )
+        `
+      : "NULL";
+    const [rows] = await pool.query(
+      `
+        SELECT
+          ${selectColumn(orderColumns, "o", "id", "id")},
+          ${selectColumn(orderColumns, "o", "order_no", "orderNo")},
+          ${selectColumn(orderColumns, "o", "business_date", "businessDate")},
+          ${selectColumn(orderColumns, "o", "total_amount", "totalAmount", "0")},
+          ${selectColumn(orderColumns, "o", "customer_name", "customerNameSnapshot")},
+          ${selectColumn(orderColumns, "o", "customer_phone", "customerPhoneSnapshot")},
+          ${selectColumn(orderColumns, "o", "customer_type", "customerType", "'LINE'")},
+          ${selectColumn(orderColumns, "o", "payment_method", "paymentMethod", "'OTHER'")},
+          ${selectColumn(orderColumns, "o", "status", "status", "'COMPLETED'")},
+          ${selectColumn(orderColumns, "o", "order_type", "orderType", "'GENERAL'")},
+          ${selectColumn(orderColumns, "o", "source", "source")},
+          ${selectColumn(orderColumns, "o", "repair_order_id", "repairOrderId", "NULL")},
+          ${repairIdSql} AS repairId,
+          ${repairStatusSql} AS repairStatus,
+          ${selectColumn(orderColumns, "o", "is_reservation_order", "isReservationOrder", "0")},
+          ${selectColumn(orderColumns, "o", "deposit_amount", "depositAmount", "0")},
+          ${selectColumn(orderColumns, "o", "unpaid_balance", "unpaidBalance", "0")},
+          ${selectColumn(orderColumns, "o", "final_payment_status", "finalPaymentStatus", "'PAID'")},
+          ${selectColumn(orderColumns, "o", "final_paid_at", "finalPaidAt")},
+          ${selectColumn(orderColumns, "o", "purchase_confirmation_sent_at", "purchaseConfirmationSentAt")},
+          ${selectColumn(orderColumns, "o", "handover_confirmed_at", "handoverConfirmedAt")},
+          ${selectColumn(orderColumns, "o", "notes", "notes")},
+          ${selectColumn(orderColumns, "o", "created_at", "createdAt")},
+          ${selectColumn(customerColumns, "c", "id", "customerId")},
+          ${selectColumn(customerColumns, "c", "name", "customerName")},
+          ${selectColumn(staffColumns, "s", "id", "staffId")},
+          ${selectColumn(staffColumns, "s", "display_name", "staffName")},
+          ${repairExistsSql} AS isRepairOrder
+        FROM orders o
+        LEFT JOIN customers c ON c.id = o.customer_id
+        LEFT JOIN staff_users s ON s.id = o.created_by
+        WHERE o.deleted_at IS NULL
+        ORDER BY o.id DESC
+        LIMIT 100
+      `
+    );
+
+    return res.json(
+      rows.map((row) => ({
+        ...row,
+        isRepairOrder: Boolean(row.isRepairOrder),
+        paymentMethodLabel: mapPaymentMethodLabel(row.paymentMethod),
+        statusLabel: mapOrderStatusLabel(row.status),
+        finalPaymentStatusLabel: mapFinalPaymentStatusLabel(row.finalPaymentStatus),
+        repairStatusLabel: mapRepairStatusLabel(row.repairStatus)
+      }))
+    );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+
+router.get("/trash/list", async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        o.id,
+        o.order_no AS orderNo,
+        o.customer_name AS customerNameSnapshot,
+        o.customer_phone AS customerPhoneSnapshot,
+        o.total_amount AS totalAmount,
+        o.status,
+        o.source,
+        o.created_at AS createdAt,
+        o.deleted_at AS deletedAt,
+        s.display_name AS deletedByName
+      FROM orders o
+      LEFT JOIN staff_users s ON s.id = o.deleted_by
+      WHERE o.deleted_at IS NOT NULL
+      ORDER BY o.deleted_at DESC, o.id DESC
+      LIMIT 200
+    `);
+    return res.json(rows);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.delete("/:id", async (req, res, next) => {
+  try {
+    const [result] = await pool.query(
+      "UPDATE orders SET deleted_at = NOW(), deleted_by = ? WHERE id = ? AND deleted_at IS NULL",
+      [req.user?.id || null, req.params.id]
+    );
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "找不到訂單或已刪除" });
+    }
+    return res.json({ message: "訂單已移至已刪除資料" });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+
+router.post("/:id/restore", async (req, res, next) => {
+  try {
+    const [result] = await pool.query(
+      "UPDATE orders SET deleted_at = NULL, deleted_by = NULL WHERE id = ? AND deleted_at IS NOT NULL",
+      [req.params.id]
+    );
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "找不到已刪除訂單" });
+    }
+    return res.json({ message: "訂單已復原" });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.delete("/:id/permanent", async (req, res, next) => {
+  try {
+    await withTransaction(async (connection) => {
+      const [rows] = await connection.query(
+        "SELECT id FROM orders WHERE id = ? AND deleted_at IS NOT NULL LIMIT 1",
+        [req.params.id]
+      );
+      if (!rows[0]) {
+        throw createError("找不到已刪除訂單", 404);
+      }
+
+      await connection.query("DELETE FROM order_items WHERE order_id = ?", [req.params.id]);
+      await connection.query("DELETE FROM purchase_confirmation_tokens WHERE order_id = ?", [req.params.id]);
+      await connection.query("DELETE FROM purchase_confirmations WHERE order_id = ?", [req.params.id]);
+      await connection.query("UPDATE coupons SET order_id = NULL WHERE order_id = ?", [req.params.id]);
+      await connection.query("UPDATE repair_orders SET order_id = NULL WHERE order_id = ?", [req.params.id]);
+      await connection.query("DELETE FROM orders WHERE id = ?", [req.params.id]);
+    });
+
+    return res.json({ message: "訂單已永久刪除" });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+
+router.get("/:id", async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `
@@ -24,25 +416,90 @@ router.get("/", async (req, res, next) => {
           o.order_no AS orderNo,
           o.business_date AS businessDate,
           o.total_amount AS totalAmount,
+          o.customer_id AS customerId,
           o.customer_name AS customerNameSnapshot,
           o.customer_phone AS customerPhoneSnapshot,
+          o.customer_type AS customerType,
+          o.order_type AS orderType,
+          o.source AS source,
+          o.repair_order_id AS repairOrderId,
+          COALESCE(
+            o.repair_order_id,
+            (
+              SELECT ro.id
+              FROM repair_orders ro
+              WHERE ro.order_id = o.id
+              ORDER BY ro.id DESC
+              LIMIT 1
+            )
+          ) AS repairId,
+          COALESCE(
+            (
+              SELECT ro.status
+              FROM repair_orders ro
+              WHERE ro.id = o.repair_order_id
+              LIMIT 1
+            ),
+            (
+              SELECT ro.status
+              FROM repair_orders ro
+              WHERE ro.order_id = o.id
+              ORDER BY ro.id DESC
+              LIMIT 1
+            )
+          ) AS repairStatus,
           o.payment_method AS paymentMethod,
           o.status,
+          o.is_reservation_order AS isReservationOrder,
+          o.deposit_amount AS depositAmount,
+          o.unpaid_balance AS unpaidBalance,
+          COALESCE(o.other_discount, 0) AS otherDiscount,
+          o.final_payment_status AS finalPaymentStatus,
+          o.final_paid_at AS finalPaidAt,
+          o.purchase_confirmation_sent_at AS purchaseConfirmationSentAt,
+          o.handover_confirmed_at AS handoverConfirmedAt,
           o.notes,
           o.created_at AS createdAt,
-          c.id AS customerId,
           c.name AS customerName,
-          s.id AS staffId,
+          c.phone AS customerPhone,
+          c.line_user_id AS lineUserId,
           s.display_name AS staffName
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
-        INNER JOIN staff_users s ON s.id = o.created_by
-        ORDER BY o.id DESC
-        LIMIT 100
-      `
+        LEFT JOIN staff_users s ON s.id = o.created_by
+        WHERE o.id = ?
+        LIMIT 1
+      `,
+      [req.params.id]
     );
 
-    return res.json(rows);
+    if (!rows[0]) {
+      return res.status(404).json({ message: "找不到訂單" });
+    }
+
+    const [items] = await pool.query(
+      `
+        SELECT
+          id,
+          product_id AS productId,
+          sku_snapshot AS sku,
+          product_name_snapshot AS productName,
+          product_category_snapshot AS productCategory,
+          quantity,
+          unit_price AS unitPrice,
+          line_total AS lineTotal
+        FROM order_items
+        WHERE order_id = ?
+        ORDER BY id ASC
+      `,
+      [req.params.id]
+    );
+
+    return res.json({
+      ...rows[0],
+      repairStatusLabel: mapRepairStatusLabel(rows[0].repairStatus),
+      items
+    });
   } catch (error) {
     return next(error);
   }
@@ -54,43 +511,75 @@ router.post("/", async (req, res, next) => {
       customerId,
       customer_name: customerNameInput,
       customer_phone: customerPhoneInput,
+      customerType,
+      customer_type: customerTypeInput,
       customerName,
       customerPhone,
       paymentMethod,
+      isReservationOrder,
+      depositAmount,
+      unpaidBalance,
+      otherDiscount,
+      finalPaymentStatus,
+      couponCode,
+      couponAmount,
       notes,
       items
     } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ message: "items are required" });
+      return res.status(400).json({ message: "必須提供訂單品項" });
     }
 
     const order = await withTransaction(async (connection) => {
       let resolvedCustomerId = customerId ? Number(customerId) : null;
       const resolvedCustomerName = customerNameInput || customerName || null;
       const resolvedCustomerPhone = customerPhoneInput || customerPhone || null;
+      let resolvedCustomerType = normalizeCustomerType(customerTypeInput || customerType);
 
-      if (!resolvedCustomerId && (resolvedCustomerName || resolvedCustomerPhone)) {
+      if (resolvedCustomerId) {
+        const [customerRows] = await connection.query(
+          `
+            SELECT customer_type AS customerType, line_user_id AS lineUserId
+            FROM customers
+            WHERE id = ?
+            LIMIT 1
+          `,
+          [resolvedCustomerId]
+        );
+        if (customerRows[0]) {
+          resolvedCustomerType = normalizeCustomerType(customerRows[0].customerType || (customerRows[0].lineUserId ? "LINE" : resolvedCustomerType));
+        }
+      }
+
+      if (!resolvedCustomerId && resolvedCustomerPhone) {
         const [matches] = await connection.query(
           `
-            SELECT id
+            SELECT id, customer_type AS customerType, line_user_id AS lineUserId
             FROM customers
-            WHERE (? IS NOT NULL AND phone = ?) OR (? IS NOT NULL AND name = ?)
+            WHERE phone = ?
             ORDER BY id DESC
             LIMIT 1
           `,
-          [resolvedCustomerPhone, resolvedCustomerPhone, resolvedCustomerName, resolvedCustomerName]
+          [resolvedCustomerPhone]
         );
 
         if (matches[0]) {
           resolvedCustomerId = matches[0].id;
+          resolvedCustomerType = normalizeCustomerType(matches[0].customerType || (matches[0].lineUserId ? "LINE" : resolvedCustomerType));
+        }
+      }
+
+      if (!resolvedCustomerId && (resolvedCustomerName || resolvedCustomerPhone)) {
+        if (!resolvedCustomerName) {
+          throw createError("一般客戶至少需要姓名", 400);
         } else {
           const [customerResult] = await connection.query(
             `
-              INSERT INTO customers (name, phone)
-              VALUES (?, ?)
+              INSERT INTO customers (name, phone, customer_type)
+              VALUES (?, ?, ?)
             `,
-            [resolvedCustomerName || "POS Customer", resolvedCustomerPhone || null]
+            [resolvedCustomerName, resolvedCustomerType === "OFFLINE_NO_PHONE" ? null : resolvedCustomerPhone || null, resolvedCustomerType]
           );
           resolvedCustomerId = customerResult.insertId;
         }
@@ -102,7 +591,7 @@ router.post("/", async (req, res, next) => {
         const quantity = Number(item.quantity || item.qty);
 
         if (!Number.isInteger(productId) || !Number.isInteger(quantity)) {
-          throw createError("Each item must include integer productId and quantity", 400);
+          throw createError("每筆品項都必須提供整數的 productId 與 quantity", 400);
         }
 
         const existing = mergedItems.get(productId);
@@ -133,7 +622,7 @@ router.post("/", async (req, res, next) => {
       );
 
       if (products.length !== productIds.length) {
-        throw createError("One or more products were not found", 400);
+          throw createError("有商品不存在", 400);
       }
 
       const productMap = new Map(products.map((product) => [product.id, product]));
@@ -145,15 +634,17 @@ router.post("/", async (req, res, next) => {
         const quantity = Number(item.quantity);
 
         if (!product || !product.is_active) {
-          throw createError(`Product ${item.productId} is unavailable`, 400);
+          throw createError(`商品 ${item.productId} 無法使用`, 400);
         }
 
         if (!Number.isInteger(quantity) || quantity <= 0) {
-          throw createError(`Invalid quantity for product ${item.productId}`, 400);
+          throw createError(`商品 ${item.productId} 數量不正確`, 400);
         }
 
-        if (product.stock < quantity) {
-          throw createError(`Insufficient stock for ${product.sku}`, 409);
+        const isReservationOrder = Number(depositAmount || 0) > 0 || Number(requestedUnpaidBalance || 0) > 0 || normalizedFinalPaymentStatus !== "PAID";
+
+        if (!isReservationOrder && product.stock < quantity) {
+          throw createError(`${product.sku} 庫存不足`, 409);
         }
 
         const unitPrice = item.unitPrice !== undefined ? Number(item.unitPrice) : Number(product.price);
@@ -173,6 +664,14 @@ router.post("/", async (req, res, next) => {
 
       const businessDate = dayjs().tz(TAIPEI_TZ).format("YYYY-MM-DD");
       const orderNo = `POS-${dayjs().tz(TAIPEI_TZ).format("YYYYMMDD-HHmmss-SSS")}`;
+      const normalizedDeposit = Number(depositAmount || 0);
+      const requestedUnpaidBalance =
+        unpaidBalance === undefined || unpaidBalance === null || unpaidBalance === ""
+          ? Math.max(totalAmount - normalizedDeposit, 0)
+          : Number(unpaidBalance);
+      const normalizedIsReservation = Boolean(isReservationOrder) || normalizedDeposit > 0 || requestedUnpaidBalance > 0;
+      const normalizedFinalPaymentStatus =
+        finalPaymentStatus || (requestedUnpaidBalance > 0 ? "PARTIAL" : "PAID");
       const [orderResult] = await connection.query(
         `
           INSERT INTO orders (
@@ -180,27 +679,62 @@ router.post("/", async (req, res, next) => {
             customer_id,
             customer_name,
             customer_phone,
+            customer_type,
+            order_type,
             total_amount,
             payment_method,
             status,
+            is_reservation_order,
+            deposit_amount,
+            unpaid_balance,
+            final_payment_status,
+            final_paid_at,
             notes,
             created_by,
             business_date
           )
-          VALUES (?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, 'GENERAL', ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           orderNo,
           resolvedCustomerId || null,
           resolvedCustomerName,
-          resolvedCustomerPhone,
+          resolvedCustomerType === "OFFLINE_NO_PHONE" ? null : resolvedCustomerPhone,
+          resolvedCustomerType,
           totalAmount,
           paymentMethod || "CASH",
+          normalizedIsReservation ? 1 : 0,
+          normalizedDeposit,
+          requestedUnpaidBalance,
+          normalizedFinalPaymentStatus,
+          normalizedFinalPaymentStatus === "PAID" ? new Date() : null,
           notes || null,
           req.user.id,
           businessDate
         ]
       );
+
+      const couponCodes = String(couponCode || "")
+        .split(",")
+        .map((code) => code.trim())
+        .filter(Boolean);
+
+      if (couponCodes.length) {
+        await connection.query(
+          `
+            UPDATE coupons
+            SET is_used = 1,
+                status = 'used',
+                used_at = NOW(),
+                order_id = ?
+            WHERE code IN (?)
+              AND customer_id = ?
+              AND is_used = 0
+              AND status IN ('issued', 'approved')
+          `,
+          [orderResult.insertId, couponCodes, resolvedCustomerId]
+        );
+      }
 
       for (const item of normalizedItems) {
         await connection.query(
@@ -254,13 +788,641 @@ router.post("/", async (req, res, next) => {
         totalAmount,
         customerId: resolvedCustomerId,
         customerName: resolvedCustomerName,
-        customerPhone: resolvedCustomerPhone,
+        customerPhone: resolvedCustomerType === "OFFLINE_NO_PHONE" ? null : resolvedCustomerPhone,
+        customerType: resolvedCustomerType,
+        isReservationOrder: normalizedIsReservation,
+        depositAmount: normalizedDeposit,
+        unpaidBalance: requestedUnpaidBalance,
+        finalPaymentStatus: normalizedFinalPaymentStatus,
         items: normalizedItems
       };
     });
 
     await logKpi(req.user.id, "ORDER_CREATED", "ORDER", order.id, 2);
+    await logWorkflowEvent("order_created", "ORDER", order.id, {
+      orderNo: order.orderNo,
+      totalAmount: order.totalAmount,
+      finalPaymentStatus: order.finalPaymentStatus
+    }, req.user.id);
+
+    if (isLineCustomerType(order.customerType)) {
+      await sendOrderCreationNotification(order);
+    }
+
+    const confirmation = await createPurchaseConfirmationForOrder(order.id);
+    if (await pushPurchaseConfirmationLineMessage(confirmation)) {
+      await sendToGroups(["admin", "staff"], [
+        createFlexMessage(
+          "訂單已完款",
+          "訂單已完款",
+          [`訂單 ${order.orderNo} 已完款，購買確認書已送出。`],
+          [createUriAction("前往訂單", `${config.frontendBaseUrl}/orders`)]
+        )
+      ]);
+    }
+
     return res.status(201).json(order);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.patch("/:id", async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    const {
+      customerName,
+      customerPhone,
+      paymentMethod,
+      isReservationOrder,
+      depositAmount,
+      unpaidBalance,
+      otherDiscount,
+      finalPaymentStatus,
+      notes
+    } = req.body;
+
+    const [rows] = await pool.query(
+      `
+        SELECT id, total_amount AS totalAmount, deposit_amount AS depositAmount, unpaid_balance AS unpaidBalance, COALESCE(other_discount,0) AS otherDiscount, final_payment_status AS finalPaymentStatus
+        FROM orders
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [orderId]
+    );
+
+    if (!rows[0]) {
+      throw createError("找不到訂單", 404);
+    }
+
+    const hasDepositAmount = depositAmount !== undefined;
+    const hasOtherDiscount = otherDiscount !== undefined;
+    const hasFinalPaymentStatus = finalPaymentStatus !== undefined;
+    const nextDepositAmount = hasDepositAmount ? Number(depositAmount || 0) : Number(rows[0].depositAmount || 0);
+    const nextOtherDiscount = hasOtherDiscount ? Number(otherDiscount || 0) : Number(rows[0].otherDiscount || 0);
+
+    const [sumRows] = await pool.query(
+      `SELECT COALESCE(SUM(line_total), 0) AS itemTotal FROM order_items WHERE order_id = ?`,
+      [orderId]
+    );
+
+    const itemTotal = Number(sumRows[0]?.itemTotal || 0);
+    const currentPayable = Number(rows[0].totalAmount || 0);
+    const currentOtherDiscount = Number(rows[0].otherDiscount || 0);
+    const couponDiscount = Math.max(itemTotal - currentPayable - currentOtherDiscount, 0);
+    const nextTotalAmount = Math.max(itemTotal - couponDiscount - nextOtherDiscount, 0);
+    const nextUnpaidBalance = Math.max(nextTotalAmount - nextDepositAmount, 0);
+
+    const nextFinalPaymentStatus =
+      hasFinalPaymentStatus ? finalPaymentStatus : nextUnpaidBalance > 0 ? "PARTIAL" : "PAID";
+
+    const wasPaid = rows[0].finalPaymentStatus === "PAID";
+
+    await pool.query(
+      `
+        UPDATE orders
+        SET
+          customer_name = COALESCE(?, customer_name),
+          customer_phone = COALESCE(?, customer_phone),
+          payment_method = COALESCE(?, payment_method),
+          is_reservation_order = COALESCE(?, is_reservation_order),
+          deposit_amount = COALESCE(?, deposit_amount),
+          other_discount = ?,
+          total_amount = ?,
+          unpaid_balance = ?,
+          final_payment_status = ?,
+          final_paid_at = CASE
+            WHEN ? = 'PAID' THEN COALESCE(final_paid_at, NOW())
+            ELSE NULL
+          END,
+          notes = COALESCE(?, notes)
+        WHERE id = ?
+      `,
+      [
+        customerName === undefined ? null : customerName,
+        customerPhone === undefined ? null : customerPhone,
+        paymentMethod === undefined ? null : paymentMethod,
+        isReservationOrder === undefined ? null : Number(Boolean(isReservationOrder)),
+        hasDepositAmount ? nextDepositAmount : null,
+        nextOtherDiscount,
+        nextTotalAmount,
+        nextUnpaidBalance,
+        nextFinalPaymentStatus,
+        nextFinalPaymentStatus,
+        notes === undefined ? null : notes,
+        orderId
+      ]
+    );
+
+    if (!wasPaid && nextFinalPaymentStatus === "PAID") {
+      const [repairCheckRows] = await pool.query(
+        `
+          SELECT EXISTS (
+            SELECT 1
+            FROM order_items
+            WHERE order_id = ?
+              AND product_category_snapshot = 'REPAIR'
+          ) AS isRepairOrder
+        `,
+        [orderId]
+      );
+
+      if (!repairCheckRows[0]?.isRepairOrder) {
+        const confirmation = await createPurchaseConfirmationForOrder(orderId);
+        await pushPurchaseConfirmationLineMessage(confirmation);
+      }
+    }
+
+    const [updated] = await pool.query(
+      `
+        SELECT
+          o.id,
+          o.order_no AS orderNo,
+          o.business_date AS businessDate,
+          o.total_amount AS totalAmount,
+          o.customer_id AS customerId,
+          o.customer_name AS customerNameSnapshot,
+          o.customer_phone AS customerPhoneSnapshot,
+          o.customer_type AS customerType,
+          o.payment_method AS paymentMethod,
+          o.status,
+          o.is_reservation_order AS isReservationOrder,
+          o.deposit_amount AS depositAmount,
+          o.unpaid_balance AS unpaidBalance,
+          COALESCE(o.other_discount, 0) AS otherDiscount,
+          o.final_payment_status AS finalPaymentStatus,
+          o.final_paid_at AS finalPaidAt,
+          o.purchase_confirmation_sent_at AS purchaseConfirmationSentAt,
+          o.handover_confirmed_at AS handoverConfirmedAt,
+          o.notes,
+          o.created_at AS createdAt,
+          c.name AS customerName,
+          c.phone AS customerPhone,
+          c.line_user_id AS lineUserId,
+          s.display_name AS staffName
+        FROM orders o
+        LEFT JOIN customers c ON c.id = o.customer_id
+        LEFT JOIN staff_users s ON s.id = o.created_by
+        WHERE o.id = ?
+        LIMIT 1
+      `,
+      [orderId]
+    );
+
+    return res.json(updated[0]);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+
+router.put("/:id/items", async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+
+    if (!orderId || items.length === 0) {
+      throw createError("請提供訂單商品", 400);
+    }
+
+    const result = await withTransaction(async (connection) => {
+      const [orderRows] = await connection.query(
+        `SELECT id, final_payment_status AS finalPaymentStatus
+         FROM orders
+         WHERE id = ?
+         FOR UPDATE`,
+        [orderId]
+      );
+
+      const order = orderRows[0];
+      if (!order) throw createError("找不到訂單", 404);
+      let totalAmount = 0;
+      const normalized = [];
+
+      for (const item of items) {
+        const productId = Number(item.productId);
+        const quantity = Math.max(Number(item.quantity || 1), 1);
+
+        const [productRows] = await connection.query(
+          `SELECT id, sku, name, category, price
+           FROM products
+           WHERE id = ? AND is_active = 1
+           LIMIT 1`,
+          [productId]
+        );
+
+        const product = productRows[0];
+        if (!product) throw createError("找不到商品", 400);
+
+        const unitPrice = Number(item.unitPrice ?? product.price ?? 0);
+        const lineTotal = unitPrice * quantity;
+        totalAmount += lineTotal;
+
+        const category =
+          product.category === "EB" ? "EBIKE" :
+          product.category === "RP" ? "REPAIR" :
+          product.category === "AC" ? "ACCESSORY" :
+          "OTHER";
+
+        normalized.push({
+          productId: product.id,
+          sku: product.sku,
+          name: product.name,
+          category,
+          quantity,
+          unitPrice,
+          lineTotal
+        });
+      }
+
+      await connection.query(`DELETE FROM order_items WHERE order_id = ?`, [orderId]);
+
+      for (const item of normalized) {
+        await connection.query(
+          `INSERT INTO order_items
+           (order_id, product_id, sku_snapshot, product_name_snapshot,
+            product_category_snapshot, quantity, unit_price, line_total)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            orderId,
+            item.productId,
+            item.sku,
+            item.name,
+            item.category,
+            item.quantity,
+            item.unitPrice,
+            item.lineTotal
+          ]
+        );
+      }
+
+      const [payRows] = await connection.query(
+        `SELECT total_amount AS currentTotalAmount,
+                deposit_amount AS depositAmount,
+                COALESCE(other_discount, 0) AS otherDiscount,
+                source,
+                notes
+         FROM orders
+         WHERE id = ?
+         LIMIT 1`,
+        [orderId]
+      );
+
+      const depositAmount = Number(payRows[0]?.depositAmount || 0);
+      const otherDiscount = Number(payRows[0]?.otherDiscount || 0);
+      const isLineOrderWithNewFriendCoupon =
+        String(payRows[0]?.source || "") === "line_order" &&
+        String(payRows[0]?.notes || "").includes("新朋友折扣");
+
+      const couponDiscount = isLineOrderWithNewFriendCoupon ? 500 : 0;
+      const payableAmount = Math.max(totalAmount - couponDiscount - otherDiscount, 0);
+      const unpaidBalance = Math.max(payableAmount - depositAmount, 0);
+      const finalPaymentStatus =
+        unpaidBalance <= 0 ? "PAID" : depositAmount > 0 ? "PARTIAL" : "UNPAID";
+
+      await connection.query(
+        `UPDATE orders
+         SET total_amount = ?,
+             unpaid_balance = ?,
+             final_payment_status = ?,
+             final_paid_at = CASE WHEN ? = 'PAID' THEN COALESCE(final_paid_at, NOW()) ELSE NULL END
+         WHERE id = ?`,
+        [payableAmount, unpaidBalance, finalPaymentStatus, finalPaymentStatus, orderId]
+      );
+
+      return { orderId, totalAmount: payableAmount, unpaidBalance, finalPaymentStatus, items: normalized };
+    });
+
+    return res.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+
+router.post("/:id/purchase-confirmation", async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    const confirmation = await createPurchaseConfirmationForOrder(orderId);
+
+    if (!confirmation) {
+      throw createError("只有已完款的電動自行車訂單可以產生購買確認書", 400);
+    }
+
+    const sent = await pushPurchaseConfirmationLineMessage(confirmation, { force: true });
+
+    if (sent) {
+      await sendToGroups(["admin", "staff"], [
+        createFlexMessage(
+          "購買確認書重新送出",
+          "購買確認書重新送出",
+          [`訂單 #${orderId} 的購買確認書連結已重新送出。`],
+          [createUriAction("前往訂單", `${config.frontendBaseUrl}/orders`)]
+        )
+      ]);
+    }
+
+    return res.json({ link: confirmation.link, sent });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/:id/collect-balance", async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    const amount = Number(req.body.amount || 0);
+    if (!orderId || amount <= 0) {
+      throw createError("請提供有效的補收金額", 400);
+    }
+
+    const result = await withTransaction(async (connection) => {
+      const [rows] = await connection.query(
+        `
+          SELECT id, order_no AS orderNo, customer_type AS customerType, unpaid_balance AS unpaidBalance
+          FROM orders
+          WHERE id = ?
+          FOR UPDATE
+        `,
+        [orderId]
+      );
+
+      const order = rows[0];
+      if (!order) {
+        throw createError("找不到訂單", 404);
+      }
+
+      const nextBalance = Math.max(Number(order.unpaidBalance || 0) - amount, 0);
+      const nextStatus = nextBalance === 0 ? "PAID" : "PARTIAL";
+
+      await connection.query(
+        `
+          UPDATE orders
+          SET unpaid_balance = ?,
+              final_payment_status = ?,
+              final_paid_at = CASE WHEN ? = 'PAID' THEN NOW() ELSE final_paid_at END
+          WHERE id = ?
+        `,
+        [nextBalance, nextStatus, nextStatus, orderId]
+      );
+
+      await logWorkflowEvent("order_balance_collected", "ORDER", orderId, {
+        amount,
+        unpaidBalance: nextBalance
+      }, req.user.id, connection);
+
+      const [typeRows] = await connection.query(
+        `
+          SELECT
+            EXISTS (
+              SELECT 1 FROM order_items
+              WHERE order_id = ?
+                AND product_category_snapshot = 'EBIKE'
+            ) AS isEbikeOrder,
+            EXISTS (
+              SELECT 1 FROM order_items
+              WHERE order_id = ?
+                AND product_category_snapshot = 'REPAIR'
+            ) AS isRepairOrder,
+            purchase_confirmation_sent_at AS purchaseConfirmationSentAt
+          FROM orders
+          WHERE id = ?
+          LIMIT 1
+        `,
+        [orderId, orderId, orderId]
+      );
+
+      const orderType = typeRows[0] || {};
+
+      return {
+        orderNo: order.orderNo,
+        customerType: normalizeCustomerType(order.customerType),
+        unpaidBalance: nextBalance,
+        finalPaymentStatus: nextStatus,
+        becamePaid:
+          nextBalance === 0 &&
+          Boolean(orderType.isEbikeOrder) &&
+          !Boolean(orderType.isRepairOrder) &&
+          !orderType.purchaseConfirmationSentAt
+      };
+    });
+
+    if (result.becamePaid) {
+      try {
+        const [customerRows] = await pool.query(
+          `
+            SELECT c.line_user_id AS lineUserId,
+                   o.order_no AS orderNo,
+                   EXISTS (
+                     SELECT 1
+                     FROM order_items oi
+                     WHERE oi.order_id = o.id
+                       AND oi.product_category_snapshot = 'REPAIR'
+                   ) AS isRepairOrder
+            FROM orders o
+            LEFT JOIN customers c ON c.id = o.customer_id
+            WHERE o.id = ?
+            LIMIT 1
+          `,
+          [orderId]
+        );
+
+        const customer = customerRows[0];
+
+        if (customer?.lineUserId) {
+          const lineText = customer.isRepairOrder
+            ? [
+                "您的維修費用已完成收款，車輛已完成交付。",
+                `訂單編號：${customer.orderNo}`,
+                "",
+                "感謝您的信任，歡迎再次使用 KINGWAY 維修服務。"
+              ].join("\n")
+            : [
+                "您的尾款已完成收款",
+                `訂單編號：${customer.orderNo}`,
+                "",
+                "我們將為您安排交車與購買確認流程。"
+              ].join("\n");
+
+          await sendLineMessage(config, customer.lineUserId, [
+            {
+              type: "text",
+              text: lineText
+            }
+          ]);
+        }
+      } catch (e) {
+        console.error("[collect-balance line push failed]", e);
+      }
+
+      const [repairCheckRows] = await pool.query(
+        `
+          SELECT EXISTS (
+            SELECT 1
+            FROM order_items
+            WHERE order_id = ?
+              AND product_category_snapshot = 'REPAIR'
+          ) AS isRepairOrder
+        `,
+        [orderId]
+      );
+
+      if (!repairCheckRows[0]?.isRepairOrder) {
+        const confirmation = await createPurchaseConfirmationForOrder(orderId);
+        await pushPurchaseConfirmationLineMessage(confirmation);
+      }
+    }
+
+    if (isLineCustomerType(result.customerType)) {
+      await sendToGroupsWithResult(["admin", "staff"], [
+        {
+          type: "text",
+          text: [
+            "尾款已完成",
+            `訂單 ${result.orderNo} 已補收尾款。`,
+            `完款狀態：${mapFinalPaymentStatusLabel(result.finalPaymentStatus)}`,
+            "",
+            "交車待確認，請由現場人員完成交車確認。"
+          ].join("\n"),
+          actions: [
+            { type: "postback", label: "確認交車", data: `action=tg_crm_handover&id=${orderId}` },
+            { type: "uri", label: "前往訂單", uri: `${config.frontendBaseUrl}/orders` }
+          ]
+        }
+      ]);
+    }
+
+    return res.json({
+      ...result,
+      finalPaymentStatusLabel: mapFinalPaymentStatusLabel(result.finalPaymentStatus)
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+
+async function createKingwayAutoPurchaseOrderOnHandover(orderId, staffId = 1) {
+  const [[existing]] = await pool.query(
+    `
+      SELECT id
+      FROM supplier_requests
+      WHERE request_type = 'PURCHASE_ORDER'
+        AND supplier_name = 'KINGWAY'
+        AND note LIKE ?
+      LIMIT 1
+    `,
+    [`%AUTO_FROM_HANDOVER_ORDER:${orderId}%`]
+  );
+
+  if (existing) return null;
+
+  const [items] = await pool.query(
+    `
+      SELECT
+        product_id AS productId,
+        quantity,
+        product_name_snapshot AS productName,
+        sku_snapshot AS sku
+      FROM order_items
+      WHERE order_id = ?
+        AND quantity > 0
+    `,
+    [orderId]
+  );
+
+  if (!items.length) return null;
+
+  const [requestResult] = await pool.query(
+    `
+      INSERT INTO supplier_requests
+        (request_type, status, supplier_name, note, requested_by_staff_id)
+      VALUES
+        ('PURCHASE_ORDER', 'PENDING_SUPPLIER', 'KINGWAY', ?, ?)
+    `,
+    [`AUTO_FROM_HANDOVER_ORDER:${orderId}｜交車確認自動發注`, staffId || 1]
+  );
+
+  const requestId = requestResult.insertId;
+
+  for (const item of items) {
+    await pool.query(
+      `
+        INSERT INTO supplier_request_items
+          (supplier_request_id, product_id, quantity, note)
+        VALUES
+          (?, ?, ?, ?)
+      `,
+      [
+        requestId,
+        item.productId,
+        item.quantity,
+        `${item.productName || ""} / ${item.sku || ""}`.trim()
+      ]
+    );
+  }
+
+  return requestId;
+}
+
+
+router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
+  try {
+    await pool.query(
+      `
+        UPDATE orders
+        SET handover_confirmed_at = NOW(),
+            handover_confirmed_by_staff_id = ?
+        WHERE id = ?
+      `,
+      [req.user.id, req.params.id]
+    );
+
+    await pool.query(
+      `
+        UPDATE purchase_confirmations
+        SET handover_confirmed_at = NOW(),
+            handover_confirmed_by_staff_id = ?
+        WHERE order_id = ?
+      `,
+      [req.user.id, req.params.id]
+    );
+
+    await pool.query(
+      `
+        UPDATE repair_orders
+        SET status = 'picked_up',
+            picked_up_at = COALESCE(picked_up_at, NOW()),
+            updated_at = NOW()
+        WHERE order_id = ?
+          AND status = 'completed_waiting_pickup'
+      `,
+      [req.params.id]
+    );
+
+    await pool.query(
+      `
+        INSERT INTO repair_logs (repair_order_id, action, note)
+        SELECT id, 'picked_up', '訂單管理確認交車，同步更新為已取車'
+        FROM repair_orders
+        WHERE order_id = ?
+          AND status = 'picked_up'
+          AND picked_up_at IS NOT NULL
+      `,
+      [req.params.id]
+    );
+
+    let autoPoId = null;
+    try {
+      autoPoId = await createKingwayAutoPurchaseOrderOnHandover(req.params.id, req.user?.id || 1);
+    } catch (autoPoError) {
+      console.error("[auto-kingway-po handover failed]", autoPoError.message);
+    }
+
+    await logWorkflowEvent("order_handover_confirmed", "ORDER", req.params.id, { autoKingwayPurchaseOrderId: autoPoId }, req.user.id);
+    await logKpi(req.user.id, "ORDER_HANDOVER_CONFIRMED", "ORDER", req.params.id, 3);
+    return res.json({ message: autoPoId ? "已確認交車，並已建立 KINGWAY 自動發注" : "已確認交車" });
   } catch (error) {
     return next(error);
   }

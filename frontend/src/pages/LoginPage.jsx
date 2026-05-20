@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../lib/api";
 import { storeAuth } from "../lib/auth";
+import { isMobileViewport, markMobileQuickActionPending } from "../lib/mobileQuickAction";
+import { getDefaultRouteForUser } from "../lib/permissions";
 
 function LoginPage() {
   const navigate = useNavigate();
@@ -26,13 +28,16 @@ function LoginPage() {
     setError("");
 
     try {
-      const data = await apiRequest("/api/login", {
+      const data = await apiRequest("/login", {
         method: "POST",
         body: JSON.stringify(form)
       });
 
       storeAuth(data.token, data.user);
-      navigate("/dashboard", { replace: true });
+      if (isMobileViewport()) {
+        markMobileQuickActionPending();
+      }
+      navigate(getDefaultRouteForUser(data.user), { replace: true });
     } catch (submitError) {
       setError(submitError.message);
     } finally {
@@ -43,35 +48,35 @@ function LoginPage() {
   return (
     <div className="login-page">
       <form className="login-card" onSubmit={handleSubmit}>
-        <h1>Admin Login</h1>
-        <p>Use your staff account to access the store management dashboard.</p>
+        <h1>後台登入</h1>
+        <p>請使用員工帳號登入門市管理系統。</p>
         <label className="form-field">
-          <span>Username</span>
+          <span>帳號</span>
           <input
             name="username"
             type="text"
             value={form.username}
             onChange={handleChange}
-            placeholder="admin"
+            placeholder="請輸入帳號"
             autoComplete="username"
             required
           />
         </label>
         <label className="form-field">
-          <span>Password</span>
+          <span>密碼</span>
           <input
             name="password"
             type="password"
             value={form.password}
             onChange={handleChange}
-            placeholder="Enter password"
+            placeholder="請輸入密碼"
             autoComplete="current-password"
             required
           />
         </label>
         {error ? <div className="error-banner">{error}</div> : null}
         <button type="submit" className="primary-button" disabled={loading}>
-          {loading ? "Signing in..." : "Login"}
+          {loading ? "登入中..." : "登入"}
         </button>
       </form>
     </div>

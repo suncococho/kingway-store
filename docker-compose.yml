@@ -36,17 +36,15 @@ services:
     command: sh -c "npm install && npm start"
 
   frontend:
-    image: node:20-alpine
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: kingway-frontend
     restart: unless-stopped
-    working_dir: /app
     depends_on:
       - backend
     ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+      - "5173:80"
 
 volumes:
   mysql_data:

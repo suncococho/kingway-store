@@ -1,29 +1,24 @@
 const express = require("express");
-const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { pool } = require("../db");
 const config = require("../config");
 const { authenticate } = require("../middleware/auth");
+const { hashPassword, verifyPassword } = require("../utils/passwords");
 
 const router = express.Router();
-const TEMP_ADMIN_ROLE = "ADMIN";
+const STAFF_LIMITED_PERMISSIONS = ["POS", "PRODUCTS", "REPAIRS", "INVENTORY"];
+
+function getUserPermissions(user) {
+  if (user?.username === "staff" && user?.role === "CASHIER") {
+    return STAFF_LIMITED_PERMISSIONS;
+  }
+
+  return [];
+}
 
 router.post("/login", async (req, res, next) => {
   try {
     const { username, password } = req.body;
-    // TEMP_ADMIN_BYPASS
-    if (username === "admin" && password === "admin123") {
-      const token = jwt.sign(
-        { id: 1, username: "admin", role: TEMP_ADMIN_ROLE },
-        process.env.JWT_SECRET || "kingway-secret",
-        { expiresIn: "7d" }
-      );
-      return res.json({
-        token,
-        user: { id: 1, username: "admin", role: TEMP_ADMIN_ROLE }
-      });
-    }
-
 
     if (!username || !password) {
       return res.status(400).json({ message: "username and password are required" });
@@ -44,17 +39,24 @@ router.post("/login", async (req, res, next) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password_hash);
+    const { isMatch, needsRehash } = await verifyPassword(password, user.password_hash);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
+    if (needsRehash) {
+      const passwordHash = await hashPassword(password);
+      await pool.query("UPDATE staff_users SET password_hash = ? WHERE id = ?", [passwordHash, user.id]);
+    }
+
+    const permissions = getUserPermissions(user);
     const token = jwt.sign(
       {
         id: user.id,
         username: user.username,
         role: user.role,
-        displayName: user.display_name
+        displayName: user.display_name,
+        permissions
       },
       config.jwtSecret,
       { expiresIn: "12h" }
@@ -66,7 +68,8 @@ router.post("/login", async (req, res, next) => {
         id: user.id,
         username: user.username,
         role: user.role,
-        displayName: user.display_name
+        displayName: user.display_name,
+        permissions
       }
     });
   } catch (error) {

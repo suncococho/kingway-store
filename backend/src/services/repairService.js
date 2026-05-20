@@ -8,12 +8,12 @@ const STORAGE_FEE_PER_DAY = 80;
 function validateRepairReservationDate(dateValue) {
   const date = dayjs(dateValue);
   if (!date.isValid()) {
-    throw createError("Invalid reservation date", 400);
+    throw createError("預約日期格式不正確", 400);
   }
 
   const reservationDay = date.format("dddd");
   if (!ALLOWED_REPAIR_DAYS.includes(reservationDay)) {
-    throw createError("Repair reservations are only available on Tuesday, Wednesday, and Sunday", 400);
+    throw createError("維修預約僅開放星期二、星期三與星期日", 400);
   }
 
   return reservationDay;

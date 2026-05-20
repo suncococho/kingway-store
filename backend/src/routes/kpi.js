@@ -1,5 +1,6 @@
 const express = require("express");
 const { pool } = require("../db");
+const { createError } = require("../utils/errors");
 const { authenticate, authorize } = require("../middleware/auth");
 
 const router = express.Router();
@@ -24,6 +25,29 @@ router.get("/", async (req, res, next) => {
     );
 
     return res.json(rows);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/manual-log", async (req, res, next) => {
+  try {
+    const { staffUserId, actionType, refType, refId, score } = req.body;
+
+    if (!staffUserId || !actionType) {
+      throw createError("staffUserId 與 actionType 為必填欄位", 400);
+    }
+
+    const normalizedScore = Number(score || 0);
+    await pool.query(
+      `
+        INSERT INTO staff_kpi_logs (staff_user_id, action_type, ref_type, ref_id, score)
+        VALUES (?, ?, ?, ?, ?)
+      `,
+      [staffUserId, actionType, refType || null, refId || null, normalizedScore]
+    );
+
+    return res.status(201).json({ message: "已新增 KPI 紀錄" });
   } catch (error) {
     return next(error);
   }

@@ -13,7 +13,7 @@ async function getPendingTaskCounts() {
     `
       SELECT COUNT(*) AS count
       FROM repair_orders
-      WHERE status IN ('reserved', 'estimate_pending_approval', 'completed_waiting_pickup')
+      WHERE status IN ('checking', 'reserved', 'estimate_pending_approval', 'estimate_approved', 'completed_waiting_pickup')
     `
   );
 

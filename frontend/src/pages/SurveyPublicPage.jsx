@@ -12,7 +12,7 @@ function SurveyPublicPage() {
   useEffect(() => {
     async function load() {
       try {
-        const response = await apiRequest(`/api/surveys/public/${token}`);
+        const response = await apiRequest(`/surveys/public/${token}`);
         setData(response);
       } catch (error) {
         alert(error.message);
@@ -25,7 +25,7 @@ function SurveyPublicPage() {
   async function handleSubmit(event) {
     event.preventDefault();
     try {
-      await apiRequest(`/api/surveys/public/${token}`, {
+      await apiRequest(`/surveys/public/${token}`, {
         method: "POST",
         body: JSON.stringify({
           rating: Number(rating),
@@ -39,15 +39,15 @@ function SurveyPublicPage() {
   }
 
   if (!data) {
-    return <div className="public-page">Loading...</div>;
+    return <div className="public-page">載入中...</div>;
   }
 
   if (submitted) {
     return (
       <div className="public-page">
         <div className="public-card">
-          <h1>{"\u554F\u5377\u5DF2\u9001\u51FA"}</h1>
-          <p>{"\u8B1D\u8B1D\u60A8\u7684\u56DE\u994B\uFF0C\u795D\u60A8\u9A0E\u4E58\u6109\u5FEB\u3002"}</p>
+          <h1>{"問卷已送出"}</h1>
+          <p>{"謝謝您的回饋，祝您騎乘愉快。"}</p>
         </div>
       </div>
     );
@@ -56,10 +56,10 @@ function SurveyPublicPage() {
   return (
     <div className="public-page">
       <form className="public-card" onSubmit={handleSubmit}>
-        <h1>{"\u9867\u5BA2\u6EFF\u610F\u5EA6\u554F\u5377"}</h1>
-        <p>{`${data.customerName} \u60A8\u597D\uFF0C\u6B61\u8FCE\u586B\u5BEB\u672C\u6B21\u670D\u52D9\u6EFF\u610F\u5EA6\u3002`}</p>
+        <h1>{"顧客滿意度問卷"}</h1>
+        <p>{`${data.customerName} 您好，歡迎填寫本次服務滿意度。`}</p>
         <label className="form-field">
-          <span>{"\u8A55\u5206"}</span>
+          <span>{"評分"}</span>
           <select value={rating} onChange={(event) => setRating(event.target.value)}>
             <option value="5">5</option>
             <option value="4">4</option>
@@ -69,11 +69,11 @@ function SurveyPublicPage() {
           </select>
         </label>
         <label className="form-field">
-          <span>{"\u610F\u898B\u56DE\u994B"}</span>
+          <span>{"意見回饋"}</span>
           <textarea rows="5" value={feedback} onChange={(event) => setFeedback(event.target.value)} />
         </label>
         <button type="submit" className="primary-button">
-          {"\u9001\u51FA\u554F\u5377"}
+          {"送出問卷"}
         </button>
       </form>
     </div>

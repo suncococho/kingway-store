@@ -1,0 +1,8 @@
+[mysqld]
+innodb_buffer_pool_size=128M
+innodb_log_buffer_size=16M
+performance_schema=OFF
+max_connections=30
+table_open_cache=200
+tmp_table_size=16M
+max_heap_table_size=16M

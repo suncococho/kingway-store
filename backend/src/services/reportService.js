@@ -2,7 +2,8 @@ const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 const timezone = require("dayjs/plugin/timezone");
 const { pool } = require("../db");
-const { sendLineMessage } = require("../utils/line");
+const { logWorkflowEvent } = require("./lineWorkflowService");
+const { sendInternalTelegram } = require("./telegramService");
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -67,7 +68,7 @@ async function buildDailyReport(targetDate) {
       SELECT
         (
           (SELECT COUNT(*) FROM purchase_confirmations WHERE status = 'PENDING')
-          + (SELECT COUNT(*) FROM repair_orders WHERE status IN ('reserved', 'estimate_pending_approval', 'completed_waiting_pickup'))
+          + (SELECT COUNT(*) FROM repair_orders WHERE status IN ('checking', 'reserved', 'estimate_pending_approval', 'estimate_approved', 'completed_waiting_pickup'))
           + (SELECT COUNT(*) FROM coupons WHERE coupon_type = 'google_review' AND approved_by_staff_id IS NULL)
         ) AS totalPending
     `
@@ -78,66 +79,68 @@ async function buildDailyReport(targetDate) {
       ? topProducts
           .map((item, index) => `${index + 1}. ${item.name} (${item.sku}) x${item.quantitySold}`)
           .join("\n")
-      : "No product sales recorded today.";
+      : "今日尚無商品銷售紀錄。";
 
   const lowStockText =
     lowStockRows.length > 0
-      ? lowStockRows.map((item) => `${item.name} (${item.sku}) stock=${item.stock}`).join("\n")
-      : "No low-stock items.";
+      ? lowStockRows.map((item) => `${item.name} (${item.sku}) 庫存=${item.stock}`).join("\n")
+      : "目前沒有低庫存商品。";
 
   const paymentText =
     paymentRows.length > 0
       ? paymentRows
-          .map((row) => `${row.paymentMethod}: ${row.orderCount} orders / NT$${Number(row.totalAmount).toFixed(2)}`)
+          .map((row) => `${row.paymentMethod}: ${row.orderCount} 筆 / NT$${Number(row.totalAmount).toFixed(2)}`)
           .join("\n")
-      : "No payment data.";
+      : "今日尚無付款資料。";
 
   return [
-    "KINGWAY Daily Settlement",
-    `Date: ${date}`,
-    `Orders: ${Number(salesSummary.orderCount || 0)}`,
-    `Sales: NT$${Number(salesSummary.totalSales || 0).toFixed(2)}`,
-    `Pending Items: ${Number(pendingItems.totalPending || 0)}`,
+    "KINGWAY 每日結算",
+    `日期：${date}`,
+    `訂單數：${Number(salesSummary.orderCount || 0)}`,
+    `銷售額：NT$${Number(salesSummary.totalSales || 0).toFixed(2)}`,
+    `待處理事項：${Number(pendingItems.totalPending || 0)}`,
     "",
-    "Payment Breakdown:",
+    "付款方式：",
     paymentText,
     "",
-    "Top Products:",
+    "熱銷商品：",
     topProductsText,
     "",
-    "Low Stock:",
+    "低庫存：",
     lowStockText
   ].join("\n");
 }
 
 async function sendDailyReport(config, targetDate) {
   const messageText = await buildDailyReport(targetDate);
-  const [registrations] = await pool.query(
-    `
-      SELECT line_group_id
-      FROM line_group_registrations
-      WHERE is_active = 1 AND registration_type = 'daily'
-    `
-  );
+  const delivery = await sendInternalTelegram(["daily"], [
+    {
+      type: "text",
+      text: messageText
+    }
+  ]);
 
-  if (registrations.length === 0) {
+  if (delivery.delivered === 0) {
+    await logWorkflowEvent("daily_report_sent", "SYSTEM", null, {
+      targetDate: targetDate || dayjs().tz(TAIPEI_TZ).format("YYYY-MM-DD"),
+      delivered: 0,
+      messageText
+    });
     return {
       delivered: 0,
       messageText
     };
   }
 
-  for (const registration of registrations) {
-    await sendLineMessage(config, registration.line_group_id, [
-      {
-        type: "text",
-        text: messageText
-      }
-    ]);
-  }
+  await logWorkflowEvent("daily_report_sent", "SYSTEM", null, {
+    targetDate: targetDate || dayjs().tz(TAIPEI_TZ).format("YYYY-MM-DD"),
+    delivered: delivery.delivered,
+    targetGroupIds: delivery.targetGroupIds,
+    messageText
+  });
 
   return {
-    delivered: registrations.length,
+    delivered: delivery.delivered,
     messageText
   };
 }

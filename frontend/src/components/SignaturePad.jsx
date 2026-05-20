@@ -87,7 +87,7 @@ function SignaturePad({ value, onChange }) {
         onTouchEnd={stopDrawing}
       />
       <button type="button" className="secondary-button" onClick={clearCanvas}>
-        Clear Signature
+        清除簽名
       </button>
     </div>
   );

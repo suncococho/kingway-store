@@ -6,58 +6,417 @@ const { createError } = require("../utils/errors");
 const { logKpi } = require("../services/kpiService");
 const { sendLineMessage } = require("../utils/line");
 const config = require("../config");
+const { mapRepairStatusLabel, mapOrderStatusLabel, mapCategoryLabel } = require("../utils/displayLabels");
+const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
+const { applyRepairReservationDecision, isLineCustomerType, normalizeCustomerType } = require("../services/repairReservationService");
+const {
+  applyRepairEstimateCustomerResponse,
+  createButtonMessage,
+  createConfirmTemplate,
+  createPostbackAction,
+  buildGroupApprovalMessage,
+  logWorkflowEvent,
+  sendRepairEstimateQuotation,
+  sendToGroups,
+  sendToGroupsWithResult
+} = require("../services/lineWorkflowService");
 
 const router = express.Router();
+const REPAIR_ALLOWED_ROLES = ["ADMIN", "MANAGER", "STAFF", "CASHIER", "REPAIR", "USER", "EMPLOYEE"];
 
-router.use(authenticate, authorize(["ADMIN", "MANAGER", "REPAIR"]));
+router.use(authenticate);
+router.use(authorize(REPAIR_ALLOWED_ROLES));
 
-router.get("/", async (req, res, next) => {
+function mapReservationStatusLabel(status) {
+  const labels = {
+    pending_approval: "待群組確認",
+    approved: "已確認",
+    rejected: "已拒絕"
+  };
+
+  return labels[status] || status || "-";
+}
+
+function normalizeRepairLifecycleStatus(row) {
+  if (!row || row.repairSource === "ORDER") {
+    return row?.status || null;
+  }
+
+  if (row.reservationStatus === "approved" && row.status === "checking") {
+    return "reserved";
+  }
+  if (row.reservationStatus === "pending_approval" && row.status === "reserved") {
+    return "checking";
+  }
+  if (row.reservationStatus === "rejected" && row.status !== "canceled") {
+    return "canceled";
+  }
+
+  return row.status;
+}
+
+function getRepairSourceLabel(source, customerType) {
+  if (source === "LINE" && isLineCustomerType(customerType)) {
+    return "LINE預約";
+  }
+  return "現場客戶";
+}
+
+function normalizeRepairProductImageUrl(imageUrl) {
+  const value = String(imageUrl || "").trim();
+  if (!value) {
+    return null;
+  }
+  if (/^https?:\/\//i.test(value) || value.startsWith("data:image/") || value.startsWith("/files/")) {
+    return value;
+  }
+  if (value.startsWith("files/")) {
+    return `/${value}`;
+  }
+  if (value.startsWith("storage/products/")) {
+    return `/files/products/${value.slice("storage/products/".length)}`;
+  }
+  if (value.startsWith("products/")) {
+    return `/files/${value}`;
+  }
+  return value;
+}
+
+function mapRepairProductRow(row) {
+  return {
+    ...row,
+    imageUrl: normalizeRepairProductImageUrl(row.imageUrl),
+    categoryLabel: mapCategoryLabel(row.category)
+  };
+}
+
+function isFinalizedRepairRow(row) {
+  const status = String(row?.status || "").trim();
+  return (
+    ["picked_up", "completed", "completed_waiting_pickup"].includes(status) ||
+    Boolean(row?.completedAt || row?.completed_at) ||
+    Boolean(row?.pickedUpAt || row?.picked_up_at)
+  );
+}
+
+function assertRepairEditable(row) {
+  if (isFinalizedRepairRow(row)) {
+    throw createError("已完成或已取車的維修單無法再次操作", 400);
+  }
+}
+
+router.get("/",  async (req, res, next) => {
   try {
-    const [rows] = await pool.query(
-      `
+    const repairColumns = await getTableColumns(pool, "repair_orders");
+    const customerColumns = await getTableColumns(pool, "customers");
+    const orderColumns = await getTableColumns(pool, "orders");
+    const orderItemColumns = await getTableColumns(pool, "order_items");
+    const canClassifyOrderRepairs = hasColumn(orderItemColumns, "product_category_snapshot");
+    const repairListSql = `
         SELECT
-          ro.id,
-          ro.customer_id AS customerId,
-          c.name AS customerName,
-          c.phone AS customerPhone,
-          c.line_user_id AS lineUserId,
-          ro.bike_model AS bikeModel,
-          ro.issue_description AS issueDescription,
-          ro.reservation_date AS reservationDate,
-          ro.reservation_day AS reservationDay,
-          ro.status,
-          ro.estimate_amount AS estimateAmount,
-          ro.base_fee AS baseFee,
-          ro.storage_fee AS storageFee,
-          ro.completed_at AS completedAt,
-          ro.picked_up_at AS pickedUpAt,
-          ro.created_at AS createdAt
+          ${selectColumn(repairColumns, "ro", "id", "id")},
+          'REPAIR_ORDER' AS repairSource,
+          ${selectColumn(repairColumns, "ro", "customer_id", "customerId")},
+          ${selectColumn(customerColumns, "c", "name", "customerName")},
+          ${selectColumn(customerColumns, "c", "phone", "customerPhone")},
+          ${selectColumn(customerColumns, "c", "line_user_id", "lineUserId")},
+          COALESCE(${selectColumn(repairColumns, "ro", "customer_type", "repairCustomerType", "NULL").replace(" AS `repairCustomerType`", "")}, ${selectColumn(customerColumns, "c", "customer_type", "customerCustomerType", "'LINE'").replace(" AS `customerCustomerType`", "")}) AS customerType,
+          ${selectColumn(repairColumns, "ro", "source", "source", "'WEB'")},
+          ${selectColumn(repairColumns, "ro", "bike_model", "bikeModel")},
+          ${selectColumn(repairColumns, "ro", "issue_description", "issueDescription")},
+          ${selectColumn(repairColumns, "ro", "reservation_date", "reservationDate")},
+          ${selectColumn(repairColumns, "ro", "reservation_day", "reservationDay")},
+          ${selectColumn(repairColumns, "ro", "reservation_time", "reservationTime")},
+          ${selectColumn(repairColumns, "ro", "reservation_status", "reservationStatus", "'approved'")},
+          ${selectColumn(repairColumns, "ro", "group_confirmed", "groupConfirmed", "0")},
+          ${selectColumn(repairColumns, "ro", "group_confirmed_at", "groupConfirmedAt")},
+          ${selectColumn(repairColumns, "ro", "group_confirmed_by", "groupConfirmedBy")},
+          ${selectColumn(repairColumns, "ro", "customer_estimate_response", "customerEstimateResponse", "'pending'")},
+          ${selectColumn(repairColumns, "ro", "customer_estimate_responded_at", "customerEstimateRespondedAt")},
+          ${selectColumn(repairColumns, "ro", "survey_id", "surveyId")},
+          ${selectColumn(repairColumns, "ro", "order_id", "orderId", "NULL")},
+          ${selectColumn(repairColumns, "ro", "status", "status", "'reserved'")},
+          ${selectColumn(repairColumns, "ro", "estimate_amount", "estimateAmount", "0")},
+          ${selectColumn(repairColumns, "ro", "estimate_details", "estimateDetails")},
+          ${selectColumn(repairColumns, "ro", "base_fee", "baseFee", "0")},
+          ${selectColumn(repairColumns, "ro", "storage_fee", "storageFee", "0")},
+          ${selectColumn(repairColumns, "ro", "completed_at", "completedAt")},
+          ${selectColumn(repairColumns, "ro", "picked_up_at", "pickedUpAt")},
+          ${selectColumn(repairColumns, "ro", "created_at", "createdAt")}
         FROM repair_orders ro
-        INNER JOIN customers c ON c.id = ro.customer_id
+        LEFT JOIN customers c ON c.id = ro.customer_id
+        WHERE ro.deleted_at IS NULL
         ORDER BY ro.id DESC
-      `
-    );
+      `;
+    const repairListParams = [];
+    const [repairRows] = await pool.query(repairListSql, repairListParams);
 
-    return res.json(
-      rows.map((row) => ({
-        ...row,
-        storageFee: calculateStorageFee(row.completedAt, row.pickedUpAt)
-      }))
-    );
+    let repairOrderRows = [];
+    let orderRepairListSql = null;
+    const orderRepairListParams = [];
+    if (canClassifyOrderRepairs) {
+      orderRepairListSql = `
+          SELECT
+            ${selectColumn(orderColumns, "o", "id", "id")},
+            'ORDER' AS repairSource,
+            ${selectColumn(orderColumns, "o", "customer_id", "customerId")},
+            COALESCE(${hasColumn(customerColumns, "name") ? "c.name" : "NULL"}, ${hasColumn(orderColumns, "customer_name") ? "o.customer_name" : "NULL"}) AS customerName,
+            COALESCE(${hasColumn(customerColumns, "phone") ? "c.phone" : "NULL"}, ${hasColumn(orderColumns, "customer_phone") ? "o.customer_phone" : "NULL"}) AS customerPhone,
+            ${selectColumn(customerColumns, "c", "line_user_id", "lineUserId")},
+            COALESCE(${hasColumn(orderColumns, "customer_type") ? "o.customer_type" : "NULL"}, ${hasColumn(customerColumns, "customer_type") ? "c.customer_type" : "'LINE'"}) AS customerType,
+            'POS' AS source,
+            GROUP_CONCAT(DISTINCT ${hasColumn(orderItemColumns, "product_name_snapshot") ? "oi.product_name_snapshot" : "oi.id"} ORDER BY oi.id SEPARATOR ' / ') AS bikeModel,
+            ${selectColumn(orderColumns, "o", "notes", "issueDescription")},
+            ${selectColumn(orderColumns, "o", "business_date", "reservationDate")},
+            NULL AS reservationDay,
+            NULL AS reservationTime,
+            'approved' AS reservationStatus,
+            1 AS groupConfirmed,
+            NULL AS groupConfirmedAt,
+            NULL AS groupConfirmedBy,
+            NULL AS customerEstimateResponse,
+            NULL AS customerEstimateRespondedAt,
+            NULL AS surveyId,
+            ${selectColumn(orderColumns, "o", "status", "status", "'COMPLETED'")},
+            NULL AS estimateAmount,
+            NULL AS estimateDetails,
+            NULL AS baseFee,
+            0 AS storageFee,
+            NULL AS completedAt,
+            NULL AS pickedUpAt,
+            ${selectColumn(orderColumns, "o", "created_at", "createdAt")}
+          FROM orders o
+          LEFT JOIN customers c ON c.id = o.customer_id
+          INNER JOIN order_items oi ON oi.order_id = o.id
+          WHERE oi.product_category_snapshot = 'REPAIR'
+            AND o.deleted_at IS NULL
+          GROUP BY o.id
+          ORDER BY o.id DESC
+        `;
+      [repairOrderRows] = await pool.query(orderRepairListSql, orderRepairListParams);
+    }
+
+    const combinedRows = [...repairRows, ...repairOrderRows]
+      .sort((a, b) => Number(b.id) - Number(a.id))
+      .map((row) => {
+        const normalizedStatus = normalizeRepairLifecycleStatus(row);
+        return {
+          ...row,
+          rawStatus: row.status,
+          status: normalizedStatus,
+          repairSourceLabel: row.repairSource === "ORDER" ? "訂單維修" : "維修工單",
+          sourceLabel: getRepairSourceLabel(row.source, row.customerType),
+          reservationStatusLabel: mapReservationStatusLabel(row.reservationStatus),
+          customerEstimateResponseLabel:
+            row.customerEstimateResponse === "approved"
+              ? "客戶已同意報價"
+              : row.customerEstimateResponse === "rejected"
+                ? "客戶已拒絕報價"
+                : row.customerEstimateResponse === "pending"
+                  ? "待客戶回覆報價"
+                  : "尚未送出報價",
+          statusLabel:
+            row.repairSource === "ORDER" ? mapOrderStatusLabel(normalizedStatus) : mapRepairStatusLabel(normalizedStatus),
+          storageFee:
+            row.repairSource === "ORDER"
+              ? 0
+              : calculateStorageFee(row.completedAt, row.pickedUpAt)
+        };
+      });
+
+    const debugPayload = {
+      userId: req.user?.id || null,
+      userRole: req.user?.role || null,
+      username: req.user?.username || null,
+      authHeaderPresent: Boolean(req.headers.authorization),
+      routeFile: "backend/src/routes/repairs.js",
+      sql: {
+        repairListSql,
+        orderRepairListSql
+      },
+      params: {
+        repairListParams,
+        orderRepairListParams
+      },
+      count: combinedRows.length
+    };
+
+    console.log("[repairs:list]", debugPayload);
+
+    res.setHeader("X-Repairs-Debug-Role", String(debugPayload.userRole || ""));
+    res.setHeader("X-Repairs-Debug-Account", String(debugPayload.username || ""));
+    res.setHeader("X-Repairs-Debug-Route", debugPayload.routeFile);
+    res.setHeader("X-Repairs-Debug-Params", JSON.stringify(debugPayload.params));
+    res.setHeader("X-Repairs-Debug-Count", String(debugPayload.count));
+
+    return res.json(combinedRows);
   } catch (error) {
     return next(error);
   }
 });
 
-router.get("/:id", async (req, res, next) => {
+router.get("/products",  async (req, res, next) => {
+  try {
+    const search = req.query.search ? `%${String(req.query.search).trim()}%` : null;
+    const productColumns = await getTableColumns(pool, "products");
+    let sql = `
+      SELECT
+        ${selectColumn(productColumns, "products", "id", "id")},
+        ${selectColumn(productColumns, "products", "sku", "sku")},
+        ${selectColumn(productColumns, "products", "name", "name")},
+        ${selectColumn(productColumns, "products", "category", "category", "'OTHER'")},
+        ${selectColumn(productColumns, "products", "description", "description")},
+        ${selectColumn(productColumns, "products", "image_url", "imageUrl")},
+        ${selectColumn(productColumns, "products", "price", "price", "0")},
+        ${selectColumn(productColumns, "products", "stock", "stock", "0")},
+        ${selectColumn(productColumns, "products", "reorder_level", "reorderLevel", "0")},
+        ${selectColumn(productColumns, "products", "is_active", "isActive", "1")},
+        ${selectColumn(productColumns, "products", "created_at", "createdAt")},
+        ${selectColumn(productColumns, "products", "updated_at", "updatedAt")}
+      FROM products
+    `;
+    const params = [];
+
+    if (search) {
+      const searchFields = ["sku", "name"].filter((column) => hasColumn(productColumns, column));
+      if (searchFields.length) {
+        sql += ` WHERE ${searchFields.map((column) => `${column} LIKE ?`).join(" OR ")} `;
+        params.push(...searchFields.map(() => search));
+      }
+    }
+
+    sql += " ORDER BY id DESC";
+
+    const [rows] = await pool.query(sql, params);
+    return res.json(rows.map(mapRepairProductRow));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+
+router.get("/trash/list", async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        ro.id,
+        c.name AS customerName,
+        c.phone AS customerPhone,
+        ro.bike_model AS bikeModel,
+        ro.issue_description AS issueDescription,
+        ro.inspection_notes AS inspectionNotes,
+        ro.status,
+        ro.created_at AS createdAt,
+        ro.deleted_at AS deletedAt,
+        s.display_name AS deletedByName
+      FROM repair_orders ro
+      LEFT JOIN customers c ON c.id = ro.customer_id
+      LEFT JOIN staff_users s ON s.id = ro.deleted_by
+      WHERE ro.deleted_at IS NOT NULL
+      ORDER BY ro.deleted_at DESC, ro.id DESC
+      LIMIT 200
+    `);
+    return res.json(rows);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+
+router.patch("/:id/inspection", async (req, res, next) => {
+  try {
+    const { inspectionFee = 0, inspectionNotes = "" } = req.body || {};
+    const notes = String(inspectionNotes || "").trim();
+
+    if (!notes) {
+      return res.status(400).json({ message: "請先填寫檢查內容" });
+    }
+
+    await pool.query(
+      `
+      UPDATE repair_orders
+      SET inspection_fee = ?,
+          inspection_notes = ?,
+          updated_at = NOW()
+      WHERE id = ?
+      `,
+      [Number(inspectionFee || 0), notes, req.params.id]
+    );
+
+    return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+
+router.delete("/:id", async (req, res, next) => {
+  try {
+    const adminPin = req.headers["x-admin-pin"] || req.body?.adminPin;
+    if (String(adminPin || "") !== "1144") {
+      return res.status(403).json({ message: "管理員 PIN 錯誤" });
+    }
+
+    const [result] = await pool.query(
+      "UPDATE repair_orders SET deleted_at = NOW(), deleted_by = ? WHERE id = ? AND deleted_at IS NULL",
+      [req.user?.id || null, req.params.id]
+    );
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "找不到維修單或已刪除" });
+    }
+    return res.json({ message: "維修單已移至已刪除資料" });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/:id/restore", async (req, res, next) => {
+  try {
+    const [result] = await pool.query(
+      "UPDATE repair_orders SET deleted_at = NULL, deleted_by = NULL WHERE id = ? AND deleted_at IS NOT NULL",
+      [req.params.id]
+    );
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "找不到已刪除維修單" });
+    }
+    return res.json({ message: "維修單已復原" });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.delete("/:id/permanent", async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id FROM repair_orders WHERE id = ? AND deleted_at IS NOT NULL LIMIT 1",
+      [req.params.id]
+    );
+    if (!rows[0]) {
+      throw createError("找不到已刪除維修單", 404);
+    }
+
+    await pool.query("DELETE FROM repair_logs WHERE repair_order_id = ?", [req.params.id]);
+    await pool.query("DELETE FROM surveys WHERE repair_order_id = ?", [req.params.id]);
+    await pool.query("DELETE FROM repair_orders WHERE id = ?", [req.params.id]);
+
+    return res.json({ message: "維修單已永久刪除" });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+
+router.get("/:id",  async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `
         SELECT
           ro.*,
+          ro.inspection_notes AS inspectionNotes,
           c.name AS customerName,
           c.phone AS customerPhone,
-          c.line_user_id AS lineUserId
+          c.line_user_id AS lineUserId,
+          COALESCE(ro.customer_type, c.customer_type, 'LINE') AS customerType
         FROM repair_orders ro
         INNER JOIN customers c ON c.id = ro.customer_id
         WHERE ro.id = ?
@@ -66,7 +425,7 @@ router.get("/:id", async (req, res, next) => {
     );
 
     if (!rows[0]) {
-      throw createError("Repair order not found", 404);
+      throw createError("找不到維修工單", 404);
     }
 
     const [logs] = await pool.query(
@@ -79,30 +438,86 @@ router.get("/:id", async (req, res, next) => {
       [req.params.id]
     );
 
+    const [surveys] = await pool.query(
+      `
+        SELECT id, rating, feedback, submitted_at AS submittedAt
+        FROM surveys
+        WHERE repair_order_id = ?
+        ORDER BY id DESC
+      `,
+      [req.params.id]
+    );
+
+    const normalizedStatus = normalizeRepairLifecycleStatus({
+      repairSource: "REPAIR_ORDER",
+      reservationStatus: rows[0].reservation_status,
+      status: rows[0].status
+    });
+
     return res.json({
       ...rows[0],
+      raw_status: rows[0].status,
+      status: normalizedStatus,
+      reservationStatusLabel: mapReservationStatusLabel(rows[0].reservation_status),
+      repairStatusLabel: mapRepairStatusLabel(normalizedStatus),
       storageFee: calculateStorageFee(rows[0].completed_at, rows[0].picked_up_at),
-      logs
+      customerEstimateResponseLabel:
+        rows[0].customer_estimate_response === "approved"
+          ? "客戶已同意報價"
+          : rows[0].customer_estimate_response === "rejected"
+            ? "客戶已拒絕報價"
+            : rows[0].customer_estimate_response === "pending"
+              ? "客戶尚未回覆"
+              : "尚未送出報價",
+      logs,
+      surveys
     });
   } catch (error) {
     return next(error);
   }
 });
 
-router.post("/", async (req, res, next) => {
+router.post("/",  async (req, res, next) => {
   try {
-    const { customerId, bikeModel, issueDescription, reservationDate } = req.body;
+    const { customerId, bikeModel, issueDescription, reservationDate, reservationTime, fromLine, customerType } = req.body;
     if (!customerId || !bikeModel || !issueDescription || !reservationDate) {
-      throw createError("customerId, bikeModel, issueDescription, and reservationDate are required", 400);
+      throw createError("customerId、bikeModel、issueDescription 與 reservationDate 為必填欄位", 400);
     }
 
+    const [customerRows] = await pool.query(
+      `
+        SELECT name, phone, line_user_id AS lineUserId, customer_type AS customerType
+        FROM customers
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [customerId]
+    );
+    const customer = customerRows[0] || {};
+    const normalizedCustomerType = normalizeCustomerType(
+      customerType || customer.customerType || (customer.lineUserId ? "LINE" : customer.phone ? "OFFLINE_WITH_PHONE" : "OFFLINE_NO_PHONE")
+    );
     const reservationDay = validateRepairReservationDate(reservationDate);
     const [result] = await pool.query(
       `
-        INSERT INTO repair_orders (customer_id, bike_model, issue_description, reservation_date, reservation_day, base_fee)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO repair_orders (
+          customer_id, customer_type, source, bike_model, issue_description, reservation_date, reservation_day, reservation_time, base_fee, reservation_status, status
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      [customerId, bikeModel, issueDescription, reservationDate, reservationDay, BASE_FEE]
+      [
+        customerId,
+        normalizedCustomerType,
+        fromLine ? "LINE" : "WEB",
+        bikeModel,
+        issueDescription,
+        reservationDate,
+        reservationDay,
+        reservationTime || null,
+        BASE_FEE,
+        fromLine ? "pending_approval" : "approved",
+        fromLine ? "checking" : "reserved"
+      ]
     );
 
     await pool.query(
@@ -110,11 +525,52 @@ router.post("/", async (req, res, next) => {
         INSERT INTO repair_logs (repair_order_id, action, note)
         VALUES (?, 'reserved', ?)
       `,
-      [result.insertId, "Repair reservation created"]
+      [
+        result.insertId,
+        fromLine
+          ? "已建立 LINE 維修預約，待員工確認"
+          : !isLineCustomerType(normalizedCustomerType)
+            ? "已建立一般客戶維修預約"
+            : "已建立維修預約"
+      ]
     );
+
+    const notificationResult = !isLineCustomerType(normalizedCustomerType)
+      ? { delivered: 0, targetGroupIds: [], skipped: true }
+      : await sendToGroupsWithResult(["repair", "admin"], [
+          buildGroupApprovalMessage("repair_reservation", {
+            id: result.insertId,
+            customerName: customer.name || `#${customerId}`,
+            customerPhone: customer.phone || null,
+            reservationDate,
+            reservationTime,
+            sourceLabel: fromLine ? "LINE 維修預約" : "後台維修預約"
+          })
+        ]);
+
+    await logWorkflowEvent(
+      "repair_reservation_group_notified",
+      "REPAIR_ORDER",
+      result.insertId,
+      {
+        delivered: notificationResult.delivered,
+        targetGroupIds: notificationResult.targetGroupIds,
+        fromLine: Boolean(fromLine),
+        customerType: normalizedCustomerType,
+        skipped: Boolean(notificationResult.skipped)
+      },
+      req.user.id
+    );
+
+    if (!notificationResult.skipped && notificationResult.delivered === 0) {
+      console.error(
+        `[LINE][repair_reservation] no target groups resolved for repair #${result.insertId} (requested: repair,admin)`
+      );
+    }
 
     return res.status(201).json({
       id: result.insertId,
+      customerType: normalizedCustomerType,
       reservationDay,
       baseFee: BASE_FEE
     });
@@ -123,85 +579,280 @@ router.post("/", async (req, res, next) => {
   }
 });
 
-router.post("/:id/estimate", async (req, res, next) => {
+router.post("/:id/reservation/respond",  async (req, res, next) => {
   try {
-    const { estimateAmount, note } = req.body;
-    await pool.query(
+    const approved = Boolean(req.body.approved);
+    const [stateRows] = await pool.query(
       `
-        UPDATE repair_orders
-        SET status = 'estimate_pending_approval',
-            estimate_amount = ?
+        SELECT status, completed_at AS completedAt, picked_up_at AS pickedUpAt
+        FROM repair_orders
         WHERE id = ?
+        LIMIT 1
       `,
-      [Number(estimateAmount || 0), req.params.id]
+      [req.params.id]
     );
-
-    await pool.query(
-      `
-        INSERT INTO repair_logs (repair_order_id, action, note)
-        VALUES (?, 'estimate_pending_approval', ?)
-      `,
-      [req.params.id, note || "Estimate pending approval"]
-    );
-
-    const [repairGroups] = await pool.query(
-      `
-        SELECT line_group_id
-        FROM line_group_registrations
-        WHERE is_active = 1 AND registration_type = 'repair'
-      `
-    );
-
-    for (const group of repairGroups) {
-      if (config.line.channelAccessToken) {
-        await sendLineMessage(config, group.line_group_id, [
-          {
-            type: "text",
-            text: `Repair #${req.params.id} estimate pending approval. Amount NT$${Number(estimateAmount || 0)}`
-          }
-        ]);
-      }
+    if (!stateRows[0]) {
+      throw createError("找不到維修工單", 404);
+    }
+    assertRepairEditable(stateRows[0]);
+    const result = await applyRepairReservationDecision(req.params.id, approved, req.user.id, "web_admin", pool, {
+      logWorkflowEvent,
+      actorLabel: `後台 staff#${req.user.id}`
+    });
+    if (!result) {
+      throw createError("找不到維修工單", 404);
     }
 
-    return res.json({ message: "Estimate submitted for approval" });
+    if (!result.alreadyProcessed && isLineCustomerType(result.customerType) && result.lineUserId && config.line.channelAccessToken) {
+      await sendLineMessage(config, result.lineUserId, [
+        {
+          type: "text",
+          text: result.customerMessage
+        }
+      ]);
+    }
+
+    if (isLineCustomerType(result.customerType)) {
+      await sendToGroups(["repair", "admin"], [
+        {
+          type: "text",
+          text: result.alreadyProcessed
+            ? `維修預約 #${req.params.id} 已是${approved ? "已確認" : "已拒絕"}狀態，略過重複通知。`
+            : `維修預約 #${req.params.id} 已由後台${approved ? "確認" : "拒絕"}。`
+        }
+      ]);
+    }
+    return res.json({
+      message: result.alreadyProcessed ? `維修預約原本就是${approved ? "已確認" : "已拒絕"}狀態` : approved ? "已確認維修預約" : "已拒絕維修預約",
+      repairId: Number(req.params.id),
+      reservationStatus: approved ? "approved" : "rejected",
+      status: approved ? "reserved" : "canceled"
+    });
   } catch (error) {
     return next(error);
   }
 });
 
-router.post("/:id/approve", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
+router.post("/:id/estimate",  async (req, res, next) => {
   try {
+    const { estimateAmount, note, details, items, inspectionFee, inspectionNotes, partsFee, laborFee, totalAmount, notes } = req.body;
+    const result = await sendRepairEstimateQuotation(
+      req.params.id,
+      {
+        items: Array.isArray(items) ? items : [],
+        inspectionFee: inspectionFee !== undefined ? inspectionFee : 0,
+        partsFee: partsFee !== undefined ? partsFee : 0,
+        laborFee: laborFee !== undefined ? laborFee : 0,
+        notes: notes || details || note || "",
+        totalAmount: totalAmount !== undefined ? totalAmount : estimateAmount
+      },
+      req.user.id,
+      "web_admin",
+      pool
+    );
+    return res.json({
+      message: "已送出報價審核",
+      quoteStatus: "sent",
+      totalAmount: result?.totalAmount || Number(totalAmount || estimateAmount || 0)
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/:id/customer-response",  async (req, res, next) => {
+  try {
+    const approved = Boolean(req.body.approved);
+    const [stateRows] = await pool.query(
+      `
+        SELECT status, completed_at AS completedAt, picked_up_at AS pickedUpAt
+        FROM repair_orders
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [req.params.id]
+    );
+    if (!stateRows[0]) {
+      throw createError("找不到維修工單", 404);
+    }
+    assertRepairEditable(stateRows[0]);
+    const result = await applyRepairEstimateCustomerResponse(req.params.id, approved, req.user.id, pool, "web_admin");
+    return res.json({
+      message: approved ? "已標記客戶同意報價" : "已標記客戶拒絕報價",
+      orderId: result?.linkedOrder?.orderId || null,
+      orderNo: result?.linkedOrder?.orderNo || null,
+      alreadyProcessed: Boolean(result?.alreadyProcessed)
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+
+
+router.post("/:id/offline-complete", async (req, res, next) => {
+  const connection = await pool.getConnection();
+  try {
+    const { estimateAmount, note, details } = req.body;
+    const amount = Number(estimateAmount || 0);
+
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw createError("維修金額不正確", 400);
+    }
+
+    await connection.beginTransaction();
+
+    await connection.query(
+      `
+        UPDATE repair_orders
+        SET
+          estimate_amount = ?,
+          estimate_details = ?,
+          inspection_notes = ?,
+          quote_status = 'approved',
+          customer_estimate_response = 'approved',
+          status = 'completed_waiting_pickup',
+          completed_at = COALESCE(completed_at, NOW()),
+          updated_at = NOW()
+        WHERE id = ?
+      `,
+      [
+        amount,
+        details || note || "現場已完成維修，略過 LINE 報價流程",
+        req.params.id
+      ]
+    );
+
+    await connection.query(
+      `
+        INSERT INTO repair_logs (repair_order_id, action, note)
+        VALUES (?, 'offline_complete', ?)
+      `,
+      [
+        req.params.id,
+        `現場已完成維修登錄，金額 NT$${amount}。略過 LINE 報價流程。${note ? " " + note : ""}`
+      ]
+    );
+
+    await connection.commit();
+
+    res.json({
+      success: true,
+      id: Number(req.params.id),
+      status: "completed_waiting_pickup",
+      estimateAmount: amount
+    });
+  } catch (error) {
+    await connection.rollback();
+    next(error);
+  } finally {
+    connection.release();
+  }
+});
+
+
+router.post("/:id/approve", async (req, res, next) => {
+  try {
+    const [repairs] = await pool.query(
+      `
+        SELECT customer_estimate_response AS customerEstimateResponse, status
+        FROM repair_orders
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [req.params.id]
+    );
+
+    if (!repairs[0]) {
+      throw createError("找不到維修工單", 404);
+    }
+
+    assertRepairEditable(repairs[0]);
+
+    if (repairs[0].customerEstimateResponse !== "approved") {
+      throw createError("客戶尚未同意報價，無法開始維修", 400);
+    }
+
     await pool.query(
       `
         UPDATE repair_orders
-        SET status = 'estimate_approved',
+        SET status = 'repairing',
             approved_by_staff_id = ?
         WHERE id = ?
       `,
       [req.user.id, req.params.id]
     );
 
+    const orderColumns = await getTableColumns(pool, "orders");
+    const [statusTypeRows] = await pool.query(
+      `
+        SELECT COLUMN_TYPE
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'orders'
+          AND COLUMN_NAME = 'status'
+        LIMIT 1
+      `
+    );
+    const orderStatusType = String(statusTypeRows[0]?.COLUMN_TYPE || "");
+    const orderStatus = orderStatusType.includes("'REPAIRING'") ? "REPAIRING" : "PENDING";
+    const updates = ["status = ?"];
+    const params = [orderStatus];
+    if (hasColumn(orderColumns, "order_type")) {
+      updates.push("order_type = 'REPAIR'");
+    }
+    if (hasColumn(orderColumns, "source")) {
+      updates.push("source = 'repair_quote'");
+    }
+    params.push(req.params.id, req.params.id);
+    await pool.query(
+      `
+        UPDATE orders
+        SET ${updates.join(", ")}
+        WHERE repair_order_id = ?
+           OR id = (SELECT order_id FROM repair_orders WHERE id = ?)
+      `,
+      params
+    );
+
     await pool.query(
       `
         INSERT INTO repair_logs (repair_order_id, action, note)
-        VALUES (?, 'estimate_approved', ?)
+        VALUES (?, 'repairing', ?)
       `,
-      [req.params.id, "Estimate approved"]
+      [req.params.id, "已開始維修"]
     );
 
     await logKpi(req.user.id, "REPAIR_ESTIMATE_APPROVED", "REPAIR_ORDER", req.params.id, 3);
-    return res.json({ message: "Estimate approved" });
+    await logWorkflowEvent("repair_started", "REPAIR_ORDER", req.params.id, null, req.user.id);
+    return res.json({ message: "已開始維修" });
   } catch (error) {
     return next(error);
   }
 });
 
-router.post("/:id/reject", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
+router.post("/:id/reject",  async (req, res, next) => {
   try {
+    const [stateRows] = await pool.query(
+      `
+        SELECT status, completed_at AS completedAt, picked_up_at AS pickedUpAt
+        FROM repair_orders
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [req.params.id]
+    );
+    if (!stateRows[0]) {
+      throw createError("找不到維修工單", 404);
+    }
+    assertRepairEditable(stateRows[0]);
+
     await pool.query(
       `
         UPDATE repair_orders
         SET status = 'estimate_rejected',
+            customer_estimate_response = 'rejected',
+            customer_estimate_responded_at = NOW(),
             approved_by_staff_id = ?
         WHERE id = ?
       `,
@@ -213,20 +864,20 @@ router.post("/:id/reject", authorize(["ADMIN", "MANAGER"]), async (req, res, nex
         INSERT INTO repair_logs (repair_order_id, action, note)
         VALUES (?, 'estimate_rejected', ?)
       `,
-      [req.params.id, req.body.note || "Estimate rejected"]
+      [req.params.id, req.body.note || "報價已拒絕"]
     );
 
-    return res.json({ message: "Estimate rejected" });
+    return res.json({ message: "報價已拒絕" });
   } catch (error) {
     return next(error);
   }
 });
 
-router.post("/:id/complete", async (req, res, next) => {
+router.post("/:id/complete",  async (req, res, next) => {
   try {
     const [repairs] = await pool.query(
       `
-        SELECT ro.id, c.line_user_id AS lineUserId
+        SELECT ro.id, ro.customer_id AS customerId, ro.order_id AS orderId, COALESCE(ro.customer_type, c.customer_type, 'LINE') AS customerType, c.line_user_id AS lineUserId
         FROM repair_orders ro
         INNER JOIN customers c ON c.id = ro.customer_id
         WHERE ro.id = ?
@@ -235,7 +886,23 @@ router.post("/:id/complete", async (req, res, next) => {
     );
 
     if (!repairs[0]) {
-      throw createError("Repair order not found", 404);
+      throw createError("找不到維修工單", 404);
+    }
+
+    assertRepairEditable(repairs[0]);
+    const [repairStateRows] = await pool.query(
+      `
+        SELECT status
+        FROM repair_orders
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [req.params.id]
+    );
+    if (String(repairStateRows[0]?.status || "").trim() === "repairing") {
+      // OK
+    } else {
+      throw createError("維修尚未開始，無法標記完修", 400);
     }
 
     await pool.query(
@@ -253,30 +920,97 @@ router.post("/:id/complete", async (req, res, next) => {
         INSERT INTO repair_logs (repair_order_id, action, note)
         VALUES (?, 'completed_waiting_pickup', ?)
       `,
-      [req.params.id, "Repair completed, waiting for pickup"]
+      [req.params.id, "維修完成，待取車"]
     );
 
-    if (repairs[0].lineUserId && config.line.channelAccessToken) {
+    if (isLineCustomerType(repairs[0].customerType) && repairs[0].lineUserId && config.line.channelAccessToken) {
+      const surveyToken = require("crypto").randomBytes(20).toString("hex");
+      const [surveyResult] = await pool.query(
+        `
+          INSERT INTO surveys (customer_id, order_id, repair_order_id, rating, feedback, token)
+          VALUES (?, ?, ?, 0, NULL, ?)
+        `,
+        [repairs[0].customerId, repairs[0].orderId || null, req.params.id, surveyToken]
+      );
+      await pool.query("UPDATE repair_orders SET survey_id = ? WHERE id = ?", [surveyResult.insertId, req.params.id]);
+      const surveyLink = `${config.frontendBaseUrl}/surveys/${surveyToken}`;
       await sendLineMessage(config, repairs[0].lineUserId, [
         {
           type: "text",
-          text:
-            "\u60A8\u7684\u7DAD\u4FEE\u5DF2\u5B8C\u6210\uFF0C\u8ACB\u5B89\u6392\u53D6\u8ECA\u3002\u901A\u77E5\u5F8C\u8D85\u904E 3 \u65E5\u672A\u53D6\u8ECA\uFF0C\u6BCF\u65E5\u5C07\u6536\u53D6\u4FDD\u7BA1\u8CBB NT$80\u3002"
+          text: [
+            "您的自行車維修已完成。",
+            "請到店付款 / 取車。",
+            "通知後超過 3 日未取車，每日將收取保管費 NT$80。",
+            `維修問卷：${surveyLink}`
+          ].join("\n")
         }
       ]);
     }
 
-    return res.json({ message: "Repair marked as completed" });
+    if (isLineCustomerType(repairs[0].customerType)) {
+      await sendToGroups(["repair", "admin"], [
+        {
+          type: "text",
+          text: `維修單 #${req.params.id} 已標記完修，已通知客戶取車與填寫問卷。`
+        }
+      ]);
+    }
+    await logWorkflowEvent("repair_completed", "REPAIR_ORDER", req.params.id, null, req.user.id);
+
+    return res.json({ message: "已標記為完修待取車" });
   } catch (error) {
     return next(error);
   }
 });
 
-router.post("/:id/pickup", async (req, res, next) => {
+router.post("/:id/phone-notified",  async (req, res, next) => {
   try {
     const [repairs] = await pool.query(
       `
-        SELECT completed_at AS completedAt
+        SELECT ro.id, ro.status, ro.completed_at AS completedAt, ro.picked_up_at AS pickedUpAt, COALESCE(ro.customer_type, c.customer_type, 'LINE') AS customerType
+        FROM repair_orders ro
+        INNER JOIN customers c ON c.id = ro.customer_id
+        WHERE ro.id = ?
+        LIMIT 1
+      `,
+      [req.params.id]
+    );
+
+    if (!repairs[0]) {
+      throw createError("找不到維修工單", 404);
+    }
+
+    const currentStatus = String(repairs[0].status || "").trim();
+    if (["picked_up", "completed"].includes(currentStatus) || repairs[0].completedAt || repairs[0].pickedUpAt) {
+      throw createError("已完成或已取車的維修單無法再次通知", 400);
+    }
+    if (currentStatus !== "completed_waiting_pickup") {
+      throw createError("需先完成維修後才能電話通知", 400);
+    }
+
+    if (isLineCustomerType(repairs[0].customerType)) {
+      throw createError("LINE 客戶請使用 LINE 通知流程", 400);
+    }
+
+    await pool.query(
+      `
+        INSERT INTO repair_logs (repair_order_id, action, note)
+        VALUES (?, 'phone_notified', ?)
+      `,
+      [req.params.id, req.body.note || "已電話通知客戶"]
+    );
+    await logWorkflowEvent("repair_phone_notified", "REPAIR_ORDER", req.params.id, null, req.user.id);
+    return res.json({ message: "已記錄電話通知" });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/:id/pickup",  async (req, res, next) => {
+  try {
+    const [repairs] = await pool.query(
+      `
+        SELECT status, completed_at AS completedAt, picked_up_at AS pickedUpAt
         FROM repair_orders
         WHERE id = ?
       `,
@@ -284,7 +1018,15 @@ router.post("/:id/pickup", async (req, res, next) => {
     );
 
     if (!repairs[0]) {
-      throw createError("Repair order not found", 404);
+      throw createError("找不到維修工單", 404);
+    }
+
+    const currentStatus = String(repairs[0].status || "").trim();
+    if (["picked_up", "completed"].includes(currentStatus) || repairs[0].pickedUpAt) {
+      throw createError("已取車的維修單無法重複取車", 400);
+    }
+    if (currentStatus !== "completed_waiting_pickup") {
+      throw createError("需先完成維修後才能取車", 400);
     }
 
     const storageFee = calculateStorageFee(repairs[0].completedAt, new Date());
@@ -305,11 +1047,21 @@ router.post("/:id/pickup", async (req, res, next) => {
         INSERT INTO repair_logs (repair_order_id, action, note)
         VALUES (?, 'picked_up', ?)
       `,
-      [req.params.id, `Picked up. Storage fee NT$${storageFee}`]
+      [req.params.id, `已取車，保管費 NT$${storageFee}`]
+    );
+
+    await pool.query(
+      `
+        UPDATE orders
+        SET status = 'COMPLETED'
+        WHERE repair_order_id = ?
+           OR id = (SELECT order_id FROM repair_orders WHERE id = ?)
+      `,
+      [req.params.id, req.params.id]
     );
 
     await logKpi(req.user.id, "REPAIR_PICKED_UP", "REPAIR_ORDER", req.params.id, 4);
-    return res.json({ message: "Repair picked up", storageFee });
+    return res.json({ message: "已完成取車", storageFee });
   } catch (error) {
     return next(error);
   }

@@ -1,20 +1,22 @@
-import { Navigate, Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar";
-import { getStoredToken } from "../lib/auth";
 
-function ProtectedLayout({ children }) {
-  const token = getStoredToken();
+function ProtectedLayout() {
+  const location = useLocation();
 
-  if (!token) {
-    return <Navigate to="/login" replace />;
-  }
+  const isPosFullscreen =
+    location.pathname === "/pos" &&
+    new URLSearchParams(location.search).get("fullscreen") === "1";
 
   return (
-    <div className="app-shell">
-      <Sidebar />
-      <main className="page-content">
-        {children || <Outlet />}
+    <div className={`app-shell ${isPosFullscreen ? "app-shell-pos-fullscreen" : ""}`}>
+      {!isPosFullscreen ? <Sidebar /> : null}
+
+      <main className={`page-content ${isPosFullscreen ? "page-content-pos-fullscreen" : ""}`}>
+        <Outlet />
       </main>
+
+      
     </div>
   );
 }

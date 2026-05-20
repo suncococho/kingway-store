@@ -28,7 +28,7 @@ router.get("/public/:token", async (req, res, next) => {
     );
 
     if (!rows[0]) {
-      throw createError("Survey link not found", 404);
+      throw createError("找不到問卷連結", 404);
     }
 
     return res.json(rows[0]);
@@ -41,7 +41,7 @@ router.post("/public/:token", async (req, res, next) => {
   try {
     const { rating, feedback } = req.body;
     if (!rating || Number(rating) < 1 || Number(rating) > 5) {
-      throw createError("rating must be between 1 and 5", 400);
+      throw createError("評分必須介於 1 到 5", 400);
     }
 
     const [result] = await pool.query(
@@ -54,10 +54,10 @@ router.post("/public/:token", async (req, res, next) => {
     );
 
     if (result.affectedRows === 0) {
-      throw createError("Survey link not found", 404);
+      throw createError("找不到問卷連結", 404);
     }
 
-    return res.json({ message: "Survey submitted" });
+    return res.json({ message: "問卷已送出" });
   } catch (error) {
     return next(error);
   }
@@ -87,7 +87,7 @@ router.get("/", async (req, res, next) => {
     return res.json(
       rows.map((row) => ({
         ...row,
-        link: row.token ? `${config.frontendBaseUrl}/survey/${row.token}` : null
+        link: row.token ? `${config.frontendBaseUrl}/surveys/${row.token}` : null
       }))
     );
   } catch (error) {
@@ -99,7 +99,7 @@ router.post("/generate-link", async (req, res, next) => {
   try {
     const { customerId, orderId } = req.body;
     if (!customerId || !orderId) {
-      throw createError("customerId and orderId are required", 400);
+      throw createError("customerId 與 orderId 為必填欄位", 400);
     }
 
     const token = crypto.randomBytes(20).toString("hex");
@@ -120,12 +120,12 @@ router.post("/generate-link", async (req, res, next) => {
       [customerId]
     );
 
-    const link = `${config.frontendBaseUrl}/survey/${token}`;
+    const link = `${config.frontendBaseUrl}/surveys/${token}`;
     if (customers[0] && customers[0].lineUserId && config.line.channelAccessToken) {
       await sendLineMessage(config, customers[0].lineUserId, [
         {
           type: "text",
-          text: `\u611F\u8B1D\u60A8\u7684\u652F\u6301\uFF0C\u6B61\u8FCE\u586B\u5BEB\u6EFF\u610F\u5EA6\u554F\u5377\uFF1A\n${link}`
+          text: `感謝您的支持，歡迎填寫滿意度問卷：\n${link}`
         }
       ]);
     }

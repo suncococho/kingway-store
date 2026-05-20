@@ -19,7 +19,8 @@ const {
   pool
 } = require("./_migrationUtils");
 
-async function upsertProducts(products) {
+async function upsertProducts(products, options = {}) {
+  const imagesOnly = options.imagesOnly === true;
   let imported = 0;
 
   for (const product of products) {
@@ -27,17 +28,38 @@ async function upsertProducts(products) {
       continue;
     }
 
+    if (imagesOnly) {
+      if (!product.imageUrl) {
+        continue;
+      }
+
+      const [result] = await pool.query(
+        `
+          UPDATE products
+          SET image_url = ?
+          WHERE sku = ?
+        `,
+        [product.imageUrl, product.sku]
+      );
+
+      if (result.affectedRows > 0) {
+        imported += 1;
+      }
+      continue;
+    }
+
     await pool.query(
       `
-        INSERT INTO products (sku, name, category, price, stock, reorder_level, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO products (sku, name, category, price, stock, reorder_level, is_active, image_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           name = VALUES(name),
           category = VALUES(category),
           price = VALUES(price),
           stock = VALUES(stock),
           reorder_level = VALUES(reorder_level),
-          is_active = VALUES(is_active)
+          is_active = VALUES(is_active),
+          image_url = COALESCE(VALUES(image_url), image_url)
       `,
       [
         product.sku,
@@ -46,7 +68,8 @@ async function upsertProducts(products) {
         product.price,
         product.stock,
         product.reorderLevel,
-        product.isActive
+        product.isActive,
+        product.imageUrl || null
       ]
     );
 
@@ -75,7 +98,8 @@ function parseProductsCsv(filePath) {
         price: parseNumber(pickField(record, ["price", "regularprice", "saleprice", "unitprice"]), 0),
         stock: parseInteger(pickField(record, ["stock", "stockquantity", "qty", "quantity"]), 0),
         reorderLevel: parseInteger(pickField(record, ["reorderlevel", "reorderpoint", "minstock"]), 0),
-        isActive: parseBoolean(pickField(record, ["isactive", "enabled", "published", "status"]), true) ? 1 : 0
+        isActive: parseBoolean(pickField(record, ["isactive", "enabled", "published", "status"]), true) ? 1 : 0,
+        imageUrl: normalizeWhitespace(pickField(record, ["imageurl", "image", "photo", "thumbnail", "thumbnailurl"]))
       };
     })
     .filter(Boolean);
@@ -83,14 +107,28 @@ function parseProductsCsv(filePath) {
 
 function parseProductsSql(filePath) {
   const sql = fs.readFileSync(filePath, "utf8");
+  const kwProducts = parseKwProductsSqlLines(sql);
+
+  if (kwProducts.length > 0) {
+    return kwProducts
+      .filter((product) => product.sku && product.name)
+      .map((product) => ({
+        sku: product.sku,
+        name: product.name,
+        category: mapCategory(product.categoryName || ""),
+        price: product.price,
+        stock: product.stock,
+        reorderLevel: product.reorderLevel,
+        isActive: product.isActive,
+        imageUrl: product.imageUrl || null
+      }));
+  }
 
   const posts = new Map();
   const postMeta = new Map();
   const terms = new Map();
   const termTaxonomy = new Map();
   const termRelationships = new Map();
-  const kwCategories = new Map();
-  const kwProducts = [];
 
   for (const statement of extractInsertStatements(sql)) {
     const rawTableName = statement.tableName.replace(/`/g, "");
@@ -196,57 +234,6 @@ function parseProductsSql(filePath) {
       continue;
     }
 
-    if (/kw_categories$/i.test(tableName)) {
-      const idIndex = columnIndex.get("id");
-      const nameIndex = columnIndex.get("name");
-      if ([idIndex, nameIndex].some((index) => index === undefined)) {
-        continue;
-      }
-
-      for (const tuple of tuples) {
-        kwCategories.set(Number(tuple[idIndex]), normalizeWhitespace(tuple[nameIndex]));
-      }
-      continue;
-    }
-
-    if (/kw_products$/i.test(tableName)) {
-      const skuIndex = columnIndex.get("sku");
-      const nameIndex = columnIndex.get("name");
-      const categoryIdIndex = columnIndex.get("category_id");
-      const priceIndex = columnIndex.get("price");
-      const stockIndex = columnIndex.get("stock");
-      const stockAlertIndex = columnIndex.get("stock_alert");
-      const isActiveIndex = columnIndex.get("is_active");
-      if ([skuIndex, nameIndex, categoryIdIndex].some((index) => index === undefined)) {
-        continue;
-      }
-
-      for (const tuple of tuples) {
-        kwProducts.push({
-          sku: normalizeSku(tuple[skuIndex]),
-          name: normalizeWhitespace(tuple[nameIndex]),
-          categoryId: Number(tuple[categoryIdIndex]),
-          price: parseNumber(tuple[priceIndex], 0),
-          stock: parseInteger(tuple[stockIndex], 0),
-          reorderLevel: parseInteger(tuple[stockAlertIndex], 0),
-          isActive: parseBoolean(tuple[isActiveIndex], true) ? 1 : 0
-        });
-      }
-    }
-  }
-
-  if (kwProducts.length > 0) {
-    return kwProducts
-      .filter((product) => product.sku && product.name)
-      .map((product) => ({
-        sku: product.sku,
-        name: product.name,
-        category: mapCategory(kwCategories.get(product.categoryId) || ""),
-        price: product.price,
-        stock: product.stock,
-        reorderLevel: product.reorderLevel,
-        isActive: product.isActive
-      }));
   }
 
   const products = [];
@@ -279,8 +266,79 @@ function parseProductsSql(filePath) {
       price,
       stock,
       reorderLevel: 0,
-      isActive: parseBoolean(post.status === "publish" ? "publish" : stockStatus || "publish", true) ? 1 : 0
+      isActive: parseBoolean(post.status === "publish" ? "publish" : stockStatus || "publish", true) ? 1 : 0,
+      imageUrl: null
     });
+  }
+
+  return products;
+}
+
+function parseKwProductsSqlLines(sql) {
+  const categories = new Map();
+  const products = [];
+  const lines = sql.split(/\r?\n/);
+
+  for (const line of lines) {
+    if (!/INSERT INTO\s+.*kw_categories/i.test(line) && !/INSERT INTO\s+.*kw_products/i.test(line)) {
+      continue;
+    }
+
+    const statementPart = line.split(/\s+--\s+image:\s+/i)[0].trim();
+    const imageMatch = line.match(/\s+--\s+image:\s+(https?:\/\/\S+)\s*$/i);
+    const imageUrl = imageMatch ? normalizeWhitespace(imageMatch[1]) : "";
+    const statements = extractInsertStatements(statementPart);
+    if (!statements.length) {
+      continue;
+    }
+
+    const statement = statements[0];
+    const rawTableName = statement.tableName.replace(/`/g, "");
+    const tableName = rawTableName.split(".").pop();
+    const columns = statement.columns.split(",").map((column) => column.replace(/`/g, "").trim());
+    const columnIndex = new Map(columns.map((column, index) => [column, index]));
+    const tuples = parseSqlValueTuples(statement.values);
+
+    if (/kw_categories$/i.test(tableName)) {
+      const idIndex = columnIndex.get("id");
+      const nameIndex = columnIndex.get("name");
+      if ([idIndex, nameIndex].some((index) => index === undefined)) {
+        continue;
+      }
+
+      for (const tuple of tuples) {
+        categories.set(Number(tuple[idIndex]), normalizeWhitespace(tuple[nameIndex]));
+      }
+      continue;
+    }
+
+    if (!/kw_products$/i.test(tableName)) {
+      continue;
+    }
+
+    const skuIndex = columnIndex.get("sku");
+    const nameIndex = columnIndex.get("name");
+    const categoryIdIndex = columnIndex.get("category_id");
+    const priceIndex = columnIndex.get("price");
+    const stockIndex = columnIndex.get("stock");
+    const stockAlertIndex = columnIndex.get("stock_alert");
+    const isActiveIndex = columnIndex.get("is_active");
+    if ([skuIndex, nameIndex, categoryIdIndex].some((index) => index === undefined)) {
+      continue;
+    }
+
+    for (const tuple of tuples) {
+      products.push({
+        sku: normalizeSku(tuple[skuIndex]),
+        name: normalizeWhitespace(tuple[nameIndex]),
+        categoryName: categories.get(Number(tuple[categoryIdIndex])) || "",
+        price: parseNumber(tuple[priceIndex], 0),
+        stock: parseInteger(tuple[stockIndex], 0),
+        reorderLevel: parseInteger(tuple[stockAlertIndex], 0),
+        isActive: parseBoolean(tuple[isActiveIndex], true) ? 1 : 0,
+        imageUrl: imageUrl || null
+      });
+    }
   }
 
   return products;
@@ -381,7 +439,10 @@ function extractInsertStatements(sql) {
 }
 
 async function main() {
-  const inputPath = requireFilePath(process.argv[2]);
+  const args = process.argv.slice(2);
+  const imagesOnly = args.includes("--images-only");
+  const inputArg = args.find((arg) => !arg.startsWith("--"));
+  const inputPath = requireFilePath(inputArg);
   const extension = path.extname(inputPath).toLowerCase();
 
   let products;
@@ -397,8 +458,8 @@ async function main() {
     fail("No products found in the source file.");
   }
 
-  const imported = await upsertProducts(products);
-  console.log(`Imported or updated ${imported} products from ${inputPath}`);
+  const imported = await upsertProducts(products, { imagesOnly });
+  console.log(`${imagesOnly ? "Backfilled images for" : "Imported or updated"} ${imported} products from ${inputPath}`);
   await printProductSummary();
 }
 
