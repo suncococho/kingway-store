@@ -5,7 +5,10 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "migrate:products": "node scripts/importProducts.js",
+    "migrate:verify": "node scripts/verifyMigration.js",
+    "migrate:orders-csv": "node scripts/importOrderItemsCsv.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
