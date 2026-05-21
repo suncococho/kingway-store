@@ -18,13 +18,12 @@ services:
     env_file:
       - .env.staging-restore
     environment:
-      MYSQL_DATABASE: kingway_store_staging_restore
+      MYSQL_DATABASE: kingway_store
       TZ: Asia/Taipei
     ports:
       - "3310:3306"
     volumes:
       - kingway-staging-mysql-data:/var/lib/mysql
-      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
@@ -47,8 +46,8 @@ services:
 
       DB_HOST: kingway-staging-mysql
       DB_PORT: 3306
-      DB_NAME: kingway_store_staging_restore
-      MYSQL_DATABASE: kingway_store_staging_restore
+      DB_NAME: kingway_store
+      MYSQL_DATABASE: kingway_store
 
       PORT: 3000
 
