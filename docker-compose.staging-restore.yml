@@ -1,0 +1,95 @@
+# Staging restore rehearsal only.
+# Do not use this file for production.
+# Run only with staging-only environment values.
+#
+# Safety rules:
+# - Do not modify production docker-compose.yml.
+# - Do not mount production DB or upload volumes.
+# - Do not use production .env directly.
+# - Do not enable LINE / Telegram / external notifications.
+
+name: kingway-staging-restore
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: kingway-staging-mysql
+    restart: unless-stopped
+    env_file:
+      - .env.staging-restore
+    environment:
+      MYSQL_DATABASE: kingway_store_staging_restore
+      TZ: Asia/Taipei
+    ports:
+      - "3310:3306"
+    volumes:
+      - kingway-staging-mysql-data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    networks:
+      - kingway-staging-network
+
+  backend:
+    image: node:20-alpine
+    container_name: kingway-staging-backend
+    restart: unless-stopped
+    working_dir: /app
+    depends_on:
+      - mysql
+    env_file:
+      - .env.staging-restore
+    environment:
+      TZ: Asia/Taipei
+      NODE_ENV: staging
+      APP_ENV: staging_restore
+
+      DB_HOST: kingway-staging-mysql
+      DB_PORT: 3306
+      DB_NAME: kingway_store_staging_restore
+      MYSQL_DATABASE: kingway_store_staging_restore
+
+      PORT: 3000
+
+      WEBHOOKS_ENABLED: "false"
+      LINE_WEBHOOK_ENABLED: "false"
+      LINE_MESSAGING_ENABLED: "false"
+      LINE_MOCK_MODE: "true"
+
+      TELEGRAM_NOTIFICATIONS_ENABLED: "false"
+      TELEGRAM_MOCK_MODE: "true"
+
+      EMAIL_ENABLED: "false"
+      PUSH_NOTIFICATIONS_ENABLED: "false"
+      NOTIFICATIONS_ENABLED: "false"
+      NOTIFICATION_DRY_RUN: "true"
+    ports:
+      - "3010:3000"
+    volumes:
+      - ./backend:/app
+      - kingway-staging-uploads:/app/uploads
+    command: sh -c "npm install && npm start"
+    networks:
+      - kingway-staging-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: kingway-staging-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5180:80"
+    networks:
+      - kingway-staging-network
+
+volumes:
+  kingway-staging-mysql-data:
+  kingway-staging-uploads:
+
+networks:
+  kingway-staging-network:
+    driver: bridge
