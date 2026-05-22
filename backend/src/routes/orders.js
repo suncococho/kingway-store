@@ -329,6 +329,8 @@ router.get("/", async (req, res, next) => {
 
 router.get("/trash/list", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+
     const [rows] = await pool.query(`
       SELECT
         o.id,
@@ -343,10 +345,11 @@ router.get("/trash/list", async (req, res, next) => {
         s.display_name AS deletedByName
       FROM orders o
       LEFT JOIN staff_users s ON s.id = o.deleted_by
-      WHERE o.deleted_at IS NOT NULL
+      WHERE o.store_id = ?
+        AND o.deleted_at IS NOT NULL
       ORDER BY o.deleted_at DESC, o.id DESC
       LIMIT 200
-    `);
+    `, [storeId]);
     return res.json(rows);
   } catch (error) {
     return next(error);
@@ -355,9 +358,11 @@ router.get("/trash/list", async (req, res, next) => {
 
 router.delete("/:id", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+
     const [result] = await pool.query(
-      "UPDATE orders SET deleted_at = NOW(), deleted_by = ? WHERE id = ? AND deleted_at IS NULL",
-      [req.user?.id || null, req.params.id]
+      "UPDATE orders SET deleted_at = NOW(), deleted_by = ? WHERE id = ? AND store_id = ? AND deleted_at IS NULL",
+      [req.user?.id || null, req.params.id, storeId]
     );
     if (!result.affectedRows) {
       return res.status(404).json({ message: "找不到訂單或已刪除" });
@@ -371,9 +376,11 @@ router.delete("/:id", async (req, res, next) => {
 
 router.post("/:id/restore", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+
     const [result] = await pool.query(
-      "UPDATE orders SET deleted_at = NULL, deleted_by = NULL WHERE id = ? AND deleted_at IS NOT NULL",
-      [req.params.id]
+      "UPDATE orders SET deleted_at = NULL, deleted_by = NULL WHERE id = ? AND store_id = ? AND deleted_at IS NOT NULL",
+      [req.params.id, storeId]
     );
     if (!result.affectedRows) {
       return res.status(404).json({ message: "找不到已刪除訂單" });
@@ -386,10 +393,12 @@ router.post("/:id/restore", async (req, res, next) => {
 
 router.delete("/:id/permanent", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+
     await withTransaction(async (connection) => {
       const [rows] = await connection.query(
-        "SELECT id FROM orders WHERE id = ? AND deleted_at IS NOT NULL LIMIT 1",
-        [req.params.id]
+        "SELECT id FROM orders WHERE id = ? AND store_id = ? AND deleted_at IS NOT NULL LIMIT 1",
+        [req.params.id, storeId]
       );
       if (!rows[0]) {
         throw createError("找不到已刪除訂單", 404);
@@ -400,7 +409,7 @@ router.delete("/:id/permanent", async (req, res, next) => {
       await connection.query("DELETE FROM purchase_confirmations WHERE order_id = ?", [req.params.id]);
       await connection.query("UPDATE coupons SET order_id = NULL WHERE order_id = ?", [req.params.id]);
       await connection.query("UPDATE repair_orders SET order_id = NULL WHERE order_id = ?", [req.params.id]);
-      await connection.query("DELETE FROM orders WHERE id = ?", [req.params.id]);
+      await connection.query("DELETE FROM orders WHERE id = ? AND store_id = ?", [req.params.id, storeId]);
     });
 
     return res.json({ message: "訂單已永久刪除" });
