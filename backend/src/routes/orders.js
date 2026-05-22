@@ -753,6 +753,7 @@ router.post("/", async (req, res, next) => {
         await connection.query(
           `
             INSERT INTO order_items (
+              store_id,
               order_id,
               product_id,
               sku_snapshot,
@@ -762,9 +763,10 @@ router.post("/", async (req, res, next) => {
               unit_price,
               line_total
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
+            storeId,
             orderResult.insertId,
             item.productId,
             item.sku,
@@ -787,10 +789,10 @@ router.post("/", async (req, res, next) => {
 
         await connection.query(
           `
-            INSERT INTO inventory_movements (product_id, movement_type, quantity, reference_type, reference_id, created_by, notes)
-            VALUES (?, 'SALE', ?, 'ORDER', ?, ?, ?)
+            INSERT INTO inventory_movements (store_id, product_id, movement_type, quantity, reference_type, reference_id, created_by, notes)
+            VALUES (?, ?, 'SALE', ?, 'ORDER', ?, ?, ?)
           `,
-          [item.productId, -item.quantity, orderResult.insertId, req.user.id, `Auto deduction for ${orderNo}`]
+          [storeId, item.productId, -item.quantity, orderResult.insertId, req.user.id, `Auto deduction for ${orderNo}`]
         );
       }
 
