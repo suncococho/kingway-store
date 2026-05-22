@@ -510,6 +510,7 @@ router.get("/:id", async (req, res, next) => {
 
 router.post("/", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const {
       customerId,
       customer_name: customerNameInput,
@@ -546,9 +547,10 @@ router.post("/", async (req, res, next) => {
             SELECT customer_type AS customerType, line_user_id AS lineUserId
             FROM customers
             WHERE id = ?
+              AND store_id = ?
             LIMIT 1
           `,
-          [resolvedCustomerId]
+          [resolvedCustomerId, storeId]
         );
         if (customerRows[0]) {
           resolvedCustomerType = normalizeCustomerType(customerRows[0].customerType || (customerRows[0].lineUserId ? "LINE" : resolvedCustomerType));
@@ -561,10 +563,11 @@ router.post("/", async (req, res, next) => {
             SELECT id, customer_type AS customerType, line_user_id AS lineUserId
             FROM customers
             WHERE phone = ?
+              AND store_id = ?
             ORDER BY id DESC
             LIMIT 1
           `,
-          [resolvedCustomerPhone]
+          [resolvedCustomerPhone, storeId]
         );
 
         if (matches[0]) {
@@ -579,10 +582,10 @@ router.post("/", async (req, res, next) => {
         } else {
           const [customerResult] = await connection.query(
             `
-              INSERT INTO customers (name, phone, customer_type)
-              VALUES (?, ?, ?)
+              INSERT INTO customers (store_id, name, phone, customer_type)
+              VALUES (?, ?, ?, ?)
             `,
-            [resolvedCustomerName, resolvedCustomerType === "OFFLINE_NO_PHONE" ? null : resolvedCustomerPhone || null, resolvedCustomerType]
+            [storeId, resolvedCustomerName, resolvedCustomerType === "OFFLINE_NO_PHONE" ? null : resolvedCustomerPhone || null, resolvedCustomerType]
           );
           resolvedCustomerId = customerResult.insertId;
         }
@@ -619,9 +622,10 @@ router.post("/", async (req, res, next) => {
           SELECT id, sku, name, category, price, stock, is_active
           FROM products
           WHERE id IN (?)
+            AND store_id = ?
           FOR UPDATE
         `,
-        [productIds]
+        [productIds, storeId]
       );
 
       if (products.length !== productIds.length) {
@@ -629,7 +633,20 @@ router.post("/", async (req, res, next) => {
       }
 
       const productMap = new Map(products.map((product) => [product.id, product]));
-      let totalAmount = 0;
+      const totalAmount = itemList.reduce((sum, item) => {
+        const product = productMap.get(item.productId);
+        const quantity = Number(item.quantity);
+        const unitPrice = item.unitPrice !== undefined ? Number(item.unitPrice) : Number(product.price);
+        return sum + unitPrice * quantity;
+      }, 0);
+      const normalizedDeposit = Number(depositAmount || 0);
+      const requestedUnpaidBalance =
+        unpaidBalance === undefined || unpaidBalance === null || unpaidBalance === ""
+          ? Math.max(totalAmount - normalizedDeposit, 0)
+          : Number(unpaidBalance);
+      const normalizedFinalPaymentStatus =
+        finalPaymentStatus || (requestedUnpaidBalance > 0 ? "PARTIAL" : "PAID");
+      const normalizedIsReservation = Boolean(isReservationOrder) || normalizedDeposit > 0 || requestedUnpaidBalance > 0;
       const normalizedItems = [];
 
       for (const item of itemList) {
@@ -652,7 +669,6 @@ router.post("/", async (req, res, next) => {
 
         const unitPrice = item.unitPrice !== undefined ? Number(item.unitPrice) : Number(product.price);
         const lineTotal = unitPrice * quantity;
-        totalAmount += lineTotal;
 
         normalizedItems.push({
           productId: product.id,
@@ -667,17 +683,10 @@ router.post("/", async (req, res, next) => {
 
       const businessDate = dayjs().tz(TAIPEI_TZ).format("YYYY-MM-DD");
       const orderNo = `POS-${dayjs().tz(TAIPEI_TZ).format("YYYYMMDD-HHmmss-SSS")}`;
-      const normalizedDeposit = Number(depositAmount || 0);
-      const requestedUnpaidBalance =
-        unpaidBalance === undefined || unpaidBalance === null || unpaidBalance === ""
-          ? Math.max(totalAmount - normalizedDeposit, 0)
-          : Number(unpaidBalance);
-      const normalizedIsReservation = Boolean(isReservationOrder) || normalizedDeposit > 0 || requestedUnpaidBalance > 0;
-      const normalizedFinalPaymentStatus =
-        finalPaymentStatus || (requestedUnpaidBalance > 0 ? "PARTIAL" : "PAID");
       const [orderResult] = await connection.query(
         `
           INSERT INTO orders (
+            store_id,
             order_no,
             customer_id,
             customer_name,
@@ -696,9 +705,10 @@ router.post("/", async (req, res, next) => {
             created_by,
             business_date
           )
-          VALUES (?, ?, ?, ?, ?, 'GENERAL', ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, 'GENERAL', ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
+          storeId,
           orderNo,
           resolvedCustomerId || null,
           resolvedCustomerName,
