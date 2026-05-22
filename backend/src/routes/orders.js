@@ -850,6 +850,7 @@ router.post("/", async (req, res, next) => {
 router.patch("/:id", async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
+    const storeId = req.storeId;
     const {
       customerName,
       customerPhone,
@@ -867,9 +868,10 @@ router.patch("/:id", async (req, res, next) => {
         SELECT id, total_amount AS totalAmount, deposit_amount AS depositAmount, unpaid_balance AS unpaidBalance, COALESCE(other_discount,0) AS otherDiscount, final_payment_status AS finalPaymentStatus
         FROM orders
         WHERE id = ?
+          AND store_id = ?
         LIMIT 1
       `,
-      [orderId]
+      [orderId, storeId]
     );
 
     if (!rows[0]) {
@@ -883,8 +885,8 @@ router.patch("/:id", async (req, res, next) => {
     const nextOtherDiscount = hasOtherDiscount ? Number(otherDiscount || 0) : Number(rows[0].otherDiscount || 0);
 
     const [sumRows] = await pool.query(
-      `SELECT COALESCE(SUM(line_total), 0) AS itemTotal FROM order_items WHERE order_id = ?`,
-      [orderId]
+      `SELECT COALESCE(SUM(line_total), 0) AS itemTotal FROM order_items WHERE order_id = ? AND store_id = ?`,
+      [orderId, storeId]
     );
 
     const itemTotal = Number(sumRows[0]?.itemTotal || 0);
@@ -918,6 +920,7 @@ router.patch("/:id", async (req, res, next) => {
           END,
           notes = COALESCE(?, notes)
         WHERE id = ?
+          AND store_id = ?
       `,
       [
         customerName === undefined ? null : customerName,
@@ -931,7 +934,8 @@ router.patch("/:id", async (req, res, next) => {
         nextFinalPaymentStatus,
         nextFinalPaymentStatus,
         notes === undefined ? null : notes,
-        orderId
+        orderId,
+        storeId
       ]
     );
 
@@ -985,9 +989,10 @@ router.patch("/:id", async (req, res, next) => {
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN staff_users s ON s.id = o.created_by
         WHERE o.id = ?
+          AND o.store_id = ?
         LIMIT 1
       `,
-      [orderId]
+      [orderId, storeId]
     );
 
     return res.json(updated[0]);
