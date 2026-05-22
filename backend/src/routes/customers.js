@@ -1,6 +1,6 @@
 const express = require("express");
 const { pool } = require("../db");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { sendLineMessage } = require("../utils/line");
 const config = require("../config");
 const { logWorkflowEvent } = require("../services/lineWorkflowService");
@@ -37,10 +37,11 @@ function safeParseJsonArray(value) {
   }
 }
 
-router.use(authenticate);
+router.use(authenticate, requireStoreScope());
 
 router.get("/", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const search = req.query.search ? `%${req.query.search}%` : null;
     let sql = `
       SELECT
@@ -61,26 +62,29 @@ router.get("/", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, nex
           SELECT COUNT(*)
           FROM orders o
           WHERE o.customer_id = customers.id
+            AND o.store_id = ?
         ) AS orderCount,
         (
           SELECT COUNT(*)
           FROM repair_orders ro
           WHERE ro.customer_id = customers.id
+            AND ro.store_id = ?
         ) AS repairCount,
         (
-          (SELECT COUNT(*) FROM orders o WHERE o.customer_id = customers.id)
+          (SELECT COUNT(*) FROM orders o WHERE o.customer_id = customers.id AND o.store_id = ?)
           +
-          (SELECT COUNT(*) FROM repair_orders ro WHERE ro.customer_id = customers.id)
+          (SELECT COUNT(*) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.store_id = ?)
         ) AS visitCount,
         COALESCE((
           SELECT SUM(o.total_amount)
           FROM orders o
           WHERE o.customer_id = customers.id
+            AND o.store_id = ?
             AND o.status <> 'CANCELED'
         ), 0) AS totalSpent,
         GREATEST(
-          COALESCE((SELECT MAX(created_at) FROM orders o WHERE o.customer_id = customers.id), '1970-01-01 00:00:00'),
-          COALESCE((SELECT MAX(created_at) FROM repair_orders ro WHERE ro.customer_id = customers.id), '1970-01-01 00:00:00')
+          COALESCE((SELECT MAX(created_at) FROM orders o WHERE o.customer_id = customers.id AND o.store_id = ?), '1970-01-01 00:00:00'),
+          COALESCE((SELECT MAX(created_at) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.store_id = ?), '1970-01-01 00:00:00')
         ) AS lastVisit,
         EXISTS(
           SELECT 1
@@ -109,12 +113,13 @@ router.get("/", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, nex
         ) AS lastInteractionAt,
         created_at AS createdAt
       FROM customers
-      WHERE COALESCE(crm_stage, '') <> 'deleted'
+      WHERE customers.store_id = ?
+        AND COALESCE(crm_stage, '') <> 'deleted'
     `;
-    const params = [];
+    const params = [storeId, storeId, storeId, storeId, storeId, storeId, storeId, storeId];
 
     if (search) {
-      sql += " WHERE name LIKE ? OR phone LIKE ? OR line_user_id LIKE ? ";
+      sql += " AND (name LIKE ? OR phone LIKE ? OR line_user_id LIKE ?) ";
       params.push(search, search, search);
     }
 
@@ -129,6 +134,7 @@ router.get("/", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, nex
 
 router.post("/", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const { name, phone, lineUserId, customerType, notes, crmStage, budget, purchaseTiming, usagePurpose, interestedModel } = req.body;
 
     if (!name) {
@@ -149,9 +155,10 @@ router.post("/", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, ne
             crm_stage AS crmStage
           FROM customers
           WHERE phone = ?
+            AND store_id = ?
           LIMIT 1
         `,
-        [phone]
+        [phone, storeId]
       );
 
       if (existingCustomers.length > 0) {
@@ -161,9 +168,9 @@ router.post("/", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, ne
     const [result] = await pool.query(
       `
         INSERT INTO customers (
-          name, phone, line_user_id, customer_type, notes, crm_stage, budget, purchase_timing, usage_purpose, interested_model, last_contact_at
+          name, phone, line_user_id, customer_type, notes, crm_stage, budget, purchase_timing, usage_purpose, interested_model, store_id, last_contact_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
       `,
       [
         name,
@@ -175,7 +182,8 @@ router.post("/", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, ne
         budget || null,
         purchaseTiming || null,
         usagePurpose || null,
-        interestedModel || null
+        interestedModel || null,
+        storeId
       ]
     );
 
@@ -212,6 +220,7 @@ router.post("/", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, ne
 router.patch("/:id", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, next) => {
   try {
     const id = Number(req.params.id);
+    const storeId = req.storeId;
     const { name, phone, lineUserId, customerType, notes, crmStage, budget, purchaseTiming, usagePurpose, interestedModel } = req.body;
 
     const updates = [];
@@ -282,8 +291,8 @@ router.patch("/:id", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res
       return res.status(400).json({ message: "沒有提供可更新欄位" });
     }
 
-    values.push(id);
-    await pool.query(`UPDATE customers SET ${updates.join(", ")} WHERE id = ?`, values);
+    values.push(id, storeId);
+    await pool.query(`UPDATE customers SET ${updates.join(", ")} WHERE id = ? AND store_id = ?`, values);
 
     const [rows] = await pool.query(
       `
@@ -301,26 +310,28 @@ router.patch("/:id", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res
           last_contact_at AS lastContactAt,
           follow_up_due_at AS followUpDueAt,
           (
-            (SELECT COUNT(*) FROM orders o WHERE o.customer_id = customers.id)
+            (SELECT COUNT(*) FROM orders o WHERE o.customer_id = customers.id AND o.store_id = ?)
             +
-            (SELECT COUNT(*) FROM repair_orders ro WHERE ro.customer_id = customers.id)
+            (SELECT COUNT(*) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.store_id = ?)
           ) AS visitCount,
           COALESCE((
             SELECT SUM(o.total_amount)
             FROM orders o
             WHERE o.customer_id = customers.id
+              AND o.store_id = ?
               AND o.status <> 'CANCELED'
           ), 0) AS totalSpent,
           GREATEST(
-            COALESCE((SELECT MAX(created_at) FROM orders o WHERE o.customer_id = customers.id), '1970-01-01 00:00:00'),
-            COALESCE((SELECT MAX(created_at) FROM repair_orders ro WHERE ro.customer_id = customers.id), '1970-01-01 00:00:00')
+            COALESCE((SELECT MAX(created_at) FROM orders o WHERE o.customer_id = customers.id AND o.store_id = ?), '1970-01-01 00:00:00'),
+            COALESCE((SELECT MAX(created_at) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.store_id = ?), '1970-01-01 00:00:00')
           ) AS lastVisit,
           notes,
           created_at AS createdAt
         FROM customers
         WHERE id = ?
+          AND store_id = ?
       `,
-      [id]
+      [storeId, storeId, storeId, storeId, storeId, id, storeId]
     );
 
     if (!rows[0]) {
