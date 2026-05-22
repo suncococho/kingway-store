@@ -412,6 +412,9 @@ router.delete("/:id/permanent", async (req, res, next) => {
 
 router.get("/:id", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+    const orderId = req.params.id;
+
     const [rows] = await pool.query(
       `
         SELECT
@@ -471,9 +474,10 @@ router.get("/:id", async (req, res, next) => {
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN staff_users s ON s.id = o.created_by
         WHERE o.id = ?
+          AND o.store_id = ?
         LIMIT 1
       `,
-      [req.params.id]
+      [orderId, storeId]
     );
 
     if (!rows[0]) {
@@ -493,9 +497,10 @@ router.get("/:id", async (req, res, next) => {
           line_total AS lineTotal
         FROM order_items
         WHERE order_id = ?
+          AND store_id = ?
         ORDER BY id ASC
       `,
-      [req.params.id]
+      [orderId, storeId]
     );
 
     return res.json({
