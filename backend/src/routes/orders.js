@@ -52,6 +52,21 @@ function isLineCustomerType(value) {
 
 
 async function createAutoSupplierRequestForZeroStockOrder(connection, orderId, staffId) {
+  const [orderRows] = await connection.query(
+    `
+      SELECT store_id AS storeId
+      FROM orders
+      WHERE id = ?
+      LIMIT 1
+    `,
+    [orderId]
+  );
+
+  const storeId = orderRows[0]?.storeId;
+  if (!storeId) {
+    return null;
+  }
+
   const [items] = await connection.query(
     `
       SELECT
@@ -63,9 +78,11 @@ async function createAutoSupplierRequestForZeroStockOrder(connection, orderId, s
       FROM order_items oi
       JOIN products p ON p.id = oi.product_id
       WHERE oi.order_id = ?
+        AND oi.store_id = ?
+        AND p.store_id = ?
         AND p.stock <= 0
     `,
-    [orderId]
+    [orderId, storeId, storeId]
   );
 
   if (!items.length) {
@@ -80,11 +97,11 @@ async function createAutoSupplierRequestForZeroStockOrder(connection, orderId, s
   const [requestResult] = await connection.query(
     `
       INSERT INTO supplier_requests
-        (request_type, status, supplier_name, note, requested_by_staff_id)
+        (store_id, request_type, status, supplier_name, note, requested_by_staff_id)
       VALUES
-        ('PO', 'PENDING_SUPPLIER', 'KINGWAY', ?, ?)
+        (?, 'PO', 'PENDING_SUPPLIER', 'KINGWAY', ?, ?)
     `,
-    [noteLines.join("\n"), staffId || null]
+    [storeId, noteLines.join("\n"), staffId || null]
   );
 
   for (const item of items) {
