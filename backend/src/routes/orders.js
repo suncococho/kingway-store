@@ -123,7 +123,7 @@ async function createAutoSupplierRequestForZeroStockOrder(connection, orderId, s
 async function deductOrderStockOnce(orderId, connection = pool) {
   const [orders] = await connection.query(
     `
-      SELECT id, stock_deducted_at AS stockDeductedAt
+      SELECT id, store_id AS storeId, stock_deducted_at AS stockDeductedAt
       FROM orders
       WHERE id = ?
       FOR UPDATE
@@ -141,8 +141,9 @@ async function deductOrderStockOnce(orderId, connection = pool) {
       SELECT product_id AS productId, quantity
       FROM order_items
       WHERE order_id = ?
+        AND store_id = ?
     `,
-    [orderId]
+    [orderId, order.storeId]
   );
 
   for (const item of items) {
@@ -151,8 +152,9 @@ async function deductOrderStockOnce(orderId, connection = pool) {
         UPDATE products
         SET stock = GREATEST(stock - ?, 0)
         WHERE id = ?
+          AND store_id = ?
       `,
-      [Number(item.quantity || 0), item.productId]
+      [Number(item.quantity || 0), item.productId, order.storeId]
     );
   }
 
@@ -161,8 +163,9 @@ async function deductOrderStockOnce(orderId, connection = pool) {
       UPDATE orders
       SET stock_deducted_at = NOW()
       WHERE id = ?
+        AND store_id = ?
     `,
-    [orderId]
+    [orderId, order.storeId]
   );
 
   return true;
@@ -797,8 +800,9 @@ router.post("/", async (req, res, next) => {
             UPDATE products
             SET stock = stock - ?
             WHERE id = ?
+              AND store_id = ?
           `,
-          [item.quantity, item.productId]
+          [item.quantity, item.productId, storeId]
         );
 
         await connection.query(
