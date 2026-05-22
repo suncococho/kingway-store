@@ -26,7 +26,7 @@ router.post("/login", async (req, res, next) => {
 
     const [rows] = await pool.query(
       `
-        SELECT id, username, password_hash, role, display_name, is_active
+        SELECT id, username, password_hash, role, display_name, is_active, store_id
         FROM staff_users
         WHERE username = ?
         LIMIT 1
@@ -56,6 +56,7 @@ router.post("/login", async (req, res, next) => {
         username: user.username,
         role: user.role,
         displayName: user.display_name,
+        storeId: user.store_id,
         permissions
       },
       config.jwtSecret,
@@ -69,6 +70,7 @@ router.post("/login", async (req, res, next) => {
         username: user.username,
         role: user.role,
         displayName: user.display_name,
+        storeId: user.store_id,
         permissions
       }
     });
