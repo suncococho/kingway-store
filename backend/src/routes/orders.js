@@ -3,7 +3,7 @@ const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 const timezone = require("dayjs/plugin/timezone");
 const { pool, withTransaction } = require("../db");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { TAIPEI_TZ } = require("../services/reportService");
 const { createError } = require("../utils/errors");
 const { logKpi } = require("../services/kpiService");
@@ -32,7 +32,7 @@ dayjs.extend(timezone);
 
 const router = express.Router();
 
-router.use(authenticate, authorize(["ADMIN", "MANAGER", "CASHIER", "REPAIR"]));
+router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER", "REPAIR"]));
 
 function normalizeCustomerType(value) {
   const normalized = String(value || "").trim().toUpperCase();
@@ -202,6 +202,7 @@ async function pushPurchaseConfirmationLineMessage(confirmation, options = {}) {
 
 router.get("/", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     await backfillApprovedRepairOrders();
     const orderColumns = await getTableColumns(pool, "orders");
     const repairOrderColumns = await getTableColumns(pool, "repair_orders");
@@ -302,10 +303,12 @@ router.get("/", async (req, res, next) => {
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN staff_users s ON s.id = o.created_by
-        WHERE o.deleted_at IS NULL
+        WHERE o.store_id = ?
+          AND o.deleted_at IS NULL
         ORDER BY o.id DESC
         LIMIT 100
-      `
+      `,
+      [storeId]
     );
 
     return res.json(
