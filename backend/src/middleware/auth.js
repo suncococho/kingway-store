@@ -10,6 +10,8 @@ function authenticate(req, res, next) {
   try {
     req.user = jwt.verify(token, config.jwtSecret);
     req.user.role = String(req.user.role || "").toUpperCase().trim();
+    req.storeId = req.user.storeId ?? null;
+    req.store_id = req.storeId;
     return next();
   } catch (err) {
     return res.status(401).json({ message: "Unauthorized" });
@@ -23,4 +25,19 @@ function authorize() {
   };
 }
 
-module.exports = { authenticate, authorize };
+function requireStoreScope() {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+
+    const storeId = req.storeId ?? req.user.storeId ?? null;
+    if (!storeId) {
+      return res.status(403).json({ message: "Store scope required" });
+    }
+
+    req.storeId = storeId;
+    req.store_id = storeId;
+    return next();
+  };
+}
+
+module.exports = { authenticate, authorize, requireStoreScope };
