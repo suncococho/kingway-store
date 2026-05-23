@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const express = require("express");
 const { pool } = require("../db");
 const { BOT_NOTIFY, sendTelegramMessage, sendInternalTelegram } = require("../services/telegramService");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { createError } = require("../utils/errors");
 const { sendLineMessage } = require("../utils/line");
 const config = require("../config");
@@ -19,10 +19,11 @@ const { mapCouponStatusLabel, mapCouponTypeLabel } = require("../utils/displayLa
 
 const router = express.Router();
 
-router.use(authenticate, authorize(["ADMIN", "MANAGER", "CASHIER"]));
+router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]));
 
 router.get("/", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [rows] = await pool.query(
       `
         SELECT
@@ -43,9 +44,10 @@ router.get("/", async (req, res, next) => {
           cp.approved_by_staff_id AS approvedByStaffId,
           c.name AS customerName
         FROM coupons cp
-        INNER JOIN customers c ON c.id = cp.customer_id
+        INNER JOIN customers c ON c.id = cp.customer_id AND c.store_id = ?
         ORDER BY cp.id DESC
-      `
+      `,
+      [storeId]
     );
 
     return res.json(rows.map((row) => ({
@@ -58,15 +60,17 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-async function ensureCouponEligibility(customerId, orderId, couponType, requireOrder = true) {
+async function ensureCouponEligibility(customerId, orderId, couponType, requireOrder = true, storeId = null) {
   const [duplicate] = await pool.query(
     `
       SELECT id
-      FROM coupons
-      WHERE customer_id = ? AND coupon_type = ?
+      FROM coupons cp
+      INNER JOIN customers c ON c.id = cp.customer_id
+      WHERE cp.customer_id = ? AND cp.coupon_type = ?
+        AND (? IS NULL OR c.store_id = ?)
       LIMIT 1
     `,
-    [customerId, couponType]
+    [customerId, couponType, storeId, storeId]
   );
 
   if (duplicate[0]) {
@@ -81,17 +85,19 @@ async function ensureCouponEligibility(customerId, orderId, couponType, requireO
     `
       SELECT o.id, c.line_user_id AS lineUserId
       FROM orders o
-      INNER JOIN customers c ON c.id = o.customer_id
+      INNER JOIN customers c ON c.id = o.customer_id AND (? IS NULL OR c.store_id = ?)
       WHERE o.id = ?
         AND o.customer_id = ?
+        AND (? IS NULL OR o.store_id = ?)
         AND EXISTS (
           SELECT 1
           FROM order_items oi
           WHERE oi.order_id = o.id
-          AND oi.product_category_snapshot = 'EB'
+            AND (? IS NULL OR oi.store_id = ?)
+            AND oi.product_category_snapshot IN ('EB', 'EBIKE')
         )
     `,
-    [orderId, customerId]
+    [storeId, storeId, orderId, customerId, storeId, storeId, storeId, storeId]
   );
 
   if (!orders[0]) {
@@ -103,6 +109,7 @@ async function ensureCouponEligibility(customerId, orderId, couponType, requireO
 
 router.post("/issue", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const { customerId, orderId, couponType } = req.body;
     if (!customerId || !orderId || !couponType) {
       throw createError("customerId、orderId 與 couponType 為必填欄位", 400);
@@ -112,7 +119,7 @@ router.post("/issue", async (req, res, next) => {
       throw createError("Google 評論優惠券請使用評論申請流程", 400);
     }
 
-    const order = await ensureCouponEligibility(customerId, orderId, couponType);
+    const order = await ensureCouponEligibility(customerId, orderId, couponType, true, storeId);
     const code = makeCode("NF");
 
     await pool.query(
@@ -140,12 +147,13 @@ router.post("/issue", async (req, res, next) => {
 
 router.post("/request-google-review", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const { customerId, orderId } = req.body;
     if (!customerId) {
       throw createError("customerId 為必填欄位", 400);
     }
 
-    await ensureCouponEligibility(customerId, orderId || null, "google_review", Boolean(orderId));
+    await ensureCouponEligibility(customerId, orderId || null, "google_review", Boolean(orderId), storeId);
     const code = makeCode("GR");
 
     const [result] = await pool.query(
@@ -182,6 +190,7 @@ router.post("/request-google-review", async (req, res, next) => {
 
 router.post("/approve-google-review-for-order/:orderId", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const orderId = Number(req.params.orderId);
 
     const [rows] = await pool.query(
@@ -189,15 +198,15 @@ router.post("/approve-google-review-for-order/:orderId", authorize(["ADMIN", "MA
         SELECT cp.id, cp.code, cp.amount, cp.customer_id AS customerId, cp.order_id AS orderId,
                c.line_user_id AS lineUserId
         FROM coupons cp
-        INNER JOIN orders o ON o.id = ?
-        INNER JOIN customers c ON c.id = cp.customer_id
+        INNER JOIN orders o ON o.id = ? AND o.store_id = ?
+        INNER JOIN customers c ON c.id = cp.customer_id AND c.store_id = ?
         WHERE cp.coupon_type = 'google_review'
           AND cp.status = 'pending_approval'
           AND (cp.order_id = o.id OR cp.customer_id = o.customer_id OR c.phone = o.customer_phone)
         ORDER BY cp.id DESC
         LIMIT 1
       `,
-      [orderId]
+      [orderId, storeId, storeId]
     );
 
     if (!rows[0]) {
@@ -217,8 +226,9 @@ router.post("/approve-google-review-for-order/:orderId", authorize(["ADMIN", "MA
             used_at = NOW(),
             order_id = ?
         WHERE id = ?
+          AND customer_id IN (SELECT id FROM customers WHERE store_id = ?)
       `,
-      [req.user.id, orderId, coupon.id]
+      [req.user.id, orderId, coupon.id, storeId]
     );
 
     await pool.query(
@@ -228,8 +238,9 @@ router.post("/approve-google-review-for-order/:orderId", authorize(["ADMIN", "MA
             total_amount = GREATEST(total_amount - ?, 0),
             unpaid_balance = GREATEST(unpaid_balance - ?, 0)
         WHERE id = ?
+          AND store_id = ?
       `,
-      [amount, amount, amount, orderId]
+      [amount, amount, amount, orderId, storeId]
     );
 
     await logWorkflowEvent("google_review_discount_applied", "ORDER", orderId, {
@@ -256,14 +267,15 @@ router.post("/approve-google-review-for-order/:orderId", authorize(["ADMIN", "MA
 
 router.post("/approve-google-review/:id", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [rows] = await pool.query(
       `
         SELECT cp.id, cp.code, cp.customer_id AS customerId, c.line_user_id AS lineUserId
         FROM coupons cp
-        INNER JOIN customers c ON c.id = cp.customer_id
+        INNER JOIN customers c ON c.id = cp.customer_id AND c.store_id = ?
         WHERE cp.id = ? AND cp.coupon_type = 'google_review'
       `,
-      [req.params.id]
+      [storeId, req.params.id]
     );
 
     if (!rows[0]) {
@@ -277,8 +289,9 @@ router.post("/approve-google-review/:id", authorize(["ADMIN", "MANAGER"]), async
             approved_at = NOW(),
             status = 'issued'
         WHERE id = ?
+          AND customer_id IN (SELECT id FROM customers WHERE store_id = ?)
       `,
-      [req.user.id, req.params.id]
+      [req.user.id, req.params.id, storeId]
     );
 
     await logKpi(req.user.id, "GOOGLE_REVIEW_APPROVED", "COUPON", req.params.id, 2);
@@ -308,14 +321,15 @@ router.post("/approve-google-review/:id", authorize(["ADMIN", "MANAGER"]), async
 
 router.post("/reject-google-review/:id", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [rows] = await pool.query(
       `
         SELECT cp.id, cp.code, c.line_user_id AS lineUserId
         FROM coupons cp
-        INNER JOIN customers c ON c.id = cp.customer_id
+        INNER JOIN customers c ON c.id = cp.customer_id AND c.store_id = ?
         WHERE cp.id = ? AND cp.coupon_type = 'google_review'
       `,
-      [req.params.id]
+      [storeId, req.params.id]
     );
 
     if (!rows[0]) {
@@ -329,8 +343,9 @@ router.post("/reject-google-review/:id", authorize(["ADMIN", "MANAGER"]), async 
             rejected_at = NOW(),
             rejection_reason = ?
         WHERE id = ?
+          AND customer_id IN (SELECT id FROM customers WHERE store_id = ?)
       `,
-      [req.body.reason || "未通過人工審核", req.params.id]
+      [req.body.reason || "未通過人工審核", req.params.id, storeId]
     );
 
     if (rows[0].lineUserId && config.line.channelAccessToken) {
@@ -351,14 +366,16 @@ router.post("/reject-google-review/:id", authorize(["ADMIN", "MANAGER"]), async 
 
 router.post("/:id/cancel", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [rows] = await pool.query(
       `
         SELECT id, status, coupon_type AS couponType, code, is_used AS isUsed
-        FROM coupons
-        WHERE id = ?
+        FROM coupons cp
+        INNER JOIN customers c ON c.id = cp.customer_id AND c.store_id = ?
+        WHERE cp.id = ?
         LIMIT 1
       `,
-      [req.params.id]
+      [storeId, req.params.id]
     );
 
     if (!rows[0]) {
@@ -376,8 +393,9 @@ router.post("/:id/cancel", authorize(["ADMIN", "MANAGER"]), async (req, res, nex
             rejected_at = NOW(),
             rejection_reason = ?
         WHERE id = ?
+          AND customer_id IN (SELECT id FROM customers WHERE store_id = ?)
       `,
-      [req.body.reason || "後台作廢", req.params.id]
+      [req.body.reason || "後台作廢", req.params.id, storeId]
     );
 
     return res.json({ message: "已取消優惠券" });

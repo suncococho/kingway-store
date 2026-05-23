@@ -1,6 +1,6 @@
 const express = require("express");
 const { pool, withTransaction } = require("../db");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { createError } = require("../utils/errors");
 const {
   createButtonMessage,
@@ -17,10 +17,11 @@ const {
 
 const router = express.Router();
 
-router.use(authenticate, authorize(["ADMIN", "MANAGER", "INVENTORY"]));
+router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "INVENTORY"]));
 
 router.get("/movements", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [rows] = await pool.query(
       `
         SELECT
@@ -35,10 +36,11 @@ router.get("/movements", async (req, res, next) => {
           im.reference_id AS referenceId,
           im.created_at AS createdAt
         FROM inventory_movements im
-        INNER JOIN products p ON p.id = im.product_id
+        INNER JOIN products p ON p.id = im.product_id AND p.store_id = ?
         ORDER BY im.id DESC
         LIMIT 200
-      `
+      `,
+      [storeId]
     );
 
     return res.json(rows);
@@ -49,13 +51,16 @@ router.get("/movements", async (req, res, next) => {
 
 router.get("/low-stock", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [rows] = await pool.query(
       `
         SELECT id, name, sku, category, stock, reorder_level AS reorderLevel
         FROM products
-        WHERE stock <= reorder_level
+        WHERE store_id = ?
+          AND stock <= reorder_level
         ORDER BY stock ASC, name ASC
-      `
+      `,
+      [storeId]
     );
 
     return res.json(rows);
@@ -66,6 +71,7 @@ router.get("/low-stock", async (req, res, next) => {
 
 router.get("/supplier-requests", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [rows] = await pool.query(
       `
         SELECT
@@ -83,9 +89,11 @@ router.get("/supplier-requests", async (req, res, next) => {
         INNER JOIN staff_users su ON su.id = sr.requested_by_staff_id
         LEFT JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
         LEFT JOIN products p ON p.id = sri.product_id
+        WHERE p.store_id = ?
         GROUP BY sr.id, sr.request_type, sr.status, sr.supplier_name, sr.note, sr.supplier_response_note, sr.supplier_responded_at, sr.created_at, su.display_name
         ORDER BY sr.id DESC
-      `
+      `,
+      [storeId]
     );
 
     return res.json(rows.map((row) => ({
@@ -100,6 +108,7 @@ router.get("/supplier-requests", async (req, res, next) => {
 
 router.post("/movements", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const { productId, type, qty, note } = req.body;
     const normalizedQty = Number(qty);
 
@@ -124,9 +133,10 @@ router.post("/movements", async (req, res, next) => {
           SELECT id, stock, name, sku
           FROM products
           WHERE id = ?
+            AND store_id = ?
           FOR UPDATE
         `,
-        [productId]
+        [productId, storeId]
       );
 
       const product = products[0];
@@ -147,8 +157,9 @@ router.post("/movements", async (req, res, next) => {
           UPDATE products
           SET stock = ?
           WHERE id = ?
+            AND store_id = ?
         `,
-        [nextStock, productId]
+        [nextStock, productId, storeId]
       );
 
       await connection.query(
@@ -184,6 +195,7 @@ router.post("/movements", async (req, res, next) => {
 
 router.post("/supplier-requests", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const { requestType, supplierName, note, items } = req.body;
     if (!["PURCHASE_ORDER", "RETURN"].includes(requestType)) {
       throw createError("請選擇發注或退貨", 400);
@@ -207,6 +219,15 @@ router.post("/supplier-requests", async (req, res, next) => {
         if (!productId || !Number.isInteger(quantity) || quantity <= 0) {
           throw createError("供應商流程品項需提供商品與正整數數量", 400);
         }
+
+        const [[product]] = await connection.query(
+          "SELECT id FROM products WHERE id = ? AND store_id = ? LIMIT 1",
+          [productId, storeId]
+        );
+        if (!product) {
+          throw createError("找不到商品", 404);
+        }
+
         await connection.query(
           `
             INSERT INTO supplier_request_items (supplier_request_id, product_id, quantity, reason, note)
@@ -242,9 +263,25 @@ router.post("/supplier-requests", async (req, res, next) => {
 
 router.post("/supplier-requests/:id/respond", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const id = Number(req.params.id);
     const approved = Boolean(req.body.approved);
     const nextStatus = approved ? "APPROVED" : "REJECTED";
+    const [[request]] = await pool.query(
+      `
+        SELECT sr.id
+        FROM supplier_requests sr
+        INNER JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
+        INNER JOIN products p ON p.id = sri.product_id AND p.store_id = ?
+        WHERE sr.id = ?
+        LIMIT 1
+      `,
+      [storeId, id]
+    );
+    if (!request) {
+      throw createError("找不到供應商請求", 404);
+    }
+
     await pool.query(
       `
         UPDATE supplier_requests
@@ -265,6 +302,7 @@ router.post("/supplier-requests/:id/respond", async (req, res, next) => {
 
 router.post("/supplier-requests/:id/receive", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const id = Number(req.params.id);
     const receivedItems = Array.isArray(req.body.items) ? req.body.items : [];
     if (receivedItems.length === 0) {
@@ -281,12 +319,13 @@ router.post("/supplier-requests/:id/receive", async (req, res, next) => {
 
         const [rows] = await connection.query(
           `
-            SELECT product_id AS productId, quantity, received_quantity AS receivedQuantity
-            FROM supplier_request_items
-            WHERE id = ? AND supplier_request_id = ?
+            SELECT sri.product_id AS productId, sri.quantity, sri.received_quantity AS receivedQuantity
+            FROM supplier_request_items sri
+            INNER JOIN products p ON p.id = sri.product_id AND p.store_id = ?
+            WHERE sri.id = ? AND sri.supplier_request_id = ?
             FOR UPDATE
           `,
-          [itemId, id]
+          [storeId, itemId, id]
         );
         const requestItem = rows[0];
         if (!requestItem) {
@@ -299,7 +338,7 @@ router.post("/supplier-requests/:id/receive", async (req, res, next) => {
         }
 
         await connection.query("UPDATE supplier_request_items SET received_quantity = ? WHERE id = ?", [nextReceived, itemId]);
-        await connection.query("UPDATE products SET stock = stock + ? WHERE id = ?", [delta, requestItem.productId]);
+        await connection.query("UPDATE products SET stock = stock + ? WHERE id = ? AND store_id = ?", [delta, requestItem.productId, storeId]);
         console.log('[INVENTORY_RECEIVE]', {
           requestId: id,
           itemId,

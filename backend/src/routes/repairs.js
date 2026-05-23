@@ -1,6 +1,6 @@
 const express = require("express");
 const { pool } = require("../db");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { BASE_FEE, calculateStorageFee, validateRepairReservationDate } = require("../services/repairService");
 const { createError } = require("../utils/errors");
 const { logKpi } = require("../services/kpiService");
@@ -25,6 +25,7 @@ const router = express.Router();
 const REPAIR_ALLOWED_ROLES = ["ADMIN", "MANAGER", "STAFF", "CASHIER", "REPAIR", "USER", "EMPLOYEE"];
 
 router.use(authenticate);
+router.use(requireStoreScope());
 router.use(authorize(REPAIR_ALLOWED_ROLES));
 
 function mapReservationStatusLabel(status) {
@@ -105,8 +106,26 @@ function assertRepairEditable(row) {
   }
 }
 
+async function assertRepairBelongsToStore(repairId, storeId, connection = pool) {
+  const [rows] = await connection.query(
+    `
+      SELECT ro.id
+      FROM repair_orders ro
+      INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ?
+      WHERE ro.id = ?
+      LIMIT 1
+    `,
+    [storeId, repairId]
+  );
+
+  if (!rows[0]) {
+    throw createError("找不到維修工單", 404);
+  }
+}
+
 router.get("/",  async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const repairColumns = await getTableColumns(pool, "repair_orders");
     const customerColumns = await getTableColumns(pool, "customers");
     const orderColumns = await getTableColumns(pool, "orders");
@@ -144,11 +163,11 @@ router.get("/",  async (req, res, next) => {
           ${selectColumn(repairColumns, "ro", "picked_up_at", "pickedUpAt")},
           ${selectColumn(repairColumns, "ro", "created_at", "createdAt")}
         FROM repair_orders ro
-        LEFT JOIN customers c ON c.id = ro.customer_id
+        INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ?
         WHERE ro.deleted_at IS NULL
         ORDER BY ro.id DESC
       `;
-    const repairListParams = [];
+    const repairListParams = [storeId];
     const [repairRows] = await pool.query(repairListSql, repairListParams);
 
     let repairOrderRows = [];
@@ -186,13 +205,15 @@ router.get("/",  async (req, res, next) => {
             NULL AS pickedUpAt,
             ${selectColumn(orderColumns, "o", "created_at", "createdAt")}
           FROM orders o
-          LEFT JOIN customers c ON c.id = o.customer_id
-          INNER JOIN order_items oi ON oi.order_id = o.id
-          WHERE oi.product_category_snapshot = 'REPAIR'
+          LEFT JOIN customers c ON c.id = o.customer_id AND c.store_id = ?
+          INNER JOIN order_items oi ON oi.order_id = o.id AND oi.store_id = ?
+          WHERE oi.product_category_snapshot IN ('RP', 'REPAIR')
+            AND o.store_id = ?
             AND o.deleted_at IS NULL
           GROUP BY o.id
           ORDER BY o.id DESC
         `;
+      orderRepairListParams.push(storeId, storeId, storeId);
       [repairOrderRows] = await pool.query(orderRepairListSql, orderRepairListParams);
     }
 
@@ -257,6 +278,7 @@ router.get("/",  async (req, res, next) => {
 
 router.get("/products",  async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const search = req.query.search ? `%${String(req.query.search).trim()}%` : null;
     const productColumns = await getTableColumns(pool, "products");
     let sql = `
@@ -274,13 +296,14 @@ router.get("/products",  async (req, res, next) => {
         ${selectColumn(productColumns, "products", "created_at", "createdAt")},
         ${selectColumn(productColumns, "products", "updated_at", "updatedAt")}
       FROM products
+      WHERE products.store_id = ?
     `;
-    const params = [];
+    const params = [storeId];
 
     if (search) {
       const searchFields = ["sku", "name"].filter((column) => hasColumn(productColumns, column));
       if (searchFields.length) {
-        sql += ` WHERE ${searchFields.map((column) => `${column} LIKE ?`).join(" OR ")} `;
+        sql += ` AND (${searchFields.map((column) => `${column} LIKE ?`).join(" OR ")}) `;
         params.push(...searchFields.map(() => search));
       }
     }
@@ -297,6 +320,7 @@ router.get("/products",  async (req, res, next) => {
 
 router.get("/trash/list", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [rows] = await pool.query(`
       SELECT
         ro.id,
@@ -310,12 +334,12 @@ router.get("/trash/list", async (req, res, next) => {
         ro.deleted_at AS deletedAt,
         s.display_name AS deletedByName
       FROM repair_orders ro
-      LEFT JOIN customers c ON c.id = ro.customer_id
+      INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ?
       LEFT JOIN staff_users s ON s.id = ro.deleted_by
       WHERE ro.deleted_at IS NOT NULL
       ORDER BY ro.deleted_at DESC, ro.id DESC
       LIMIT 200
-    `);
+    `, [storeId]);
     return res.json(rows);
   } catch (error) {
     return next(error);
@@ -325,6 +349,7 @@ router.get("/trash/list", async (req, res, next) => {
 
 router.patch("/:id/inspection", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const { inspectionFee = 0, inspectionNotes = "" } = req.body || {};
     const notes = String(inspectionNotes || "").trim();
 
@@ -339,8 +364,9 @@ router.patch("/:id/inspection", async (req, res, next) => {
           inspection_notes = ?,
           updated_at = NOW()
       WHERE id = ?
+        AND customer_id IN (SELECT id FROM customers WHERE store_id = ?)
       `,
-      [Number(inspectionFee || 0), notes, req.params.id]
+      [Number(inspectionFee || 0), notes, req.params.id, storeId]
     );
 
     return res.json({ ok: true });
@@ -352,14 +378,15 @@ router.patch("/:id/inspection", async (req, res, next) => {
 
 router.delete("/:id", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const adminPin = req.headers["x-admin-pin"] || req.body?.adminPin;
     if (String(adminPin || "") !== "1144") {
       return res.status(403).json({ message: "管理員 PIN 錯誤" });
     }
 
     const [result] = await pool.query(
-      "UPDATE repair_orders SET deleted_at = NOW(), deleted_by = ? WHERE id = ? AND deleted_at IS NULL",
-      [req.user?.id || null, req.params.id]
+      "UPDATE repair_orders SET deleted_at = NOW(), deleted_by = ? WHERE id = ? AND deleted_at IS NULL AND customer_id IN (SELECT id FROM customers WHERE store_id = ?)",
+      [req.user?.id || null, req.params.id, storeId]
     );
     if (!result.affectedRows) {
       return res.status(404).json({ message: "找不到維修單或已刪除" });
@@ -372,9 +399,10 @@ router.delete("/:id", async (req, res, next) => {
 
 router.post("/:id/restore", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [result] = await pool.query(
-      "UPDATE repair_orders SET deleted_at = NULL, deleted_by = NULL WHERE id = ? AND deleted_at IS NOT NULL",
-      [req.params.id]
+      "UPDATE repair_orders SET deleted_at = NULL, deleted_by = NULL WHERE id = ? AND deleted_at IS NOT NULL AND customer_id IN (SELECT id FROM customers WHERE store_id = ?)",
+      [req.params.id, storeId]
     );
     if (!result.affectedRows) {
       return res.status(404).json({ message: "找不到已刪除維修單" });
@@ -387,9 +415,10 @@ router.post("/:id/restore", async (req, res, next) => {
 
 router.delete("/:id/permanent", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [rows] = await pool.query(
-      "SELECT id FROM repair_orders WHERE id = ? AND deleted_at IS NOT NULL LIMIT 1",
-      [req.params.id]
+      "SELECT ro.id FROM repair_orders ro INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ? WHERE ro.id = ? AND ro.deleted_at IS NOT NULL LIMIT 1",
+      [storeId, req.params.id]
     );
     if (!rows[0]) {
       throw createError("找不到已刪除維修單", 404);
@@ -397,7 +426,7 @@ router.delete("/:id/permanent", async (req, res, next) => {
 
     await pool.query("DELETE FROM repair_logs WHERE repair_order_id = ?", [req.params.id]);
     await pool.query("DELETE FROM surveys WHERE repair_order_id = ?", [req.params.id]);
-    await pool.query("DELETE FROM repair_orders WHERE id = ?", [req.params.id]);
+    await pool.query("DELETE FROM repair_orders WHERE id = ? AND customer_id IN (SELECT id FROM customers WHERE store_id = ?)", [req.params.id, storeId]);
 
     return res.json({ message: "維修單已永久刪除" });
   } catch (error) {
@@ -408,6 +437,7 @@ router.delete("/:id/permanent", async (req, res, next) => {
 
 router.get("/:id",  async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [rows] = await pool.query(
       `
         SELECT
@@ -418,10 +448,10 @@ router.get("/:id",  async (req, res, next) => {
           c.line_user_id AS lineUserId,
           COALESCE(ro.customer_type, c.customer_type, 'LINE') AS customerType
         FROM repair_orders ro
-        INNER JOIN customers c ON c.id = ro.customer_id
+        INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ?
         WHERE ro.id = ?
       `,
-      [req.params.id]
+      [storeId, req.params.id]
     );
 
     if (!rows[0]) {
@@ -479,6 +509,7 @@ router.get("/:id",  async (req, res, next) => {
 
 router.post("/",  async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const { customerId, bikeModel, issueDescription, reservationDate, reservationTime, fromLine, customerType } = req.body;
     if (!customerId || !bikeModel || !issueDescription || !reservationDate) {
       throw createError("customerId、bikeModel、issueDescription 與 reservationDate 為必填欄位", 400);
@@ -489,9 +520,10 @@ router.post("/",  async (req, res, next) => {
         SELECT name, phone, line_user_id AS lineUserId, customer_type AS customerType
         FROM customers
         WHERE id = ?
+          AND store_id = ?
         LIMIT 1
       `,
-      [customerId]
+      [customerId, storeId]
     );
     const customer = customerRows[0] || {};
     const normalizedCustomerType = normalizeCustomerType(
@@ -581,6 +613,8 @@ router.post("/",  async (req, res, next) => {
 
 router.post("/:id/reservation/respond",  async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+    await assertRepairBelongsToStore(req.params.id, storeId);
     const approved = Boolean(req.body.approved);
     const [stateRows] = await pool.query(
       `
@@ -635,6 +669,8 @@ router.post("/:id/reservation/respond",  async (req, res, next) => {
 
 router.post("/:id/estimate",  async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+    await assertRepairBelongsToStore(req.params.id, storeId);
     const { estimateAmount, note, details, items, inspectionFee, inspectionNotes, partsFee, laborFee, totalAmount, notes } = req.body;
     const result = await sendRepairEstimateQuotation(
       req.params.id,
@@ -662,6 +698,8 @@ router.post("/:id/estimate",  async (req, res, next) => {
 
 router.post("/:id/customer-response",  async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+    await assertRepairBelongsToStore(req.params.id, storeId);
     const approved = Boolean(req.body.approved);
     const [stateRows] = await pool.query(
       `
@@ -693,6 +731,7 @@ router.post("/:id/customer-response",  async (req, res, next) => {
 router.post("/:id/offline-complete", async (req, res, next) => {
   const connection = await pool.getConnection();
   try {
+    const storeId = req.storeId;
     const { estimateAmount, note, details } = req.body;
     const amount = Number(estimateAmount || 0);
 
@@ -701,6 +740,8 @@ router.post("/:id/offline-complete", async (req, res, next) => {
     }
 
     await connection.beginTransaction();
+
+    await assertRepairBelongsToStore(req.params.id, storeId, connection);
 
     await connection.query(
       `
@@ -753,6 +794,8 @@ router.post("/:id/offline-complete", async (req, res, next) => {
 
 router.post("/:id/approve", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+    await assertRepairBelongsToStore(req.params.id, storeId);
     const [repairs] = await pool.query(
       `
         SELECT customer_estimate_response AS customerEstimateResponse, status
@@ -833,6 +876,8 @@ router.post("/:id/approve", async (req, res, next) => {
 
 router.post("/:id/reject",  async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+    await assertRepairBelongsToStore(req.params.id, storeId);
     const [stateRows] = await pool.query(
       `
         SELECT status, completed_at AS completedAt, picked_up_at AS pickedUpAt
@@ -875,6 +920,8 @@ router.post("/:id/reject",  async (req, res, next) => {
 
 router.post("/:id/complete",  async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+    await assertRepairBelongsToStore(req.params.id, storeId);
     const [repairs] = await pool.query(
       `
         SELECT ro.id, ro.customer_id AS customerId, ro.order_id AS orderId, COALESCE(ro.customer_type, c.customer_type, 'LINE') AS customerType, c.line_user_id AS lineUserId
@@ -965,6 +1012,8 @@ router.post("/:id/complete",  async (req, res, next) => {
 
 router.post("/:id/phone-notified",  async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+    await assertRepairBelongsToStore(req.params.id, storeId);
     const [repairs] = await pool.query(
       `
         SELECT ro.id, ro.status, ro.completed_at AS completedAt, ro.picked_up_at AS pickedUpAt, COALESCE(ro.customer_type, c.customer_type, 'LINE') AS customerType
@@ -1008,6 +1057,8 @@ router.post("/:id/phone-notified",  async (req, res, next) => {
 
 router.post("/:id/pickup",  async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+    await assertRepairBelongsToStore(req.params.id, storeId);
     const [repairs] = await pool.query(
       `
         SELECT status, completed_at AS completedAt, picked_up_at AS pickedUpAt

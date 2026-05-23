@@ -1,7 +1,7 @@
 const express = require("express");
 const { sendInternalTelegram } = require("../services/telegramService");
 const { pool } = require("../db");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -47,10 +47,11 @@ async function sendSupplierDecisionRequest(requestId, requestType, supplierName,
   });
 }
 
-router.use(authenticate, authorize(["ADMIN", "MANAGER", "CASHIER"]));
+router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]));
 
 router.get("/requests", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [rows] = await pool.query(`
       SELECT
         sr.id,
@@ -70,10 +71,11 @@ router.get("/requests", async (req, res, next) => {
       FROM supplier_requests sr
       LEFT JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
       LEFT JOIN products p ON p.id = sri.product_id
-      WHERE sr.status IN ('PENDING_SUPPLIER', 'PARTIALLY_RECEIVED')
+      WHERE p.store_id = ?
+        AND sr.status IN ('PENDING_SUPPLIER', 'PARTIALLY_RECEIVED')
       ORDER BY sr.id DESC
       LIMIT 200
-    `);
+    `, [storeId]);
 
     res.json(rows);
   } catch (error) {
@@ -84,6 +86,7 @@ router.get("/requests", async (req, res, next) => {
 
 router.post("/requests", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const { type, supplierName = "kingway", sku, quantity, note } = req.body || {};
     const requestType = String(type || "").toUpperCase() === "RETURN" ? "RETURN" : "PURCHASE_ORDER";
     const qty = Math.max(Number(quantity || 0), 0);
@@ -93,8 +96,8 @@ router.post("/requests", async (req, res, next) => {
     }
 
     const [[product]] = await pool.query(
-      "SELECT id, sku, name, stock FROM products WHERE sku = ? LIMIT 1",
-      [sku]
+      "SELECT id, sku, name, stock FROM products WHERE sku = ? AND store_id = ? LIMIT 1",
+      [sku, storeId]
     );
 
     if (!product) {
@@ -158,6 +161,7 @@ router.post("/:id/receive", async (req, res, next) => {
   const conn = await pool.getConnection();
 
   try {
+    const storeId = req.storeId;
     const requestId = Number(req.params.id);
 
     if (!requestId) {
@@ -167,8 +171,16 @@ router.post("/:id/receive", async (req, res, next) => {
     await conn.beginTransaction();
 
     const [[request]] = await conn.query(
-      "SELECT id, request_type AS requestType, status FROM supplier_requests WHERE id = ? LIMIT 1 FOR UPDATE",
-      [requestId]
+      `
+        SELECT sr.id, sr.request_type AS requestType, sr.status
+        FROM supplier_requests sr
+        INNER JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
+        INNER JOIN products p ON p.id = sri.product_id AND p.store_id = ?
+        WHERE sr.id = ?
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [storeId, requestId]
     );
 
     if (!request) {
@@ -192,12 +204,12 @@ router.post("/:id/receive", async (req, res, next) => {
                sri.received_quantity AS receivedQuantity,
                p.stock, p.sku, p.name
         FROM supplier_request_items sri
-        JOIN products p ON p.id = sri.product_id
+        JOIN products p ON p.id = sri.product_id AND p.store_id = ?
         WHERE sri.supplier_request_id = ?
         LIMIT 1
         FOR UPDATE
       `,
-      [requestId]
+      [storeId, requestId]
     );
 
     if (!item) {
@@ -224,8 +236,8 @@ router.post("/:id/receive", async (req, res, next) => {
     );
 
     await conn.query(
-      "UPDATE products SET stock = stock + ? WHERE id = ?",
-      [actualReceive, item.productId]
+      "UPDATE products SET stock = stock + ? WHERE id = ? AND store_id = ?",
+      [actualReceive, item.productId, storeId]
     );
 
     console.log("[SUPPLIER_RECEIVE] before movement insert", {
@@ -283,11 +295,19 @@ router.post("/:id/receive", async (req, res, next) => {
 
 router.post("/:id/return-done", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const requestId = Number(req.params.id);
 
     const [[request]] = await pool.query(
-      "SELECT id, request_type AS requestType, status FROM supplier_requests WHERE id = ? LIMIT 1",
-      [requestId]
+      `
+        SELECT sr.id, sr.request_type AS requestType, sr.status
+        FROM supplier_requests sr
+        INNER JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
+        INNER JOIN products p ON p.id = sri.product_id AND p.store_id = ?
+        WHERE sr.id = ?
+        LIMIT 1
+      `,
+      [storeId, requestId]
     );
 
     if (!request) {
@@ -310,11 +330,11 @@ router.post("/:id/return-done", async (req, res, next) => {
                p.sku,
                p.name
         FROM supplier_request_items sri
-        JOIN products p ON p.id = sri.product_id
+        JOIN products p ON p.id = sri.product_id AND p.store_id = ?
         WHERE sri.supplier_request_id = ?
         LIMIT 1
       `,
-      [requestId]
+      [storeId, requestId]
     );
 
     if (!item) {
@@ -322,8 +342,8 @@ router.post("/:id/return-done", async (req, res, next) => {
     }
 
     await pool.query(
-      "UPDATE products SET stock = GREATEST(stock - ?, 0) WHERE id = ?",
-      [Number(item.quantity || 0), item.productId]
+      "UPDATE products SET stock = GREATEST(stock - ?, 0) WHERE id = ? AND store_id = ?",
+      [Number(item.quantity || 0), item.productId, storeId]
     );
 
     await pool.query(
@@ -348,6 +368,7 @@ router.post("/:id/return-done", async (req, res, next) => {
 
 router.get("/monthly", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [rows] = await pool.query(`
       SELECT
         sr.supplier_name AS supplierName,
@@ -359,10 +380,11 @@ router.get("/monthly", async (req, res, next) => {
       FROM supplier_requests sr
       LEFT JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
       LEFT JOIN products p ON p.id = sri.product_id
-      WHERE DATE_FORMAT(sr.created_at, '%Y-%m') = DATE_FORMAT(NOW(), '%Y-%m')
+      WHERE p.store_id = ?
+        AND DATE_FORMAT(sr.created_at, '%Y-%m') = DATE_FORMAT(NOW(), '%Y-%m')
       GROUP BY sr.supplier_name
       ORDER BY sr.supplier_name ASC
-    `);
+    `, [storeId]);
 
     res.json(rows);
   } catch (error) {
