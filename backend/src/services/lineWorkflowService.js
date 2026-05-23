@@ -381,12 +381,14 @@ async function bindPhoneAndIssueNewFriendCoupon(lineUserId, phone) {
   });
 }
 
-async function createPurchaseConfirmationForOrder(orderId, connection = pool) {
+async function createPurchaseConfirmationForOrder(orderId, connection = pool, options = {}) {
+  const storeId = options.storeId || null;
   const normalizedCustomerPhone = sqlNormalizedPhone("c.phone");
   const [rows] = await connection.query(
     `
       SELECT
         o.id AS orderId,
+        o.store_id AS storeId,
         o.order_no AS orderNo,
         o.customer_id AS customerId,
         COALESCE(o.customer_phone, c.phone) AS customerPhone,
@@ -395,17 +397,21 @@ async function createPurchaseConfirmationForOrder(orderId, connection = pool) {
         COALESCE(o.customer_type, c.customer_type, 'LINE') AS customerType,
         EXISTS (
           SELECT 1 FROM order_items oi
-          WHERE oi.order_id = o.id AND oi.product_category_snapshot = 'EB'
+          WHERE oi.order_id = o.id
+            AND (? IS NULL OR oi.store_id = ?)
+            AND oi.product_category_snapshot IN ('EB', 'EBIKE')
         ) AS hasEbike,
         o.status AS orderStatus,
         o.final_payment_status AS finalPaymentStatus,
         o.purchase_confirmation_sent_at AS purchaseConfirmationSentAt
       FROM orders o
       LEFT JOIN customers c ON c.id = o.customer_id
+        AND (? IS NULL OR c.store_id = ?)
       WHERE o.id = ?
+        AND (? IS NULL OR o.store_id = ?)
       LIMIT 1
     `,
-    [orderId]
+    [storeId, storeId, storeId, storeId, orderId, storeId, storeId]
   );
 
   const order = rows[0];
@@ -413,6 +419,7 @@ async function createPurchaseConfirmationForOrder(orderId, connection = pool) {
     return null;
   }
 
+  const effectiveStoreId = storeId || order.storeId || null;
   const normalizedPhone = normalizePhoneForMatch(order.customerPhone);
   let targetCustomerId = order.customerId || null;
   let lineUserId = order.orderLineUserId || null;
@@ -423,12 +430,13 @@ async function createPurchaseConfirmationForOrder(orderId, connection = pool) {
         SELECT id, line_user_id AS lineUserId
         FROM customers c
         WHERE (${normalizedCustomerPhone}) = ?
+          AND (? IS NULL OR c.store_id = ?)
         ORDER BY
           CASE WHEN c.line_user_id IS NOT NULL AND c.line_user_id <> '' THEN 0 ELSE 1 END,
           id DESC
         LIMIT 1
       `,
-      [normalizedPhone]
+      [normalizedPhone, effectiveStoreId, effectiveStoreId]
     );
 
     if (matchedCustomers[0]) {
@@ -458,6 +466,7 @@ async function createPurchaseConfirmationForOrder(orderId, connection = pool) {
       SELECT id
       FROM purchase_confirmations
       WHERE order_id = ?
+        AND (? IS NULL OR store_id = ?)
         AND (
           status = 'COMPLETED'
           OR submitted_at IS NOT NULL
@@ -466,7 +475,7 @@ async function createPurchaseConfirmationForOrder(orderId, connection = pool) {
         )
       LIMIT 1
     `,
-    [orderId]
+    [orderId, effectiveStoreId, effectiveStoreId]
   );
 
   if (completedConfirmations[0]) {
@@ -516,11 +525,12 @@ async function createPurchaseConfirmationForOrder(orderId, connection = pool) {
       FROM purchase_confirmations
       WHERE order_id = ?
         AND customer_id = ?
+        AND (? IS NULL OR store_id = ?)
         AND status = 'PENDING'
       ORDER BY id DESC
       LIMIT 1
     `,
-    [orderId, targetCustomerId]
+    [orderId, targetCustomerId, effectiveStoreId, effectiveStoreId]
   );
 
   await connection.query(
@@ -538,16 +548,17 @@ async function createPurchaseConfirmationForOrder(orderId, connection = pool) {
         SET token = ?,
             status = 'PENDING'
         WHERE id = ?
+          AND (? IS NULL OR store_id = ?)
       `,
-      [token, pendingConfirmations[0].id]
+      [token, pendingConfirmations[0].id, effectiveStoreId, effectiveStoreId]
     );
   } else {
     await connection.query(
       `
-        INSERT INTO purchase_confirmations (token, customer_id, order_id, status, created_at)
-        VALUES (?, ?, ?, 'PENDING', NOW())
+        INSERT INTO purchase_confirmations (store_id, token, customer_id, order_id, status, created_at)
+        VALUES (?, ?, ?, ?, 'PENDING', NOW())
       `,
-      [token, targetCustomerId, order.orderId]
+      [effectiveStoreId, token, targetCustomerId, order.orderId]
     );
   }
 

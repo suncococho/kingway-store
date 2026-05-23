@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const { pool, withTransaction } = require("../db");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { writePurchaseConfirmationPdf } = require("../services/pdfService");
 const config = require("../config");
 const purchaseConfirmationContent = require("../content/purchaseConfirmationContent.json");
@@ -822,10 +822,11 @@ router.post("/manual", async (req, res, next) => {
   }
 });
 
-router.use(authenticate, authorize(["ADMIN", "MANAGER", "CASHIER"]));
+router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]));
 
 router.get("/", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [rows] = await pool.query(
       `
         SELECT
@@ -851,10 +852,12 @@ router.get("/", async (req, res, next) => {
           COALESCE(c.phone, pc.buyer_phone) AS customerPhone,
           COALESCE(o.order_no, 'MANUAL') AS orderNo
         FROM purchase_confirmations pc
-        LEFT JOIN customers c ON c.id = pc.customer_id
-        LEFT JOIN orders o ON o.id = pc.order_id
+        LEFT JOIN customers c ON c.id = pc.customer_id AND c.store_id = ?
+        LEFT JOIN orders o ON o.id = pc.order_id AND o.store_id = ?
+        WHERE (pc.store_id = ? OR o.store_id = ? OR c.store_id = ?)
         ORDER BY pc.id DESC
-      `
+      `,
+      [storeId, storeId, storeId, storeId, storeId]
     );
 
     return res.json(
@@ -872,6 +875,7 @@ router.get("/", async (req, res, next) => {
 
 router.get("/pending-links", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const [pendingRows] = await pool.query(
       `
         SELECT
@@ -885,11 +889,14 @@ router.get("/pending-links", async (req, res, next) => {
           pct.expires_at AS expires_at,
           c.name AS customer_name
         FROM purchase_confirmations pc
-        LEFT JOIN customers c ON c.id = pc.customer_id
+        LEFT JOIN customers c ON c.id = pc.customer_id AND c.store_id = ?
+        LEFT JOIN orders o ON o.id = pc.order_id AND o.store_id = ?
         LEFT JOIN purchase_confirmation_tokens pct ON pct.token = pc.token
         WHERE pc.status = 'PENDING'
+          AND (pc.store_id = ? OR o.store_id = ? OR c.store_id = ?)
         ORDER BY pc.created_at DESC
-      `
+      `,
+      [storeId, storeId, storeId, storeId, storeId]
     );
 
     const pending = pendingRows.map((row) => ({
@@ -911,6 +918,7 @@ router.get("/pending-links", async (req, res, next) => {
 
 router.post("/generate-link", async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const customerId = Number(req.body.customerId);
     if (!customerId) {
       throw createError("customerId 為必填欄位", 400);
@@ -928,25 +936,26 @@ router.post("/generate-link", async (req, res, next) => {
           GROUP_CONCAT(DISTINCT p.id ORDER BY p.id) AS matchedProductIds,
           GROUP_CONCAT(DISTINCT p.category ORDER BY p.category) AS matchedProductCategories
         FROM orders o
-        INNER JOIN customers c ON c.id = o.customer_id
-        INNER JOIN order_items oi ON oi.order_id = o.id
-        INNER JOIN products p ON p.id = oi.product_id
+        INNER JOIN customers c ON c.id = o.customer_id AND c.store_id = ?
+        INNER JOIN order_items oi ON oi.order_id = o.id AND oi.store_id = ?
+        INNER JOIN products p ON p.id = oi.product_id AND p.store_id = ?
         WHERE c.id = ?
+          AND o.store_id = ?
           AND o.status = 'COMPLETED'
           AND o.final_payment_status = 'PAID'
-          AND p.category = 'EB'
+          AND (oi.product_category_snapshot IN ('EB', 'EBIKE') OR p.category IN ('EB', 'EBIKE'))
         GROUP BY o.id, o.order_no, c.id, c.name, c.phone, c.line_user_id
         ORDER BY o.created_at DESC, o.id DESC
         LIMIT 1
       `,
-      [customerId]
+      [storeId, storeId, storeId, customerId, storeId]
     );
 
     const order = rows[0];
     if (!order) {
       throw createError("找不到已完款的電動自行車訂單", 404);
     }
-    const confirmation = await createPurchaseConfirmationForOrder(order.orderId);
+    const confirmation = await createPurchaseConfirmationForOrder(order.orderId, pool, { storeId });
     if (!confirmation) {
       throw createError("找不到可用的購買確認書連結", 404);
     }
@@ -967,8 +976,9 @@ router.post("/generate-link", async (req, res, next) => {
           UPDATE orders
           SET purchase_confirmation_sent_at = COALESCE(purchase_confirmation_sent_at, NOW())
           WHERE id = ?
+            AND store_id = ?
         `,
-        [confirmation.orderId]
+        [confirmation.orderId, storeId]
       );
     }
 

@@ -190,6 +190,7 @@ async function deductOrderStockOnce(orderId, connection = pool) {
 
 
 async function pushPurchaseConfirmationLineMessage(confirmation, options = {}) {
+  const storeId = options.storeId || null;
   if (!confirmation?.lineUserId || !confirmation.link || !config.line.channelAccessToken) {
     return false;
   }
@@ -213,8 +214,9 @@ async function pushPurchaseConfirmationLineMessage(confirmation, options = {}) {
       UPDATE orders
       SET purchase_confirmation_sent_at = COALESCE(purchase_confirmation_sent_at, NOW())
       WHERE id = ?
+        AND (? IS NULL OR store_id = ?)
     `,
-    [confirmation.orderId]
+    [confirmation.orderId, storeId, storeId]
   );
 
   return true;
@@ -859,8 +861,8 @@ router.post("/", async (req, res, next) => {
       await sendOrderCreationNotification(order);
     }
 
-    const confirmation = await createPurchaseConfirmationForOrder(order.id);
-    if (await pushPurchaseConfirmationLineMessage(confirmation)) {
+    const confirmation = await createPurchaseConfirmationForOrder(order.id, pool, { storeId });
+    if (await pushPurchaseConfirmationLineMessage(confirmation, { storeId })) {
       await sendToGroups(["admin", "staff"], [
         createFlexMessage(
           "訂單已完款",
@@ -976,15 +978,16 @@ router.patch("/:id", async (req, res, next) => {
             SELECT 1
             FROM order_items
             WHERE order_id = ?
-              AND product_category_snapshot = 'REPAIR'
+              AND store_id = ?
+              AND product_category_snapshot IN ('RP', 'REPAIR')
           ) AS isRepairOrder
         `,
-        [orderId]
+        [orderId, storeId]
       );
 
       if (!repairCheckRows[0]?.isRepairOrder) {
-        const confirmation = await createPurchaseConfirmationForOrder(orderId);
-        await pushPurchaseConfirmationLineMessage(confirmation);
+        const confirmation = await createPurchaseConfirmationForOrder(orderId, pool, { storeId });
+        await pushPurchaseConfirmationLineMessage(confirmation, { storeId });
       }
     }
 
@@ -1159,13 +1162,14 @@ router.put("/:id/items", async (req, res, next) => {
 router.post("/:id/purchase-confirmation", async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
-    const confirmation = await createPurchaseConfirmationForOrder(orderId);
+    const storeId = req.storeId;
+    const confirmation = await createPurchaseConfirmationForOrder(orderId, pool, { storeId });
 
     if (!confirmation) {
       throw createError("只有已完款的電動自行車訂單可以產生購買確認書", 400);
     }
 
-    const sent = await pushPurchaseConfirmationLineMessage(confirmation, { force: true });
+    const sent = await pushPurchaseConfirmationLineMessage(confirmation, { force: true, storeId });
 
     if (sent) {
       await sendToGroups(["admin", "staff"], [
@@ -1187,6 +1191,7 @@ router.post("/:id/purchase-confirmation", async (req, res, next) => {
 router.post("/:id/collect-balance", async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
+    const storeId = req.storeId;
     const amount = Number(req.body.amount || 0);
     if (!orderId || amount <= 0) {
       throw createError("請提供有效的補收金額", 400);
@@ -1198,9 +1203,10 @@ router.post("/:id/collect-balance", async (req, res, next) => {
           SELECT id, order_no AS orderNo, customer_type AS customerType, unpaid_balance AS unpaidBalance
           FROM orders
           WHERE id = ?
+            AND store_id = ?
           FOR UPDATE
         `,
-        [orderId]
+        [orderId, storeId]
       );
 
       const order = rows[0];
@@ -1218,8 +1224,9 @@ router.post("/:id/collect-balance", async (req, res, next) => {
               final_payment_status = ?,
               final_paid_at = CASE WHEN ? = 'PAID' THEN NOW() ELSE final_paid_at END
           WHERE id = ?
+            AND store_id = ?
         `,
-        [nextBalance, nextStatus, nextStatus, orderId]
+        [nextBalance, nextStatus, nextStatus, orderId, storeId]
       );
 
       await logWorkflowEvent("order_balance_collected", "ORDER", orderId, {
@@ -1233,19 +1240,22 @@ router.post("/:id/collect-balance", async (req, res, next) => {
             EXISTS (
               SELECT 1 FROM order_items
               WHERE order_id = ?
-                AND product_category_snapshot = 'EBIKE'
+                AND store_id = ?
+                AND product_category_snapshot IN ('EB', 'EBIKE')
             ) AS isEbikeOrder,
             EXISTS (
               SELECT 1 FROM order_items
               WHERE order_id = ?
-                AND product_category_snapshot = 'REPAIR'
+                AND store_id = ?
+                AND product_category_snapshot IN ('RP', 'REPAIR')
             ) AS isRepairOrder,
             purchase_confirmation_sent_at AS purchaseConfirmationSentAt
           FROM orders
           WHERE id = ?
+            AND store_id = ?
           LIMIT 1
         `,
-        [orderId, orderId, orderId]
+        [orderId, storeId, orderId, storeId, orderId, storeId]
       );
 
       const orderType = typeRows[0] || {};
@@ -1273,14 +1283,16 @@ router.post("/:id/collect-balance", async (req, res, next) => {
                      SELECT 1
                      FROM order_items oi
                      WHERE oi.order_id = o.id
-                       AND oi.product_category_snapshot = 'REPAIR'
+                       AND oi.store_id = ?
+                       AND oi.product_category_snapshot IN ('RP', 'REPAIR')
                    ) AS isRepairOrder
             FROM orders o
             LEFT JOIN customers c ON c.id = o.customer_id
             WHERE o.id = ?
+              AND o.store_id = ?
             LIMIT 1
           `,
-          [orderId]
+          [storeId, orderId, storeId]
         );
 
         const customer = customerRows[0];
@@ -1317,15 +1329,16 @@ router.post("/:id/collect-balance", async (req, res, next) => {
             SELECT 1
             FROM order_items
             WHERE order_id = ?
-              AND product_category_snapshot = 'REPAIR'
+              AND store_id = ?
+              AND product_category_snapshot IN ('RP', 'REPAIR')
           ) AS isRepairOrder
         `,
-        [orderId]
+        [orderId, storeId]
       );
 
       if (!repairCheckRows[0]?.isRepairOrder) {
-        const confirmation = await createPurchaseConfirmationForOrder(orderId);
-        await pushPurchaseConfirmationLineMessage(confirmation);
+        const confirmation = await createPurchaseConfirmationForOrder(orderId, pool, { storeId });
+        await pushPurchaseConfirmationLineMessage(confirmation, { storeId });
       }
     }
 
