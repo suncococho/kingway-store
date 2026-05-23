@@ -1,10 +1,10 @@
 const express = require("express");
 const { pool, withTransaction } = require("../db");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { createError } = require("../utils/errors");
 
 const router = express.Router();
-router.use(authenticate, authorize(["ADMIN", "MANAGER", "CASHIER"]));
+router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]));
 
 function mapCategory(category) {
   if (category === "EB") return "EBIKE";
@@ -17,6 +17,7 @@ router.put("/:id/items", async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
     const items = Array.isArray(req.body.items) ? req.body.items : [];
+    const storeId = req.storeId;
 
     if (!orderId) throw createError("訂單 ID 錯誤", 400);
     if (!items.length) throw createError("商品不可為空", 400);
@@ -24,15 +25,15 @@ router.put("/:id/items", async (req, res, next) => {
     const result = await withTransaction(async (tx) => {
       const [orders] = await tx.query(
         `SELECT id, final_payment_status AS finalPaymentStatus, deposit_amount AS depositAmount, total_amount AS totalAmount
-         FROM orders WHERE id = ? FOR UPDATE`,
-        [orderId]
+         FROM orders WHERE id = ? AND store_id = ? FOR UPDATE`,
+        [orderId, storeId]
       );
 
       const order = orders[0];
       if (!order) throw createError("找不到訂單", 404);
       const [oldSumRows] = await tx.query(
-        `SELECT COALESCE(SUM(line_total), 0) AS subtotal FROM order_items WHERE order_id = ?`,
-        [orderId]
+        `SELECT COALESCE(SUM(line_total), 0) AS subtotal FROM order_items WHERE order_id = ? AND store_id = ?`,
+        [orderId, storeId]
       );
 
       const oldSubtotal = Number(oldSumRows[0]?.subtotal || 0);
@@ -46,8 +47,8 @@ router.put("/:id/items", async (req, res, next) => {
         if (!productId) throw createError("商品資料錯誤", 400);
 
         const [products] = await tx.query(
-          `SELECT id, sku, name, category, price FROM products WHERE id = ? LIMIT 1`,
-          [productId]
+          `SELECT id, sku, name, category, price FROM products WHERE id = ? AND store_id = ? LIMIT 1`,
+          [productId, storeId]
         );
 
         const product = products[0];
@@ -67,14 +68,14 @@ router.put("/:id/items", async (req, res, next) => {
         });
       }
 
-      await tx.query(`DELETE FROM order_items WHERE order_id = ?`, [orderId]);
+      await tx.query(`DELETE FROM order_items WHERE order_id = ? AND store_id = ?`, [orderId, storeId]);
 
       for (const item of normalized) {
         await tx.query(
           `INSERT INTO order_items
-           (order_id, product_id, sku_snapshot, product_name_snapshot, product_category_snapshot, quantity, unit_price, line_total)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [orderId, item.productId, item.sku, item.name, item.category, item.quantity, item.unitPrice, item.lineTotal]
+           (store_id, order_id, product_id, sku_snapshot, product_name_snapshot, product_category_snapshot, quantity, unit_price, line_total)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [storeId, orderId, item.productId, item.sku, item.name, item.category, item.quantity, item.unitPrice, item.lineTotal]
         );
       }
 
@@ -89,8 +90,8 @@ router.put("/:id/items", async (req, res, next) => {
              unpaid_balance = ?,
              final_payment_status = ?,
              final_paid_at = CASE WHEN ? = 'PAID' THEN COALESCE(final_paid_at, NOW()) ELSE NULL END
-         WHERE id = ?`,
-        [totalAmount, unpaidBalance, finalPaymentStatus, finalPaymentStatus, orderId]
+         WHERE id = ? AND store_id = ?`,
+        [totalAmount, unpaidBalance, finalPaymentStatus, finalPaymentStatus, orderId, storeId]
       );
 
       return { ok: true, orderId, subtotal, discount: keepDiscount, totalAmount, unpaidBalance, finalPaymentStatus, items: normalized };
