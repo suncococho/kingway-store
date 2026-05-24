@@ -38,11 +38,25 @@ function parseCsvList(value) {
     .filter(Boolean);
 }
 
+function parseBoolean(value, fallback = false) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
 module.exports = {
   nodeEnv: process.env.NODE_ENV || "development",
+  appEnv: process.env.APP_ENV || "",
   port: Number(process.env.PORT || 3000),
   jwtSecret: requireEnv("JWT_SECRET", "change-me-in-production"),
   frontendBaseUrl: resolveFrontendBaseUrl(),
+  requireStoreIdSchema: parseBoolean(process.env.REQUIRE_STORE_ID_SCHEMA, false),
+  expectedDbHost: (process.env.EXPECTED_DB_HOST || "").trim(),
+  expectedDbPort: (process.env.EXPECTED_DB_PORT || "").trim(),
+  expectedDbName: (process.env.EXPECTED_DB_NAME || "").trim(),
+  logDbIdentity: parseBoolean(process.env.LOG_DB_IDENTITY, true),
   mysql: {
     host: requireEnv("MYSQL_HOST", "mysql"),
     port: Number(process.env.MYSQL_PORT || 3306),

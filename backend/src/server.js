@@ -1,9 +1,10 @@
-const app = require("./app");
 const config = require("./config");
 const { ensureDefaultAdmin, ensureDefaultStaff, ensureStorageDirectories, ensureV2Schema } = require("./bootstrap");
+const { runSchemaGuard } = require("./services/schemaGuardService");
 const { validateTelegramConfig } = require("./services/telegramService");
 
 async function start() {
+  await runSchemaGuard();
   ensureStorageDirectories();
   await ensureV2Schema();
   validateTelegramConfig();
@@ -20,6 +21,7 @@ async function start() {
     console.warn(`Default staff account skipped: ${staffResult.reason}.`);
   }
 
+  const app = require("./app");
   app.listen(config.port, () => {
     console.log(`Backend listening on port ${config.port}`);
   });
