@@ -1,5 +1,5 @@
 const express = require("express");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { getPublicStoreSettings, getSettingsSnapshot, saveSettingsScope } = require("../services/settingsService");
 
 const router = express.Router();
@@ -24,7 +24,7 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-router.patch("/store", async (req, res, next) => {
+router.patch("/store", requireStoreScope(), requireStoreRole(["owner", "admin"]), async (req, res, next) => {
   try {
     const settings = await saveSettingsScope("STORE", req.body || {}, req.user?.id || null);
     return res.json({ store: settings });
@@ -33,7 +33,7 @@ router.patch("/store", async (req, res, next) => {
   }
 });
 
-router.patch("/system", async (req, res, next) => {
+router.patch("/system", requireStoreScope(), requireStoreRole(["owner", "admin"]), async (req, res, next) => {
   try {
     const settings = await saveSettingsScope("SYSTEM", req.body || {}, req.user?.id || null);
     return res.json({ system: settings });

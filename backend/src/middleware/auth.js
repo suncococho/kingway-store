@@ -44,4 +44,27 @@ function requireStoreScope() {
   };
 }
 
-module.exports = { authenticate, authorize, requireStoreScope };
+function requireStoreRole(allowedRoles) {
+  const normalizedAllowedRoles = (Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles])
+    .filter(Boolean)
+    .map((role) => String(role).toLowerCase().trim());
+
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+
+    const storeRole = String(req.storeRole ?? req.user.storeRole ?? "").toLowerCase().trim();
+    if (!storeRole) {
+      return res.status(403).json({ message: "Store role required" });
+    }
+
+    if (!normalizedAllowedRoles.includes(storeRole)) {
+      return res.status(403).json({ message: "Insufficient store role" });
+    }
+
+    req.storeRole = storeRole;
+    req.store_role = storeRole;
+    return next();
+  };
+}
+
+module.exports = { authenticate, authorize, requireStoreScope, requireStoreRole };
