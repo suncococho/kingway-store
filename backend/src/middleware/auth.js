@@ -12,6 +12,8 @@ function authenticate(req, res, next) {
     req.user.role = String(req.user.role || "").toUpperCase().trim();
     req.storeId = req.user.storeId ?? null;
     req.store_id = req.storeId;
+    req.storeRole = req.user.storeRole ?? null;
+    req.store_role = req.storeRole;
     return next();
   } catch (err) {
     return res.status(401).json({ message: "Unauthorized" });
@@ -36,6 +38,8 @@ function requireStoreScope() {
 
     req.storeId = storeId;
     req.store_id = storeId;
+    req.storeRole = req.user.storeRole ?? null;
+    req.store_role = req.storeRole;
     return next();
   };
 }

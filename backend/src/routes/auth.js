@@ -16,6 +16,75 @@ function getUserPermissions(user) {
   return [];
 }
 
+
+function isMissingStoreMembershipsTableError(error) {
+  return (
+    error?.code === "ER_NO_SUCH_TABLE" &&
+    (String(error?.sqlMessage || "").includes("store_memberships") ||
+      String(error?.message || "").includes("store_memberships"))
+  );
+}
+
+async function loadActiveStoreMemberships(staffUserId) {
+  try {
+    const [rows] = await pool.query(
+      `
+        SELECT
+          sm.store_id,
+          sm.role AS store_role,
+          sm.is_default
+        FROM store_memberships sm
+        JOIN stores s ON s.id = sm.store_id
+        WHERE sm.staff_user_id = ?
+          AND sm.status = 'active'
+          AND s.status = 'active'
+        ORDER BY sm.is_default DESC, sm.store_id ASC
+      `,
+      [staffUserId]
+    );
+
+    return rows;
+  } catch (error) {
+    if (isMissingStoreMembershipsTableError(error)) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function selectStoreContext(user, memberships) {
+  if (memberships.length === 1) {
+    return {
+      storeId: memberships[0].store_id,
+      storeRole: memberships[0].store_role
+    };
+  }
+
+  const defaultMemberships = memberships.filter((membership) => Number(membership.is_default) === 1);
+  if (defaultMemberships.length === 1) {
+    return {
+      storeId: defaultMemberships[0].store_id,
+      storeRole: defaultMemberships[0].store_role
+    };
+  }
+
+  const legacyStoreId = user.store_id ?? null;
+  if (legacyStoreId !== null && memberships.length > 0) {
+    const matchingMembership = memberships.find((membership) => String(membership.store_id) === String(legacyStoreId));
+    if (matchingMembership) {
+      return {
+        storeId: matchingMembership.store_id,
+        storeRole: matchingMembership.store_role
+      };
+    }
+  }
+
+  return {
+    storeId: legacyStoreId,
+    storeRole: null
+  };
+}
+
 router.post("/login", async (req, res, next) => {
   try {
     const { username, password } = req.body;
@@ -49,6 +118,8 @@ router.post("/login", async (req, res, next) => {
       await pool.query("UPDATE staff_users SET password_hash = ? WHERE id = ?", [passwordHash, user.id]);
     }
 
+    const memberships = await loadActiveStoreMemberships(user.id);
+    const storeContext = selectStoreContext(user, memberships);
     const permissions = getUserPermissions(user);
     const token = jwt.sign(
       {
@@ -56,7 +127,8 @@ router.post("/login", async (req, res, next) => {
         username: user.username,
         role: user.role,
         displayName: user.display_name,
-        storeId: user.store_id,
+        storeId: storeContext.storeId,
+        storeRole: storeContext.storeRole,
         permissions
       },
       config.jwtSecret,
@@ -70,7 +142,8 @@ router.post("/login", async (req, res, next) => {
         username: user.username,
         role: user.role,
         displayName: user.display_name,
-        storeId: user.store_id,
+        storeId: storeContext.storeId,
+        storeRole: storeContext.storeRole,
         permissions
       }
     });
