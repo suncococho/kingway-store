@@ -1,11 +1,13 @@
 const express = require("express");
 const { pool } = require("../db");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreRole } = require("../middleware/auth");
 const { hashPassword } = require("../utils/passwords");
 
 const router = express.Router();
 
 router.use(authenticate, authorize("ADMIN"));
+
+const requireStaffManagementStoreRole = requireStoreRole(["owner", "admin"]);
 
 router.get("/", async (req, res, next) => {
   try {
@@ -23,7 +25,7 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-router.post("/", async (req, res, next) => {
+router.post("/", requireStaffManagementStoreRole, async (req, res, next) => {
   try {
     const { username, password, displayName, role, lineUserId } = req.body;
 
@@ -56,7 +58,7 @@ router.post("/", async (req, res, next) => {
   }
 });
 
-router.patch("/:id", async (req, res, next) => {
+router.patch("/:id", requireStaffManagementStoreRole, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     const { username, password, displayName, role, lineUserId, isActive } = req.body;
