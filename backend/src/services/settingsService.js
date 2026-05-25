@@ -271,7 +271,41 @@ function scopeFromRow(scope, row) {
   return normalizeSystemPayload(mergeSettings(SYSTEM_DEFAULTS, payload));
 }
 
-async function loadSettingsRows() {
+let appSettingsStoreIdColumnExists = null;
+
+async function appSettingsHasStoreIdColumn() {
+  if (appSettingsStoreIdColumnExists !== null) {
+    return appSettingsStoreIdColumnExists;
+  }
+
+  const [rows] = await pool.query(
+    `
+      SELECT COUNT(*) AS columnCount
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'app_settings'
+        AND COLUMN_NAME = 'store_id'
+    `
+  );
+
+  appSettingsStoreIdColumnExists = Number(rows[0]?.columnCount || 0) > 0;
+  return appSettingsStoreIdColumnExists;
+}
+
+async function loadSettingsRows(storeId = null) {
+  if (storeId !== null && (await appSettingsHasStoreIdColumn())) {
+    const [rows] = await pool.query(
+      `
+        SELECT setting_scope AS settingScope, payload_json AS payloadJson
+        FROM app_settings
+        WHERE store_id = ?
+          AND setting_scope IN ('STORE', 'SYSTEM')
+      `,
+      [storeId]
+    );
+    return rows;
+  }
+
   const [rows] = await pool.query(
     `
       SELECT setting_scope AS settingScope, payload_json AS payloadJson
@@ -282,8 +316,46 @@ async function loadSettingsRows() {
   return rows;
 }
 
-async function saveSettingsScope(scope, payload, updatedByStaffId = null) {
+async function saveSettingsScope(storeId, scope, payload, updatedByStaffId = null) {
   const normalized = scope === "STORE" ? normalizeStorePayload(payload) : normalizeSystemPayload(payload);
+  const payloadJson = JSON.stringify(normalized);
+
+  if (storeId !== null && (await appSettingsHasStoreIdColumn())) {
+    const [updateResult] = await pool.query(
+      `
+        UPDATE app_settings
+        SET payload_json = ?, updated_by_staff_id = ?
+        WHERE store_id = ?
+          AND setting_scope = ?
+      `,
+      [payloadJson, updatedByStaffId, storeId, scope]
+    );
+
+    if (Number(updateResult.affectedRows || 0) === 0) {
+      const [[existingRow]] = await pool.query(
+        `
+          SELECT COUNT(*) AS rowCount
+          FROM app_settings
+          WHERE store_id = ?
+            AND setting_scope = ?
+        `,
+        [storeId, scope]
+      );
+
+      if (Number(existingRow?.rowCount || 0) === 0) {
+        await pool.query(
+          `
+            INSERT INTO app_settings (store_id, setting_scope, payload_json, updated_by_staff_id)
+            VALUES (?, ?, ?, ?)
+          `,
+          [storeId, scope, payloadJson, updatedByStaffId]
+        );
+      }
+    }
+
+    return normalized;
+  }
+
   await pool.query(
     `
       INSERT INTO app_settings (setting_scope, payload_json, updated_by_staff_id)
@@ -292,12 +364,18 @@ async function saveSettingsScope(scope, payload, updatedByStaffId = null) {
         payload_json = VALUES(payload_json),
         updated_by_staff_id = VALUES(updated_by_staff_id)
     `,
-    [scope, JSON.stringify(normalized), updatedByStaffId]
+    [scope, payloadJson, updatedByStaffId]
   );
   return normalized;
 }
 
-async function seedDefaultSettings() {
+async function seedDefaultSettings(storeId = 1) {
+  if (storeId !== null && (await appSettingsHasStoreIdColumn())) {
+    await saveSettingsScope(storeId, "STORE", STORE_DEFAULTS, null);
+    await saveSettingsScope(storeId, "SYSTEM", SYSTEM_DEFAULTS, null);
+    return;
+  }
+
   await pool.query(
     `
       INSERT INTO app_settings (setting_scope, payload_json)
@@ -314,8 +392,8 @@ async function seedDefaultSettings() {
   );
 }
 
-async function getSettingsSnapshot() {
-  const rows = await loadSettingsRows();
+async function getSettingsSnapshot(storeId) {
+  const rows = await loadSettingsRows(storeId);
   const storeRow = rows.find((row) => row.settingScope === "STORE") || null;
   const systemRow = rows.find((row) => row.settingScope === "SYSTEM") || null;
   const store = scopeFromRow("STORE", storeRow);
@@ -442,8 +520,8 @@ async function getSettingsSnapshot() {
   };
 }
 
-async function getPublicStoreSettings() {
-  const rows = await loadSettingsRows();
+async function getPublicStoreSettings(storeId = 1) {
+  const rows = await loadSettingsRows(storeId);
   const storeRow = rows.find((row) => row.settingScope === "STORE") || null;
   return scopeFromRow("STORE", storeRow);
 }
