@@ -222,11 +222,14 @@ CREATE TABLE IF NOT EXISTS staff_kpi_logs (
 );
 
 CREATE TABLE IF NOT EXISTS app_settings (
-  setting_scope ENUM('STORE', 'SYSTEM') NOT NULL PRIMARY KEY,
+  store_id BIGINT UNSIGNED NULL,
+  setting_scope ENUM('STORE', 'SYSTEM') NOT NULL,
   payload_json LONGTEXT NOT NULL,
   updated_by_staff_id BIGINT UNSIGNED NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_app_settings_store_scope (store_id, setting_scope),
+  INDEX idx_app_settings_store_scope (store_id, setting_scope)
 );
 
 CREATE INDEX idx_orders_business_date ON orders (business_date);

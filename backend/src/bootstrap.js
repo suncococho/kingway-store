@@ -204,6 +204,64 @@ async function addColumnIfMissing(tableName, columnName, definition) {
   return true;
 }
 
+async function indexExists(tableName, indexName) {
+  const [rows] = await pool.query(
+    `
+      SELECT INDEX_NAME
+      FROM INFORMATION_SCHEMA.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+        AND INDEX_NAME = ?
+      LIMIT 1
+    `,
+    [tableName, indexName]
+  );
+
+  return Boolean(rows[0]);
+}
+
+async function ensureIndexIfMissing(tableName, indexName, definition) {
+  if (await indexExists(tableName, indexName)) {
+    return false;
+  }
+
+  await pool.query(`ALTER TABLE ${tableName} ADD ${definition}`);
+  return true;
+}
+
+async function ensureAppSettingsSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      store_id BIGINT UNSIGNED NULL,
+      setting_scope ENUM('STORE', 'SYSTEM') NOT NULL,
+      payload_json LONGTEXT NOT NULL,
+      updated_by_staff_id BIGINT UNSIGNED NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_app_settings_store_scope (store_id, setting_scope),
+      INDEX idx_app_settings_store_scope (store_id, setting_scope)
+    )
+  `);
+
+  await addColumnIfMissing("app_settings", "store_id", "BIGINT UNSIGNED NULL");
+  await pool.query(`
+    UPDATE app_settings
+    SET store_id = 1
+    WHERE store_id IS NULL
+      AND setting_scope IN ('STORE', 'SYSTEM')
+  `);
+
+  await ensureIndexIfMissing(
+    "app_settings",
+    "idx_app_settings_store_scope",
+    "INDEX idx_app_settings_store_scope (store_id, setting_scope)"
+  );
+}
+
+async function shouldSeedStoreAwareSettings() {
+  return columnExists("app_settings", "store_id");
+}
+
 async function ensureCustomerTypeColumn(tableName) {
   const definition = "ENUM('LINE','OFFLINE_WITH_PHONE','OFFLINE_NO_PHONE') NOT NULL DEFAULT 'LINE'";
   if (!(await columnExists(tableName, "customer_type"))) {
@@ -533,17 +591,9 @@ async function ensureV2Schema() {
     )
   `);
 
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS app_settings (
-      setting_scope ENUM('STORE', 'SYSTEM') NOT NULL PRIMARY KEY,
-      payload_json LONGTEXT NOT NULL,
-      updated_by_staff_id BIGINT UNSIGNED NULL,
-      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )
-  `);
+  await ensureAppSettingsSchema();
 
-  await seedDefaultSettings();
+  await seedDefaultSettings((await shouldSeedStoreAwareSettings()) ? 1 : null);
 }
 
 function ensureStorageDirectories() {
