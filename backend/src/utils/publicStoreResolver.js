@@ -45,6 +45,7 @@ const RESERVED_SLUGS = new Set([
 ]);
 
 const tableExistsCache = new Map();
+const columnExistsCache = new Map();
 
 function toBase64Url(input) {
   return Buffer.from(input)
@@ -181,17 +182,45 @@ async function tableExists(db, tableName) {
   return exists;
 }
 
+async function columnExists(db, tableName, columnName) {
+  const cacheKey = `${tableName}.${columnName}`;
+  if (columnExistsCache.has(cacheKey)) {
+    return columnExistsCache.get(cacheKey);
+  }
+
+  const [rows] = await db.query(
+    `
+      SELECT COUNT(*) AS columnCount
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+        AND COLUMN_NAME = ?
+    `,
+    [tableName, columnName]
+  );
+  const exists = Number(rows[0]?.columnCount || 0) > 0;
+  columnExistsCache.set(cacheKey, exists);
+  return exists;
+}
+
+async function getStoreTenantIdSelect(db, tableAlias = "s") {
+  return (await columnExists(db, "stores", "tenant_id"))
+    ? `${tableAlias}.tenant_id AS tenantId`
+    : "NULL AS tenantId";
+}
+
 async function fetchActiveStore(db, storeId) {
   if (!storeId || !(await tableExists(db, "stores"))) {
     return null;
   }
 
+  const tenantIdSelect = await getStoreTenantIdSelect(db);
   const [rows] = await db.query(
     `
-      SELECT id, tenant_id AS tenantId
-      FROM stores
-      WHERE id = ?
-        AND status = 'active'
+      SELECT s.id, ${tenantIdSelect}
+      FROM stores s
+      WHERE s.id = ?
+        AND s.status = 'active'
       LIMIT 1
     `,
     [storeId]
@@ -291,12 +320,13 @@ async function resolveByLineChannel(req, options, context) {
     return null;
   }
 
+  const tenantIdSelect = await getStoreTenantIdSelect(options.db);
   const [rows] = await options.db.query(
     `
       SELECT
         slc.store_id AS storeId,
         slc.channel_id AS lineChannelId,
-        s.tenant_id AS tenantId
+        ${tenantIdSelect}
       FROM store_line_channels slc
       INNER JOIN stores s ON s.id = slc.store_id
       WHERE slc.webhook_path_token = ?
@@ -345,12 +375,13 @@ async function resolveByLiffId(req, options, context) {
   }
 
   const routeScope = options.routeScope || null;
+  const tenantIdSelect = await getStoreTenantIdSelect(options.db);
   const [rows] = await options.db.query(
     `
       SELECT
         sla.store_id AS storeId,
         sla.route_scope AS routeScope,
-        s.tenant_id AS tenantId
+        ${tenantIdSelect}
       FROM store_liff_apps sla
       INNER JOIN stores s ON s.id = sla.store_id
       WHERE sla.liff_id = ?
@@ -407,12 +438,13 @@ async function resolveBySlug(req, options, context) {
     return null;
   }
 
+  const tenantIdSelect = await getStoreTenantIdSelect(options.db);
   const [rows] = await options.db.query(
     `
-      SELECT id, tenant_id AS tenantId
-      FROM stores
-      WHERE slug = ?
-        AND status = 'active'
+      SELECT s.id, ${tenantIdSelect}
+      FROM stores s
+      WHERE s.slug = ?
+        AND s.status = 'active'
       LIMIT 1
     `,
     [slug]
@@ -451,11 +483,12 @@ async function resolveByHostname(req, options, context) {
     return null;
   }
 
+  const tenantIdSelect = await getStoreTenantIdSelect(options.db);
   const [rows] = await options.db.query(
     `
       SELECT
         sh.store_id AS storeId,
-        s.tenant_id AS tenantId
+        ${tenantIdSelect}
       FROM store_hostnames sh
       INNER JOIN stores s ON s.id = sh.store_id
       WHERE sh.hostname = ?
