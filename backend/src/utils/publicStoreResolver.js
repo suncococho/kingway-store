@@ -508,23 +508,26 @@ async function resolveByLegacyKingwayFallback(req, options, context) {
   }
 
   const store = await fetchActiveStore(options.db, storeId);
-  if (!store) {
+  const allowUnverifiedFallback = options.legacyFallbackAllowUnverifiedStore === true;
+  if (!store && !allowUnverifiedFallback) {
     recordAttempt(context, SOURCE.LEGACY_KINGWAY_FALLBACK, "store_not_found", { storeId });
     return null;
   }
 
+  const fallbackStoreId = store?.id || storeId;
   const warningMetadata = {
     code: "legacy_kingway_fallback_used",
     source: SOURCE.LEGACY_KINGWAY_FALLBACK,
-    storeId: store.id,
+    storeId: fallbackStoreId,
     sourceResolved: false,
+    unverifiedStore: !store,
     ignoredClientStoreId: context.audit.ignoredClientStoreId
   };
 
-  recordAttempt(context, SOURCE.LEGACY_KINGWAY_FALLBACK, "resolved", { storeId: store.id });
+  recordAttempt(context, SOURCE.LEGACY_KINGWAY_FALLBACK, store ? "resolved" : "resolved_unverified", { storeId: fallbackStoreId });
   const resolved = finalizeContext(context, {
-    storeId: store.id,
-    tenantId: store.tenantId || options.legacyTenantId || null,
+    storeId: fallbackStoreId,
+    tenantId: store?.tenantId || options.legacyTenantId || null,
     source: SOURCE.LEGACY_KINGWAY_FALLBACK,
     sourceResolved: false,
     confidence: "legacy",
@@ -542,7 +545,7 @@ async function resolveByLegacyKingwayFallback(req, options, context) {
   console.warn("[public-store-resolver] legacy KINGWAY fallback used", {
     route: req.originalUrl || req.url || "",
     method: req.method || "",
-    storeId: store.id,
+    storeId: fallbackStoreId,
     sourceResolved: resolved.sourceResolved,
     warning: warningMetadata,
     ignoredClientStoreId: resolved.audit.ignoredClientStoreId
@@ -622,6 +625,18 @@ async function resolvePublicStoreContext(req, options = {}) {
   return context;
 }
 
+function createPublicStoreContextMiddleware(options = {}) {
+  return async function publicStoreContextMiddleware(req, res, next) {
+    try {
+      const context = await resolvePublicStoreContext(req, options);
+      req.publicStoreContext = context;
+      return next();
+    } catch (error) {
+      return next(error);
+    }
+  };
+}
+
 module.exports = {
   SOURCE,
   RESOLVER_SOURCE_PRIORITY,
@@ -629,6 +644,7 @@ module.exports = {
   RESERVED_SLUGS,
   normalizeHostname,
   normalizeSlug,
+  createPublicStoreContextMiddleware,
   resolvePublicStoreContext,
   verifySignedContextToken
 };
