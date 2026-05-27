@@ -3,6 +3,7 @@ const { pool } = require("../db");
 const config = require("../config");
 const { authenticate, authorize } = require("../middleware/auth");
 const { verifyLineSignature } = require("../utils/line");
+const { resolveLineWebhookChannelContext } = require("../utils/publicStoreResolver");
 const { sendDailyReport } = require("../services/reportService");
 const { logKpi } = require("../services/kpiService");
 const {
@@ -24,6 +25,37 @@ const {
 } = require("../services/lineWorkflowService");
 
 const router = express.Router();
+
+router.post("/webhook/:webhookPathToken", async (req, res, next) => {
+  try {
+    const lineStoreContext = await resolveLineWebhookChannelContext(req, {
+      db: pool,
+      logger: console
+    });
+    req.lineStoreContext = lineStoreContext;
+
+    if (!lineStoreContext.resolved) {
+      return res.status(lineStoreContext.failure?.status || 404).json({
+        ok: false,
+        mode: "resolver_only",
+        message: "找不到可用的 LINE webhook channel 對應",
+        reason: lineStoreContext.failure?.reason || "unresolved"
+      });
+    }
+
+    console.log("[line:webhook:resolver-only] no-op", {
+      storeId: lineStoreContext.storeId,
+      tenantId: lineStoreContext.tenantId,
+      lineChannelId: lineStoreContext.lineChannelId,
+      webhookPathTokenHash: lineStoreContext.webhookPathTokenHash,
+      mode: "resolver_only"
+    });
+
+    return res.json({ ok: true, mode: "resolver_only" });
+  } catch (error) {
+    return next(error);
+  }
+});
 
 router.post("/webhook", async (req, res, next) => {
   try {

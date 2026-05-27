@@ -139,6 +139,23 @@ function recordAttempt(context, source, status, detail = {}) {
   });
 }
 
+function hashWebhookPathToken(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return null;
+  }
+  return `sha256:${crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 16)}`;
+}
+
+function redactWebhookPathTokenInRoute(route, token) {
+  const rawRoute = String(route || "");
+  const rawToken = String(token || "");
+  if (!rawRoute || !rawToken) {
+    return rawRoute;
+  }
+  return rawRoute.split(rawToken).join(":webhookPathToken");
+}
+
 function finalizeContext(context, patch) {
   const next = {
     ...context,
@@ -350,6 +367,165 @@ async function resolveByLineChannel(req, options, context) {
     confidence: "high",
     lineChannelId: rows[0].lineChannelId || null
   });
+}
+
+function getWebhookPathToken(req, options = {}) {
+  return String(
+    options.webhookPathToken ||
+      req.params?.webhookPathToken ||
+      req.params?.lineWebhookToken ||
+      req.query?.webhookPathToken ||
+      ""
+  ).trim();
+}
+
+function isSafeWebhookPathToken(value) {
+  const token = String(value || "").trim();
+  return token.length > 0 && token.length <= 160 && /^[A-Za-z0-9._~-]+$/.test(token);
+}
+
+async function resolveLineWebhookChannelContext(req, options = {}) {
+  if (!options.db) {
+    throw new Error("resolveLineWebhookChannelContext requires options.db");
+  }
+
+  const logger = options.logger || console;
+  const token = getWebhookPathToken(req, options);
+  const tokenHash = hashWebhookPathToken(token);
+  const context = createEmptyContext(req, options);
+  context.source = SOURCE.LINE_CHANNEL;
+  context.audit.source = SOURCE.LINE_CHANNEL;
+  context.audit.route = redactWebhookPathTokenInRoute(context.audit.route, token);
+
+  function fail(status, reason, details = {}) {
+    const failed = finalizeContext(context, {
+      source: SOURCE.LINE_CHANNEL,
+      sourceResolved: false,
+      confidence: "none",
+      storeId: null,
+      tenantId: null,
+      lineChannelId: null,
+      legacyFallbackUsed: false,
+      webhookPathTokenHash: tokenHash,
+      signatureVerified: false
+    });
+    failed.failure = {
+      status,
+      reason,
+      ...details
+    };
+    logger.warn?.("[line:webhook:resolver-only] unresolved", {
+      route: failed.audit.route,
+      method: failed.audit.method,
+      reason,
+      status,
+      webhookPathTokenHash: tokenHash
+    });
+    return failed;
+  }
+
+  if (!token) {
+    recordAttempt(context, SOURCE.LINE_CHANNEL, "missing_path_token");
+    return fail(400, "missing_path_token");
+  }
+
+  if (!isSafeWebhookPathToken(token)) {
+    recordAttempt(context, SOURCE.LINE_CHANNEL, "invalid_path_token_format", { webhookPathTokenHash: tokenHash });
+    return fail(400, "invalid_path_token_format");
+  }
+
+  if (!(await tableExists(options.db, "store_line_channels"))) {
+    recordAttempt(context, SOURCE.LINE_CHANNEL, "table_missing", { webhookPathTokenHash: tokenHash });
+    return fail(503, "store_line_channels_table_missing");
+  }
+
+  const tenantIdSelect = await getStoreTenantIdSelect(options.db);
+  const [rows] = await options.db.query(
+    `
+      SELECT
+        slc.store_id AS storeId,
+        slc.channel_id AS lineChannelId,
+        slc.channel_secret_ref AS channelSecretRef,
+        slc.channel_access_token_ref AS channelAccessTokenRef,
+        slc.webhook_path AS webhookPath,
+        slc.status AS channelStatus,
+        s.status AS storeStatus,
+        ${tenantIdSelect}
+      FROM store_line_channels slc
+      INNER JOIN stores s ON s.id = slc.store_id
+      WHERE slc.webhook_path_token = ?
+      LIMIT 2
+    `,
+    [token]
+  );
+
+  if (!rows.length) {
+    recordAttempt(context, SOURCE.LINE_CHANNEL, "not_found", { webhookPathTokenHash: tokenHash });
+    return fail(404, "line_channel_mapping_not_found");
+  }
+
+  if (rows.length > 1) {
+    recordAttempt(context, SOURCE.LINE_CHANNEL, "ambiguous", { webhookPathTokenHash: tokenHash });
+    return fail(409, "line_channel_mapping_ambiguous");
+  }
+
+  const row = rows[0];
+  if (row.channelStatus !== "ACTIVE") {
+    recordAttempt(context, SOURCE.LINE_CHANNEL, "inactive_mapping", {
+      storeId: row.storeId,
+      lineChannelId: row.lineChannelId || null,
+      webhookPathTokenHash: tokenHash
+    });
+    return fail(403, "line_channel_mapping_inactive", {
+      storeId: row.storeId || null,
+      lineChannelId: row.lineChannelId || null
+    });
+  }
+
+  if (row.storeStatus !== "active") {
+    recordAttempt(context, SOURCE.LINE_CHANNEL, "store_inactive", {
+      storeId: row.storeId,
+      lineChannelId: row.lineChannelId || null,
+      webhookPathTokenHash: tokenHash
+    });
+    return fail(403, "line_channel_store_inactive", {
+      storeId: row.storeId || null,
+      lineChannelId: row.lineChannelId || null
+    });
+  }
+
+  recordAttempt(context, SOURCE.LINE_CHANNEL, "resolved", {
+    storeId: row.storeId,
+    lineChannelId: row.lineChannelId || null,
+    webhookPathTokenHash: tokenHash
+  });
+
+  const resolved = finalizeContext(context, {
+    storeId: row.storeId,
+    tenantId: row.tenantId || null,
+    source: SOURCE.LINE_CHANNEL,
+    sourceResolved: true,
+    confidence: "high",
+    lineChannelId: row.lineChannelId || null,
+    channelSecretRef: row.channelSecretRef || null,
+    channelAccessTokenRef: row.channelAccessTokenRef || null,
+    webhookPathTokenHash: tokenHash,
+    webhookPath: row.webhookPath || null,
+    legacyFallbackUsed: false,
+    signatureVerified: false
+  });
+
+  logger.info?.("[line:webhook:resolver-only] resolved", {
+    route: resolved.audit.route,
+    method: resolved.audit.method,
+    storeId: resolved.storeId,
+    tenantId: resolved.tenantId,
+    lineChannelId: resolved.lineChannelId,
+    webhookPathTokenHash: resolved.webhookPathTokenHash,
+    mode: "resolver_only"
+  });
+
+  return resolved;
 }
 
 function getLiffId(req, options) {
@@ -678,6 +854,7 @@ module.exports = {
   normalizeHostname,
   normalizeSlug,
   createPublicStoreContextMiddleware,
+  resolveLineWebhookChannelContext,
   resolvePublicStoreContext,
   verifySignedContextToken
 };
