@@ -7,10 +7,12 @@ function verifyLineSignature(rawBody, channelSecret, signature) {
 
   const digest = crypto
     .createHmac("SHA256", channelSecret)
-    .update(rawBody)
+    .update(rawBody || "")
     .digest("base64");
 
-  return digest === signature;
+  const expected = Buffer.from(digest);
+  const actual = Buffer.from(String(signature));
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
 async function sendLineMessage(config, to, messages) {

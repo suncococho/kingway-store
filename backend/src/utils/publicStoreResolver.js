@@ -414,7 +414,7 @@ async function resolveLineWebhookChannelContext(req, options = {}) {
       reason,
       ...details
     };
-    logger.warn?.("[line:webhook:resolver-only] unresolved", {
+    logger.warn?.("[line:webhook:resolver] unresolved", {
       route: failed.audit.route,
       method: failed.audit.method,
       reason,
@@ -515,14 +515,14 @@ async function resolveLineWebhookChannelContext(req, options = {}) {
     signatureVerified: false
   });
 
-  logger.info?.("[line:webhook:resolver-only] resolved", {
+  logger.info?.("[line:webhook:resolver] resolved", {
     route: resolved.audit.route,
     method: resolved.audit.method,
     storeId: resolved.storeId,
     tenantId: resolved.tenantId,
     lineChannelId: resolved.lineChannelId,
     webhookPathTokenHash: resolved.webhookPathTokenHash,
-    mode: "resolver_only"
+    mode: "signature_pending"
   });
 
   return resolved;

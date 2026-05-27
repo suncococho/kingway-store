@@ -3,6 +3,7 @@ const { pool } = require("../db");
 const config = require("../config");
 const { authenticate, authorize } = require("../middleware/auth");
 const { verifyLineSignature } = require("../utils/line");
+const { resolveSecretRef } = require("../utils/lineSecretResolver");
 const { resolveLineWebhookChannelContext } = require("../utils/publicStoreResolver");
 const { sendDailyReport } = require("../services/reportService");
 const { logKpi } = require("../services/kpiService");
@@ -43,15 +44,48 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
       });
     }
 
-    console.log("[line:webhook:resolver-only] no-op", {
+    const channelSecretRef = lineStoreContext.channelSecretRef;
+    const secretResult = resolveSecretRef(channelSecretRef);
+    if (!secretResult.resolved) {
+      console.warn("[line:webhook:signature] secret unavailable", {
+        storeId: lineStoreContext.storeId,
+        tenantId: lineStoreContext.tenantId,
+        lineChannelId: lineStoreContext.lineChannelId,
+        webhookPathTokenHash: lineStoreContext.webhookPathTokenHash,
+        reason: secretResult.reason
+      });
+      return res.status(503).json({
+        ok: false,
+        mode: "signature_verification_failed",
+        reason: "line_channel_secret_unavailable"
+      });
+    }
+
+    const signature = req.headers["x-line-signature"];
+    const rawBody = req.rawBody || "";
+    if (!verifyLineSignature(rawBody, secretResult.secret, signature)) {
+      console.warn("[line:webhook:signature] invalid", {
+        storeId: lineStoreContext.storeId,
+        tenantId: lineStoreContext.tenantId,
+        lineChannelId: lineStoreContext.lineChannelId,
+        webhookPathTokenHash: lineStoreContext.webhookPathTokenHash
+      });
+      return res.status(401).json({
+        ok: false,
+        mode: "signature_verification_failed",
+        reason: "invalid_line_signature"
+      });
+    }
+
+    console.log("[line:webhook:signature] verified no-op", {
       storeId: lineStoreContext.storeId,
       tenantId: lineStoreContext.tenantId,
       lineChannelId: lineStoreContext.lineChannelId,
       webhookPathTokenHash: lineStoreContext.webhookPathTokenHash,
-      mode: "resolver_only"
+      mode: "signature_verified_noop"
     });
 
-    return res.json({ ok: true, mode: "resolver_only" });
+    return res.json({ ok: true, mode: "signature_verified_noop" });
   } catch (error) {
     return next(error);
   }
