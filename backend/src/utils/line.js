@@ -15,8 +15,14 @@ function verifyLineSignature(rawBody, channelSecret, signature) {
   return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
-async function sendLineMessage(config, to, messages) {
-  if (!config.line.channelAccessToken) {
+function resolveLineAccessToken(config, options = {}) {
+  return options.channelAccessToken || options.accessToken || config.line.channelAccessToken;
+}
+
+async function sendLineMessage(config, to, messages, options = {}) {
+  const channelAccessToken = resolveLineAccessToken(config, options);
+
+  if (!channelAccessToken) {
     throw new Error("LINE channel access token is not configured");
   }
 
@@ -24,7 +30,7 @@ async function sendLineMessage(config, to, messages) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${config.line.channelAccessToken}`
+      Authorization: `Bearer ${channelAccessToken}`
     },
     body: JSON.stringify({
       to,
@@ -42,5 +48,6 @@ async function sendLineMessage(config, to, messages) {
 
 module.exports = {
   verifyLineSignature,
+  resolveLineAccessToken,
   sendLineMessage
 };

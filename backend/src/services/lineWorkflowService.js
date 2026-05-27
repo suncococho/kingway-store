@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const dayjs = require("dayjs");
 const { pool, withTransaction } = require("../db");
 const config = require("../config");
-const { sendLineMessage } = require("../utils/line");
+const { resolveLineAccessToken, sendLineMessage } = require("../utils/line");
 const { createError } = require("../utils/errors");
 const { validateRepairReservationDate } = require("./repairService");
 const { getPublicStoreSettings } = require("./settingsService");
@@ -3299,9 +3299,11 @@ async function handleStaffRepairEstimateWizard(event) {
   return false;
 }
 
-async function replyToLine(replyToken, messages) {
+async function replyToLine(replyToken, messages, options = {}) {
   try {
-    if (!config.line.channelAccessToken) {
+    const channelAccessToken = resolveLineAccessToken(config, options);
+
+    if (!channelAccessToken) {
       console.log("[line:reply] skip no-channel-access-token");
       return;
     }
@@ -3324,7 +3326,7 @@ async function replyToLine(replyToken, messages) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${config.line.channelAccessToken}`
+        Authorization: `Bearer ${channelAccessToken}`
       },
       body: JSON.stringify({
         replyToken,
