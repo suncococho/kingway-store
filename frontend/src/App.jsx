@@ -10,6 +10,7 @@ import ProductsPage from "./pages/ProductsPage";
 import InventoryPage from "./pages/InventoryPage";
 import SuppliersPage from "./pages/SuppliersPage";
 import OrdersPage from "./pages/OrdersPage";
+import SalesManagementPage from "./pages/SalesManagementPage";
 import OrderEditPage from "./pages/OrderEditPage";
 import POSPage from "./pages/POSPage";
 import PurchaseConfirmationsPage from "./pages/PurchaseConfirmationsPage";
@@ -70,6 +71,7 @@ function App() {
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/suppliers" element={<SuppliersPage />} />
         <Route path="/orders" element={<OrdersPage />} />
+        <Route path="/sales" element={<SalesManagementPage />} />
         <Route path="/orders/:id/edit" element={<OrderEditPage />} />
         <Route path="/pos" element={<POSPage />} />
         <Route path="/purchase-confirmations" element={<PurchaseConfirmationsPage />} />

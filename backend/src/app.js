@@ -24,6 +24,7 @@ const repairRoutes = require("./routes/repairs");
 const couponRoutes = require("./routes/coupons");
 const surveyRoutes = require("./routes/surveys");
 const supplierRoutes = require("./routes/suppliers");
+const salesRoutes = require("./routes/sales");
 const attendanceRoutes = require("./routes/attendance");
 const kpiRoutes = require("./routes/kpi");
 const payrollRoutes = require("./routes/payroll");
@@ -383,6 +384,7 @@ app.get("/health", async (req, res, next) => {
 
 app.use("/api/settings", settingsRoutes);
 app.use("/api/products", productRoutes);
+app.use("/api/sales", salesRoutes);
 app.use("/api", authRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/dashboard", dashboardRoutes);
