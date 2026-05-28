@@ -27,6 +27,44 @@ const {
 
 const router = express.Router();
 
+
+function isTokenizedLineWebhookEnabled() {
+  return process.env.NODE_ENV === "staging" || process.env.LINE_TOKENIZED_WEBHOOK_ENABLED === "true";
+}
+
+function resolveTokenizedLineAccessTokenOptions(lineStoreContext) {
+  const metadata = {
+    storeId: lineStoreContext?.storeId || null,
+    tenantId: lineStoreContext?.tenantId || null,
+    lineChannelId: lineStoreContext?.lineChannelId || null,
+    webhookPathTokenHash: lineStoreContext?.webhookPathTokenHash || null,
+    hasChannelAccessTokenRef: Boolean(lineStoreContext?.channelAccessTokenRef)
+  };
+
+  if (!isTokenizedLineWebhookEnabled()) {
+    console.log("[line:webhook:tokenized] access token disabled", metadata);
+    return {};
+  }
+
+  if (!lineStoreContext?.channelAccessTokenRef) {
+    console.warn("[line:webhook:tokenized] access token ref missing", metadata);
+    return {};
+  }
+
+  const tokenResult = resolveSecretRef(lineStoreContext.channelAccessTokenRef);
+  if (!tokenResult.resolved) {
+    console.warn("[line:webhook:tokenized] access token unavailable", {
+      ...metadata,
+      reason: tokenResult.reason
+    });
+    return {};
+  }
+
+  console.log("[line:webhook:tokenized] access token resolved", metadata);
+  return { channelAccessToken: tokenResult.secret };
+}
+
+
 router.post("/webhook/:webhookPathToken", async (req, res, next) => {
   try {
     const lineStoreContext = await resolveLineWebhookChannelContext(req, {
@@ -76,16 +114,25 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
         reason: "invalid_line_signature"
       });
     }
+      const lineAccessTokenOptions = resolveTokenizedLineAccessTokenOptions(lineStoreContext);
+      req.lineStoreContext = {
+        ...lineStoreContext,
+        signatureVerified: true
+      };
+      req.lineAccessTokenOptions = lineAccessTokenOptions;
 
-    console.log("[line:webhook:signature] verified no-op", {
-      storeId: lineStoreContext.storeId,
-      tenantId: lineStoreContext.tenantId,
-      lineChannelId: lineStoreContext.lineChannelId,
-      webhookPathTokenHash: lineStoreContext.webhookPathTokenHash,
-      mode: "signature_verified_noop"
-    });
+      console.log("[line:webhook:signature] verified forward", {
+        storeId: lineStoreContext.storeId,
+        tenantId: lineStoreContext.tenantId,
+        lineChannelId: lineStoreContext.lineChannelId,
+        webhookPathTokenHash: lineStoreContext.webhookPathTokenHash,
+        mode: "signature_verified_forward",
+        tokenizedAccessTokenInjected: Boolean(lineAccessTokenOptions.channelAccessToken)
+      });
 
-    return res.json({ ok: true, mode: "signature_verified_noop" });
+      req.url = "/webhook";
+      req.originalUrl = `${req.baseUrl || ""}/webhook`;
+      return runWithLineAccessTokenOptions(lineAccessTokenOptions, () => router.handle(req, res, next));
   } catch (error) {
     return next(error);
   }

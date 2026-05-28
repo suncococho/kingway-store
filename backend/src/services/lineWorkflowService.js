@@ -1,14 +1,38 @@
 const crypto = require("crypto");
+const { AsyncLocalStorage } = require("async_hooks");
 const dayjs = require("dayjs");
 const { pool, withTransaction } = require("../db");
 const config = require("../config");
-const { resolveLineAccessToken, sendLineMessage } = require("../utils/line");
+const { resolveLineAccessToken, sendLineMessage: sendLinePushMessage } = require("../utils/line");
 const { createError } = require("../utils/errors");
 const { validateRepairReservationDate } = require("./repairService");
 const { getPublicStoreSettings } = require("./settingsService");
 const { sendInternalTelegram } = require("./telegramService");
 const { applyRepairReservationDecision, notifyRepairCustomer } = require("./repairReservationService");
 const { getTableColumns, hasColumn } = require("../utils/schema");
+
+const lineAccessTokenOptionsStorage = new AsyncLocalStorage();
+
+function getScopedLineAccessTokenOptions(options = {}) {
+  const scopedOptions = lineAccessTokenOptionsStorage.getStore() || {};
+  return {
+    ...scopedOptions,
+    ...(options || {})
+  };
+}
+
+function runWithLineAccessTokenOptions(options = {}, callback) {
+  return lineAccessTokenOptionsStorage.run(options || {}, callback);
+}
+
+async function sendLineMessage(configArg, to, messages, options = {}) {
+  return sendLinePushMessage(
+    configArg,
+    to,
+    messages,
+    getScopedLineAccessTokenOptions(options)
+  );
+}
 
 function makeCode(prefix) {
   return `${prefix}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
@@ -3301,7 +3325,7 @@ async function handleStaffRepairEstimateWizard(event) {
 
 async function replyToLine(replyToken, messages, options = {}) {
   try {
-    const channelAccessToken = resolveLineAccessToken(config, options);
+    const channelAccessToken = resolveLineAccessToken(config, getScopedLineAccessTokenOptions(options));
 
     if (!channelAccessToken) {
       console.log("[line:reply] skip no-channel-access-token");
@@ -4530,6 +4554,7 @@ module.exports = {
   mapRegistrationTypeLabel,
   makeCode,
   replyToLine,
+  runWithLineAccessTokenOptions,
   resolveGroupTargets,
   sendRepairEstimateQuotation,
   sendToGroups,
