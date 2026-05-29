@@ -57,8 +57,8 @@ export const REPAIR_STATUS_LABELS = {
 };
 
 export const COUPON_TYPE_LABELS = {
-  new_friend: "新好友優惠券",
-  google_review: "Google 評論優惠券"
+  new_friend: "會員服務",
+  google_review: "Google 評論"
 };
 
 export const COUPON_STATUS_LABELS = {

@@ -19,6 +19,15 @@ const { mapCouponStatusLabel, mapCouponTypeLabel } = require("../utils/displayLa
 
 const router = express.Router();
 
+function isCouponCampaignEnabled(type) {
+  if (process.env.COUPON_CAMPAIGN_ENABLED === "true") return true;
+  if (type === "new_friend") return process.env.NEW_FRIEND_COUPON_ENABLED === "true";
+  if (type === "google_review") return process.env.GOOGLE_REVIEW_COUPON_ENABLED === "true";
+  return false;
+}
+
+
+
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]));
 
 router.get("/", async (req, res, next) => {
@@ -134,7 +143,7 @@ router.post("/issue", async (req, res, next) => {
       await sendLineMessage(config, order.lineUserId, [
         {
           type: "text",
-          text: `恭喜獲得新朋友優惠券 NT$500，券碼：${code}`
+          text: `會員優惠券已建立，券碼：${code}`
         }
       ]);
     }
@@ -146,6 +155,15 @@ router.post("/issue", async (req, res, next) => {
 });
 
 router.post("/request-google-review", async (req, res, next) => {
+  if (
+    process.env.COUPON_CAMPAIGN_ENABLED !== "true" &&
+    process.env.GOOGLE_REVIEW_COUPON_ENABLED !== "true"
+  ) {
+    return res.status(403).json({
+      message: "Google 評論優惠活動目前暫停"
+    });
+  }
+
   try {
     const storeId = req.storeId;
     const { customerId, orderId } = req.body;
@@ -166,7 +184,7 @@ router.post("/request-google-review", async (req, res, next) => {
 
     try {
       await sendInternalTelegram(
-        `🟢 Google 評論待審核\n\n客戶 ID：${customerId}\n訂單 ID：${orderId || "-"}\n優惠券 ID：${result.insertId}\n折抵金額：NT$1500\n\n請確認客戶 Google 評論後核准或拒絕。`,
+        `🟢 Google 評論待審核\n\n客戶 ID：${customerId}\n訂單 ID：${orderId || "-"}\n優惠券 ID：${result.insertId}\n折抵金額：活動暫停\n\n請確認客戶 Google 評論後核准或拒絕。`,
         {
           inline_keyboard: [
             [
@@ -300,7 +318,7 @@ router.post("/approve-google-review/:id", authorize(["ADMIN", "MANAGER"]), async
       await sendLineMessage(config, rows[0].lineUserId, [
         {
           type: "text",
-          text: `Google 評論優惠券已核准，金額 NT$1500，券碼：${rows[0].code}`
+          text: `Google 評論優惠券已核准，券碼：${rows[0].code}`
         }
       ]);
     }

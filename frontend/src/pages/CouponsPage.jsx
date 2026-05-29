@@ -27,8 +27,8 @@ function CouponsPage() {
 
   const sectionItems = [
     { key: "ALL", label: "全部優惠券" },
-    { key: "new_friend", label: "新朋友優惠券" },
-    { key: "google_review", label: "Google 評論優惠券" },
+    { key: "new_friend", label: "會員服務" },
+    { key: "google_review", label: "Google 評論" },
     { key: "pending_approval", label: "待審核" },
     { key: "issued", label: "已發放" },
     { key: "used", label: "已使用" },
@@ -55,7 +55,7 @@ function CouponsPage() {
       });
       setNewFriendForm({ customerId: "", orderId: "" });
       coupons.refetch();
-      alert("已發送新朋友優惠券");
+      alert("已發送會員服務");
     } catch (error) {
       alert(error.message);
     }
@@ -73,7 +73,7 @@ function CouponsPage() {
       });
       setReviewForm({ customerId: "", orderId: "" });
       coupons.refetch();
-      alert("已送出 Google 評論優惠券申請");
+      alert("已送出 Google 評論申請");
     } catch (error) {
       alert(error.message);
     }
@@ -219,7 +219,7 @@ function CouponsPage() {
 
   return (
     <div>
-      <PageHeader title="優惠券管理" description="新朋友與 Google 評論優惠券都在同一頁管理，狀態與審核一眼可見。" />
+      <PageHeader title="優惠券管理" description="新朋友與 Google 評論都在同一頁管理，狀態與審核一眼可見。" />
       <SectionTabs items={sectionItems} value={tab} onChange={setTab} label="優惠券子功能" />
       <div className="admin-summary-grid">
         {summaryCards.map((card) => (
@@ -238,7 +238,7 @@ function CouponsPage() {
         />
         <div className="admin-split-grid">
           <section className="stack-card">
-            <div className="section-title">發送新朋友優惠券</div>
+            <div className="section-title">發送會員服務</div>
             <form className="grid-form compact-grid" onSubmit={issueNewFriend}>
               <label className="form-field">
                 <span>客戶 ID</span>
@@ -249,12 +249,12 @@ function CouponsPage() {
                 <input value={newFriendForm.orderId} onChange={(event) => handleFormChange(setNewFriendForm, "orderId", event.target.value)} />
               </label>
               <button type="submit" className="primary-button inline-submit">
-                發送 NT$500
+                發送 
               </button>
             </form>
           </section>
           <section className="stack-card">
-            <div className="section-title">申請 Google 評論優惠券</div>
+            <div className="section-title">申請 Google 評論</div>
             <form className="grid-form compact-grid" onSubmit={requestReviewCoupon}>
               <label className="form-field">
                 <span>客戶 ID</span>

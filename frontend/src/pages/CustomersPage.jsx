@@ -925,7 +925,7 @@ function CustomersPage() {
           <div className="section-header">
             <div>
               <h2>優惠券</h2>
-              <p className="muted-text">集中查看新好友與 Google 評論優惠券狀態。</p>
+              <p className="muted-text">集中查看新好友與 Google 評論狀態。</p>
             </div>
             <StatusBadge tone="info">顯示 {couponRows.length} 筆</StatusBadge>
           </div>

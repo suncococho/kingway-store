@@ -466,7 +466,7 @@ function OrderEditPage() {
             <h2 className="kw-card-title">訂單摘要</h2>
 
             <div className="kw-summary-row"><span>商品總額</span><strong>{money(itemTotal)}</strong></div>
-            <div className="kw-summary-row"><span>新朋友優惠券</span><strong className="kw-minus">-{money(couponDiscount)}</strong></div>
+            <div className="kw-summary-row"><span>會員服務</span><strong className="kw-minus">-{money(couponDiscount)}</strong></div>
             <div className="kw-summary-row"><span>其他折扣</span><strong className="kw-minus">-{money(otherDiscount)}</strong></div>
             <div className="kw-summary-row"><span>訂單應收</span><strong className="kw-blue">{money(payableAmount)}</strong></div>
             <div className="kw-summary-row"><span>已收訂金</span><strong>{money(depositAmount)}</strong></div>
@@ -544,7 +544,7 @@ function OrderEditPage() {
             <strong>金額說明</strong>
             <ul>
               <li>商品總額：所有商品小計加總</li>
-              <li>新朋友優惠券：LINE 新朋友折扣</li>
+              <li>會員服務：LINE 新朋友折扣</li>
               <li>其他折扣：門市手動折扣</li>
               <li>訂單應收：商品總額 - 優惠券 - 其他折扣</li>
               <li>剩餘尾款：訂單應收 - 已收訂金</li>

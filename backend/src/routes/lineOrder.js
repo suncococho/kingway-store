@@ -188,9 +188,13 @@ router.post("/create", async (req, res, next) => {
         [customer.id]
       );
 
-      let coupon = couponRows[0];
+      const newFriendCouponEnabled =
+        process.env.COUPON_CAMPAIGN_ENABLED === "true" ||
+        process.env.NEW_FRIEND_COUPON_ENABLED === "true";
 
-      if (!coupon) {
+      let coupon = newFriendCouponEnabled ? couponRows[0] : null;
+
+      if (newFriendCouponEnabled && !coupon) {
         const code = `NEW${customer.id}${Date.now().toString().slice(-5)}`;
         const [couponResult] = await tx.query(
           `INSERT INTO coupons (code, coupon_type, amount, customer_id, status, eligible_category)
@@ -201,7 +205,7 @@ router.post("/create", async (req, res, next) => {
       }
 
       const unitPrice = Number(product.price || 0);
-      const discount = Number(coupon.amount || 500);
+      const discount = newFriendCouponEnabled && coupon ? Number(coupon.amount || 500) : 0;
       const totalAmount = Math.max(unitPrice - discount, 0);
       const orderNo = `LINE-${dayjs().format("YYYYMMDD-HHmmss-SSS")}`;
 

@@ -319,7 +319,7 @@ function OrdersPage() {
   async function requestGoogleReviewCoupon() {
     if (!detail?.id) return;
 
-    if (!window.confirm("確認核准 Google 評論優惠並套用 NT$1500 折抵？")) {
+    if (!window.confirm("確認核准 Google 評論優惠並套用  折抵？")) {
       return;
     }
 
@@ -421,16 +421,117 @@ if (!window.confirm(
 
   async function printOrderInvoice(row) {
     try {
-      const marker = "PRINT_FRONTEND_ONLY_V2";
-      const orderNo = row.orderNo || row.order_no || row.id || "-";
-      const customerName = row.customerName || row.customer_name || row.name || "-";
-      const customerPhone = row.customerPhone || row.customer_phone || row.phone || "";
-      const orderDate = row.businessDate || row.business_date || row.createdAt || row.created_at || "";
-      const totalAmount = Number(row.totalAmount ?? row.total_amount ?? row.amount ?? 0);
-      const depositAmount = Number(row.depositAmount ?? row.deposit_amount ?? 0);
-      const unpaidBalance = Number(row.unpaidBalance ?? row.unpaid_balance ?? Math.max(totalAmount - depositAmount, 0));
-      const paymentStatus = row.finalPaymentStatus || row.final_payment_status || row.paymentStatus || row.payment_status || "-";
-      const orderStatus = row.status || "-";
+      const marker = "PRINT_FRONTEND_ONLY_V4_DETAIL_ITEMS";
+
+      let detail = row;
+
+      try {
+        if (row?.id) {
+          const loaded = await apiRequest(`/orders/${row.id}`);
+          detail = loaded?.order || loaded?.data || loaded || row;
+        }
+      } catch (loadError) {
+        detail = row;
+      }
+
+      const orderNo = detail.orderNo || detail.order_no || row.orderNo || row.order_no || row.id || "-";
+      const customerName = detail.customerName || detail.customer_name || detail.customerNameSnapshot || row.customerName || row.customer_name || "-";
+      const customerPhone = detail.customerPhone || detail.customer_phone || detail.customerPhoneSnapshot || row.customerPhone || row.customer_phone || "";
+      const orderDate = detail.businessDate || detail.business_date || detail.createdAt || detail.created_at || row.businessDate || row.createdAt || "";
+      const totalAmount = Number(detail.totalAmount ?? detail.total_amount ?? row.totalAmount ?? row.total_amount ?? 0);
+      const depositAmount = Number(detail.depositAmount ?? detail.deposit_amount ?? row.depositAmount ?? row.deposit_amount ?? 0);
+      const unpaidBalance = Number(detail.unpaidBalance ?? detail.unpaid_balance ?? row.unpaidBalance ?? row.unpaid_balance ?? Math.max(totalAmount - depositAmount, 0));
+
+      const couponDiscountAmount = Number(
+        detail.couponDiscountAmount ??
+        detail.coupon_discount_amount ??
+        detail.coupon_discount ??
+        detail.couponAmount ??
+        row.couponDiscountAmount ??
+        row.coupon_discount_amount ??
+        row.coupon_discount ??
+        0
+      );
+
+      const storedOtherDiscount = Number(
+        detail.otherDiscountAmount ??
+        detail.other_discount_amount ??
+        detail.other_discount ??
+        detail.manual_discount ??
+        row.otherDiscountAmount ??
+        row.other_discount_amount ??
+        row.other_discount ??
+        0
+      );
+
+      const paymentStatus = detail.finalPaymentStatus || detail.final_payment_status || row.finalPaymentStatus || row.final_payment_status || "-";
+      const orderStatus = detail.status || row.status || "-";
+
+      const rawItems =
+        Array.isArray(detail.items) ? detail.items :
+        Array.isArray(detail.orderItems) ? detail.orderItems :
+        Array.isArray(detail.order_items) ? detail.order_items :
+        Array.isArray(detail.products) ? detail.products :
+        Array.isArray(row.items) ? row.items :
+        Array.isArray(row.orderItems) ? row.orderItems :
+        [];
+
+      const summaryText =
+        detail.itemSummary ||
+        detail.itemsSummary ||
+        detail.productSummary ||
+        detail.productsSummary ||
+        row.itemSummary ||
+        row.itemsSummary ||
+        row.productSummary ||
+        row.productsSummary ||
+        "";
+
+      let invoiceItems = rawItems.map((item) => ({
+        name: item.productName || item.product_name || item.product_name_snapshot || item.productNameSnapshot || item.name || item.title || "商品",
+        qty: Number(item.quantity ?? item.qty ?? 1),
+        price: Number(item.unitPrice ?? item.unit_price ?? item.price ?? item.unitPriceSnapshot ?? 0),
+        total: Number(item.subtotal ?? item.line_total ?? item.total ?? item.amount ?? 0),
+      }));
+
+      if (!invoiceItems.length && summaryText) {
+        invoiceItems = String(summaryText)
+          .split(" / ")
+          .map((text) => text.trim())
+          .filter(Boolean)
+          .map((text) => ({
+            name: text,
+            qty: "",
+            price: "",
+            total: "",
+          }));
+      }
+
+      const itemTotal = invoiceItems.reduce((sum, item) => {
+        const lineTotal = Number(item.total || 0);
+        const qty = Number(item.qty || 0);
+        const price = Number(item.price || 0);
+        return sum + (lineTotal > 0 ? lineTotal : qty * price);
+      }, 0);
+
+      const computedOtherDiscount = Math.max(itemTotal - totalAmount - couponDiscountAmount, 0);
+      const otherDiscountAmount = storedOtherDiscount > 0 ? storedOtherDiscount : computedOtherDiscount;
+      const originalAmount = Math.max(
+        itemTotal,
+        totalAmount + couponDiscountAmount + otherDiscountAmount
+      );
+
+      const itemsHtml = invoiceItems.length
+        ? invoiceItems.map((item, index) => `
+          <tr>
+            <td class="idx">${index + 1}</td>
+            <td class="item-name">${invoiceEscape(item.name)}</td>
+            <td class="num">${item.qty === "" ? "" : Number(item.qty || 0).toLocaleString()}</td>
+            <td class="num">${item.price === "" ? "" : invoiceMoney(item.price)}</td>
+            <td class="num">${item.total === "" ? "" : invoiceMoney(item.total)}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="5" class="empty">此訂單目前沒有商品明細資料</td></tr>`;
 
       const html = `<!doctype html>
 <html>
@@ -438,22 +539,37 @@ if (!window.confirm(
   <meta charset="utf-8" />
   <title>訂單明細 ${invoiceEscape(orderNo)}</title>
   <style>
-    body { font-family: Arial, "Noto Sans TC", sans-serif; color:#111827; margin:0; padding:28px; background:#fff; }
+    @page { size: A4; margin: 8mm; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, "Noto Sans TC", sans-serif; color:#111827; margin:0; padding:14px; background:#fff; font-size:11px; }
     .invoice { max-width:760px; margin:0 auto; }
-    .top { display:flex; justify-content:space-between; border-bottom:3px solid #111827; padding-bottom:16px; margin-bottom:22px; }
-    .brand { font-size:28px; font-weight:900; letter-spacing:1px; }
-    .subtitle { color:#667085; margin-top:5px; font-size:14px; }
-    .title { font-size:22px; font-weight:900; text-align:right; }
-    .meta { display:grid; grid-template-columns:1fr 1fr; gap:10px 28px; margin-bottom:24px; font-size:14px; }
-    .meta div { display:flex; justify-content:space-between; border-bottom:1px solid #e5e7eb; padding:8px 0; gap:14px; }
+    .top { display:flex; justify-content:space-between; border-bottom:3px solid #111827; padding-bottom:9px; margin-bottom:10px; }
+    .brand { font-size:22px; font-weight:900; letter-spacing:1px; }
+    .subtitle { color:#667085; margin-top:3px; font-size:11px; }
+    .title { font-size:17px; font-weight:900; text-align:right; letter-spacing:2px; }
+    .meta { display:grid; grid-template-columns:1fr 1fr; gap:4px 26px; margin-bottom:8px; font-size:11px; }
+    .meta div { display:flex; justify-content:space-between; border-bottom:1px solid #e5e7eb; padding:4px 0; gap:10px; }
     .meta span { color:#667085; }
-    .summary { width:360px; margin-left:auto; margin-top:18px; border:1px solid #e5e7eb; border-radius:10px; overflow:hidden; }
-    .summary-row { display:flex; justify-content:space-between; padding:11px 14px; border-bottom:1px solid #e5e7eb; font-size:15px; }
+    .items-title { font-size:13px; font-weight:900; margin:7px 0 4px; }
+    table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:9.5px; }
+    th { background:#f3f4f6; color:#374151; padding:4px 5px; border:1px solid #e5e7eb; text-align:left; font-weight:800; }
+    td { padding:3px 5px; border:1px solid #e5e7eb; vertical-align:top; line-height:1.18; }
+    .idx { width:26px; text-align:center; color:#667085; }
+    .item-name { width:auto; word-break:break-word; }
+    .num { text-align:right; white-space:nowrap; }
+    .summary { width:300px; margin-left:auto; margin-top:8px; border:1px solid #e5e7eb; border-radius:8px; overflow:hidden; }
+    .summary-row { display:flex; justify-content:space-between; padding:6px 9px; border-bottom:1px solid #e5e7eb; font-size:11px; }
     .summary-row:last-child { border-bottom:none; }
-    .final { font-size:18px; font-weight:900; background:#f9fafb; }
-    .note { margin-top:26px; padding:14px; background:#f9fafb; border-radius:10px; color:#475467; font-size:13px; line-height:1.6; }
-    .footer { margin-top:36px; color:#667085; font-size:12px; text-align:center; }
-    @media print { body { padding:0; } .invoice { max-width:none; } }
+    .discount { color:#b42318; }
+    .final { font-size:14px; font-weight:900; background:#f9fafb; }
+    .note { margin-top:8px; padding:7px 9px; background:#f9fafb; border-radius:8px; color:#475467; font-size:9.5px; line-height:1.35; }
+    .footer { margin-top:10px; color:#667085; font-size:9px; text-align:center; }
+    .empty { text-align:center; color:#667085; padding:7px; }
+    @media print {
+      body { padding:0; }
+      .invoice { max-width:none; }
+      .top, .meta, table, .summary, .note, .footer { page-break-inside:avoid; }
+    }
   </style>
 </head>
 <body>
@@ -475,16 +591,30 @@ if (!window.confirm(
       <div><span>訂單狀態</span><strong>${invoiceEscape(orderStatus)}</strong></div>
     </div>
 
+    <div class="items-title">商品明細</div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:28px;">#</th>
+          <th>商品</th>
+          <th style="width:42px;" class="num">數量</th>
+          <th style="width:82px;" class="num">單價</th>
+          <th style="width:82px;" class="num">小計</th>
+        </tr>
+      </thead>
+      <tbody>${itemsHtml}</tbody>
+    </table>
+
     <div class="summary">
+      <div class="summary-row"><span>商品總額</span><strong>${invoiceMoney(originalAmount)}</strong></div>
+      <div class="summary-row discount"><span>會員服務</span><strong>- ${invoiceMoney(couponDiscountAmount)}</strong></div>
+      <div class="summary-row discount"><span>其他折扣</span><strong>- ${invoiceMoney(otherDiscountAmount)}</strong></div>
       <div class="summary-row final"><span>訂單應收</span><strong>${invoiceMoney(totalAmount)}</strong></div>
       <div class="summary-row"><span>已收訂金</span><strong>${invoiceMoney(depositAmount)}</strong></div>
       <div class="summary-row"><span>未收尾款</span><strong>${invoiceMoney(unpaidBalance)}</strong></div>
     </div>
 
-    <div class="note">
-      商品明細以 POS 原始訂單資料為準。本列印單作為門市訂單、付款與交車確認參考。
-    </div>
-
+    <div class="note">本列印單作為門市訂單、付款與交車確認參考。商品較多時已自動壓縮版面，盡量維持單頁列印。</div>
     <div class="footer">感謝您的購買。請妥善保存此訂單明細作為門市服務與付款紀錄參考。</div>
   </div>
 
@@ -498,7 +628,6 @@ if (!window.confirm(
 </html>`;
 
       const printWindow = window.open("", "_blank", "width=900,height=1100");
-
       if (!printWindow) {
         window.alert("瀏覽器阻擋了列印視窗，請允許彈出視窗後再試一次。");
         return;

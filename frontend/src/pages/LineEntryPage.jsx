@@ -25,13 +25,13 @@ const PAGE_CONTENT = {
   },
   "/coupon-center": {
     title: "優惠券服務",
-    description: "請回到 LINE 對話查詢新朋友優惠券、Google 評論優惠券與使用狀態。",
-    tips: ["若尚未綁定手機，請先在 LINE 回覆手機號碼。", "新朋友優惠券限購買電動自行車時使用。"]
+    description: "請回到 LINE 對話查詢會員服務、Google 評論與使用狀態。",
+    tips: ["若尚未綁定手機，請先在 LINE 回覆手機號碼。", "會員服務限購買電動自行車時使用。"]
   },
   "/google-review": {
     title: "Google 評論",
     description: "完成 Google 評論後，請回到 LINE 對話輸入「我已完成評論」，系統會送門市審核。",
-    tips: ["Google 評論優惠券需人工審核後才會發放。"]
+    tips: ["Google 評論需人工審核後才會發放。"]
   },
   "/progress": {
     title: "查詢進度",

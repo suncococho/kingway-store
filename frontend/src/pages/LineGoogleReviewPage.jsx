@@ -101,7 +101,7 @@ function LineGoogleReviewPage() {
           {done ? (
         <section className="line-customer-summary">
           <div className="line-customer-summary-title">已送出審核</div>
-          <p>門市確認 Google 評論後，系統會發放 Google 評論優惠券。</p>
+          <p>門市確認 Google 評論後，系統會發放 Google 評論。</p>
         </section>
       ) : (
         <section className="line-customer-summary">
