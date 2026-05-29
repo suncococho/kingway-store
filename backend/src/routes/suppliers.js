@@ -8,9 +8,9 @@ const router = express.Router();
 async function notifySupplierRequestTelegram({ requestId, requestType, supplierName, note, items = [] }) {
   const token = process.env.TELEGRAM_STOCK_BOT_TOKEN;
   const chatId =
+    process.env.TELEGRAM_SUPPLIER_CHAT_ID ||
     process.env.TELEGRAM_STOCK_GROUP_ID ||
-    process.env.TELEGRAM_STOCK_CHAT_ID ||
-    process.env.TELEGRAM_SUPPLIER_CHAT_ID;
+    process.env.TELEGRAM_STOCK_CHAT_ID;
 
   if (!token || !chatId) {
     console.warn("[supplier:telegram] skipped missing env", {
@@ -223,6 +223,15 @@ router.post("/requests", async (req, res, next) => {
     } catch (e) {
       console.warn("Supplier decision request send failed:", e.message);
     }
+
+    // SUPPLIERS_NOTIFY_CALL_V2
+    await notifySupplierRequestTelegram({
+      requestId,
+      requestType,
+      supplierName,
+      note,
+      items
+    });
 
     return res.status(201).json({
       id: requestResult.insertId,
