@@ -34,6 +34,15 @@ router.get("/customer", async (req, res, next) => {
 
 router.post("/request", async (req, res, next) => {
   try {
+    if (
+      process.env.COUPON_CAMPAIGN_ENABLED !== "true" &&
+      process.env.GOOGLE_REVIEW_COUPON_ENABLED !== "true"
+    ) {
+      return res.status(403).json({
+        message: "Google 評論活動目前暫停"
+      });
+    }
+
     const lineUserId = String(req.body.lineUserId || "").trim();
     if (!lineUserId) return res.status(400).json({ message: "缺少 LINE 使用者資料" });
 
@@ -66,7 +75,7 @@ router.post("/request", async (req, res, next) => {
         return res.json({
           ok: false,
           alreadyUsed: true,
-          message: "您已使用過 Google 評論優惠券，每位顧客限使用一次。"
+          message: "您已完成過 Google 評論確認。"
         });
       }
 
@@ -75,7 +84,7 @@ router.post("/request", async (req, res, next) => {
           ok: true,
           pending: true,
           couponId: coupon.id,
-          message: `您的 Google 評論優惠券已在審核中，申請編號 #${coupon.id}。`
+          message: `您的 Google 評論已在確認中，申請編號 #${coupon.id}。`
         });
       }
 
@@ -85,7 +94,7 @@ router.post("/request", async (req, res, next) => {
           alreadyIssued: true,
           couponId: coupon.id,
           code: coupon.code,
-          message: `您已有 Google 評論優惠券，券碼：${coupon.code}`
+          message: `您已有 Google 評論紀錄。`
         });
       }
 
@@ -93,7 +102,7 @@ router.post("/request", async (req, res, next) => {
         return res.json({
           ok: false,
           rejected: true,
-          message: "您的 Google 評論優惠券申請先前未通過，如有疑問請洽門市人員。"
+          message: "您的 Google 評論先前未通過確認，如有疑問請洽門市人員。"
         });
       }
     }
@@ -145,7 +154,7 @@ router.post("/request", async (req, res, next) => {
     return res.json({
       ok: true,
       couponId: result.insertId,
-      message: "已送出 Google 評論優惠券審核，門市確認後會通知您。"
+      message: "已送出 Google 評論確認，門市確認後會通知您。"
     });
   } catch (error) {
     return next(error);

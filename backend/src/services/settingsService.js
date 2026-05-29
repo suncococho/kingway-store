@@ -71,7 +71,7 @@ const SYSTEM_DEFAULTS = {
       { role: "REPAIR", label: "維修", summary: "維修預約、估價、完修" },
       { role: "INVENTORY", label: "庫存", summary: "商品、庫存、發注、退貨" }
     ],
-    adminApprovalItems: ["Google 評論優惠券", "維修予約審核", "供應商退貨確認"],
+    adminApprovalItems: ["Google 評論", "維修予約審核", "供應商退貨確認"],
     staffLineLinkSummary: "員工 LINE userId 綁定由員工資料管理頁維護。"
   },
   status: {

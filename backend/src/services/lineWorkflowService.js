@@ -1948,7 +1948,7 @@ function buildWelcomeMessages() {
       type: "text",
       text: [
         "歡迎加入 KINGWAY 台南。",
-        "請回覆您的手機號碼完成綁定，即可領取新好友 NT$500 優惠券。",
+        "請回覆您的手機號碼完成綁定，即可領取新好友  優惠券。",
         "也可以回覆預算、預計購買時間與用途，讓門市更快協助您。"
       ].join("\n")
     }
@@ -1992,7 +1992,7 @@ function buildPhoneBoundMessages(couponCode) {
   return withCustomerQuickReply([
     {
       type: "text",
-      text: `手機已綁定。新好友 NT$500 優惠券已建立，券碼：${couponCode}。此券限電動自行車購買使用。`
+      text: `手機已綁定。新好友  優惠券已建立，券碼：${couponCode}。此券限電動自行車購買使用。`
     }
   ]);
 }
@@ -2003,8 +2003,8 @@ function buildCouponBindingRequiredMessages() {
       type: "text",
       text: [
         "您好 🎁",
-        "領取新朋友優惠券前，請先完成手機綁定。",
-        "完成綁定後，即可領取 NT$500 新朋友優惠券。",
+        "使用會員服務前，請先完成手機綁定。",
+        "完成綁定後，門市可提供訂單、維修與售後服務。",
         "此優惠券限購買「電動自行車」時使用。",
         "",
         "如要綁定手機，請直接點下方「綁定手機」或回覆您的手機號碼。"
@@ -2220,8 +2220,8 @@ function buildCouponStatusMessages(coupon) {
       text: [
         "您好 🎁",
         "優惠券：請直接於門市結帳時由人員協助確認。",
-        "新朋友優惠券：",
-        "- 金額：NT$500",
+        "會員服務：",
+        "- 狀態：目前活動暫停",
         "- 適用：電動自行車",
         "- 每位客戶限領一次",
         coupon ? `目前狀態：${coupon.status}${coupon.code ? ` / 券碼：${coupon.code}` : ""}` : "目前狀態：尚未建立"
@@ -2237,7 +2237,7 @@ function buildGoogleReviewEntryMessages() {
       text: [
         "感謝您支持 KINGWAY ⭐",
         "如果您願意幫我們留下 Google 評論，請在 Google 地圖搜尋 KINGWAY 台南門市並完成評論。",
-        "完成後，請再點下方「我已完成評論」，我們會由門市人員確認後發送 NT$1500 優惠券給您。",
+        "完成後，請再點下方「我已完成評論」，我們會由門市人員確認後發送  優惠券給您。",
         "此優惠券限購買「電動自行車」時使用。"
       ].join("\n")
     }
@@ -4106,8 +4106,8 @@ async function handleCustomerMessageEvent(event) {
             {
               type: "text",
               text: existingCoupons[0].status === "issued"
-                ? `您已有 Google 評論優惠券，券碼：${existingCoupons[0].code}`
-                : `您的 Google 評論優惠券申請已送審，申請編號 #${existingCoupons[0].id}`
+                ? `您已有 Google 評論紀錄，門市會協助確認。`
+                : `您的 Google 評論已送出確認，申請編號 #${existingCoupons[0].id}`
             }
           ])
         );
@@ -4402,8 +4402,8 @@ async function handleLinePostback(event) {
         {
           type: "text",
           text: approved
-            ? `Google 評論優惠券已核准，金額 NT$1500，券碼：${rows[0].code}`
-            : "Google 評論優惠券這次未通過審核，如有疑問請洽門市人員。"
+            ? `Google 評論已核准，金額 ，券碼：${rows[0].code}`
+            : "Google 評論這次未通過審核，如有疑問請洽門市人員。"
         }
       ]);
     }
@@ -4452,7 +4452,7 @@ async function handleLinePostback(event) {
       }, staffId);
     }
 
-    await sendToGroups(["admin", "staff", "daily"], [{ type: "text", text: `Google 評論優惠券 #${id} 已${approved ? "核准" : "拒絕"}。` }]);
+    await sendToGroups(["admin", "staff", "daily"], [{ type: "text", text: `Google 評論 #${id} 已${approved ? "核准" : "拒絕"}。` }]);
     await logWorkflowEvent(approved ? "google_review_coupon_approved" : "google_review_coupon_rejected", "COUPON", id, { source: "line_postback" }, staffId);
     if (event.replyToken) {
       await replyToLine(
@@ -4460,7 +4460,7 @@ async function handleLinePostback(event) {
         withStaffQuickReply([
           {
             type: "text",
-            text: approved ? "已核准 Google 評論優惠券。" : "已拒絕 Google 評論優惠券。"
+            text: approved ? "已核准 Google 評論。" : "已拒絕 Google 評論。"
           }
         ])
       );

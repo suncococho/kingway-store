@@ -946,12 +946,12 @@ router.post("/webhook", async (req, res) => {
       );
 
       if (!coupon) {
-        if (chatId) await sendMessage(chatId, `找不到 Google 評論優惠券 #${couponId}`);
+        if (chatId) await sendMessage(chatId, `找不到 Google 評論 #${couponId}`);
         return res.json({ ok: true });
       }
 
       if (Number(coupon.isUsed || 0) || coupon.status === "used") {
-        if (chatId) await sendMessage(chatId, `Google 評論優惠券 #${couponId} 已使用過，不能重複核准。`);
+        if (chatId) await sendMessage(chatId, `Google 評論 #${couponId} 已處理過，不能重複核准。`);
         return res.json({ ok: true });
       }
 
@@ -967,7 +967,7 @@ router.post("/webhook", async (req, res) => {
           [couponId]
         );
 
-        if (chatId) await sendMessage(chatId, `❌ Google 評論優惠券 #${couponId} 已拒絕。`);
+        if (chatId) await sendMessage(chatId, `❌ Google 評論 #${couponId} 已拒絕。`);
         return res.json({ ok: true });
       }
 
@@ -989,7 +989,7 @@ router.post("/webhook", async (req, res) => {
       }
 
       if (!orderId) {
-        if (chatId) await sendMessage(chatId, `找不到可套用 Google 評論優惠券 #${couponId} 的訂單。`);
+        if (chatId) await sendMessage(chatId, `找不到可確認 Google 評論 #${couponId} 的訂單。`);
         return res.json({ ok: true });
       }
 
@@ -1035,7 +1035,7 @@ router.post("/webhook", async (req, res) => {
       if (chatId) {
         await sendMessage(
           chatId,
-          `✅ Google 評論優惠券 #${couponId} 已核准並套用至訂單 #${orderId}，折抵 NT$${amount}。`
+          `✅ Google 評論 #${couponId} 已確認，對應訂單 #${orderId}。`
         );
       }
 

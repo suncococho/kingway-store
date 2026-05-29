@@ -125,7 +125,7 @@ router.post("/issue", async (req, res, next) => {
     }
 
     if (couponType !== "new_friend") {
-      throw createError("Google 評論優惠券請使用評論申請流程", 400);
+      throw createError("Google 評論請使用評論申請流程", 400);
     }
 
     const order = await ensureCouponEligibility(customerId, orderId, couponType, true, storeId);
@@ -228,7 +228,7 @@ router.post("/approve-google-review-for-order/:orderId", authorize(["ADMIN", "MA
     );
 
     if (!rows[0]) {
-      throw createError("尚未收到此訂單客戶的 Google 評論優惠券審核申請", 404);
+      throw createError("尚未收到此訂單客戶的 Google 評論確認申請", 404);
     }
 
     const coupon = rows[0];
@@ -297,7 +297,7 @@ router.post("/approve-google-review/:id", authorize(["ADMIN", "MANAGER"]), async
     );
 
     if (!rows[0]) {
-      throw createError("找不到 Google 評論優惠券申請", 404);
+      throw createError("找不到 Google 評論申請", 404);
     }
 
     await pool.query(
@@ -318,7 +318,7 @@ router.post("/approve-google-review/:id", authorize(["ADMIN", "MANAGER"]), async
       await sendLineMessage(config, rows[0].lineUserId, [
         {
           type: "text",
-          text: `Google 評論優惠券已核准，券碼：${rows[0].code}`
+          text: `Google 評論已確認，券碼：${rows[0].code}`
         }
       ]);
     }
@@ -326,12 +326,12 @@ router.post("/approve-google-review/:id", authorize(["ADMIN", "MANAGER"]), async
     await sendToGroups(["admin", "staff"], [
       {
         type: "text",
-        text: `Google 評論優惠券已核准：${rows[0].code}`
+        text: `Google 評論已確認：${rows[0].code}`
       }
     ]);
 
     await logWorkflowEvent("google_review_coupon_approved", "COUPON", req.params.id, null, req.user.id);
-    return res.json({ message: "Google 評論優惠券已核准" });
+    return res.json({ message: "Google 評論已確認" });
   } catch (error) {
     return next(error);
   }
@@ -351,7 +351,7 @@ router.post("/reject-google-review/:id", authorize(["ADMIN", "MANAGER"]), async 
     );
 
     if (!rows[0]) {
-      throw createError("找不到 Google 評論優惠券申請", 404);
+      throw createError("找不到 Google 評論申請", 404);
     }
 
     await pool.query(
@@ -370,13 +370,13 @@ router.post("/reject-google-review/:id", authorize(["ADMIN", "MANAGER"]), async 
       await sendLineMessage(config, rows[0].lineUserId, [
         {
           type: "text",
-          text: "Google 評論優惠券這次未通過審核，如有疑問請洽門市人員。"
+          text: "Google 評論這次未通過審核，如有疑問請洽門市人員。"
         }
       ]);
     }
 
     await logWorkflowEvent("google_review_coupon_rejected", "COUPON", req.params.id, { reason: req.body.reason || null }, req.user.id);
-    return res.json({ message: "已拒絕 Google 評論優惠券" });
+    return res.json({ message: "已拒絕 Google 評論" });
   } catch (error) {
     return next(error);
   }
