@@ -394,6 +394,125 @@ if (!window.confirm(
     setSearchParams({ tab: next }, { replace: true });
   }
 
+
+  function moneyForInvoice(value) {
+    return `NT$ ${Number(value || 0).toLocaleString("zh-TW", { maximumFractionDigits: 0 })}`;
+  }
+
+  function escapeInvoiceHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function invoiceMoney(value) {
+    return `NT$ ${Number(value || 0).toLocaleString("zh-TW", { maximumFractionDigits: 0 })}`;
+  }
+
+  function invoiceEscape(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  async function printOrderInvoice(row) {
+    try {
+      const marker = "PRINT_FRONTEND_ONLY_V2";
+      const orderNo = row.orderNo || row.order_no || row.id || "-";
+      const customerName = row.customerName || row.customer_name || row.name || "-";
+      const customerPhone = row.customerPhone || row.customer_phone || row.phone || "";
+      const orderDate = row.businessDate || row.business_date || row.createdAt || row.created_at || "";
+      const totalAmount = Number(row.totalAmount ?? row.total_amount ?? row.amount ?? 0);
+      const depositAmount = Number(row.depositAmount ?? row.deposit_amount ?? 0);
+      const unpaidBalance = Number(row.unpaidBalance ?? row.unpaid_balance ?? Math.max(totalAmount - depositAmount, 0));
+      const paymentStatus = row.finalPaymentStatus || row.final_payment_status || row.paymentStatus || row.payment_status || "-";
+      const orderStatus = row.status || "-";
+
+      const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>訂單明細 ${invoiceEscape(orderNo)}</title>
+  <style>
+    body { font-family: Arial, "Noto Sans TC", sans-serif; color:#111827; margin:0; padding:28px; background:#fff; }
+    .invoice { max-width:760px; margin:0 auto; }
+    .top { display:flex; justify-content:space-between; border-bottom:3px solid #111827; padding-bottom:16px; margin-bottom:22px; }
+    .brand { font-size:28px; font-weight:900; letter-spacing:1px; }
+    .subtitle { color:#667085; margin-top:5px; font-size:14px; }
+    .title { font-size:22px; font-weight:900; text-align:right; }
+    .meta { display:grid; grid-template-columns:1fr 1fr; gap:10px 28px; margin-bottom:24px; font-size:14px; }
+    .meta div { display:flex; justify-content:space-between; border-bottom:1px solid #e5e7eb; padding:8px 0; gap:14px; }
+    .meta span { color:#667085; }
+    .summary { width:360px; margin-left:auto; margin-top:18px; border:1px solid #e5e7eb; border-radius:10px; overflow:hidden; }
+    .summary-row { display:flex; justify-content:space-between; padding:11px 14px; border-bottom:1px solid #e5e7eb; font-size:15px; }
+    .summary-row:last-child { border-bottom:none; }
+    .final { font-size:18px; font-weight:900; background:#f9fafb; }
+    .note { margin-top:26px; padding:14px; background:#f9fafb; border-radius:10px; color:#475467; font-size:13px; line-height:1.6; }
+    .footer { margin-top:36px; color:#667085; font-size:12px; text-align:center; }
+    @media print { body { padding:0; } .invoice { max-width:none; } }
+  </style>
+</head>
+<body>
+  <div class="invoice" data-marker="${marker}">
+    <div class="top">
+      <div>
+        <div class="brand">KINGWAY 台南門市</div>
+        <div class="subtitle">訂單明細 / Invoice</div>
+      </div>
+      <div class="title">ORDER INVOICE</div>
+    </div>
+
+    <div class="meta">
+      <div><span>訂單編號</span><strong>${invoiceEscape(orderNo)}</strong></div>
+      <div><span>日期</span><strong>${invoiceEscape(String(orderDate).slice(0, 10))}</strong></div>
+      <div><span>客戶</span><strong>${invoiceEscape(customerName)}</strong></div>
+      <div><span>電話</span><strong>${invoiceEscape(customerPhone)}</strong></div>
+      <div><span>付款狀態</span><strong>${invoiceEscape(paymentStatus)}</strong></div>
+      <div><span>訂單狀態</span><strong>${invoiceEscape(orderStatus)}</strong></div>
+    </div>
+
+    <div class="summary">
+      <div class="summary-row final"><span>訂單應收</span><strong>${invoiceMoney(totalAmount)}</strong></div>
+      <div class="summary-row"><span>已收訂金</span><strong>${invoiceMoney(depositAmount)}</strong></div>
+      <div class="summary-row"><span>未收尾款</span><strong>${invoiceMoney(unpaidBalance)}</strong></div>
+    </div>
+
+    <div class="note">
+      商品明細以 POS 原始訂單資料為準。本列印單作為門市訂單、付款與交車確認參考。
+    </div>
+
+    <div class="footer">感謝您的購買。請妥善保存此訂單明細作為門市服務與付款紀錄參考。</div>
+  </div>
+
+  <script>
+    window.onload = function () {
+      window.focus();
+      window.print();
+    };
+  </script>
+</body>
+</html>`;
+
+      const printWindow = window.open("", "_blank", "width=900,height=1100");
+
+      if (!printWindow) {
+        window.alert("瀏覽器阻擋了列印視窗，請允許彈出視窗後再試一次。");
+        return;
+      }
+
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+    } catch (error) {
+      window.alert(error.message || "無法產生訂單列印資料");
+    }
+  }
+
+
   const columns = [
     { key: "orderNo", label: "訂單編號", mobileHidden: true },
     {
@@ -467,6 +586,9 @@ if (!window.confirm(
           <button type="button" className="secondary-button" onClick={() => openDetail(row)}>
             詳情
           </button>
+            <button type="button" className="secondary-button" onClick={() => printOrderInvoice(row)}>
+              列印訂單
+            </button>
           <button type="button" className="danger-button" onClick={() => deleteOrder(row)}>
             刪除
           </button>

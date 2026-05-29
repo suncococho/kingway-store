@@ -1496,4 +1496,151 @@ router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), async (req
   }
 });
 
+
+
+// Order invoice print data
+router.get("/:id/invoice", async (req, res, next) => {
+  try {
+    const orderKey = String(req.params.id || "").trim();
+    const decodedOrderKey = decodeURIComponent(orderKey);
+    const orderId = Number(decodedOrderKey);
+    const isNumericId = Number.isInteger(orderId) && orderId > 0;
+
+    console.log("[orders:invoice] request", {
+      orderKey,
+      isNumericId,
+      userId: req.user?.id,
+      username: req.user?.username
+    });
+
+    if (!orderKey) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    const [orderRows] = await pool.query(
+      `
+        SELECT
+          o.*,
+          COALESCE(c.name, o.customer_name) AS resolved_customer_name,
+          COALESCE(c.phone, o.customer_phone) AS resolved_customer_phone
+        FROM orders o
+        LEFT JOIN customers c ON c.id = o.customer_id
+        WHERE ${isNumericId ? "o.id = ? OR o.order_no = ?" : "o.order_no = ?"}
+        LIMIT 1
+      `,
+      isNumericId ? [orderId, decodedOrderKey] : [decodedOrderKey]
+    );
+
+    console.log("[orders:invoice] orderRows", {
+      orderKey,
+      count: orderRows.length,
+      foundId: orderRows[0]?.id,
+      foundOrderNo: orderRows[0]?.order_no
+    });
+
+    if (!orderRows.length) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    const order = orderRows[0];
+
+    const [columns] = await pool.query(
+      `
+        SELECT COLUMN_NAME AS columnName
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'order_items'
+      `
+    );
+
+    const columnSet = new Set(columns.map((row) => row.columnName));
+
+    function col(candidates, fallback) {
+      for (const name of candidates) {
+        if (columnSet.has(name)) return `oi.\`${name}\``;
+      }
+      return fallback;
+    }
+
+    const nameExpr = col(["product_name_snapshot", "product_name", "name"], "'商品'");
+    const skuExpr = col(["product_sku_snapshot", "sku"], "''");
+    const qtyExpr = col(["quantity", "qty"], "0");
+    const unitExpr = col(["unit_price", "price"], "0");
+    const totalExpr = columnSet.has("subtotal")
+      ? "COALESCE(oi.`subtotal`, 0)"
+      : columnSet.has("line_total")
+        ? "COALESCE(oi.`line_total`, 0)"
+        : `COALESCE(${unitExpr}, 0) * COALESCE(${qtyExpr}, 0)`;
+
+    const [itemRows] = await pool.query(
+      `
+        SELECT
+          oi.id,
+          ${nameExpr} AS productName,
+          ${skuExpr} AS sku,
+          COALESCE(${qtyExpr}, 0) AS quantity,
+          COALESCE(${unitExpr}, 0) AS unitPrice,
+          ${totalExpr} AS subtotal
+        FROM order_items oi
+        WHERE oi.order_id = ?
+        ORDER BY oi.id
+      `,
+      [order.id]
+    );
+
+    console.log("[orders:invoice] itemRows", {
+      orderId: order.id,
+      count: itemRows.length
+    });
+
+    const items = itemRows.map((item) => ({
+      id: item.id,
+      productName: item.productName || "商品",
+      sku: item.sku || "",
+      quantity: Number(item.quantity || 0),
+      unitPrice: Number(item.unitPrice || 0),
+      subtotal: Number(item.subtotal || 0)
+    }));
+
+    const itemTotal = items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+    const receivableAmount = Number(order.total_amount || 0);
+    const couponDiscountAmount = Number(order.coupon_discount || order.coupon_discount_amount || order.coupon_amount || 0);
+    const storedOtherDiscount = Number(order.other_discount || order.manual_discount || order.discount_amount || 0);
+    const computedOtherDiscount = Math.max(itemTotal - receivableAmount - couponDiscountAmount, 0);
+    const otherDiscountAmount = storedOtherDiscount > 0 ? storedOtherDiscount : computedOtherDiscount;
+    const originalAmount = Math.max(itemTotal, receivableAmount + couponDiscountAmount + otherDiscountAmount);
+    const depositAmount = Number(order.deposit_amount || 0);
+    const unpaidBalance = Number(order.unpaid_balance || Math.max(receivableAmount - depositAmount, 0));
+
+    res.json({
+      order: {
+        id: order.id,
+        orderNo: order.order_no,
+        createdAt: order.created_at,
+        businessDate: order.business_date,
+        customerName: order.resolved_customer_name || order.customer_name || "",
+        customerPhone: order.resolved_customer_phone || order.customer_phone || "",
+        paymentMethod: order.payment_method,
+        finalPaymentStatus: order.final_payment_status,
+        status: order.status,
+        notes: order.notes || ""
+      },
+      items,
+      totals: {
+        originalAmount,
+        couponDiscountAmount,
+        otherDiscountAmount,
+        discountAmount: couponDiscountAmount + otherDiscountAmount,
+        receivableAmount,
+        depositAmount,
+        unpaidBalance
+      }
+    });
+  } catch (error) {
+    console.error("[orders:invoice] error", error);
+    next(error);
+  }
+});
+
+
 module.exports = router;
