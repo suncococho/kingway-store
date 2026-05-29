@@ -5,6 +5,88 @@ const { authenticate, authorize, requireStoreScope } = require("../middleware/au
 
 const router = express.Router();
 
+async function notifySupplierRequestTelegram({ requestId, requestType, supplierName, note, items = [] }) {
+  const token = process.env.TELEGRAM_STOCK_BOT_TOKEN;
+  const chatId =
+    process.env.TELEGRAM_STOCK_GROUP_ID ||
+    process.env.TELEGRAM_STOCK_CHAT_ID ||
+    process.env.TELEGRAM_SUPPLIER_CHAT_ID;
+
+  if (!token || !chatId) {
+    console.warn("[supplier:telegram] skipped missing env", {
+      hasToken: Boolean(token),
+      chatId: chatId || null
+    });
+    return;
+  }
+
+  const typeLabel = requestType === "RETURN" ? "退貨 / 換貨" : "發注";
+  const itemLines = items.length
+    ? items.map((item, index) => {
+        const name =
+          item.productName ||
+          item.product_name ||
+          item.product_name_snapshot ||
+          item.name ||
+          item.note ||
+          `商品ID ${item.productId || item.product_id || "-"}`;
+
+        const sku =
+          item.sku ||
+          item.productSku ||
+          item.product_sku ||
+          item.product_sku_snapshot ||
+          "";
+
+        const qty = Number(item.quantity || item.qty || 0);
+
+        return `${index + 1}. ${name}${sku ? ` / ${sku}` : ""} × ${qty}`;
+      }).join("\n")
+    : "- 無商品明細";
+
+  const text = [
+    `📦 KINGWAY ${typeLabel}通知`,
+    `單號: PO-${requestId}`,
+    `供應商: ${supplierName || "-"}`,
+    `類型: ${requestType || "-"}`,
+    note ? `備註: ${note}` : null,
+    "",
+    "商品:",
+    itemLines
+  ].filter(Boolean).join("\n");
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text
+      })
+    });
+
+    const body = await response.text();
+
+    if (!response.ok) {
+      console.error("[supplier:telegram] send failed", {
+        status: response.status,
+        body
+      });
+      return;
+    }
+
+    console.log("[supplier:telegram] sent", {
+      requestId,
+      chatId,
+      status: response.status
+    });
+  } catch (error) {
+    console.error("[supplier:telegram] send error", error);
+  }
+}
+
+
+
 async function sendTelegramMessage(chatId, text, replyMarkup = null) {
   const token = process.env.TELEGRAM_STOCK_BOT_TOKEN || process.env.TELEGRAM_NOTIFY_BOT_TOKEN;
   if (!token || !chatId) return;
