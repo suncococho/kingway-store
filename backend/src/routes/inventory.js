@@ -52,19 +52,27 @@ async function notifySupplierRequestTelegram({ requestId, requestType, supplierN
 
         const qty = Number(item.quantity || item.qty || 0);
 
-        return `${index + 1}. ${name}${sku ? ` / ${sku}` : ""} × ${qty}`;
+        return [
+          `${index + 1}. ${name}`,
+          sku ? `   SKU：${sku}` : null,
+          `   數量：${qty}`
+        ].filter(Boolean).join("\n");
       }).join("\n")
     : "- 無商品明細";
 
   const text = [
-    `📦 KINGWAY ${typeLabel}通知`,
-    `單號: PO-${requestId}`,
-    `供應商: ${supplierName || "-"}`,
-    `類型: ${requestType || "-"}`,
-    note ? `備註: ${note}` : null,
+    `📦 KINGWAY ${typeLabel}申請`,
     "",
-    "商品:",
-    itemLines
+    `單號：PO-${requestId}`,
+    `供應商：${supplierName || "-"}`,
+    "狀態：待供應商確認",
+    "",
+    "商品明細",
+    itemLines,
+    "",
+    note ? `備註：${note}` : null,
+    "",
+    "請供應商確認或拒絕。"
   ].filter(Boolean).join("\n");
 
   try {
