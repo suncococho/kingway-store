@@ -16,6 +16,10 @@ const {
 } = require("../utils/productCategories");
 
 const router = express.Router();
+
+function getRequestStoreId(req) {
+  return Number(req.storeId || req.user?.store_id || req.user?.storeId || 1);
+}
 const productsStorageDir = path.join(__dirname, "..", "..", "storage", "products");
 const allowedImageTypes = new Map([
   ["image/jpeg", ".jpg"],
@@ -103,6 +107,10 @@ router.get("/", async (req, res, next) => {
   try {
     const search = req.query.search ? `%${req.query.search}%` : null;
     const productColumns = await getTableColumns(pool, "products");
+
+    // PRODUCTS_STORE_ID_FILTER_V1
+    const storeId = getRequestStoreId(req);
+    const hasStoreId = hasColumn(productColumns, "store_id");
     let sql = `
       SELECT
         ${selectColumn(productColumns, "products", "id", "id")},
@@ -124,13 +132,23 @@ router.get("/", async (req, res, next) => {
       FROM products
     `;
     const params = [];
+    const whereClauses = [];
+
+    if (hasStoreId) {
+      whereClauses.push("store_id = ?");
+      params.push(storeId);
+    }
 
     if (search) {
       const searchFields = ["sku", "name"].filter((column) => hasColumn(productColumns, column));
       if (searchFields.length) {
-        sql += ` WHERE ${searchFields.map((column) => `${column} LIKE ?`).join(" OR ")} `;
+        whereClauses.push(`(${searchFields.map((column) => `${column} LIKE ?`).join(" OR ")})`);
         params.push(...searchFields.map(() => search));
       }
+    }
+
+    if (whereClauses.length) {
+      sql += ` WHERE ${whereClauses.join(" AND ")} `;
     }
 
     sql += " ORDER BY id DESC";
@@ -205,13 +223,16 @@ router.post("/", async (req, res, next) => {
       return res.status(400).json({ message: "SKU、商品名稱、售價與庫存為必填欄位" });
     }
 
+    const productColumns = await getTableColumns(pool, "products");
+    const storeId = getRequestStoreId(req);
+
     const normalizedSku = normalizeProductSku(sku);
     const resolvedCategory = getCategoryFromSku(normalizedSku, category);
 
     const [result] = await pool.query(
       `
-        INSERT INTO products (sku, name, category, price, stock, reorder_level, is_active, description, image_url, cost_price, location, inputter_name, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO products (sku, name, category, price, stock, reorder_level, is_active, description, image_url, cost_price, location, inputter_name, source, store_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         normalizedSku,
@@ -226,7 +247,8 @@ router.post("/", async (req, res, next) => {
         costPrice === undefined ? 0 : Number(costPrice || 0),
         location || null,
         inputterName || null,
-        source || null
+        source || null,
+        hasColumn(productColumns, "store_id") ? storeId : null
       ]
     );
 
