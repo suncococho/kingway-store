@@ -3,6 +3,10 @@ const { pool } = require("../db");
 
 const router = express.Router();
 
+function getRequestStoreId(req) {
+  return Number(req.storeId || req.user?.store_id || req.user?.storeId || 1);
+}
+
 function normalizeDate(value, fallback) {
   const text = String(value || "").trim();
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : fallback;
@@ -67,6 +71,10 @@ router.get("/summary", async (req, res, next) => {
     const orderColumns = await getColumns("orders");
     const itemColumns = await getColumns("order_items");
 
+    // SALES_STORE_ID_FILTER_SAFE_V1
+    const storeId = getRequestStoreId(req);
+    const storeFilter = orderColumns.has("store_id") ? "AND o.`store_id` = ?" : "";
+
     const orderDateCol = pickColumn(orderColumns, ["created_at", "business_date", "updated_at"], "o.`id`", "o");
     const orderNoCol = pickColumn(orderColumns, ["order_no", "order_number", "id"], "o.`id`", "o");
     const customerNameCol = pickColumn(orderColumns, ["customer_name", "name"], "NULL", "o");
@@ -91,7 +99,13 @@ router.get("/summary", async (req, res, next) => {
       ? `AND ${orderDateCol} BETWEEN ? AND ?`
       : "";
 
-    const params = dateFilter ? [startDateTime, endDateTime] : [];
+    const params = [];
+    if (dateFilter) {
+      params.push(startDateTime, endDateTime);
+    }
+    if (storeFilter) {
+      params.push(storeId);
+    }
 
     const [summaryRows] = await pool.query(
       `
@@ -106,6 +120,7 @@ router.get("/summary", async (req, res, next) => {
           ${deletedFilter}
           ${statusFilter}
           ${dateFilter}
+          ${storeFilter}
       `,
       params
     );
@@ -140,6 +155,7 @@ router.get("/summary", async (req, res, next) => {
           ${deletedFilter}
           ${statusFilter}
           ${dateFilter}
+          ${storeFilter}
         GROUP BY o.id
         ORDER BY createdAt DESC, o.id DESC
         LIMIT 500
@@ -161,6 +177,7 @@ router.get("/summary", async (req, res, next) => {
           ${deletedFilter}
           ${statusFilter}
           ${dateFilter}
+          ${storeFilter}
         GROUP BY productId, sku, productName
         ORDER BY totalSales DESC, quantity DESC
         LIMIT 300
