@@ -128,6 +128,7 @@ router.get("/",  async (req, res, next) => {
     const storeId = req.storeId;
     const repairColumns = await getTableColumns(pool, "repair_orders");
     const customerColumns = await getTableColumns(pool, "customers");
+    // REPAIRS_APPROVE_STORE_SCOPE_V1
     const orderColumns = await getTableColumns(pool, "orders");
     const orderItemColumns = await getTableColumns(pool, "order_items");
     const canClassifyOrderRepairs = hasColumn(orderItemColumns, "product_category_snapshot");
@@ -742,6 +743,7 @@ router.post("/:id/offline-complete", async (req, res, next) => {
     await connection.beginTransaction();
 
     await assertRepairBelongsToStore(req.params.id, storeId, connection);
+    // REPAIRS_OFFLINE_COMPLETE_STORE_SCOPE_V1
 
     await connection.query(
       `
@@ -756,11 +758,13 @@ router.post("/:id/offline-complete", async (req, res, next) => {
           completed_at = COALESCE(completed_at, NOW()),
           updated_at = NOW()
         WHERE id = ?
+          AND store_id = ?
       `,
       [
         amount,
         details || note || "現場已完成維修，略過 LINE 報價流程",
-        req.params.id
+        req.params.id,
+        storeId
       ]
     );
 
@@ -822,8 +826,9 @@ router.post("/:id/approve", async (req, res, next) => {
         SET status = 'repairing',
             approved_by_staff_id = ?
         WHERE id = ?
+          AND store_id = ?
       `,
-      [req.user.id, req.params.id]
+      [req.user.id, req.params.id, storeId]
     );
 
     const orderColumns = await getTableColumns(pool, "orders");
@@ -847,13 +852,16 @@ router.post("/:id/approve", async (req, res, next) => {
     if (hasColumn(orderColumns, "source")) {
       updates.push("source = 'repair_quote'");
     }
-    params.push(req.params.id, req.params.id);
+    params.push(req.params.id, storeId, req.params.id, storeId);
     await pool.query(
       `
         UPDATE orders
         SET ${updates.join(", ")}
-        WHERE repair_order_id = ?
-           OR id = (SELECT order_id FROM repair_orders WHERE id = ?)
+        WHERE store_id = ?
+          AND (
+            repair_order_id = ?
+            OR id = (SELECT order_id FROM repair_orders WHERE id = ? AND store_id = ?)
+          )
       `,
       params
     );
