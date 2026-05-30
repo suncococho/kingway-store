@@ -1038,6 +1038,8 @@ router.patch("/:id", async (req, res, next) => {
 router.put("/:id/items", async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
+    const storeId = req.storeId;
+    // ORDERS_ITEMS_STORE_SCOPE_V1
     const items = Array.isArray(req.body.items) ? req.body.items : [];
 
     if (!orderId || items.length === 0) {
@@ -1049,8 +1051,9 @@ router.put("/:id/items", async (req, res, next) => {
         `SELECT id, final_payment_status AS finalPaymentStatus
          FROM orders
          WHERE id = ?
+           AND store_id = ?
          FOR UPDATE`,
-        [orderId]
+        [orderId, storeId]
       );
 
       const order = orderRows[0];
@@ -1065,9 +1068,11 @@ router.put("/:id/items", async (req, res, next) => {
         const [productRows] = await connection.query(
           `SELECT id, sku, name, category, price
            FROM products
-           WHERE id = ? AND is_active = 1
+           WHERE id = ?
+             AND store_id = ?
+             AND is_active = 1
            LIMIT 1`,
-          [productId]
+          [productId, storeId]
         );
 
         const product = productRows[0];
@@ -1094,15 +1099,19 @@ router.put("/:id/items", async (req, res, next) => {
         });
       }
 
-      await connection.query(`DELETE FROM order_items WHERE order_id = ?`, [orderId]);
+      await connection.query(
+        `DELETE FROM order_items WHERE order_id = ? AND store_id = ?`,
+        [orderId, storeId]
+      );
 
       for (const item of normalized) {
         await connection.query(
           `INSERT INTO order_items
-           (order_id, product_id, sku_snapshot, product_name_snapshot,
+           (store_id, order_id, product_id, sku_snapshot, product_name_snapshot,
             product_category_snapshot, quantity, unit_price, line_total)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
+            storeId,
             orderId,
             item.productId,
             item.sku,
@@ -1123,8 +1132,9 @@ router.put("/:id/items", async (req, res, next) => {
                 notes
          FROM orders
          WHERE id = ?
+           AND store_id = ?
          LIMIT 1`,
-        [orderId]
+        [orderId, storeId]
       );
 
       const depositAmount = Number(payRows[0]?.depositAmount || 0);
@@ -1145,8 +1155,9 @@ router.put("/:id/items", async (req, res, next) => {
              unpaid_balance = ?,
              final_payment_status = ?,
              final_paid_at = CASE WHEN ? = 'PAID' THEN COALESCE(final_paid_at, NOW()) ELSE NULL END
-         WHERE id = ?`,
-        [payableAmount, unpaidBalance, finalPaymentStatus, finalPaymentStatus, orderId]
+         WHERE id = ?
+           AND store_id = ?`,
+        [payableAmount, unpaidBalance, finalPaymentStatus, finalPaymentStatus, orderId, storeId]
       );
 
       return { orderId, totalAmount: payableAmount, unpaidBalance, finalPaymentStatus, items: normalized };
@@ -1437,14 +1448,18 @@ async function createKingwayAutoPurchaseOrderOnHandover(orderId, staffId = 1) {
 
 router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
   try {
+    const storeId = req.storeId;
+    // ORDERS_HANDOVER_STORE_SCOPE_V1
+
     await pool.query(
       `
         UPDATE orders
         SET handover_confirmed_at = NOW(),
             handover_confirmed_by_staff_id = ?
         WHERE id = ?
+          AND store_id = ?
       `,
-      [req.user.id, req.params.id]
+      [req.user.id, req.params.id, storeId]
     );
 
     await pool.query(
@@ -1453,8 +1468,9 @@ router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), async (req
         SET handover_confirmed_at = NOW(),
             handover_confirmed_by_staff_id = ?
         WHERE order_id = ?
+          AND store_id = ?
       `,
-      [req.user.id, req.params.id]
+      [req.user.id, req.params.id, storeId]
     );
 
     await pool.query(
@@ -1464,9 +1480,10 @@ router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), async (req
             picked_up_at = COALESCE(picked_up_at, NOW()),
             updated_at = NOW()
         WHERE order_id = ?
+          AND store_id = ?
           AND status = 'completed_waiting_pickup'
       `,
-      [req.params.id]
+      [req.params.id, storeId]
     );
 
     await pool.query(
