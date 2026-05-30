@@ -127,7 +127,7 @@ async function sendSupplierDecisionRequest(requestId, requestType, supplierName,
     note ? `備註：${note}` : null,
     "",
     "請供應商確認或拒絕。"
-  ].filter(Boolean).join("\\n");
+  ].filter(Boolean).join("\n");
 
   await sendTelegramMessage(supplierGroupId, text, {
     inline_keyboard: [[

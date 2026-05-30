@@ -12,6 +12,12 @@ const { pool } = require("../db");
 
 const router = express.Router();
 
+
+
+
+
+
+
 const BOT_NOTIFY = "notify";
 
 
@@ -1164,7 +1170,11 @@ router.post("/webhook", async (req, res) => {
     const chatId = msg?.chat?.id;
     const text = msg?.text;
 
-    console.log("[TG webhook]", text);
+    console.log("[TG webhook]", text, JSON.stringify({
+    chatId: req.body?.message?.chat?.id || req.body?.callback_query?.message?.chat?.id,
+    chatType: req.body?.message?.chat?.type || req.body?.callback_query?.message?.chat?.type,
+    chatTitle: req.body?.message?.chat?.title || req.body?.callback_query?.message?.chat?.title
+  }));
 
     if (!chatId || !text) return res.sendStatus(200);
 
