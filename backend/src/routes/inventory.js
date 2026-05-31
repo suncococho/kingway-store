@@ -484,7 +484,10 @@ router.post("/supplier-requests/:id/receive", async (req, res, next) => {
         [id]
       );
       const status = Number(summary.completedItems || 0) === Number(summary.totalItems || 0) ? "RECEIVED" : "PARTIALLY_RECEIVED";
-      await connection.query("UPDATE supplier_requests SET status = ? WHERE id = ?", [status, id]);
+      await connection.query(
+          "UPDATE supplier_requests SET status = ? WHERE id = ? AND store_id = ?",
+          [status, id, storeId]
+        );
       await logWorkflowEvent("supplier_request_received", "SUPPLIER_REQUEST", id, { status }, req.user.id, connection);
       return { status };
     });
