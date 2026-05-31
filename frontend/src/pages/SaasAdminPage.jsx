@@ -62,7 +62,7 @@ function SaasAdminPage() {
         const response = await apiRequest("/saas-admin/stores");
         setData(response);
       } catch (err) {
-        setError(err.message || "載入 SaaS 管理資料失敗");
+        setError(err.message || "載入 SaaS 平台管理資料失敗");
       } finally {
         setLoading(false);
       }
@@ -88,7 +88,7 @@ function SaasAdminPage() {
   );
 
   const summaryCards = [
-    { label: "店鋪總數", value: data?.totalStores ?? stores.length },
+    { label: "租戶店鋪總數", value: data?.totalStores ?? stores.length },
     { label: "環境 Environment", value: data?.environment || "unknown", small: true },
     { label: "SchemaGuard 狀態", value: getSchemaGuardLabel(data?.schemaGuard), small: true },
     { label: "商品總數", value: totals.productCount },
@@ -121,7 +121,7 @@ function SaasAdminPage() {
   if (!isAdmin) {
     return (
       <div>
-        <PageHeader title="SaaS 管理中心" description="僅限平台管理員檢視。" />
+        <PageHeader title="SaaS 平台管理中心" description="僅限平台管理員檢視；此區不是 KINGWAY_TAINAN 門市設定。" />
         <div className="empty-state">沒有 SaaS 管理權限。</div>
       </div>
     );
@@ -130,7 +130,7 @@ function SaasAdminPage() {
   if (loading) {
     return (
       <div>
-        <PageHeader title="SaaS 管理中心" description="載入 SaaS 店鋪資料中..." />
+        <PageHeader title="SaaS 平台管理中心" description="載入平台租戶店鋪資料中..." />
       </div>
     );
   }
@@ -138,7 +138,7 @@ function SaasAdminPage() {
   if (error) {
     return (
       <div>
-        <PageHeader title="SaaS 管理中心" description="SaaS 平台管理、店鋪設定與功能設定入口。" />
+        <PageHeader title="SaaS 平台管理中心" description="平台管理所有租戶店鋪；此區不是 KINGWAY_TAINAN 門市設定。" />
         <div className="empty-state">{error}</div>
       </div>
     );
@@ -146,7 +146,7 @@ function SaasAdminPage() {
 
   return (
     <div>
-      <PageHeader title="SaaS 管理中心" description="平台層級檢視所有店鋪、SchemaGuard 狀態與各店鋪模組入口。" />
+      <PageHeader title="SaaS 平台管理中心" description="平台層級檢視所有租戶店鋪、SchemaGuard 狀態與各店鋪模組入口；KINGWAY_TAINAN 只是 store_id=1 租戶。" />
 
       <div className="admin-summary-grid dashboard-summary-grid">
         {summaryCards.map((card) => (
@@ -160,11 +160,11 @@ function SaasAdminPage() {
       <section className="admin-panel">
         <AdminSectionHeader
           eyebrow="SaaS 平台"
-          title="店鋪列表"
-          description="第一版為唯讀總覽；設定按鈕先作為後續店鋪、功能、整合與權限頁面的入口占位。"
+          title="租戶店鋪列表"
+          description="第一版為唯讀總覽；KINGWAY_TAINAN 顯示為租戶店鋪，不代表平台本身。設定按鈕先作為後續平台管理頁面的入口占位。"
           badges={
             <>
-              <StatusBadge tone="info">店鋪總數 {data?.totalStores ?? stores.length}</StatusBadge>
+              <StatusBadge tone="info">租戶店鋪總數 {data?.totalStores ?? stores.length}</StatusBadge>
               <StatusBadge tone={data?.schemaGuard?.requireStoreIdSchema ? "success" : "warning"}>
                 SchemaGuard {data?.schemaGuard?.status || "UNKNOWN"}
               </StatusBadge>

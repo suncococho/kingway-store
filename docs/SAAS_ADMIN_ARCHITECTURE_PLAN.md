@@ -27,9 +27,46 @@ KINGWAY is moving from a single-store POS/ERP into a multi-store SaaS architectu
 - Uses daily workflows such as POS, customers, repairs, inventory, coupons, attendance, and supplier requests.
 - Does not access SaaS-wide store administration.
 
+## Platform Admin Separation
+
+SaaS platform administration must be separate from store staff administration.
+
+- SaaS platform admin is not a KINGWAY_TAINAN store employee.
+- Platform admin users must not depend on `store_id`.
+- Store owners and store staff continue using the existing POS/ERP pages scoped by `store_id`.
+- KINGWAY_TAINAN is only the default tenant store with `store_id=1`; it is not the SaaS platform itself.
+- Current `/saas-admin` is a temporary staging skeleton inside the existing frontend so the SaaS structure is visible early.
+- During staging, the Sidebar may show `SaaS 管理` to existing `ADMIN` users only. Final architecture should use a separate platform admin login and layout.
+
+Target future platform routes:
+
+- `/platform-admin/login`
+- `/platform-admin`
+- `/platform-admin/stores`
+- `/platform-admin/stores/:id/features`
+- `/platform-admin/stores/:id/integrations`
+- `/platform-admin/stores/:id/plan`
+
+Existing store ERP remains store-scoped:
+
+- `/dashboard`
+- `/pos`
+- `/orders`
+- `/products`
+- `/repairs`
+- `/settings`
+
+Frontend naming convention for the future platform area:
+
+- `frontend/src/pages/platform/PlatformAdminPage.jsx`
+- `frontend/src/pages/platform/PlatformStoresPage.jsx`
+- `frontend/src/pages/platform/PlatformStoreFeaturesPage.jsx`
+
+The existing `SaasAdminPage` and `SaasStoreFeaturesPage` can be migrated into this platform folder once platform login/layout is introduced. Do not move them during the staging skeleton phase unless the platform shell exists.
+
 ## Target Routes
 
-- `/saas-admin`: SaaS platform management dashboard.
+- `/saas-admin`: temporary staging SaaS platform management dashboard inside the current admin shell.
 - `/saas-admin/stores`: future store list and store creation view.
 - `/saas-admin/stores/:storeId/settings`: future store metadata and plan settings.
 - `/saas-admin/stores/:storeId/features`: future feature flag management.
