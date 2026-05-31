@@ -15,6 +15,16 @@ function getFeatureTone(enabled) {
   return enabled ? "success" : "neutral";
 }
 
+function toNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toText(value, fallback = "") {
+  if (value === null || value === undefined) return fallback;
+  return String(value);
+}
+
 function SaasStoreFeaturesPage() {
   const { id } = useParams();
   const currentUser = getStoredUser();
@@ -46,8 +56,23 @@ function SaasStoreFeaturesPage() {
     loadFeatures();
   }, [id, isAdmin]);
 
-  const store = data?.store || null;
-  const features = Array.isArray(data?.features) ? data.features : [];
+  const store = data?.store
+    ? {
+        id: toNumber(data.store.id),
+        code: toText(data.store.code, "-"),
+        name: toText(data.store.name, ""),
+        status: toText(data.store.status, "-"),
+        plan: toText(data.store.plan, "-")
+      }
+    : null;
+  const features = Array.isArray(data?.features)
+    ? data.features.map((feature) => ({
+        key: toText(feature.key),
+        label: toText(feature.label, "未命名功能"),
+        enabled: Boolean(feature.enabled),
+        description: toText(feature.description, "-")
+      }))
+    : [];
   const enabledCount = useMemo(() => features.filter((feature) => feature.enabled).length, [features]);
 
   const columns = [
