@@ -82,6 +82,9 @@ function t(value, fallback = "") {
   return String(value);
 }
 
+const toNumber = n;
+const toText = t;
+
 router.get("/stores", async (req, res, next) => {
   try {
     const [rows] = await pool.query(`
@@ -133,18 +136,18 @@ router.get("/stores", async (req, res, next) => {
   }
 });
 
+
 router.get("/stores/:id/features", async (req, res, next) => {
   try {
-    const storeId = n(req.params.id);
+    const storeId = toNumber(req.params.id, 0);
+
+    if (!storeId) {
+      return res.status(400).json({ message: "Invalid store id" });
+    }
 
     const [[storeRow]] = await pool.query(
       `
-        SELECT
-          CAST(id AS UNSIGNED) AS id,
-          code,
-          name,
-          status,
-          plan
+        SELECT id, code, status, plan
         FROM stores
         WHERE id = ?
         LIMIT 1
@@ -153,31 +156,55 @@ router.get("/stores/:id/features", async (req, res, next) => {
     );
 
     if (!storeRow) {
-      return res.status(404).json({ message: "找不到店鋪" });
+      return res.status(404).json({ message: "Store not found" });
     }
 
     const store = {
-      id: n(storeRow.id),
-      code: t(storeRow.code, "UNKNOWN"),
-      name: t(storeRow.name, t(storeRow.code, "UNKNOWN")),
-      status: t(storeRow.status, "unknown"),
-      plan: t(storeRow.plan, "unknown")
+      id: toNumber(storeRow.id, storeId),
+      code: toText(storeRow.code, "UNKNOWN"),
+      name: toText(storeRow.code, "UNKNOWN"),
+      status: toText(storeRow.status, "unknown"),
+      plan: toText(storeRow.plan, "unknown")
     };
+
+    const featureKeys = [
+      "pos_enabled",
+      "orders_enabled",
+      "repairs_enabled",
+      "inventory_enabled",
+      "suppliers_enabled",
+      "coupons_enabled",
+      "purchase_confirmations_enabled",
+      "line_enabled",
+      "telegram_enabled",
+      "sales_dashboard_enabled",
+      "staff_management_enabled"
+    ];
+
+    const features = featureKeys.map((key) => ({
+      key,
+      label: key,
+      enabled: true,
+      description: "readonly_default"
+    }));
 
     return res.json({
       ok: true,
+      environment: toText(process.env.APP_ENV || process.env.NODE_ENV, "unknown"),
+      schemaGuard: {
+        requireStoreIdSchema: String(process.env.REQUIRE_STORE_ID_SCHEMA || "").toLowerCase() === "true",
+        status: String(process.env.REQUIRE_STORE_ID_SCHEMA || "").toLowerCase() === "true" ? "STRICT_ON" : "WARN_ONLY"
+      },
       store,
-      features: DEFAULT_STORE_FEATURES.map((feature) => ({
-        key: feature.key,
-        label: feature.label,
-        enabled: store.code === "KINGWAY_TAINAN" ? true : Boolean(feature.enabled),
-        description: feature.description
-      }))
+      readOnly: true,
+      note: "readonly_default_until_store_features_table",
+      features
     });
   } catch (error) {
-    console.error("[saasAdmin/store/features] failed", error);
+    console.error("[saasAdmin/features] failed", error);
     return next(error);
   }
 });
+
 
 module.exports = router;
