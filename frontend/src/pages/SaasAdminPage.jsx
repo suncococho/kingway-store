@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
@@ -22,13 +23,19 @@ function getSchemaGuardLabel(schemaGuard) {
   return schemaGuard.requireStoreIdSchema ? "嚴格模式" : "警告模式";
 }
 
-function renderActionButtons() {
+function renderActionButtons(store) {
   return (
     <div className="compact-actions">
       {ACTION_LABELS.map((label) => (
-        <button key={label} type="button" className="secondary-button" disabled>
-          {label}
-        </button>
+        label === "功能設定" && store?.id ? (
+          <Link key={label} to={`/saas-admin/stores/${store.id}/features`} className="secondary-button">
+            {label}
+          </Link>
+        ) : (
+          <button key={label} type="button" className="secondary-button" disabled>
+            {label}
+          </button>
+        )
       ))}
     </div>
   );
@@ -107,7 +114,7 @@ function SaasAdminPage() {
     {
       key: "actions",
       label: "管理入口",
-      render: () => renderActionButtons()
+      render: (row) => renderActionButtons(row)
     }
   ];
 
@@ -172,7 +179,7 @@ function SaasAdminPage() {
           cardTitle={(row) => row.code || `Store ${row.id}`}
           cardDescription={(row) => row.name || "未設定店鋪名稱"}
           cardBadges={(row) => <StatusBadge tone={getStatusTone(row.status)}>{row.status || "-"}</StatusBadge>}
-          cardFooter={() => renderActionButtons()}
+          cardFooter={(row) => renderActionButtons(row)}
         />
       </section>
     </div>

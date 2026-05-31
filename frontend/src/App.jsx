@@ -25,6 +25,7 @@ import PayrollPage from "./pages/PayrollPage";
 import MorePage from "./pages/MorePage";
 import SettingsPage from "./pages/SettingsPage";
 import SaasAdminPage from "./pages/SaasAdminPage";
+import SaasStoreFeaturesPage from "./pages/SaasStoreFeaturesPage";
 import PurchaseConfirmPublicPage from "./pages/PurchaseConfirmPublicPage";
 import SurveyPublicPage from "./pages/SurveyPublicPage";
 import LineEntryPage from "./pages/LineEntryPage";
@@ -87,6 +88,7 @@ function App() {
         <Route path="/payroll" element={<PayrollPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/saas-admin" element={<SaasAdminPage />} />
+        <Route path="/saas-admin/stores/:id/features" element={<SaasStoreFeaturesPage />} />
         <Route path="/more" element={<MorePage />} />
         <Route path="/trash" element={<TrashPage />} />
       </Route>

@@ -1,0 +1,165 @@
+import { useEffect, useMemo, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import AdminSectionHeader from "../components/AdminSectionHeader";
+import DataTable from "../components/DataTable";
+import PageHeader from "../components/PageHeader";
+import StatusBadge from "../components/StatusBadge";
+import { apiRequest } from "../lib/api";
+import { getStoredUser } from "../lib/auth";
+
+function getStatusTone(status) {
+  return String(status || "").toLowerCase() === "active" ? "success" : "neutral";
+}
+
+function getFeatureTone(enabled) {
+  return enabled ? "success" : "neutral";
+}
+
+function SaasStoreFeaturesPage() {
+  const { id } = useParams();
+  const currentUser = getStoredUser();
+  const isAdmin = String(currentUser?.role || "").trim().toUpperCase() === "ADMIN";
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setLoading(false);
+      return;
+    }
+
+    async function loadFeatures() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const response = await apiRequest(`/saas-admin/stores/${id}/features`);
+        setData(response);
+      } catch (err) {
+        setError(err.message || "載入店鋪功能設定失敗");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadFeatures();
+  }, [id, isAdmin]);
+
+  const store = data?.store || null;
+  const features = Array.isArray(data?.features) ? data.features : [];
+  const enabledCount = useMemo(() => features.filter((feature) => feature.enabled).length, [features]);
+
+  const columns = [
+    { key: "label", label: "功能" },
+    { key: "description", label: "說明" },
+    {
+      key: "enabled",
+      label: "狀態",
+      render: (row) => (
+        <StatusBadge tone={getFeatureTone(row.enabled)}>
+          {row.enabled ? "已啟用" : "未啟用"}
+        </StatusBadge>
+      )
+    },
+    {
+      key: "actions",
+      label: "操作",
+      render: () => (
+        <button type="button" className="secondary-button" disabled>
+          設定
+        </button>
+      )
+    }
+  ];
+
+  if (!isAdmin) {
+    return (
+      <div>
+        <PageHeader title="店鋪功能設定" description="僅限平台管理員檢視。" />
+        <div className="empty-state">沒有 SaaS 管理權限。</div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div>
+        <PageHeader title="店鋪功能設定" description="載入店鋪功能設定中..." />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <PageHeader title="店鋪功能設定" description="SaaS 平台的店鋪功能設定入口。" />
+        <div className="empty-state">{error}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <PageHeader title="店鋪功能設定" description="檢視單一店鋪目前啟用的 SaaS 功能模組。" />
+
+      <div className="admin-summary-grid dashboard-summary-grid">
+        <article className="admin-summary-card">
+          <div className="admin-summary-label">店鋪代碼</div>
+          <div className="admin-summary-value admin-summary-value-small">{store?.code || "-"}</div>
+        </article>
+        <article className="admin-summary-card">
+          <div className="admin-summary-label">Store ID</div>
+          <div className="admin-summary-value">{store?.id ?? "-"}</div>
+        </article>
+        <article className="admin-summary-card">
+          <div className="admin-summary-label">狀態</div>
+          <div className="admin-summary-value admin-summary-value-small">{store?.status || "-"}</div>
+        </article>
+        <article className="admin-summary-card">
+          <div className="admin-summary-label">Plan</div>
+          <div className="admin-summary-value admin-summary-value-small">{store?.plan || "-"}</div>
+        </article>
+        <article className="admin-summary-card">
+          <div className="admin-summary-label">已啟用功能</div>
+          <div className="admin-summary-value">{enabledCount}</div>
+        </article>
+      </div>
+
+      <section className="admin-panel">
+        <AdminSectionHeader
+          eyebrow="Feature flags"
+          title={store?.code || `Store ${id}`}
+          description="第一版為唯讀，下一階段接 store_features 資料表後可編輯。"
+          badges={
+            <>
+              <StatusBadge tone={getStatusTone(store?.status)}>{store?.status || "-"}</StatusBadge>
+              <StatusBadge tone="info">{store?.plan || "-"}</StatusBadge>
+            </>
+          }
+          actions={<Link to="/saas-admin" className="secondary-button">返回 SaaS 管理</Link>}
+        />
+
+        <DataTable
+          columns={columns}
+          rows={features}
+          emptyText="目前沒有功能設定資料。"
+          cardTitle={(row) => row.label}
+          cardDescription={(row) => row.description}
+          cardBadges={(row) => (
+            <StatusBadge tone={getFeatureTone(row.enabled)}>
+              {row.enabled ? "已啟用" : "未啟用"}
+            </StatusBadge>
+          )}
+          cardFooter={() => (
+            <button type="button" className="secondary-button" disabled>
+              設定
+            </button>
+          )}
+        />
+      </section>
+    </div>
+  );
+}
+
+export default SaasStoreFeaturesPage;

@@ -98,17 +98,26 @@ Guidance:
 
 ## Implementation Phases
 
-### Phase 1: Read-only SaaS visibility
+### Phase 1: Read-only SaaS visibility - done
 
 - Add `/saas-admin`.
 - Add `GET /api/saas-admin/stores`.
 - Display environment, SchemaGuard state, total stores, and per-store business counts.
 - Show placeholder action buttons for 店鋪設定, 功能設定, LINE 設定, Telegram 設定, POS 設定, 權限設定.
 
-### Phase 2: Store detail shell
+### Phase 2: Store feature settings read-only skeleton
+
+- Add `/saas-admin/stores/:storeId/features`.
+- Add `GET /api/saas-admin/stores/:storeId/features`.
+- Return default feature flags from backend code without creating a migration.
+- Keep the feature settings page read-only.
+- Show enabled status, description, and placeholder 設定 action for each feature.
+- Actual editable settings come after the `store_features` table migration and backfill are reviewed.
+
+### Phase 2B: Store detail shell
 
 - Add store detail routing.
-- Split store settings, feature settings, integrations, POS defaults, and permissions into separate sections.
+- Split store settings, integrations, POS defaults, and permissions into separate sections.
 - Keep every section read-only until persistence rules are finalized.
 
 ### Phase 3: Feature flag persistence
