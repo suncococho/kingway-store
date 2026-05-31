@@ -94,8 +94,6 @@ function t(value, fallback = "") {
   return String(value);
 }
 
-const toNumber = n;
-const toText = t;
 
 router.get("/stores", async (req, res, next) => {
   try {
