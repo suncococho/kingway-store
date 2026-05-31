@@ -549,6 +549,7 @@ router.post("/public/:token", async (req, res, next) => {
         UPDATE purchase_confirmations
         SET pdf_path = ?
         WHERE id = ?
+            AND store_id = ?
       `,
       [pdf.publicPath, confirmation.id]
     );
@@ -730,6 +731,8 @@ router.post("/manual", async (req, res, next) => {
     const matchedOrderNo = matchedOrder?.orderNo || null;
     const matchedCustomerName = matchedCustomer?.name || buyerName;
     const matchedCustomerPhone = matchedCustomer?.phone || buyerPhone;
+      // PURCHASE_CONFIRM_MANUAL_STORE_ID_V1
+      const storeId = Number(matchedOrder?.storeId || matchedCustomer?.storeId || 1);
 
     const submittedAt = new Date().toISOString();
     const snapshot = toUtf8SafeText(buildPurchaseConfirmationSnapshot({
@@ -760,9 +763,10 @@ router.post("/manual", async (req, res, next) => {
           final_confirmation_accepted,
           signature_data,
           html_snapshot,
-          submitted_at
+          submitted_at,
+            store_id
         )
-        VALUES (NULL, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, 1, 1, ?, ?, NOW())
+        VALUES (NULL, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, 1, 1, ?, ?, NOW(), ?)
       `,
       [
         matchedOrder?.orderId || null,
@@ -773,7 +777,8 @@ router.post("/manual", async (req, res, next) => {
         stringifyUtf8SafeJson(confirmedDeliveryChecks),
         stringifyUtf8SafeJson(confirmedStaffExplanations),
         signatureData,
-        snapshot
+        snapshot,
+          storeId
       ]
     );
 
@@ -795,7 +800,7 @@ router.post("/manual", async (req, res, next) => {
         SET pdf_path = ?
         WHERE id = ?
       `,
-      [pdf.publicPath, insertResult.insertId]
+      [pdf.publicPath, insertResult.insertId, storeId]
     );
 
     await logWorkflowEvent("manual_purchase_confirmation_completed", "PURCHASE_CONFIRMATION", insertResult.insertId, {
