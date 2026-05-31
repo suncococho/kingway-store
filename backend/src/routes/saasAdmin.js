@@ -3,6 +3,18 @@ const { pool } = require("../db");
 
 const router = express.Router();
 
+function toNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toText(value, fallback = "") {
+  if (value === null || value === undefined) return fallback;
+  return String(value);
+}
+
+
+
 const DEFAULT_STORE_FEATURES = [
   {
     key: "pos_enabled",
