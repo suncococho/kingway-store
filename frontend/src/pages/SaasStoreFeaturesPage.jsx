@@ -25,13 +25,27 @@ function toText(value, fallback = "") {
   return String(value);
 }
 
+function featuresToDraft(features) {
+  return (Array.isArray(features) ? features : []).reduce((acc, feature) => {
+    const key = toText(feature.key);
+    if (key) {
+      acc[key] = Boolean(feature.enabled);
+    }
+    return acc;
+  }, {});
+}
+
 function SaasStoreFeaturesPage() {
   const { id } = useParams();
   const currentUser = getStoredUser();
   const isAdmin = String(currentUser?.role || "").trim().toUpperCase() === "ADMIN";
   const [data, setData] = useState(null);
+  const [draftFeatures, setDraftFeatures] = useState({});
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [success, setSuccess] = useState("");
 
   useEffect(() => {
     if (!isAdmin) {
@@ -42,10 +56,13 @@ function SaasStoreFeaturesPage() {
     async function loadFeatures() {
       setLoading(true);
       setError("");
+      setSaveError("");
+      setSuccess("");
 
       try {
         const response = await apiRequest(`/saas-admin/stores/${id}/features`);
         setData(response);
+        setDraftFeatures(featuresToDraft(response.features));
       } catch (err) {
         setError(err.message || "載入店鋪功能設定失敗");
       } finally {
@@ -66,14 +83,54 @@ function SaasStoreFeaturesPage() {
       }
     : null;
   const features = Array.isArray(data?.features)
-    ? data.features.map((feature) => ({
-        key: toText(feature.key),
-        label: toText(feature.label, "未命名功能"),
-        enabled: Boolean(feature.enabled),
-        description: toText(feature.description, "-")
-      }))
+    ? data.features.map((feature) => {
+        const key = toText(feature.key);
+        const hasDraftValue = Object.prototype.hasOwnProperty.call(draftFeatures, key);
+        return {
+          key,
+          label: toText(feature.label, "未命名功能"),
+          enabled: hasDraftValue ? Boolean(draftFeatures[key]) : Boolean(feature.enabled),
+          persistedEnabled: Boolean(feature.enabled),
+          description: toText(feature.description, "-")
+        };
+      })
     : [];
   const enabledCount = useMemo(() => features.filter((feature) => feature.enabled).length, [features]);
+  const hasChanges = useMemo(
+    () => features.some((feature) => feature.enabled !== feature.persistedEnabled),
+    [features]
+  );
+
+  function toggleFeature(key, enabled) {
+    setDraftFeatures((current) => ({ ...current, [key]: enabled }));
+    setSaveError("");
+    setSuccess("");
+  }
+
+  async function saveFeatures() {
+    setSaving(true);
+    setSaveError("");
+    setSuccess("");
+
+    try {
+      const payload = features.reduce((acc, feature) => {
+        acc[feature.key] = Boolean(feature.enabled);
+        return acc;
+      }, {});
+      const response = await apiRequest(`/saas-admin/stores/${id}/features`, {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+
+      setData(response);
+      setDraftFeatures(featuresToDraft(response.features));
+      setSuccess("功能設定已儲存。");
+    } catch (err) {
+      setSaveError(err.message || "儲存店鋪功能設定失敗");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const columns = [
     { key: "label", label: "功能" },
@@ -89,11 +146,18 @@ function SaasStoreFeaturesPage() {
     },
     {
       key: "actions",
-      label: "操作",
-      render: () => (
-        <button type="button" className="secondary-button" disabled>
-          設定
-        </button>
+      label: "設定",
+      mobileHidden: true,
+      render: (row) => (
+        <label className="checklist-item">
+          <input
+            type="checkbox"
+            checked={row.enabled}
+            disabled={saving}
+            onChange={(event) => toggleFeature(row.key, event.target.checked)}
+          />
+          <span>{row.enabled ? "啟用" : "停用"}</span>
+        </label>
       )
     }
   ];
@@ -126,7 +190,7 @@ function SaasStoreFeaturesPage() {
 
   return (
     <div>
-      <PageHeader title="店鋪功能設定" description="檢視單一店鋪目前啟用的 SaaS 功能模組。" />
+      <PageHeader title="店鋪功能設定" description="管理單一店鋪目前啟用的 SaaS 功能模組。" />
 
       <div className="admin-summary-grid dashboard-summary-grid">
         <article className="admin-summary-card">
@@ -155,15 +219,30 @@ function SaasStoreFeaturesPage() {
         <AdminSectionHeader
           eyebrow="Feature flags"
           title={store?.code || `Store ${id}`}
-          description="第一版為唯讀，下一階段接 store_features 資料表後可編輯。"
+          description="可編輯，儲存後會套用至此店鋪。"
           badges={
             <>
               <StatusBadge tone={getStatusTone(store?.status)}>{store?.status || "-"}</StatusBadge>
               <StatusBadge tone="info">{store?.plan || "-"}</StatusBadge>
             </>
           }
-          actions={<Link to="/saas-admin" className="secondary-button">返回 SaaS 管理</Link>}
+          actions={
+            <>
+              <Link to="/saas-admin" className="secondary-button">返回 SaaS 管理</Link>
+              <button
+                type="button"
+                className="primary-button inline-submit"
+                onClick={saveFeatures}
+                disabled={saving || !features.length || !hasChanges}
+              >
+                {saving ? "儲存中..." : "儲存設定"}
+              </button>
+            </>
+          }
         />
+
+        {saveError ? <div className="empty-state">{saveError}</div> : null}
+        {success ? <div className="empty-state">{success}</div> : null}
 
         <DataTable
           columns={columns}
@@ -176,10 +255,16 @@ function SaasStoreFeaturesPage() {
               {row.enabled ? "已啟用" : "未啟用"}
             </StatusBadge>
           )}
-          cardFooter={() => (
-            <button type="button" className="secondary-button" disabled>
-              設定
-            </button>
+          cardFooter={(row) => (
+            <label className="checklist-item">
+              <input
+                type="checkbox"
+                checked={row.enabled}
+                disabled={saving}
+                onChange={(event) => toggleFeature(row.key, event.target.checked)}
+              />
+              <span>{row.enabled ? "啟用" : "停用"}</span>
+            </label>
           )}
         />
       </section>

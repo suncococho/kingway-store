@@ -80,14 +80,14 @@ The existing `SaasAdminPage` and `SaasStoreFeaturesPage` can be migrated into th
 - `POST /api/saas-admin/stores`: future store creation.
 - `GET /api/saas-admin/stores/:storeId`: future store detail.
 - `PATCH /api/saas-admin/stores/:storeId`: future store metadata update.
-- `GET /api/saas-admin/stores/:storeId/features`: future feature flag read.
-- `PATCH /api/saas-admin/stores/:storeId/features`: future feature flag update.
+- `GET /api/saas-admin/stores/:storeId/features`: persisted feature flag read from `store_features`.
+- `PATCH /api/saas-admin/stores/:storeId/features`: persisted feature flag update for known store feature keys.
 - `GET /api/saas-admin/stores/:storeId/integrations`: future integration status read without raw secrets.
 - `PATCH /api/saas-admin/stores/:storeId/integrations`: future integration setting update with secret-safe handling.
 
 ## Store Feature Flags Plan
 
-Feature flags should be store-scoped and reversible. The first table can be introduced after the read-only SaaS admin dashboard is stable.
+Feature flags are store-scoped and reversible. Staging now persists store-level module settings in `store_features`, but these flags are not enforced in business routes yet.
 
 Candidate flags:
 
@@ -142,14 +142,13 @@ Guidance:
 - Display environment, SchemaGuard state, total stores, and per-store business counts.
 - Show placeholder action buttons for 店鋪設定, 功能設定, LINE 設定, Telegram 設定, POS 設定, 權限設定.
 
-### Phase 2: Store feature settings read-only skeleton
+### Phase 2: Store feature settings read-only skeleton - done
 
 - Add `/saas-admin/stores/:storeId/features`.
 - Add `GET /api/saas-admin/stores/:storeId/features`.
 - Return default feature flags from backend code without creating a migration.
 - Keep the feature settings page read-only.
 - Show enabled status, description, and placeholder 設定 action for each feature.
-- Actual editable settings come after the `store_features` table migration and backfill are reviewed.
 
 ### Phase 2B: Store detail shell
 
@@ -157,11 +156,13 @@ Guidance:
 - Split store settings, integrations, POS defaults, and permissions into separate sections.
 - Keep every section read-only until persistence rules are finalized.
 
-### Phase 3: Feature flag persistence
+### Phase 3: Feature flag persistence - done in staging
 
-- Add store feature flag schema.
-- Backfill the default store to preserve current behavior.
-- Add a dry-run migration report before applying writes.
+- Add `store_features` schema through the existing backend bootstrap path.
+- Backfill one default feature row for every row in `stores`; existing stores keep all modules enabled by default.
+- Read and update known feature keys from SaaS admin without exposing secrets.
+- Feature flags are stored now, but not yet enforced in POS, orders, repairs, inventory, supplier, coupon, LINE, Telegram, dashboard, or staff business routes.
+- Next phase: enforce these flags in backend business routes with a central mapping layer.
 
 ### Phase 4: Integration settings persistence
 
