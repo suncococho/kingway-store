@@ -388,8 +388,9 @@ router.post("/supplier-requests/:id/respond", async (req, res, next) => {
             supplier_response_note = ?,
             supplier_responded_at = NOW()
         WHERE id = ?
+            AND store_id = ?
       `,
-      [nextStatus, req.body.note || null, id]
+      [nextStatus, req.body.note || null, id, storeId]
     );
 
     await logWorkflowEvent("supplier_request_responded", "SUPPLIER_REQUEST", id, { approved }, req.user.id);
