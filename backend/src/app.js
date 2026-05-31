@@ -14,6 +14,8 @@ const authRoutes = require("./routes/auth");
 const staffRoutes = require("./routes/staff");
 const customerRoutes = require("./routes/customers");
 const productRoutes = require("./routes/products");
+const systemStatusRoutes = require("./routes/systemStatus");
+const saasAdminRoutes = require("./routes/saasAdmin");
 const orderRoutes = require("./routes/orders");
 const orderItemsEditRoutes = require("./routes/orderItemsEdit");
 const lineRoutes = require("./routes/line");
@@ -383,6 +385,8 @@ app.get("/health", async (req, res, next) => {
 });
 
 app.use("/api/settings", settingsRoutes);
+app.use("/api/system", systemStatusRoutes);
+app.use("/api/saas-admin", saasAdminRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api", authRoutes);

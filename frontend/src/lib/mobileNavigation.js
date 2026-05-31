@@ -35,6 +35,7 @@ export const mobileMenuSections = [
   {
     heading: "系統管理",
     items: [
+      { to: "/saas-admin", label: "SaaS 管理", description: "平台店鋪、功能與整合設定入口", adminOnly: true },
       { to: "/settings?section=store", label: "門市設定", description: "門市名稱、地址、營業時間與對外文字" },
       { to: "/settings?section=system", label: "系統設定", description: "LINE 狀態、通知預設與 POS 預設" },
       { to: "/trash", label: "已刪除資料", description: "復原或永久刪除訂單 / 維修單" }

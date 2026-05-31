@@ -11,6 +11,10 @@ function normalizePermissions(permissions) {
     : [];
 }
 
+function isAdminUser(user) {
+  return normalizeRole(user?.role) === "ADMIN";
+}
+
 function hasCashierLimitedPermissions(user) {
   const permissions = normalizePermissions(user?.permissions);
   return CASHIER_ALLOWED_PERMISSIONS.every((permission) => permissions.includes(permission));
@@ -39,9 +43,11 @@ export function canAccessProtectedRoute(user, pathname) {
 }
 
 export function filterMenuItemsForUser(items, user) {
+  const visibleItems = items.filter((item) => !item.adminOnly || isAdminUser(user));
+
   if (!isStaffLimitedUser(user)) {
-    return items;
+    return visibleItems;
   }
 
-  return items.filter((item) => item.to && canAccessProtectedRoute(user, item.to.split("?")[0]));
+  return visibleItems.filter((item) => item.to && canAccessProtectedRoute(user, item.to.split("?")[0]));
 }
