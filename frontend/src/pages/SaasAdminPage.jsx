@@ -4,8 +4,7 @@ import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
-import { apiRequest } from "../lib/api";
-import { getStoredUser } from "../lib/auth";
+import { getStoredPlatformUser, platformRequest } from "../lib/platformAuth";
 
 const ACTION_LABELS = ["店鋪設定", "功能設定", "LINE 設定", "Telegram 設定", "POS 設定", "權限設定"];
 
@@ -42,8 +41,10 @@ function renderActionButtons(store) {
 }
 
 function SaasAdminPage() {
-  const currentUser = getStoredUser();
-  const isAdmin = String(currentUser?.role || "").trim().toUpperCase() === "ADMIN";
+  const currentUser = getStoredPlatformUser();
+  const isAdmin = ["PLATFORM_OWNER", "PLATFORM_ADMIN", "SUPPORT"].includes(
+    String(currentUser?.role || "").trim().toUpperCase()
+  );
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -59,7 +60,7 @@ function SaasAdminPage() {
       setError("");
 
       try {
-        const response = await apiRequest("/saas-admin/stores");
+        const response = await platformRequest("/saas-admin/stores");
         setData(response);
       } catch (err) {
         setError(err.message || "載入 SaaS 平台管理資料失敗");

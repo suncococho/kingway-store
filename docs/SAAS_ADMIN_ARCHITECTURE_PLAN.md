@@ -53,7 +53,7 @@ SaaS 平台管理與門市 ERP 必須分離。KINGWAY_TAINAN 是 `store_id=1` �
 - `POST /api/platform-auth/login`
 - `GET /api/saas-admin/stores`
 
-`/api/saas-admin/*` 已套用 `backend/src/middleware/platformAuth.js` 的 `authenticatePlatformAdmin`。既有 staff token 不能通過，平台 token 也不能通過門市 ERP 的既有 `authenticate`。
+`/api/saas-admin/*` 已套用 `backend/src/middleware/platformAuth.js` 的 `authenticatePlatformAdmin`，並要求平台角色屬於 `PLATFORM_OWNER`、`PLATFORM_ADMIN` 或 `SUPPORT`。middleware 會回查 `platform_admin_users`，停用帳號即使持有舊 token 也不能使用 SaaS admin API。既有 staff token 不能通過，平台 token 也不能通過門市 ERP 的既有 `authenticate`。
 
 本階段定位為 auth skeleton：先建立平台帳號、登入、token scope 與 API 邊界。`requirePlatformRole` 已提供，但尚未把每個 SaaS 管理功能細分到 `PLATFORM_OWNER`、`PLATFORM_ADMIN`、`SUPPORT`，細部權限 enforcement 留到下一階段。
 

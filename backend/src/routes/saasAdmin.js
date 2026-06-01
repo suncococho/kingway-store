@@ -1,6 +1,6 @@
 const express = require("express");
 const { pool } = require("../db");
-const { authenticatePlatformAdmin } = require("../middleware/platformAuth");
+const { authenticatePlatformAdmin, requirePlatformRole } = require("../middleware/platformAuth");
 
 const router = express.Router();
 
@@ -23,6 +23,7 @@ function getSchemaGuardStatus() {
 }
 
 router.use(authenticatePlatformAdmin);
+router.use(requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN", "SUPPORT"]));
 
 router.get("/stores", async (req, res, next) => {
   try {

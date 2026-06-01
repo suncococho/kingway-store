@@ -61,9 +61,9 @@ Backend bootstrap 會讀取以下環境值：
 - `authenticatePlatformAdmin`
 - `requirePlatformRole`
 
-平台專用入口在 `backend/src/middleware/platformAuth.js`。本次已將 `/api/saas-admin/*` 實際套用 `authenticatePlatformAdmin`，因此必須使用平台 token 存取。
+平台專用入口在 `backend/src/middleware/platformAuth.js`。本次已將 `/api/saas-admin/*` 實際套用 `authenticatePlatformAdmin`，因此必須使用平台 token 存取。middleware 會驗證 JWT 的 `type` 或 `scope` 為 `platform_admin`，並回查 `platform_admin_users` 確認帳號仍為 active。
 
-本次是 auth skeleton：已完成 staff token 與 platform token 的邊界隔離，但更細的 `PLATFORM_OWNER`、`PLATFORM_ADMIN`、`SUPPORT` 功能層級授權 enforcement 留到下一階段逐項套用。
+本次已完成 staff token 與 platform token 的邊界隔離，並在 SaaS admin router 套用 `PLATFORM_OWNER`、`PLATFORM_ADMIN`、`SUPPORT` 角色 guard。更細的功能層級授權 enforcement 留到下一階段逐項套用。
 
 ## 前端路由
 

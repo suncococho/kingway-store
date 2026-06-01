@@ -4,8 +4,7 @@ import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
-import { apiRequest } from "../lib/api";
-import { getStoredUser } from "../lib/auth";
+import { getStoredPlatformUser, platformRequest } from "../lib/platformAuth";
 
 function getStatusTone(status) {
   return String(status || "").toLowerCase() === "active" ? "success" : "neutral";
@@ -37,8 +36,10 @@ function featuresToDraft(features) {
 
 function SaasStoreFeaturesPage() {
   const { id } = useParams();
-  const currentUser = getStoredUser();
-  const isAdmin = String(currentUser?.role || "").trim().toUpperCase() === "ADMIN";
+  const currentUser = getStoredPlatformUser();
+  const isAdmin = ["PLATFORM_OWNER", "PLATFORM_ADMIN", "SUPPORT"].includes(
+    String(currentUser?.role || "").trim().toUpperCase()
+  );
   const [data, setData] = useState(null);
   const [draftFeatures, setDraftFeatures] = useState({});
   const [loading, setLoading] = useState(true);
@@ -60,7 +61,7 @@ function SaasStoreFeaturesPage() {
       setSuccess("");
 
       try {
-        const response = await apiRequest(`/saas-admin/stores/${id}/features`);
+        const response = await platformRequest(`/saas-admin/stores/${id}/features`);
         setData(response);
         setDraftFeatures(featuresToDraft(response.features));
       } catch (err) {
@@ -117,7 +118,7 @@ function SaasStoreFeaturesPage() {
         acc[feature.key] = Boolean(feature.enabled);
         return acc;
       }, {});
-      const response = await apiRequest(`/saas-admin/stores/${id}/features`, {
+      const response = await platformRequest(`/saas-admin/stores/${id}/features`, {
         method: "PATCH",
         body: JSON.stringify(payload)
       });
