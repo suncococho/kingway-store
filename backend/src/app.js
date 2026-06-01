@@ -17,6 +17,7 @@ const customerRoutes = require("./routes/customers");
 const productRoutes = require("./routes/products");
 const systemStatusRoutes = require("./routes/systemStatus");
 const saasAdminRoutes = require("./routes/saasAdmin");
+const storeFeatureRoutes = require("./routes/storeFeatures");
 const orderRoutes = require("./routes/orders");
 const orderItemsEditRoutes = require("./routes/orderItemsEdit");
 const lineRoutes = require("./routes/line");
@@ -389,6 +390,7 @@ app.use("/api/settings", settingsRoutes);
 app.use("/api/system", systemStatusRoutes);
 app.use("/api/platform-auth", platformAuthRoutes);
 app.use("/api/saas-admin", saasAdminRoutes);
+app.use("/api/store-features", storeFeatureRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/sales", salesRoutes);
 app.use("/api", authRoutes);
@@ -485,4 +487,3 @@ app.use((req, res, next) => {
 app.use(errorHandler);
 
 module.exports = app;
-

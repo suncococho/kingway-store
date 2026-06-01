@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { clearAuth, getStoredUser } from "../lib/auth";
+import { useStoreFeatures } from "../hooks/useStoreFeatures";
 import { getMobileMenuSectionsForUser, isMenuItemActive } from "../lib/mobileNavigation";
 
 function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const user = getStoredUser();
-  const mobileMenuSections = getMobileMenuSectionsForUser(user)
+  const { features } = useStoreFeatures();
+  const mobileMenuSections = getMobileMenuSectionsForUser(user, features)
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => item.to !== "/saas-admin")

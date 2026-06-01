@@ -5,6 +5,7 @@ export default function SuppliersPage() {
   const [rows, setRows] = useState([]);
   const [monthly, setMonthly] = useState([]);
   const [products, setProducts] = useState([]);
+  const [error, setError] = useState("");
   const [productSearch, setProductSearch] = useState("");
   const [form, setForm] = useState({
     supplierName: "",
@@ -14,9 +15,18 @@ export default function SuppliersPage() {
   });
 
   async function load() {
-    setRows(await apiRequest("/suppliers/requests"));
-    setMonthly(await apiRequest("/suppliers/monthly"));
-    setProducts(await apiRequest("/products"));
+    setError("");
+
+    try {
+      setRows(await apiRequest("/suppliers/requests"));
+      setMonthly(await apiRequest("/suppliers/monthly"));
+      setProducts(await apiRequest("/products"));
+    } catch (requestError) {
+      setRows([]);
+      setMonthly([]);
+      setProducts([]);
+      setError(requestError.message || "供應商資料讀取失敗");
+    }
   }
 
   useEffect(() => {
@@ -95,6 +105,8 @@ export default function SuppliersPage() {
         </div>
         <button className="primary-button" onClick={load}>重新整理</button>
       </div>
+
+      {error ? <div className="empty-state">{error}</div> : null}
 
       <section className="stack-card">
         <div className="section-title">建立發注 / 退貨</div>

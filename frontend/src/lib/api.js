@@ -37,7 +37,10 @@ export async function apiRequest(path, options = {}) {
       clearAuth();
     }
 
-    throw new Error(data.message || "Request failed");
+    const error = new Error(data.message || "Request failed");
+    error.status = response.status;
+    error.data = data;
+    throw error;
   }
 
   return data;
@@ -66,7 +69,10 @@ export async function apiUploadImage(path, file) {
       clearAuth();
     }
 
-    throw new Error(data.message || "圖片上傳失敗");
+    const error = new Error(data.message || "圖片上傳失敗");
+    error.status = response.status;
+    error.data = data;
+    throw error;
   }
 
   return data;

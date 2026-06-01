@@ -58,7 +58,21 @@ SaaS 平台管理與門市 ERP 必須分離。KINGWAY_TAINAN 是 `store_id=1` �
 
 `/api/saas-admin/*` 已套用 `backend/src/middleware/platformAuth.js` 的 `authenticatePlatformAdmin`，並要求平台角色屬於 `PLATFORM_OWNER`、`PLATFORM_ADMIN` 或 `SUPPORT`。middleware 會回查 `platform_admin_users`，停用帳號即使持有舊 token 也不能使用 SaaS admin API。既有 staff token 不能通過，平台 token 也不能通過門市 ERP 的既有 `authenticate`。
 
-本階段定位為平台管理儲存與初期 enforcement 階段：已建立平台帳號、登入、token scope、API 邊界與 `store_features` 設定儲存。第一階段已套用 `sales_dashboard_enabled`、`coupons_enabled`、`suppliers_enabled` 到對應後台 API；POS、訂單、維修、庫存、LINE/Telegram 等實際業務 route enforcement 留到下一階段逐項處理。
+本階段定位為平台管理儲存與初期 enforcement 階段：已建立平台帳號、登入、token scope、API 邊界與 `store_features` 設定儲存。第一階段已套用 `sales_dashboard_enabled`、`coupons_enabled`、`suppliers_enabled` 到對應後台 API；並新增門市 staff read-only 功能查詢與前端 menu enforcement，讓門市 Sidebar / 更多頁依第一階段功能狀態隱藏銷售報表、優惠券、發注 / 供應商入口。POS、訂單、維修、庫存、LINE/Telegram 等實際業務 route enforcement 留到下一階段逐項處理。
+
+## Phase: frontend menu enforcement for initial features
+
+已完成：
+
+- Backend enforcement already applied for `sales_dashboard_enabled`、`coupons_enabled`、`suppliers_enabled`。
+- 新增 staff auth 專用 read-only endpoint：`GET /api/store-features/me`，只回傳目前門市的第一階段 feature 狀態。
+- Frontend now hides menu items for first feature set：銷售報表、優惠券、發注 / 供應商。
+- 直接 URL 進入已關閉功能時，對應 API 403 會顯示「此功能未啟用，請聯絡平台管理員。」。
+
+Next phase：
+
+- inventory / repairs / orders enforcement。
+- 逐步處理 POS、購買確認書、員工管理與其他 feature 對應的 route 與 UI enforcement。
 
 ## 本次保留與未做事項
 
@@ -75,11 +89,12 @@ SaaS 平台管理與門市 ERP 必須分離。KINGWAY_TAINAN 是 `store_id=1` �
 - 新增店鋪功能設定 GET/PATCH API
 - 平台管理畫面可編輯並儲存店鋪功能開關
 - 第一階段將銷售報表、優惠券、發注/供應商 API 套用 store feature enforcement
+- 第一階段將銷售報表、優惠券、發注/供應商前端選單套用 store feature 狀態
 
 未做：
 
 - POS、訂單、維修、庫存等尚未套用 `store_features` route enforcement
-- 門市 ERP sidebar 尚未接入 store feature 狀態；目前以 backend 403 enforcement 為準
+- 庫存、訂單、維修等門市 ERP sidebar 尚未接入 store feature 狀態；目前只完成第一階段三個功能
 - 不調整 LINE/Telegram token 邏輯
 - 不變更 production config
 - 不改動既有門市登入與 POS/ERP 工作流

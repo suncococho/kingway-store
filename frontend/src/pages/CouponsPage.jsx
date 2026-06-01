@@ -220,6 +220,7 @@ function CouponsPage() {
   return (
     <div>
       <PageHeader title="優惠券管理" description="新朋友與 Google 評論都在同一頁管理，狀態與審核一眼可見。" />
+      {coupons.error ? <div className="empty-state">{coupons.error}</div> : null}
       <SectionTabs items={sectionItems} value={tab} onChange={setTab} label="優惠券子功能" />
       <div className="admin-summary-grid">
         {summaryCards.map((card) => (

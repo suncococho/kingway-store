@@ -1,11 +1,18 @@
 import { filterMenuItemsForUser } from "./permissions";
 
+const FEATURE_ROUTE_MAP = {
+  "/sales": "sales_dashboard_enabled",
+  "/coupons": "coupons_enabled",
+  "/suppliers": "suppliers_enabled"
+};
+
 export const mobileMenuSections = [
   {
     heading: "營運",
     items: [
       { to: "/customer-status", label: "客戶狀態", description: "電話或姓名快速查詢訂單與維修" },
       { to: "/dashboard", label: "首頁", description: "今日待確認與營業摘要" },
+      { to: "/sales", label: "銷售報表", description: "銷售統計、商品排行與訂單明細" },
       { to: "/pos", label: "POS / 新訂單", description: "快速建立訂單與結帳" },
       { to: "/orders", label: "訂單管理", description: "一般訂單、預約單、維修相關" },
       { to: "/customers", label: "客戶管理", description: "CRM、歷程與跟進" },
@@ -42,11 +49,21 @@ export const mobileMenuSections = [
   }
 ];
 
-export function getMobileMenuSectionsForUser(user) {
+function isMenuItemEnabledByFeatures(item, features) {
+  const path = item.to ? item.to.split("?")[0] : "";
+  const featureKey = FEATURE_ROUTE_MAP[path];
+  if (!featureKey) {
+    return true;
+  }
+
+  return features?.[featureKey] !== false;
+}
+
+export function getMobileMenuSectionsForUser(user, features = {}) {
   return mobileMenuSections
     .map((section) => ({
       ...section,
-      items: filterMenuItemsForUser(section.items, user)
+      items: filterMenuItemsForUser(section.items, user).filter((item) => isMenuItemEnabledByFeatures(item, features))
     }))
     .filter((section) => section.items.length > 0);
 }

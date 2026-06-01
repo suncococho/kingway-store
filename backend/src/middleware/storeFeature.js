@@ -52,7 +52,7 @@ function requireStoreFeature(featureKey) {
       }
 
       if (!Boolean(rows[0].enabled)) {
-        return res.status(403).json({ message: "此店鋪功能目前已關閉" });
+        return res.status(403).json({ message: "此功能未啟用，請聯絡平台管理員。" });
       }
 
       return next();

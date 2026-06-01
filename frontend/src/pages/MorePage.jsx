@@ -2,12 +2,14 @@ import { NavLink, useLocation } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { getStoredUser } from "../lib/auth";
+import { useStoreFeatures } from "../hooks/useStoreFeatures";
 import { getMobileMenuSectionsForUser, isMenuItemActive } from "../lib/mobileNavigation";
 
 function MorePage() {
   const location = useLocation();
   const user = getStoredUser();
-  const mobileMenuSections = getMobileMenuSectionsForUser(user);
+  const { features } = useStoreFeatures();
+  const mobileMenuSections = getMobileMenuSectionsForUser(user, features);
 
   return (
     <div>
