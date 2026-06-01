@@ -7,6 +7,7 @@ import FilterBar from "../components/FilterBar";
 import PageHeader from "../components/PageHeader";
 import ProductImage from "../components/ProductImage";
 import StatusBadge from "../components/StatusBadge";
+import { useStoreFeatures } from "../hooks/useStoreFeatures";
 import { apiRequest } from "../lib/api";
 import { getCategoryLabel } from "../lib/display";
 import { PRODUCT_CATEGORY_OPTIONS } from "../lib/productCategories";
@@ -150,6 +151,8 @@ function loadInitialCartState() {
 
 function POSPage() {
   const navigate = useNavigate();
+  const { features, loading: featuresLoading } = useStoreFeatures();
+  const posEnabled = features.pos_enabled !== false;
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -177,6 +180,17 @@ function POSPage() {
 
   useEffect(() => {
     async function loadProducts() {
+      if (featuresLoading) {
+        return;
+      }
+
+      if (!posEnabled) {
+        setProducts([]);
+        setLoading(false);
+        setError("此功能未啟用，請聯絡平台管理員。");
+        return;
+      }
+
       setLoading(true);
       try {
         const data = await apiRequest("/products");
@@ -190,7 +204,7 @@ function POSPage() {
     }
 
     loadProducts();
-  }, []);
+  }, [featuresLoading, posEnabled]);
 
   useEffect(() => {
     if (posStep !== 2) {
@@ -1027,6 +1041,30 @@ function POSPage() {
       ) : null}
     </>
   );
+
+  if (featuresLoading) {
+    return (
+      <div>
+        <PageHeader
+          title="POS"
+          description="Step 1 到 Step 4 一次只處理一件事，依序完成商品、客戶、付款與確認。"
+        />
+        <div className="loading-state">載入功能設定中...</div>
+      </div>
+    );
+  }
+
+  if (!posEnabled) {
+    return (
+      <div>
+        <PageHeader
+          title="POS"
+          description="Step 1 到 Step 4 一次只處理一件事，依序完成商品、客戶、付款與確認。"
+        />
+        <div className="empty-state">此功能未啟用，請聯絡平台管理員。</div>
+      </div>
+    );
+  }
 
   return (
     <div>

@@ -58,7 +58,7 @@ SaaS 平台管理與門市 ERP 必須分離。KINGWAY_TAINAN 是 `store_id=1` �
 
 `/api/saas-admin/*` 已套用 `backend/src/middleware/platformAuth.js` 的 `authenticatePlatformAdmin`，並要求平台角色屬於 `PLATFORM_OWNER`、`PLATFORM_ADMIN` 或 `SUPPORT`。middleware 會回查 `platform_admin_users`，停用帳號即使持有舊 token 也不能使用 SaaS admin API。既有 staff token 不能通過，平台 token 也不能通過門市 ERP 的既有 `authenticate`。
 
-本階段定位為平台管理儲存與逐步 enforcement 階段：已建立平台帳號、登入、token scope、API 邊界與 `store_features` 設定儲存。第一階段已套用 `sales_dashboard_enabled`、`coupons_enabled`、`suppliers_enabled` 到對應後台 API；並新增門市 staff read-only 功能查詢與前端 menu enforcement，讓門市 Sidebar / 更多頁依第一階段功能狀態隱藏銷售報表、優惠券、發注 / 供應商入口。第二至第四階段已完成庫存、購買確認書管理、維修、員工管理與訂單管理 enforcement。POS、LINE/Telegram 與 public/LIFF 客戶流程需維持獨立邊界，後續逐項處理。
+本階段定位為平台管理儲存與逐步 enforcement 階段：已建立平台帳號、登入、token scope、API 邊界與 `store_features` 設定儲存。第一階段已套用 `sales_dashboard_enabled`、`coupons_enabled`、`suppliers_enabled` 到對應後台 API；並新增門市 staff read-only 功能查詢與前端 menu enforcement，讓門市 Sidebar / 更多頁依第一階段功能狀態隱藏銷售報表、優惠券、發注 / 供應商入口。第二至最終階段已完成庫存、購買確認書管理、維修、員工管理、訂單管理與 POS enforcement。LINE/Telegram 與 public/LIFF 客戶流程需維持獨立邊界，不因門市後台功能開關而阻擋客戶流程。
 
 ## Phase: frontend menu enforcement for initial features
 
@@ -124,6 +124,19 @@ Final remaining phase：
 
 - `pos_enabled`
 
+## Phase: final feature enforcement
+
+已完成：
+
+- `pos_enabled` 已套用至 `backend/src/routes/orders.js` 的 POS 建單 API：`POST /api/orders`。此路徑是 POS 畫面完成付款或建立訂單時的保存流程。
+- Sidebar / 更多頁已依 `pos_enabled` 隱藏「POS / 新訂單」入口；直接 URL 進入 POS 頁面時顯示「此功能未啟用，請聯絡平台管理員。」。
+- orders/POS boundary：`orders_enabled` 繼續負責訂單列表、詳情、修改、刪除、尾款與交車等管理 API；`pos_enabled` 只負責 POS 新訂單建立/結帳保存流程。
+- Public purchase confirmation flow、LINE/public repair/order LIFF flow 維持可用，不套用 `pos_enabled` 或 `orders_enabled`。
+
+Feature enforcement phase complete：
+
+- 初始核心 feature set 已完成 backend route enforcement 與門市前端 menu/page enforcement。
+
 ## 本次保留與未做事項
 
 已做：
@@ -148,11 +161,12 @@ Final remaining phase：
 - 第三階段將維修管理、員工管理、出勤、KPI、薪資前端選單套用 store feature 狀態
 - 第四階段將訂單管理 API 套用 store feature enforcement，但 POS 建單 `POST /api/orders` 維持可用
 - 第四階段將訂單管理前端選單套用 store feature 狀態
+- 最終階段將 POS 建單 `POST /api/orders` 套用 `pos_enabled`，並將 POS 前端入口與直接頁面接入 store feature 狀態
 
 未做：
 
-- POS 尚未套用 `store_features` route enforcement；`pos_enabled` 保留為 final remaining phase
-- 訂單管理已接入 `orders_enabled`，但 POS 建單與訂單管理的邊界仍需在 `pos_enabled` 階段獨立確認
+- 不再保留核心 feature enforcement 階段；目前核心 feature set 已套用完畢
+- 訂單管理與 POS 邊界已拆分：管理 API 使用 `orders_enabled`，POS 建單使用 `pos_enabled`
 - 不調整 LINE/Telegram token 邏輯
 - 不變更 production config
 - 不改動既有門市登入與 POS/ERP 工作流

@@ -6,6 +6,7 @@ const router = express.Router();
 
 const STORE_STAFF_FEATURE_KEYS = [
   "sales_dashboard_enabled",
+  "pos_enabled",
   "coupons_enabled",
   "suppliers_enabled",
   "inventory_enabled",

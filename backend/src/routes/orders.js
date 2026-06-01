@@ -35,6 +35,7 @@ const router = express.Router();
 
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER", "REPAIR"]));
 const requireOrderManagementFeature = requireStoreFeature("orders_enabled");
+const requirePosFeature = requireStoreFeature("pos_enabled");
 
 function normalizeCustomerType(value) {
   const normalized = String(value || "").trim().toUpperCase();
@@ -546,7 +547,7 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
   }
 });
 
-router.post("/", async (req, res, next) => {
+router.post("/", requirePosFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const {

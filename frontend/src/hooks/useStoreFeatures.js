@@ -3,6 +3,7 @@ import { apiRequest } from "../lib/api";
 
 export const DEFAULT_STORE_FEATURES = {
   sales_dashboard_enabled: true,
+  pos_enabled: true,
   coupons_enabled: true,
   suppliers_enabled: true,
   inventory_enabled: true,

@@ -248,6 +248,7 @@ function SaasStoreFeaturesPage() {
           第二階段已套用至：庫存管理、購買確認書。
           第三階段已套用至：維修系統、員工管理。
           第四階段已套用至：訂單管理。
+          最終階段已套用至：POS 系統。
         </div>
 
         {saveError ? <div className="empty-state">{saveError}</div> : null}

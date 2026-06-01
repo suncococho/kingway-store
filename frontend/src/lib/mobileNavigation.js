@@ -2,6 +2,7 @@ import { filterMenuItemsForUser } from "./permissions";
 
 const FEATURE_ROUTE_MAP = {
   "/sales": "sales_dashboard_enabled",
+  "/pos": "pos_enabled",
   "/coupons": "coupons_enabled",
   "/suppliers": "suppliers_enabled",
   "/inventory": "inventory_enabled",
