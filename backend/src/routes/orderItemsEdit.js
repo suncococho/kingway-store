@@ -1,6 +1,7 @@
 const express = require("express");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { requireStoreFeature } = require("../middleware/storeFeature");
 const { createError } = require("../utils/errors");
 
 const router = express.Router();
@@ -13,7 +14,7 @@ function mapCategory(category) {
   return "OTHER";
 }
 
-router.put("/:id/items", async (req, res, next) => {
+router.put("/:id/items", requireStoreFeature("orders_enabled"), async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
     const items = Array.isArray(req.body.items) ? req.body.items : [];

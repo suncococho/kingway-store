@@ -11,7 +11,8 @@ const STORE_STAFF_FEATURE_KEYS = [
   "inventory_enabled",
   "purchase_confirmations_enabled",
   "repairs_enabled",
-  "staff_management_enabled"
+  "staff_management_enabled",
+  "orders_enabled"
 ];
 
 function resolveStoreId(req) {

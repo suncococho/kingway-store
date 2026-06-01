@@ -7,6 +7,7 @@ const FEATURE_ROUTE_MAP = {
   "/inventory": "inventory_enabled",
   "/purchase-confirmations": "purchase_confirmations_enabled",
   "/repairs": "repairs_enabled",
+  "/orders": "orders_enabled",
   "/staff": "staff_management_enabled",
   "/staff-attendance": "staff_management_enabled",
   "/kpi": "staff_management_enabled",

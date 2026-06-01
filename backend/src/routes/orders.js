@@ -4,6 +4,7 @@ const utc = require("dayjs/plugin/utc");
 const timezone = require("dayjs/plugin/timezone");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { requireStoreFeature } = require("../middleware/storeFeature");
 const { TAIPEI_TZ } = require("../services/reportService");
 const { createError } = require("../utils/errors");
 const { logKpi } = require("../services/kpiService");
@@ -33,6 +34,7 @@ dayjs.extend(timezone);
 const router = express.Router();
 
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER", "REPAIR"]));
+const requireOrderManagementFeature = requireStoreFeature("orders_enabled");
 
 function normalizeCustomerType(value) {
   const normalized = String(value || "").trim().toUpperCase();
@@ -222,7 +224,7 @@ async function pushPurchaseConfirmationLineMessage(confirmation, options = {}) {
   return true;
 }
 
-router.get("/", async (req, res, next) => {
+router.get("/", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     await backfillApprovedRepairOrders();
@@ -349,7 +351,7 @@ router.get("/", async (req, res, next) => {
 });
 
 
-router.get("/trash/list", async (req, res, next) => {
+router.get("/trash/list", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
 
@@ -378,7 +380,7 @@ router.get("/trash/list", async (req, res, next) => {
   }
 });
 
-router.delete("/:id", async (req, res, next) => {
+router.delete("/:id", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
 
@@ -396,7 +398,7 @@ router.delete("/:id", async (req, res, next) => {
 });
 
 
-router.post("/:id/restore", async (req, res, next) => {
+router.post("/:id/restore", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
 
@@ -413,7 +415,7 @@ router.post("/:id/restore", async (req, res, next) => {
   }
 });
 
-router.delete("/:id/permanent", async (req, res, next) => {
+router.delete("/:id/permanent", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
 
@@ -441,7 +443,7 @@ router.delete("/:id/permanent", async (req, res, next) => {
 });
 
 
-router.get("/:id", async (req, res, next) => {
+router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const orderId = req.params.id;
@@ -879,7 +881,7 @@ router.post("/", async (req, res, next) => {
   }
 });
 
-router.patch("/:id", async (req, res, next) => {
+router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
     const storeId = req.storeId;
@@ -1035,7 +1037,7 @@ router.patch("/:id", async (req, res, next) => {
 });
 
 
-router.put("/:id/items", async (req, res, next) => {
+router.put("/:id/items", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
     const storeId = req.storeId;
@@ -1170,7 +1172,7 @@ router.put("/:id/items", async (req, res, next) => {
 });
 
 
-router.post("/:id/purchase-confirmation", async (req, res, next) => {
+router.post("/:id/purchase-confirmation", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
     const storeId = req.storeId;
@@ -1199,7 +1201,7 @@ router.post("/:id/purchase-confirmation", async (req, res, next) => {
   }
 });
 
-router.post("/:id/collect-balance", async (req, res, next) => {
+router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const orderId = Number(req.params.id);
     const storeId = req.storeId;
@@ -1446,7 +1448,7 @@ async function createKingwayAutoPurchaseOrderOnHandover(orderId, staffId = 1) {
 }
 
 
-router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
+router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), requireOrderManagementFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     // ORDERS_HANDOVER_STORE_SCOPE_V1
@@ -1516,7 +1518,7 @@ router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), async (req
 
 
 // Order invoice print data
-router.get("/:id/invoice", async (req, res, next) => {
+router.get("/:id/invoice", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const orderKey = String(req.params.id || "").trim();
     const decodedOrderKey = decodeURIComponent(orderKey);

@@ -8,7 +8,8 @@ export const DEFAULT_STORE_FEATURES = {
   inventory_enabled: true,
   purchase_confirmations_enabled: true,
   repairs_enabled: true,
-  staff_management_enabled: true
+  staff_management_enabled: true,
+  orders_enabled: true
 };
 
 function normalizeFeatures(features) {

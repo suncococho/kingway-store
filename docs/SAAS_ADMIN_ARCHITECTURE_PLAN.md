@@ -58,7 +58,7 @@ SaaS 平台管理與門市 ERP 必須分離。KINGWAY_TAINAN 是 `store_id=1` �
 
 `/api/saas-admin/*` 已套用 `backend/src/middleware/platformAuth.js` 的 `authenticatePlatformAdmin`，並要求平台角色屬於 `PLATFORM_OWNER`、`PLATFORM_ADMIN` 或 `SUPPORT`。middleware 會回查 `platform_admin_users`，停用帳號即使持有舊 token 也不能使用 SaaS admin API。既有 staff token 不能通過，平台 token 也不能通過門市 ERP 的既有 `authenticate`。
 
-本階段定位為平台管理儲存與初期 enforcement 階段：已建立平台帳號、登入、token scope、API 邊界與 `store_features` 設定儲存。第一階段已套用 `sales_dashboard_enabled`、`coupons_enabled`、`suppliers_enabled` 到對應後台 API；並新增門市 staff read-only 功能查詢與前端 menu enforcement，讓門市 Sidebar / 更多頁依第一階段功能狀態隱藏銷售報表、優惠券、發注 / 供應商入口。POS、訂單、維修、庫存、LINE/Telegram 等實際業務 route enforcement 留到下一階段逐項處理。
+本階段定位為平台管理儲存與逐步 enforcement 階段：已建立平台帳號、登入、token scope、API 邊界與 `store_features` 設定儲存。第一階段已套用 `sales_dashboard_enabled`、`coupons_enabled`、`suppliers_enabled` 到對應後台 API；並新增門市 staff read-only 功能查詢與前端 menu enforcement，讓門市 Sidebar / 更多頁依第一階段功能狀態隱藏銷售報表、優惠券、發注 / 供應商入口。第二至第四階段已完成庫存、購買確認書管理、維修、員工管理與訂單管理 enforcement。POS、LINE/Telegram 與 public/LIFF 客戶流程需維持獨立邊界，後續逐項處理。
 
 ## Phase: frontend menu enforcement for initial features
 
@@ -88,7 +88,7 @@ Next phase：
 - `repairs_enabled`
 - `staff_management_enabled`
 
-Final phase：
+Later phases：
 
 - `orders_enabled`
 - `pos_enabled`
@@ -102,9 +102,26 @@ Final phase：
 - LINE/public repair flow continues to be allowed：LINE 客戶水路維持在 `/api/line-repair/*` 等 public/LIFF route，不因管理功能關閉而阻擋客戶送出水路預約。
 - 直接 URL 進入已關閉的維修或員工管理相關頁面時，對應 API 403 會顯示「此功能未啟用，請聯絡平台管理員。」。
 
-Final phase：
+Next phase：
 
 - `orders_enabled`
+
+Final phase：
+
+- `pos_enabled`
+
+## Phase: fourth feature enforcement
+
+已完成：
+
+- `orders_enabled` 已套用至 `backend/src/routes/orders.js` 的門市訂單管理 API：列表、垃圾桶、刪除/復原、詳細、修改、品項編輯、購買確認書重送、尾款收取、交車確認與 invoice 讀取。
+- `backend/src/routes/orderItemsEdit.js` 屬於訂單品項管理編輯路徑，已套用 `orders_enabled`。
+- Sidebar / 更多頁已依 `orders_enabled` 隱藏「訂單管理」入口；直接 URL 進入時，訂單管理 API 403 會顯示「此功能未啟用，請聯絡平台管理員。」。
+- POS/order boundary：POS 建單 `POST /api/orders` 本階段刻意不套用 `orders_enabled`，避免把 POS 功能誤判為訂單管理功能。`pos_enabled` 仍需獨立設計與測試。
+- Public purchase confirmation flow 與 LINE/public LIFF 客戶流程未調整，維持可用。
+
+Final remaining phase：
+
 - `pos_enabled`
 
 ## 本次保留與未做事項
@@ -129,11 +146,13 @@ Final phase：
 - 第三階段將維修管理 API 套用 store feature enforcement，LINE/public repair flow 維持可用
 - 第三階段將員工管理、出勤、KPI、薪資 API 套用 store feature enforcement
 - 第三階段將維修管理、員工管理、出勤、KPI、薪資前端選單套用 store feature 狀態
+- 第四階段將訂單管理 API 套用 store feature enforcement，但 POS 建單 `POST /api/orders` 維持可用
+- 第四階段將訂單管理前端選單套用 store feature 狀態
 
 未做：
 
-- POS、訂單尚未套用 `store_features` route enforcement
-- 訂單與 POS 門市 ERP sidebar 尚未接入 store feature 狀態；目前完成第一、第二、第三階段功能
+- POS 尚未套用 `store_features` route enforcement；`pos_enabled` 保留為 final remaining phase
+- 訂單管理已接入 `orders_enabled`，但 POS 建單與訂單管理的邊界仍需在 `pos_enabled` 階段獨立確認
 - 不調整 LINE/Telegram token 邏輯
 - 不變更 production config
 - 不改動既有門市登入與 POS/ERP 工作流
