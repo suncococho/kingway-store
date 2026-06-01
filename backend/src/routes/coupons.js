@@ -3,6 +3,7 @@ const express = require("express");
 const { pool } = require("../db");
 const { BOT_NOTIFY, sendTelegramMessage, sendInternalTelegram } = require("../services/telegramService");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { requireStoreFeature } = require("../middleware/storeFeature");
 const { createError } = require("../utils/errors");
 const { sendLineMessage } = require("../utils/line");
 const config = require("../config");
@@ -28,7 +29,7 @@ function isCouponCampaignEnabled(type) {
 
 
 
-router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]));
+router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]), requireStoreFeature("coupons_enabled"));
 
 router.get("/", async (req, res, next) => {
   try {

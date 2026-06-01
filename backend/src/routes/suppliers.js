@@ -2,6 +2,7 @@ const express = require("express");
 const { sendInternalTelegram } = require("../services/telegramService");
 const { pool } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { requireStoreFeature } = require("../middleware/storeFeature");
 
 const router = express.Router();
 
@@ -137,7 +138,7 @@ async function sendSupplierDecisionRequest(requestId, requestType, supplierName,
   });
 }
 
-router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]));
+router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]), requireStoreFeature("suppliers_enabled"));
 
 router.get("/requests", async (req, res, next) => {
   try {
