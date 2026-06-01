@@ -57,9 +57,14 @@ echo
 echo "== Health checks =="
 curl -f http://127.0.0.1:3010/health
 echo
-curl -f http://127.0.0.1:3010/api/saas-admin/stores
-echo
 curl -f http://127.0.0.1:3010/api/system/saas-status
+echo
+SAAS_STORES_STATUS="$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3010/api/saas-admin/stores)"
+if [ "$SAAS_STORES_STATUS" != "401" ]; then
+  echo "Expected /api/saas-admin/stores to require platform admin auth, got HTTP $SAAS_STORES_STATUS"
+  exit 1
+fi
+echo "/api/saas-admin/stores auth check: HTTP 401"
 echo
 
 echo "== Staging URLs =="
