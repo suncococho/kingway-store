@@ -2,11 +2,29 @@ const express = require("express");
 const dayjs = require("dayjs");
 const { pool, withTransaction } = require("../db");
 const { BOT_NOTIFY, sendTelegramMessage } = require("../services/telegramService");
+const {
+  SOURCE,
+  createPublicStoreContextMiddleware
+} = require("../utils/publicStoreResolver");
 
 const router = express.Router();
+const resolvePublicStoreContext = createPublicStoreContextMiddleware({
+  db: pool,
+  legacyFallbackMode: SOURCE.LEGACY_KINGWAY_FALLBACK,
+  legacyFallbackStoreId: 1,
+  legacyFallbackAllowUnverifiedStore: true
+});
+
+function getLineOrderStoreId(req) {
+  const resolved = Number(req.publicStoreContext?.storeId || 1);
+  return Number.isSafeInteger(resolved) && resolved > 0 ? resolved : 1;
+}
+
+router.use(resolvePublicStoreContext);
 
 router.get("/customer", async (req, res, next) => {
   try {
+    const storeId = getLineOrderStoreId(req);
     const lineUserId = String(req.query.lineUserId || "").trim();
     const displayName = String(req.query.displayName || "").trim();
 
@@ -23,19 +41,20 @@ router.get("/customer", async (req, res, next) => {
           line_user_id AS lineUserId
         FROM customers
         WHERE line_user_id = ?
+          AND store_id = ?
         LIMIT 1
       `,
-      [lineUserId]
+      [lineUserId, storeId]
     );
 
     if (!customer) {
       const fallbackName = displayName || "LINE 客戶";
       const [created] = await pool.query(
         `
-          INSERT INTO customers (name, line_user_id, line_display_name, crm_stage, last_contact_at)
-          VALUES (?, ?, ?, 'new_line_friend', NOW())
+        INSERT INTO customers (name, line_user_id, line_display_name, crm_stage, last_contact_at, store_id)
+        VALUES (?, ?, ?, 'new_line_friend', NOW(), ?)
         `,
-        [fallbackName, lineUserId, fallbackName]
+        [fallbackName, lineUserId, fallbackName, storeId]
       );
 
       const newCustomer = {
@@ -60,11 +79,12 @@ router.get("/customer", async (req, res, next) => {
          status,
          business_date AS businessDate,
          notes
-       FROM orders
-       WHERE customer_id = ? OR customer_phone = ?
+        FROM orders
+       WHERE (customer_id = ? OR customer_phone = ?)
+         AND store_id = ?
        ORDER BY id DESC
        LIMIT 20`,
-      [customer.id, customer.phone]
+      [customer.id, customer.phone, storeId]
     );
 
     const [repairs] = await pool.query(
@@ -83,9 +103,10 @@ router.get("/customer", async (req, res, next) => {
          picked_up_at AS pickedUpAt
        FROM repair_orders
        WHERE customer_id = ?
+         AND store_id = ?
        ORDER BY id DESC
        LIMIT 20`,
-      [customer.id]
+      [customer.id, storeId]
     );
 
     return res.json({ customer, orders, repairs });
@@ -96,13 +117,16 @@ router.get("/customer", async (req, res, next) => {
 
 router.get("/ebikes", async (req, res, next) => {
   try {
+    const storeId = getLineOrderStoreId(req);
     const [rows] = await pool.query(`
       SELECT id, sku, name, price, stock, image_url AS imageUrl
       FROM products
-      WHERE category = 'EB' AND is_active = 1
+      WHERE category = 'EB'
+        AND is_active = 1
+        AND store_id = ?
       ORDER BY id DESC
       LIMIT 50
-    `);
+    `, [storeId]);
     return res.json(rows);
   } catch (error) {
     console.error("[line-order/create failed]", error);
@@ -112,6 +136,7 @@ router.get("/ebikes", async (req, res, next) => {
 
 router.post("/create", async (req, res, next) => {
   try {
+    const storeId = getLineOrderStoreId(req);
     const { lineUserId, productId, name, phone } = req.body;
 
     if (!productId) {
@@ -125,9 +150,10 @@ router.post("/create", async (req, res, next) => {
         `SELECT id, name, phone, line_user_id AS lineUserId
          FROM customers
          WHERE line_user_id = ?
+           AND store_id = ?
          LIMIT 1
          FOR UPDATE`,
-        [effectiveLineUserId]
+        [effectiveLineUserId, storeId]
       );
 
       let customer = customerRows[0];
@@ -138,9 +164,9 @@ router.post("/create", async (req, res, next) => {
         }
 
         const [created] = await tx.query(
-          `INSERT INTO customers (name, phone, line_user_id, customer_type)
-           VALUES (?, ?, ?, 'LINE')`,
-          [name || "LINE 客戶", phone, effectiveLineUserId]
+          `INSERT INTO customers (name, phone, line_user_id, customer_type, store_id)
+           VALUES (?, ?, ?, 'LINE', ?)`,
+          [name || "LINE 客戶", phone, effectiveLineUserId, storeId]
         );
 
         customer = {
@@ -157,8 +183,8 @@ router.post("/create", async (req, res, next) => {
 
       if (phone && customer.phone !== phone) {
         await tx.query(
-          `UPDATE customers SET name = COALESCE(?, name), phone = ? WHERE id = ?`,
-          [name || customer.name, phone, customer.id]
+          `UPDATE customers SET name = COALESCE(?, name), phone = ? WHERE id = ? AND store_id = ?`,
+          [name || customer.name, phone, customer.id, storeId]
         );
         customer.phone = phone;
       }
@@ -167,10 +193,11 @@ router.post("/create", async (req, res, next) => {
         `SELECT id, sku, name, price, stock
          FROM products
          WHERE id = ?
+           AND store_id = ?
            AND category IN ('EB', 'EBIKE')
            AND is_active = 1
          LIMIT 1`,
-        [productId]
+        [productId, storeId]
       );
 
       const product = productRows[0];
@@ -210,22 +237,28 @@ router.post("/create", async (req, res, next) => {
       const orderNo = `LINE-${dayjs().format("YYYYMMDD-HHmmss-SSS")}`;
 
       const [staffRows] = await tx.query(
-        `SELECT id FROM staff_users WHERE is_active = 1 ORDER BY id ASC LIMIT 1`
+        `SELECT id FROM staff_users WHERE is_active = 1 AND store_id = ? ORDER BY id ASC LIMIT 1`,
+        [storeId]
       );
-      const staffId = staffRows[0]?.id || 1;
+      const staffRow = staffRows[0];
+      if (!staffRow) {
+        throw Object.assign(new Error("找不到可用店員"), { statusCode: 500 });
+      }
+      const staffId = staffRow.id;
 
       const [orderResult] = await tx.query(
         `INSERT INTO orders
-         (order_no, customer_id, customer_name, customer_phone, customer_type,
+         (store_id, order_no, customer_id, customer_name, customer_phone, customer_type,
           total_amount, payment_method, status, is_reservation_order,
           deposit_amount, unpaid_balance, final_payment_status, final_paid_at,
           notes, created_by, business_date, order_type, source)
          VALUES
-         (?, ?, ?, ?, 'LINE',
+         (?, ?, ?, ?, ?, 'LINE',
           ?, 'OTHER', 'PENDING_CONFIRM', 1,
           0, ?, 'UNPAID', NULL,
           ?, ?, CURDATE(), 'GENERAL', 'line_order')`,
         [
+          storeId,
           orderNo,
           customer.id,
           customer.name || name || "LINE 客戶",
@@ -239,10 +272,11 @@ router.post("/create", async (req, res, next) => {
 
       await tx.query(
         `INSERT INTO order_items
-         (order_id, product_id, sku_snapshot, product_name_snapshot,
+         (store_id, order_id, product_id, sku_snapshot, product_name_snapshot,
           product_category_snapshot, quantity, unit_price, line_total)
-         VALUES (?, ?, ?, ?, 'EB', 1, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 'EB', 1, ?, ?)`,
         [
+          storeId,
           orderResult.insertId,
           product.id,
           product.sku,

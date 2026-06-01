@@ -20,6 +20,18 @@ const router = express.Router();
 
 const BOT_NOTIFY = "notify";
 
+const DEFAULT_TELEGRAM_STORE_ID = Number(process.env.TELEGRAM_FALLBACK_STORE_ID || process.env.LEGACY_KINGWAY_STORE_ID || 1);
+
+function resolveTelegramStoreId() {
+  const resolved = Number(DEFAULT_TELEGRAM_STORE_ID);
+
+  if (Number.isSafeInteger(resolved) && resolved > 0) {
+    return resolved;
+  }
+
+  return 1;
+}
+
 
 async function sendDocument(chatId, filePath, caption = "") {
   try {
@@ -104,7 +116,7 @@ async function sendMessage(chatId, text, replyMarkup = null) {
 
 
 
-async function handleLowStockAutoCommand(chatId, text) {
+async function handleLowStockAutoCommand(chatId, text, storeId) {
   if (!/^\/lowstock\s+auto$/i.test(String(text || "").trim())) return false;
 
   const [products] = await pool.query(
@@ -114,10 +126,11 @@ async function handleLowStockAutoCommand(chatId, text) {
       WHERE is_active = 1
         AND reorder_level > 0
         AND stock <= reorder_level
+        AND store_id = ?
       ORDER BY stock ASC, id DESC
       LIMIT 20
     `,
-    supplierFilter ? [supplierFilter] : []
+    [storeId]
   );
 
   if (!products.length) {
@@ -167,7 +180,7 @@ async function handleLowStockAutoCommand(chatId, text) {
 
 
 
-async function handleSupplierXlsxCommand(chatId, text) {
+async function handleSupplierXlsxCommand(chatId, text, storeId) {
   const raw = String(text || "").trim();
   if (!/^\/supplier\s+xlsx(?:\s+\S+)?$/i.test(raw)) return false;
 
@@ -205,9 +218,10 @@ async function handleSupplierXlsxCommand(chatId, text) {
       LEFT JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
       LEFT JOIN products p ON p.id = sri.product_id
       WHERE ${where.join(" AND ")}
+        AND p.store_id = ?
       ORDER BY sr.id DESC
     `,
-    params
+    [...params, storeId]
   );
 
   if (!rows.length) {
@@ -270,7 +284,7 @@ async function handleSupplierXlsxCommand(chatId, text) {
 }
 
 
-async function handleSupplierMonthlyCommand(chatId, text) {
+async function handleSupplierMonthlyCommand(chatId, text, storeId) {
   const raw = String(text || "").trim();
   if (!/^\/supplier\s+monthly(?:\s+\S+)?$/i.test(raw)) return false;
 
@@ -297,13 +311,16 @@ async function handleSupplierMonthlyCommand(chatId, text) {
         SUM(CASE WHEN sr.request_type='PURCHASE_ORDER' THEN GREATEST(sri.quantity - sri.received_quantity, 0) * p.cost_price ELSE 0 END) AS pendingAmount,
         SUM(CASE WHEN sr.request_type='RETURN' THEN sri.quantity * p.cost_price ELSE 0 END) AS returnAmount
       FROM supplier_requests sr
-      LEFT JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
-      LEFT JOIN products p ON p.id = sri.product_id
+      INNER JOIN supplier_request_items sri
+        ON sri.supplier_request_id = sr.id
+      INNER JOIN products p
+        ON p.id = sri.product_id
+       AND p.store_id = ?
       WHERE ${where.join(" AND ")}
       GROUP BY sr.supplier_name
       ORDER BY sr.supplier_name ASC
     `,
-    params
+    [...params, storeId]
   );
 
   if (!rows.length) {
@@ -331,7 +348,7 @@ async function handleSupplierMonthlyCommand(chatId, text) {
 }
 
 
-async function handleSupplierCsvCommand(chatId, text) {
+async function handleSupplierCsvCommand(chatId, text, storeId) {
   const raw = String(text || "").trim();
   if (!/^\/supplier\s+excel(?:\s+\S+)?$/i.test(raw)) return false;
 
@@ -365,12 +382,15 @@ async function handleSupplierCsvCommand(chatId, text) {
         sri.reason,
         sr.note
       FROM supplier_requests sr
-      LEFT JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
-      LEFT JOIN products p ON p.id = sri.product_id
+      INNER JOIN supplier_request_items sri
+        ON sri.supplier_request_id = sr.id
+      INNER JOIN products p
+        ON p.id = sri.product_id
+       AND p.store_id = ?
       WHERE ${where.join(" AND ")}
       ORDER BY sr.id DESC
     `,
-    params
+    [...params, storeId]
   );
 
   if (!rows.length) {
@@ -434,7 +454,7 @@ async function handleSupplierCsvCommand(chatId, text) {
 }
 
 
-async function handleSupplierReportCommand(chatId, text) {
+async function handleSupplierReportCommand(chatId, text, storeId) {
   const raw = String(text || "").trim();
   if (!/^\/supplier\s+report(?:\s+\S+)?$/i.test(raw)) return false;
 
@@ -460,13 +480,16 @@ async function handleSupplierReportCommand(chatId, text) {
         sr.status,
         SUM(sri.quantity) AS qty
       FROM supplier_requests sr
-      LEFT JOIN supplier_request_items sri
+      INNER JOIN supplier_request_items sri
         ON sri.supplier_request_id = sr.id
+      INNER JOIN products p
+        ON p.id = sri.product_id
+       AND p.store_id = ?
       WHERE ${where.join(" AND ")}
       GROUP BY sr.supplier_name, sr.request_type, sr.status
       ORDER BY sr.supplier_name ASC
     `,
-    params
+    [...params, storeId]
   );
 
   if (!rows.length) {
@@ -525,7 +548,7 @@ async function handleSupplierHelpCommand(chatId, text) {
   return true;
 }
 
-async function handleLowStockCommand(chatId, text) {
+async function handleLowStockCommand(chatId, text, storeId) {
   if (!/^\/lowstock$/i.test(String(text || "").trim())) return false;
 
   const [rows] = await pool.query(
@@ -535,9 +558,11 @@ async function handleLowStockCommand(chatId, text) {
       WHERE is_active = 1
         AND reorder_level > 0
         AND stock <= reorder_level
+        AND store_id = ?
       ORDER BY stock ASC, id DESC
       LIMIT 20
-    `
+    `,
+    [storeId]
   );
 
   if (!rows.length) {
@@ -559,7 +584,7 @@ async function handleLowStockCommand(chatId, text) {
 }
 
 
-async function handleSupplierListCommand(chatId, text) {
+async function handleSupplierListCommand(chatId, text, storeId) {
   const raw = String(text || "").trim();
   if (!/^\/supplier(?:\s+(pending))?(?:\s+(\S+))?$/i.test(raw) && !/^\/supplier\s+\S+$/i.test(raw)) return false;
 
@@ -600,13 +625,16 @@ async function handleSupplierListCommand(chatId, text) {
         p.sku,
         p.name
       FROM supplier_requests sr
-      LEFT JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
-      LEFT JOIN products p ON p.id = sri.product_id
+      INNER JOIN supplier_request_items sri
+        ON sri.supplier_request_id = sr.id
+      INNER JOIN products p
+        ON p.id = sri.product_id
+       AND p.store_id = ?
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY sr.id DESC
       LIMIT 10
     `,
-    params
+    [storeId, ...params]
   );
 
   if (!rows.length) {
@@ -631,15 +659,22 @@ async function handleSupplierListCommand(chatId, text) {
   return true;
 }
 
-async function handleSupplierReturnDoneCommand(chatId, text) {
+async function handleSupplierReturnDoneCommand(chatId, text, storeId) {
   const match = String(text || "").trim().match(/^\/return-done\s+(\d+)$/i);
   if (!match) return false;
 
   const requestId = Number(match[1]);
 
   const [[reqRow]] = await pool.query(
-    `SELECT id, request_type AS requestType, status FROM supplier_requests WHERE id = ? LIMIT 1`,
-    [requestId]
+    `
+      SELECT sr.id, sr.request_type AS requestType, sr.status
+      FROM supplier_requests sr
+      INNER JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
+      INNER JOIN products p ON p.id = sri.product_id AND p.store_id = ?
+      WHERE sr.id = ?
+      LIMIT 1
+    `,
+    [storeId, requestId]
   );
 
   if (!reqRow) {
@@ -662,11 +697,11 @@ async function handleSupplierReturnDoneCommand(chatId, text) {
       SELECT sri.id, sri.product_id AS productId, sri.quantity,
              p.sku, p.name, p.stock
       FROM supplier_request_items sri
-      JOIN products p ON p.id = sri.product_id
+      JOIN products p ON p.id = sri.product_id AND p.store_id = ?
       WHERE sri.supplier_request_id = ?
       LIMIT 1
     `,
-    [requestId]
+    [storeId, requestId]
   );
 
   if (!item) {
@@ -675,8 +710,8 @@ async function handleSupplierReturnDoneCommand(chatId, text) {
   }
 
   await pool.query(
-    `UPDATE products SET stock = GREATEST(stock - ?, 0) WHERE id = ?`,
-    [Number(item.quantity || 0), item.productId]
+    `UPDATE products SET stock = GREATEST(stock - ?, 0) WHERE id = ? AND store_id = ?`,
+    [Number(item.quantity || 0), item.productId, storeId]
   );
 
   await pool.query(
@@ -701,7 +736,7 @@ async function handleSupplierReturnDoneCommand(chatId, text) {
 }
 
 
-async function handleSupplierReceiveCommand(chatId, text) {
+async function handleSupplierReceiveCommand(chatId, text, storeId) {
   const match = String(text || "").trim().match(/^\/receive\s+(\d+)\s+(\d+)$/i);
   if (!match) return false;
 
@@ -714,8 +749,15 @@ async function handleSupplierReceiveCommand(chatId, text) {
   }
 
   const [[reqRow]] = await pool.query(
-    `SELECT id, request_type AS requestType, status FROM supplier_requests WHERE id = ? LIMIT 1`,
-    [requestId]
+    `
+      SELECT sr.id, sr.request_type AS requestType, sr.status
+      FROM supplier_requests sr
+      INNER JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
+      INNER JOIN products p ON p.id = sri.product_id AND p.store_id = ?
+      WHERE sr.id = ?
+      LIMIT 1
+    `,
+    [storeId, requestId]
   );
 
   if (!reqRow) {
@@ -733,11 +775,11 @@ async function handleSupplierReceiveCommand(chatId, text) {
       SELECT sri.id, sri.product_id AS productId, sri.quantity, sri.received_quantity AS receivedQuantity,
              p.sku, p.name, p.stock
       FROM supplier_request_items sri
-      JOIN products p ON p.id = sri.product_id
+      JOIN products p ON p.id = sri.product_id AND p.store_id = ?
       WHERE sri.supplier_request_id = ?
       LIMIT 1
     `,
-    [requestId]
+    [storeId, requestId]
   );
 
   if (!item) {
@@ -759,8 +801,8 @@ async function handleSupplierReceiveCommand(chatId, text) {
   );
 
   await pool.query(
-    `UPDATE products SET stock = stock + ? WHERE id = ?`,
-    [actualReceive, item.productId]
+    `UPDATE products SET stock = stock + ? WHERE id = ? AND store_id = ?`,
+    [actualReceive, item.productId, storeId]
   );
 
   const newReceived = Number(item.receivedQuantity || 0) + actualReceive;
@@ -789,7 +831,7 @@ async function handleSupplierReceiveCommand(chatId, text) {
 }
 
 
-async function handleSupplierCommand(chatId, text) {
+async function handleSupplierCommand(chatId, text, storeId) {
   const parts = String(text || "").trim().split(/\s+/);
   if (!parts.length || !/^\/(po|return)$/i.test(parts[0])) return false;
 
@@ -813,8 +855,8 @@ async function handleSupplierCommand(chatId, text) {
   }
 
   const [[product]] = await pool.query(
-    `SELECT id, sku, name, stock FROM products WHERE sku = ? LIMIT 1`,
-    [sku]
+    `SELECT id, sku, name, stock FROM products WHERE sku = ? AND store_id = ? LIMIT 1`,
+    [sku, storeId]
   );
 
   if (!product) {
@@ -867,6 +909,7 @@ async function handleSupplierCommand(chatId, text) {
 
 router.post("/webhook", async (req, res) => {
   try {
+    const telegramStoreId = resolveTelegramStoreId();
     const callbackQuery = req.body?.callback_query;
 
     console.log("[TG_CALLBACK_DEBUG]", {
@@ -1060,7 +1103,7 @@ router.post("/webhook", async (req, res) => {
         return res.json({ ok: true });
       }
 
-      const [[request]] = await pool.query(
+        const [[request]] = await pool.query(
         `
           SELECT
             sr.id,
@@ -1070,6 +1113,7 @@ router.post("/webhook", async (req, res) => {
             sr.note,
             sri.quantity,
             p.id AS product_id,
+            p.store_id AS product_store_id,
             p.sku,
             p.name AS productName
           FROM supplier_requests sr
@@ -1088,6 +1132,9 @@ router.post("/webhook", async (req, res) => {
         return res.json({ ok: true });
       }
 
+      const requestStoreId = Number(request.product_store_id || 0);
+      const effectiveStoreId = requestStoreId > 0 ? requestStoreId : Number(telegramStoreId);
+
       if (["RECEIVED", "RETURN_CONFIRMED"].includes(request.status)) {
         if (callbackQuery.message?.chat?.id) {
           await sendMessage(callbackQuery.message.chat.id, `#${requestId} 已完成，不能再變更。`);
@@ -1097,8 +1144,8 @@ router.post("/webhook", async (req, res) => {
 
       let nextStatus = action === "approve" ? "APPROVED" : "REJECTED";
 
-      if (action === "approve" && request.requestType === "RETURN") {
-        nextStatus = "RETURN_CONFIRMED";
+  if (action === "approve" && request.requestType === "RETURN") {
+    nextStatus = "RETURN_CONFIRMED";
 
         const returnQty = Math.abs(Number(request.quantity || 0));
 
@@ -1106,7 +1153,7 @@ router.post("/webhook", async (req, res) => {
           await pool.query(
             `INSERT INTO inventory_movements
              (product_id, movement_type, quantity, reference_type, reference_id, notes)
-             VALUES (?, 'OUT', ?, 'SUPPLIER_REQUEST', ?, ?)`,
+            VALUES (?, 'OUT', ?, 'SUPPLIER_REQUEST', ?, ?)`,
             [
               request.product_id,
               -returnQty,
@@ -1116,8 +1163,8 @@ router.post("/webhook", async (req, res) => {
           );
 
           await pool.query(
-            "UPDATE products SET stock = stock - ? WHERE id = ?",
-            [returnQty, request.product_id]
+            "UPDATE products SET stock = stock - ? WHERE id = ? AND store_id = ?",
+            [returnQty, request.product_id, effectiveStoreId]
           );
         }
       }
@@ -1178,23 +1225,23 @@ router.post("/webhook", async (req, res) => {
 
     if (!chatId || !text) return res.sendStatus(200);
 
-    if (await handleSupplierXlsxCommand(chatId, text)) {
+    if (await handleSupplierXlsxCommand(chatId, text, telegramStoreId)) {
       return res.sendStatus(200);
     }
 
-    if (await handleSupplierMonthlyCommand(chatId, text)) {
+    if (await handleSupplierMonthlyCommand(chatId, text, telegramStoreId)) {
       return res.sendStatus(200);
     }
 
-    if (await handleSupplierCsvCommand(chatId, text)) {
+    if (await handleSupplierCsvCommand(chatId, text, telegramStoreId)) {
       return res.sendStatus(200);
     }
 
-    if (await handleSupplierReportCommand(chatId, text)) {
+    if (await handleSupplierReportCommand(chatId, text, telegramStoreId)) {
       return res.sendStatus(200);
     }
 
-    if (await handleLowStockAutoCommand(chatId, text)) {
+    if (await handleLowStockAutoCommand(chatId, text, telegramStoreId)) {
       return res.sendStatus(200);
     }
 
@@ -1202,23 +1249,23 @@ router.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    if (await handleLowStockCommand(chatId, text)) {
+    if (await handleLowStockCommand(chatId, text, telegramStoreId)) {
       return res.sendStatus(200);
     }
 
-    if (await handleSupplierListCommand(chatId, text)) {
+    if (await handleSupplierListCommand(chatId, text, telegramStoreId)) {
       return res.sendStatus(200);
     }
 
-    if (await handleSupplierReturnDoneCommand(chatId, text)) {
+    if (await handleSupplierReturnDoneCommand(chatId, text, telegramStoreId)) {
       return res.sendStatus(200);
     }
 
-    if (await handleSupplierReceiveCommand(chatId, text)) {
+    if (await handleSupplierReceiveCommand(chatId, text, telegramStoreId)) {
       return res.sendStatus(200);
     }
 
-    if (await handleSupplierCommand(chatId, text)) {
+    if (await handleSupplierCommand(chatId, text, telegramStoreId)) {
       return res.sendStatus(200);
     }
 

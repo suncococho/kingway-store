@@ -901,7 +901,7 @@ async function getStaffUserByLineUserId(lineUserId, connection = pool) {
   });
   const [rows] = await connection.query(
     `
-      SELECT id, display_name AS name, role
+      SELECT id, display_name AS name, role, COALESCE(store_id, 0) AS storeId
       FROM staff_users
       WHERE line_user_id = ?
       LIMIT 1
@@ -1416,23 +1416,41 @@ function parseStaffCommand(messageText) {
   return null;
 }
 
-async function findProductBySku(sku, connection = pool) {
+function normalizeStoreId(value) {
+  const normalized = Number(value || 0);
+  return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : null;
+}
+
+async function findProductBySku(sku, connection = pool, storeId = null) {
+  const resolvedStoreId = normalizeStoreId(storeId);
+  const conditions = ["sku = ?"];
+  const params = [sku];
+  if (resolvedStoreId) {
+    conditions.push("store_id = ?");
+    params.push(resolvedStoreId);
+  }
+
   const [rows] = await connection.query(
     `
       SELECT id, name, sku, stock, reorder_level AS reorderLevel, category
       FROM products
-      WHERE sku = ?
+      WHERE ${conditions.join(" AND ")}
       LIMIT 1
     `,
-    [sku]
+    params
   );
 
   return rows[0] || null;
 }
 
-async function applyInventoryCommandMovement({ sku, movementType, qty, staffId, note = null }) {
+async function applyInventoryCommandMovement({ sku, movementType, qty, staffId, note = null, storeId = null }) {
   return withTransaction(async (connection) => {
-    const product = await findProductBySku(sku, connection);
+    const resolvedStoreId = normalizeStoreId(storeId);
+    if (!resolvedStoreId) {
+      return { error: "無法判斷操作員店別，請先設定店別後再操作" };
+    }
+
+    const product = await findProductBySku(sku, connection, resolvedStoreId);
     if (!product) {
       return { error: "找不到 SKU 對應的商品" };
     }
@@ -1468,8 +1486,9 @@ async function applyInventoryCommandMovement({ sku, movementType, qty, staffId, 
         UPDATE products
         SET stock = ?
         WHERE id = ?
+          AND store_id = ?
       `,
-      [nextStock, product.id]
+      [nextStock, product.id, resolvedStoreId]
     );
 
     await connection.query(
@@ -1504,9 +1523,14 @@ async function applyInventoryCommandMovement({ sku, movementType, qty, staffId, 
   });
 }
 
-async function createSupplierRequestFromCommand({ requestType, sku, qty, reason, staffId }) {
+async function createSupplierRequestFromCommand({ requestType, sku, qty, reason, staffId, storeId = null }) {
   return withTransaction(async (connection) => {
-    const product = await findProductBySku(sku, connection);
+    const resolvedStoreId = normalizeStoreId(storeId);
+    if (!resolvedStoreId) {
+      return { error: "無法判斷操作員店別，請先設定店別後再操作" };
+    }
+
+    const product = await findProductBySku(sku, connection, resolvedStoreId);
     if (!product) {
       return { error: "找不到 SKU 對應的商品" };
     }
@@ -1773,12 +1797,24 @@ async function handleStaffOperationalCommand(event) {
     console.log("[line:staff] branch inventory-stock", {
       sku: command.sku || null
     });
+    if (!staffUser?.storeId) {
+      await reply(
+        buildStockCommandMessages(
+          null,
+          null,
+          null,
+          null,
+          "無法判斷操作員店別，請先綁定店員帳號。"
+        )
+      );
+      return true;
+    }
     if (!command.sku) {
       await reply(buildStockCommandMessages(null, null, null, null, "請輸入 /stock {sku}"));
       return true;
     }
 
-    const product = await findProductBySku(command.sku);
+    const product = await findProductBySku(command.sku, pool, staffUser.storeId);
     if (!product) {
       await reply(buildStockCommandMessages(null, null, null, null, `找不到 SKU：${command.sku}`));
       return true;
@@ -1811,7 +1847,8 @@ async function handleStaffOperationalCommand(event) {
       movementType: command.movementType,
       qty: command.qty,
       staffId: staffUser.id,
-      note: `LINE 指令 ${messageText}`
+      note: `LINE 指令 ${messageText}`,
+      storeId: staffUser.storeId
     });
 
     if (result.error) {
@@ -1861,7 +1898,8 @@ async function handleStaffOperationalCommand(event) {
       sku: command.sku,
       qty: command.qty,
       reason: command.reason,
-      staffId: staffUser.id
+      staffId: staffUser.id,
+      storeId: staffUser.storeId
     });
 
     if (result.error) {

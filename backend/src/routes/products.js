@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { pool } = require("../db");
-const {  authorize } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { mapCategoryLabel } = require("../utils/displayLabels");
 const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
 const {
@@ -28,7 +28,7 @@ const allowedImageTypes = new Map([
   ["image/gif", ".gif"]
 ]);
 
-router.use((req, res, next) => next());
+router.use(authenticate, requireStoreScope(), authorize());
 
 function normalizeImageUrl(imageUrl) {
   const value = String(imageUrl || "").trim();
@@ -73,7 +73,7 @@ function getCategoryFromSku(sku, fallbackCategory = "OT") {
   return PRODUCT_CATEGORY_LABELS[parsedCategory] ? parsedCategory : normalizeProductCategory(fallbackCategory);
 }
 
-async function getNextProductSku(connection, category, region = "C", shelf = "S1") {
+async function getNextProductSku(connection, storeId, category, region = "C", shelf = "S1") {
   const normalizedCategory = PRODUCT_CATEGORY_LABELS[normalizeProductCategory(category)] ? normalizeProductCategory(category) : "OT";
   const normalizedRegion = normalizeProductSku(region) || "C";
   const normalizedShelf = normalizeProductSku(shelf) || "S1";
@@ -82,8 +82,9 @@ async function getNextProductSku(connection, category, region = "C", shelf = "S1
       SELECT sku
       FROM products
       WHERE sku LIKE ?
+        AND store_id = ?
     `,
-    [`${normalizedRegion}-${normalizedCategory}-%`]
+    [`${normalizedRegion}-${normalizedCategory}-%`, storeId]
   );
 
   let maxSequence = 0;
@@ -201,6 +202,7 @@ router.get("/next-sku", async (req, res, next) => {
   try {
     const sku = await getNextProductSku(
       pool,
+      getRequestStoreId(req),
       req.query.category,
       req.query.region || "C",
       req.query.shelf || "S1"
@@ -286,6 +288,8 @@ router.patch("/:id", async (req, res, next) => {
     const categoryFromSku = normalizedSku ? getCategoryFromSku(normalizedSku, category) : null;
     const resolvedCategory = categoryFromSku || (category ? normalizeProductCategory(category) : null);
 
+    const storeId = getRequestStoreId(req);
+
     await pool.query(
       `
         UPDATE products
@@ -304,6 +308,7 @@ router.patch("/:id", async (req, res, next) => {
           inputter_name = COALESCE(?, inputter_name),
           source = COALESCE(?, source)
         WHERE id = ?
+          AND store_id = ?
       `,
       [
         normalizedSku,
@@ -319,7 +324,8 @@ router.patch("/:id", async (req, res, next) => {
         location === undefined ? null : location,
         inputterName === undefined ? null : inputterName,
         source === undefined ? null : source,
-        id
+        id,
+        storeId
       ]
     );
 
@@ -342,8 +348,9 @@ router.patch("/:id", async (req, res, next) => {
           updated_at AS updatedAt
         FROM products
         WHERE id = ?
+          AND store_id = ?
       `,
-      [id]
+      [id, storeId]
     );
 
     if (!rows[0]) {

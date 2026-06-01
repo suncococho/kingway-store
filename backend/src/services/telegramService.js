@@ -749,13 +749,37 @@ async function clearTelegramSession(bot, chatId, telegramUserId, connection = po
   );
 }
 
-async function resolveTelegramStaffUserId(connection, telegramUser) {
+async function resolveTelegramStaffUserId(connection, telegramUser, targetStoreId = null) {
+  const telegramUserId = telegramUser?.id ? String(telegramUser.id) : "";
+  const telegramUsername = telegramUser?.username ? String(telegramUser.username).trim() : "";
+  const hasIdentity = Boolean(telegramUserId) || Boolean(telegramUsername);
+  if (!hasIdentity) {
+    throw new Error("找不到可用 Telegram 操作員資料");
+  }
+
+  const whereParts = [
+    "is_active = 1",
+    "(telegram_user_id = ? OR telegram_username = ? OR username = ?)"
+  ];
+  const queryParams = [telegramUserId || null, telegramUsername || null, telegramUsername || null];
+
+  const explicitStoreId = Number(targetStoreId || telegramUser?.storeId || telegramUser?.store_id || 0);
+  if (Number.isSafeInteger(explicitStoreId) && explicitStoreId > 0) {
+    whereParts.push("store_id = ?");
+    queryParams.push(explicitStoreId);
+  }
+
   const [rows] = await connection.query(
     `
-      SELECT id
+      SELECT id, COALESCE(store_id, 0) AS storeId
       FROM staff_users
-      WHERE is_active = 1
+      WHERE ${whereParts.join(" AND ")}
       ORDER BY
+        CASE
+          WHEN telegram_user_id = ? THEN 1
+          WHEN telegram_username = ? THEN 2
+          ELSE 3
+        END,
         CASE role
           WHEN 'ADMIN' THEN 1
           WHEN 'MANAGER' THEN 2
@@ -764,26 +788,35 @@ async function resolveTelegramStaffUserId(connection, telegramUser) {
         END,
         id ASC
       LIMIT 1
-    `
+    `,
+    [...queryParams, telegramUserId || null, telegramUsername || null]
   );
   if (!rows[0]) {
-    throw new Error("找不到可用員工帳號，無法建立 Telegram 訂單");
+    throw new Error("找不到可用員工帳號，無法建立 Telegram 作業");
   }
-  return rows[0].id;
+  const resolvedStoreId = Number(rows[0].storeId || 0);
+  return {
+    id: rows[0].id,
+    storeId: Number.isSafeInteger(resolvedStoreId) && resolvedStoreId > 0 ? resolvedStoreId : null
+  };
 }
 
-async function findCustomerByPhone(phone, connection = pool) {
+async function findCustomerByPhone(phone, connection = pool, storeId = null) {
+  const normalizedStoreId = Number(storeId || 0);
+  const hasStoreFilter = Number.isSafeInteger(normalizedStoreId) && normalizedStoreId > 0;
+
   const [rows] = await connection.query(
     `
       SELECT id, name, phone, line_user_id AS lineUserId, customer_type AS customerType
       FROM customers
       WHERE phone = ?
+      ${hasStoreFilter ? " AND store_id = ?" : ""}
       ORDER BY
         CASE WHEN line_user_id IS NOT NULL AND line_user_id <> '' THEN 0 ELSE 1 END,
         id DESC
       LIMIT 1
     `,
-    [phone]
+    hasStoreFilter ? [phone, normalizedStoreId] : [phone]
   );
   return rows[0] || null;
 }
@@ -804,23 +837,32 @@ function normalizeTelegramOrderProductRow(row) {
   };
 }
 
-async function findTelegramOrderProducts(keyword, connection = pool) {
+function normalizeStoreId(value) {
+  const normalized = Number(value || 0);
+  return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : null;
+}
+
+async function findTelegramOrderProducts(keyword, connection = pool, storeId = null) {
   const searchText = String(keyword || "").trim();
   if (!searchText) {
     return { exact: null, exactMatches: [], matches: [] };
   }
 
+  const normalizedStoreId = normalizeStoreId(storeId);
+  const storeClause = normalizedStoreId ? " AND store_id = ?" : "";
+  const queryParams = normalizedStoreId ? [searchText, searchText, searchText, normalizedStoreId] : [searchText, searchText, searchText];
   const [exactRows] = await connection.query(
     `
       SELECT id, sku, name, category, price, stock, is_active AS isActive
       FROM products
       WHERE is_active = 1
         AND (sku = ? OR name = ?)
+        ${storeClause}
       ORDER BY
         CASE WHEN sku = ? THEN 0 ELSE 1 END,
         id DESC
     `,
-    [searchText, searchText, searchText]
+    queryParams
   );
 
   const exactMatches = exactRows.map(normalizeTelegramOrderProductRow).filter(Boolean);
@@ -833,12 +875,16 @@ async function findTelegramOrderProducts(keyword, connection = pool) {
   }
 
   const like = `%${searchText}%`;
+  const listParams = normalizedStoreId
+    ? [like, like, `${searchText}%`, `${searchText}%`, normalizedStoreId]
+    : [like, like, `${searchText}%`, `${searchText}%`];
   const [matches] = await connection.query(
     `
       SELECT id, sku, name, category, price, stock, is_active AS isActive
       FROM products
       WHERE is_active = 1
         AND (sku LIKE ? OR name LIKE ?)
+        ${storeClause}
       ORDER BY
         CASE WHEN sku LIKE ? THEN 0 ELSE 1 END,
         CASE WHEN name LIKE ? THEN 0 ELSE 1 END,
@@ -846,7 +892,7 @@ async function findTelegramOrderProducts(keyword, connection = pool) {
         id DESC
       LIMIT 8
     `,
-    [like, like, `${searchText}%`, `${searchText}%`]
+    listParams
   );
 
   return {
@@ -966,21 +1012,30 @@ function buildOrderSummary(payload) {
   ].join("\n");
 }
 
-async function createTelegramCustomerIfNeeded(phone, telegramUser, connection) {
-  const existing = await findCustomerByPhone(phone, connection);
+async function createTelegramCustomerIfNeeded(phone, telegramUser, connection, options = {}) {
+  const existing = await findCustomerByPhone(phone, connection, options.storeId || null);
   if (existing) {
     return existing;
   }
 
+  const customerColumns = await getTableColumns(connection, "customers");
+  const hasStoreId = hasColumn(customerColumns, "store_id");
   const actorLabel = buildTelegramActorLabel(telegramUser);
   const fallbackName = `Telegram客戶-${phone}`;
+  const insertColumns = ["name", "phone", "customer_type", "notes", "last_contact_at"];
+  const insertValues = [fallbackName, phone, "OFFLINE_WITH_PHONE", `由 ${actorLabel} 透過 Telegram 建立`, new Date()];
+
+  if (hasStoreId) {
+    insertColumns.push("store_id");
+    insertValues.push(options.storeId || null);
+  }
+
+  const placeholders = insertColumns.map(() => "?").join(", ");
   const [result] = await connection.query(
-    `
-      INSERT INTO customers (name, phone, customer_type, notes, last_contact_at)
-      VALUES (?, ?, 'OFFLINE_WITH_PHONE', ?, NOW())
-    `,
-    [fallbackName, phone, `由 ${actorLabel} 透過 Telegram 建立`]
+    `INSERT INTO customers (${insertColumns.map((column) => `\`${column}\``).join(", ")}) VALUES (${placeholders})`,
+    insertValues
   );
+
   return {
     id: result.insertId,
     name: fallbackName,
@@ -1017,8 +1072,14 @@ async function createTelegramProductFromPayload(payload, telegramUser) {
     const description = String(payload.description || "").trim();
     const areaCode = String(payload.areaCode || "C").trim().toUpperCase();
     const categoryCode = String(payload.categoryCode || "PT").trim().toUpperCase();
-    const staffId = await resolveTelegramStaffUserId(connection, telegramUser);
+    const staff = await resolveTelegramStaffUserId(connection, telegramUser, payload.storeId);
+    const staffId = staff.id;
+    const staffStoreId = staff.storeId;
+    if (!staffStoreId) {
+      throw new Error("無法判斷員工店別，無法新增 Telegram 商品");
+    }
     const location = `${areaCode} - ${getTelegramUpAreaLabel(areaCode)}`;
+    const hasStoreId = hasColumn(productColumns, "store_id");
     const insertColumns = [
       "sku",
       "name",
@@ -1030,7 +1091,8 @@ async function createTelegramProductFromPayload(payload, telegramUser) {
       "description",
       "location",
       ...(hasColumn(productColumns, "inputter_name") ? ["inputter_name"] : []),
-      ...(hasColumn(productColumns, "source") ? ["source"] : [])
+      ...(hasColumn(productColumns, "source") ? ["source"] : []),
+      ...(hasStoreId ? ["store_id"] : [])
     ];
     const insertSql = `INSERT INTO products (${insertColumns.map((column) => `\`${column}\``).join(", ")}) VALUES (${insertColumns.map(() => "?").join(", ")})`;
 
@@ -1049,7 +1111,8 @@ async function createTelegramProductFromPayload(payload, telegramUser) {
         description || null,
         location,
         ...(hasColumn(productColumns, "inputter_name") ? [inputterName] : []),
-        ...(hasColumn(productColumns, "source") ? ["TELEGRAM_UP"] : [])
+        ...(hasColumn(productColumns, "source") ? ["TELEGRAM_UP"] : []),
+        ...(hasStoreId ? [staffStoreId] : [])
       ];
 
       try {
@@ -1141,15 +1204,26 @@ function buildBaojiaPreview(payload) {
 async function createRepairQuoteDraftFromTelegram(payload, telegramUser) {
   return withTransaction(async (connection) => {
     const { sendRepairEstimateQuotation } = require("./lineWorkflowService");
+    const staff = await resolveTelegramStaffUserId(connection, telegramUser);
+    const staffStoreId = staff.storeId;
+    if (!staffStoreId) {
+      throw new Error("無法判斷員工店別，無法建立 Telegram 維修報價");
+    }
+
+    const repairOrderColumns = await getTableColumns(connection, "repair_orders");
+    const hasStoreId = hasColumn(repairOrderColumns, "store_id");
+    const repairOrderWhere = hasStoreId ? "id = ? AND store_id = ?" : "id = ?";
+    const repairOrderParams = hasStoreId ? [payload.createdRepairId, staffStoreId] : [payload.createdRepairId];
+
     if (payload.createdRepairId) {
       const [existingRows] = await connection.query(
         `
           SELECT id, customer_id AS customerId, estimate_amount AS estimateAmount, quote_status AS quoteStatus
           FROM repair_orders
-          WHERE id = ?
+          WHERE ${repairOrderWhere}
           LIMIT 1
         `,
-        [payload.createdRepairId]
+        repairOrderParams
       );
       if (existingRows[0]) {
         return {
@@ -1161,8 +1235,8 @@ async function createRepairQuoteDraftFromTelegram(payload, telegramUser) {
       }
     }
 
-    const customer = await createTelegramCustomerIfNeeded(payload.customer.phone, telegramUser, connection);
-    const staffId = await resolveTelegramStaffUserId(connection, telegramUser);
+    const customer = await createTelegramCustomerIfNeeded(payload.customer.phone, telegramUser, connection, { storeId: staffStoreId });
+    const staffId = staff.id;
     const items = (Array.isArray(payload.items) ? payload.items : []).map((item) => ({
       productId: Number(item.productId),
       sku: String(item.sku || "").trim(),
@@ -1201,8 +1275,9 @@ async function createRepairQuoteDraftFromTelegram(payload, telegramUser) {
           reservation_status,
           status,
           approved_by_staff_id
+          ${hasStoreId ? ", store_id" : ""}
         )
-        VALUES (?, ?, 'WEB', ?, ?, ?, ?, NULL, 0, 'approved', 'checking', ?)
+        VALUES (?, ?, 'WEB', ?, ?, ?, ?, NULL, 0, 'approved', 'checking', ?, ${hasStoreId ? "?" : ""})
       `,
       [
         customer.id,
@@ -1211,7 +1286,8 @@ async function createRepairQuoteDraftFromTelegram(payload, telegramUser) {
         issueDescription || "Telegram 維修報價",
         reservationDate,
         reservationDay,
-        staffId
+        staffId,
+        ...(hasStoreId ? [staffStoreId] : [])
       ]
     );
 
@@ -1266,15 +1342,29 @@ async function createRepairQuoteDraftFromTelegram(payload, telegramUser) {
 
 async function createTelegramOrderFromPayload(payload, telegramUser) {
   return withTransaction(async (connection) => {
+    const staff = await resolveTelegramStaffUserId(connection, telegramUser, payload.storeId || null);
+    const staffId = staff.id;
+    const staffStoreId = staff.storeId;
+    if (!staffStoreId) {
+      throw new Error("無法判斷員工店別，無法建立 Telegram 訂單");
+    }
+
+    const orderColumns = await getTableColumns(connection, "orders");
+    const orderItemColumns = await getTableColumns(connection, "order_items");
+    const hasOrderStoreId = hasColumn(orderColumns, "store_id");
+    const hasOrderItemStoreId = hasColumn(orderItemColumns, "store_id");
+    const hasProductStoreId = hasColumn(await getTableColumns(connection, "products"), "store_id");
+
     const [existingOrderRows] = payload.createdOrderId
       ? await connection.query(
           `
             SELECT id, order_no AS orderNo
             FROM orders
             WHERE id = ?
+            ${hasOrderStoreId ? "AND store_id = ?" : ""}
             LIMIT 1
           `,
-          [payload.createdOrderId]
+          hasOrderStoreId ? [payload.createdOrderId, staffStoreId] : [payload.createdOrderId]
         )
       : [[]];
     if (existingOrderRows[0]) {
@@ -1285,16 +1375,16 @@ async function createTelegramOrderFromPayload(payload, telegramUser) {
       };
     }
 
-    const staffId = await resolveTelegramStaffUserId(connection, telegramUser);
-    const customer = await createTelegramCustomerIfNeeded(payload.customer.phone, telegramUser, connection);
+    const customer = await createTelegramCustomerIfNeeded(payload.customer.phone, telegramUser, connection, { storeId: staffStoreId });
     const [productRows] = await connection.query(
       `
         SELECT id, sku, name, category, price, stock, is_active AS isActive
         FROM products
         WHERE id = ?
+          AND store_id = ?
         FOR UPDATE
       `,
-      [payload.product.id]
+      [payload.product.id, staffStoreId]
     );
     const product = productRows[0];
     if (!product || !product.isActive) {
@@ -1320,7 +1410,6 @@ async function createTelegramOrderFromPayload(payload, telegramUser) {
       `付款類型：${mapPaymentKindLabel(payload.paymentKind)}`
     ].filter(Boolean);
     const businessDate = formatTelegramTimestamp(new Date()).slice(0, 10).replace(/\//g, "-");
-    const orderColumns = await getTableColumns(connection, "orders");
     const insertColumns = [
       "order_no",
       "customer_id",
@@ -1339,6 +1428,7 @@ async function createTelegramOrderFromPayload(payload, telegramUser) {
       "notes",
       "created_by",
       "business_date",
+      ...(hasOrderStoreId ? ["store_id"] : []),
       ...(hasColumn(orderColumns, "source") ? ["source"] : [])
     ];
     const [orderResult] = await connection.query(
@@ -1364,6 +1454,7 @@ async function createTelegramOrderFromPayload(payload, telegramUser) {
         noteLines.join("\n"),
         staffId,
         businessDate,
+        ...(hasOrderStoreId ? [staffStoreId] : []),
         ...(hasColumn(orderColumns, "source") ? ["TELEGRAM_ORDER"] : [])
       ]
     );
@@ -1372,6 +1463,7 @@ async function createTelegramOrderFromPayload(payload, telegramUser) {
       `
         INSERT INTO order_items (
           order_id,
+          ${hasOrderItemStoreId ? "store_id," : ""}
           product_id,
           sku_snapshot,
           product_name_snapshot,
@@ -1380,12 +1472,16 @@ async function createTelegramOrderFromPayload(payload, telegramUser) {
           unit_price,
           line_total
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ${hasOrderItemStoreId ? "?, " : ""}?, ?, ?, ?, ?, ?, ?)
       `,
-      [orderResult.insertId, product.id, product.sku, product.name, product.category, quantity, unitPrice, totalAmount]
+      [orderResult.insertId, ...(hasOrderItemStoreId ? [staffStoreId] : []), product.id, product.sku, product.name, product.category, quantity, unitPrice, totalAmount]
     );
 
-    await connection.query("UPDATE products SET stock = stock - ? WHERE id = ?", [quantity, product.id]);
+    if (hasProductStoreId) {
+      await connection.query("UPDATE products SET stock = stock - ? WHERE id = ? AND store_id = ?", [quantity, product.id, staffStoreId]);
+    } else {
+      await connection.query("UPDATE products SET stock = stock - ? WHERE id = ?", [quantity, product.id]);
+    }
     const inventoryColumns = await getTableColumns(connection, "inventory_movements");
     if (hasColumn(inventoryColumns, "reference_type") && hasColumn(inventoryColumns, "reference_id")) {
       await connection.query(
@@ -1571,6 +1667,8 @@ async function sendCrmSummary(bot, chatId, phone, connection = pool) {
 }
 
 async function fetchOrderForCrm(orderId, connection = pool, options = {}) {
+  const orderStoreId = Number(options.storeId || 0);
+  const hasStoreFilter = Number.isSafeInteger(orderStoreId) && orderStoreId > 0;
   const [rows] = await connection.query(
     `
       SELECT
@@ -1590,10 +1688,11 @@ async function fetchOrderForCrm(orderId, connection = pool, options = {}) {
       FROM orders o
       LEFT JOIN customers c ON c.id = o.customer_id
       WHERE o.id = ?
+        ${hasStoreFilter ? "AND o.store_id = ?" : ""}
       LIMIT 1
       ${options.forUpdate ? "FOR UPDATE" : ""}
     `,
-    [orderId]
+    hasStoreFilter ? [orderId, orderStoreId] : [orderId]
   );
   return rows[0] || null;
 }
@@ -1622,12 +1721,18 @@ async function appendPaymentEvent(connection, order, amount, paymentKind, note, 
 
 async function applyTelegramCrmPayment(orderId, paymentKind, amount, telegramUser) {
   return withTransaction(async (connection) => {
-    const order = await fetchOrderForCrm(orderId, connection, { forUpdate: true });
+    const staff = await resolveTelegramStaffUserId(connection, telegramUser);
+    const staffStoreId = staff.storeId;
+    if (!staffStoreId) {
+      throw new Error("無法判斷員工店別，無法操作 CRM 付款");
+    }
+
+    const order = await fetchOrderForCrm(orderId, connection, { forUpdate: true, storeId: staffStoreId });
     if (!order) {
       throw new Error("找不到訂單");
     }
 
-    const staffId = await resolveTelegramStaffUserId(connection, telegramUser);
+    const staffId = staff.id;
     const totalAmount = Number(order.totalAmount || 0);
     const currentUnpaid = Number(order.unpaidBalance || 0);
     const currentDeposit = Number(order.depositAmount || 0);
@@ -1698,11 +1803,17 @@ async function sendLineOrderStatusUpdate(order, message) {
 
 async function updateTelegramCrmOrderStatus(orderId, status, telegramUser, options = {}) {
   return withTransaction(async (connection) => {
-    const order = await fetchOrderForCrm(orderId, connection, { forUpdate: true });
+    const staff = await resolveTelegramStaffUserId(connection, telegramUser);
+    const staffStoreId = staff.storeId;
+    if (!staffStoreId) {
+      throw new Error("無法判斷員工店別，無法更新 CRM 狀態");
+    }
+
+    const order = await fetchOrderForCrm(orderId, connection, { forUpdate: true, storeId: staffStoreId });
     if (!order) {
       throw new Error("找不到訂單");
     }
-    const staffId = await resolveTelegramStaffUserId(connection, telegramUser);
+    const staffId = staff.id;
     await connection.query(
       `
         UPDATE orders
@@ -1732,8 +1843,8 @@ async function updateTelegramCrmOrderStatus(orderId, status, telegramUser, optio
   });
 }
 
-async function sendOrderDetail(bot, chatId, orderId, connection = pool) {
-  const order = await fetchOrderForCrm(orderId, connection);
+async function sendOrderDetail(bot, chatId, orderId, connection = pool, storeId = null) {
+  const order = await fetchOrderForCrm(orderId, connection, { storeId });
   if (!order) {
     await sendTelegramMessage(bot, chatId, "找不到訂單");
     return false;
@@ -2755,15 +2866,21 @@ async function handleTelegramConversationCallback(bot, callbackQuery) {
   return false;
 }
 
-async function findProductBySku(sku, connection = pool) {
+async function findProductBySku(sku, connection = pool, options = {}) {
+  const productColumns = await getTableColumns(connection, "products");
+  const normalizedStoreId = hasColumn(productColumns, "store_id")
+    ? normalizeStoreId(options?.storeId)
+    : null;
+  const hasStoreIdFilter = Number.isSafeInteger(normalizedStoreId) && normalizedStoreId > 0;
   const [rows] = await connection.query(
     `
       SELECT id, name, sku, stock, reorder_level AS reorderLevel
       FROM products
       WHERE sku = ?
+        ${hasStoreIdFilter ? "AND store_id = ?" : ""}
       LIMIT 1
     `,
-    [sku]
+    hasStoreIdFilter ? [sku, normalizedStoreId] : [sku]
   );
   return rows[0] || null;
 }
@@ -2808,7 +2925,28 @@ async function handleStockCommand(message) {
   }
 
   if (stockMatch) {
-    const product = await findProductBySku(stockMatch[1]);
+    const telegramUser = {
+      id: message.from?.id || null,
+      username: message.from?.username || null
+    };
+    let staffStoreId = null;
+    try {
+      const staff = await resolveTelegramStaffUserId(pool, telegramUser);
+      staffStoreId = Number(staff?.storeId || 0) || null;
+    } catch {
+      staffStoreId = null;
+    }
+
+    if (!staffStoreId) {
+      await sendTelegramMessage(
+        BOT_STOCK,
+        chatId,
+        "找不到可用員工帳號，請先確認 Telegram 帳號已綁定且有對應店鋪。"
+      );
+      return true;
+    }
+
+    const product = await findProductBySku(stockMatch[1], pool, { storeId: staffStoreId });
     await sendTelegramMessage(
       BOT_STOCK,
       chatId,
@@ -2827,9 +2965,25 @@ async function handleStockCommand(message) {
     username: message.from?.username || null,
     firstName: message.from?.first_name || null
   };
+  let staffStoreId = null;
+  try {
+    const staff = await resolveTelegramStaffUserId(pool, telegramUser);
+    staffStoreId = Number(staff?.storeId || 0) || null;
+  } catch {
+    staffStoreId = null;
+  }
+
+  if (!staffStoreId) {
+    await sendTelegramMessage(
+      BOT_STOCK,
+      chatId,
+      "找不到可用員工帳號，請先確認 Telegram 帳號已綁定且有對應店鋪。"
+    );
+    return true;
+  }
 
   const result = await withTransaction(async (connection) => {
-    const product = await findProductBySku(sku, connection);
+    const product = await findProductBySku(sku, connection, { storeId: staffStoreId });
     if (!product) {
       return { error: `找不到 SKU：${sku}` };
     }
@@ -2844,7 +2998,10 @@ async function handleStockCommand(message) {
       return { error: "庫存不可小於 0" };
     }
     const movementQty = movementType === "SET" ? nextStock - currentStock : movementType === "OUT" ? -qty : qty;
-    await connection.query("UPDATE products SET stock = ? WHERE id = ?", [nextStock, product.id]);
+    await connection.query(
+      "UPDATE products SET stock = ? WHERE id = ? AND store_id = ?",
+      [nextStock, product.id, staffStoreId]
+    );
     await connection.query(
       `
         INSERT INTO inventory_movements (product_id, movement_type, quantity, notes, created_by)

@@ -51,35 +51,6 @@ app.use(
 
 
 
-app.get("/api/products", async (req, res, next) => {
-  try {
-    const [rows] = await pool.query(`
-      SELECT
-        id,
-        sku,
-        name,
-        category,
-        description,
-        image_url AS imageUrl,
-        price,
-        stock,
-        reorder_level AS reorderLevel,
-        location,
-        is_active AS isActive,
-        created_at AS createdAt,
-        updated_at AS updatedAt
-      FROM products
-      ORDER BY id DESC
-    `);
-    return res.json(rows);
-  } catch (error) {
-    return next(error);
-  }
-});
-
-
-
-
 app.get("/api/coupons/by-phone/:phone", async (req, res, next) => {
   try {
     const phone = String(req.params.phone || "").trim();
