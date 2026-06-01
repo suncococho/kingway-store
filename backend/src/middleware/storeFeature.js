@@ -31,20 +31,23 @@ function requireStoreFeature(featureKey) {
       req.storeId = storeId;
       req.store_id = storeId;
 
-      await pool.query(
-        `
-          INSERT IGNORE INTO store_features (store_id)
-          VALUES (?)
-        `,
-        [storeId]
-      );
-
       const [rows] = await pool.query(
         "SELECT " + featureKey + " AS enabled FROM store_features WHERE store_id = ? LIMIT 1",
         [storeId]
       );
 
-      if (!rows[0] || rows[0].enabled === null || rows[0].enabled === undefined) {
+      if (!rows[0]) {
+        await pool.query(
+          `
+            INSERT IGNORE INTO store_features (store_id)
+            VALUES (?)
+          `,
+          [storeId]
+        );
+        return next();
+      }
+
+      if (rows[0].enabled === null || rows[0].enabled === undefined) {
         return next();
       }
 

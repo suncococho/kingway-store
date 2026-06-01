@@ -69,6 +69,15 @@ async function getStore(storeId) {
 }
 
 async function ensureStoreFeatureRow(storeId) {
+  const [rows] = await pool.query(
+    "SELECT id FROM store_features WHERE store_id = ? LIMIT 1",
+    [storeId]
+  );
+
+  if (rows[0]) {
+    return;
+  }
+
   await pool.query(
     `
       INSERT IGNORE INTO store_features (store_id)
