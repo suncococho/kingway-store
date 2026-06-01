@@ -178,3 +178,27 @@ Feature enforcement phase complete：
 3. 將平台畫面拆到獨立 layout 與更完整的 stores 模組。
 4. 如需功能設定，先設計審核與 audit，再另案建立資料模型。
 5. 需要支援客服 impersonation 時，必須顯示狀態並完整稽核。
+
+## Staging Tenant Isolation Test（當前任務）
+
+目標：建立第二個測試店鋪 `KINGWAY_KAOHSIUNG`（`store_id=2`），並驗證租戶隔離。
+
+已完成項目（預期）：
+
+- `stores`: 新增 `KINGWAY_KAOHSIUNG`，`name=KINGWAY 高雄`，`status=active`，`plan=single_store`。
+- `store_features`: 針對 `store_id=2` 建立預設 row，全部 feature 欄位預設為 `1`（全開）。
+- `staff_users`: 建立 `kaohsiung_owner`，`store_id=2`，`is_active=1`，`role=ADMIN`。
+- `products`: 建立樣本 `KH-TEST-001 / 高雄測試商品`，`store_id=2`。
+- `customers`: 建立樣本 `高雄測試客戶 / 0900000002`，`customer_type=OFFLINE_WITH_PHONE`，`store_id=2`。
+
+隔離驗證要點：
+
+- `GET /api/saas-admin/stores`（platform token）應回傳 `totalStores >= 2`，並同時顯示 `KINGWAY_TAINAN`、`KINGWAY_KAOHSIUNG`。
+- `store_id=2` staff token 呼叫 `GET /api/products` 應可見 `KH-TEST-001`。
+- `store_id=1` staff token 呼叫 `GET /api/products` 不應看到 `KH-TEST-001`。
+
+Next phase：
+
+- 店長管理 UI / tenant owner 操作 flow。
+- 禁止員工跨店切換。
+- 店鋪整合設定（integration settings）補齊。
