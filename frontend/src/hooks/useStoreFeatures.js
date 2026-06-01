@@ -6,7 +6,9 @@ export const DEFAULT_STORE_FEATURES = {
   coupons_enabled: true,
   suppliers_enabled: true,
   inventory_enabled: true,
-  purchase_confirmations_enabled: true
+  purchase_confirmations_enabled: true,
+  repairs_enabled: true,
+  staff_management_enabled: true
 };
 
 function normalizeFeatures(features) {

@@ -114,6 +114,9 @@ function KPIPage() {
   return (
     <div>
       <PageHeader title="員工績效" description="用同一套營運工作台結構呈現員工、KPI、排名與待確認摘要。" />
+      {kpi.error || staff.error || attendance.error ? (
+        <div className="empty-state">{kpi.error || staff.error || attendance.error}</div>
+      ) : null}
       <SectionTabs items={sectionItems} value={tab} onChange={changeTab} label="KPI 子功能" />
 
       <div className="admin-summary-grid">

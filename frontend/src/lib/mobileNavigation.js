@@ -5,7 +5,12 @@ const FEATURE_ROUTE_MAP = {
   "/coupons": "coupons_enabled",
   "/suppliers": "suppliers_enabled",
   "/inventory": "inventory_enabled",
-  "/purchase-confirmations": "purchase_confirmations_enabled"
+  "/purchase-confirmations": "purchase_confirmations_enabled",
+  "/repairs": "repairs_enabled",
+  "/staff": "staff_management_enabled",
+  "/staff-attendance": "staff_management_enabled",
+  "/kpi": "staff_management_enabled",
+  "/payroll": "staff_management_enabled"
 };
 
 export const mobileMenuSections = [

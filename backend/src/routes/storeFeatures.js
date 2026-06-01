@@ -9,7 +9,9 @@ const STORE_STAFF_FEATURE_KEYS = [
   "coupons_enabled",
   "suppliers_enabled",
   "inventory_enabled",
-  "purchase_confirmations_enabled"
+  "purchase_confirmations_enabled",
+  "repairs_enabled",
+  "staff_management_enabled"
 ];
 
 function resolveStoreId(req) {

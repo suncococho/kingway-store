@@ -187,6 +187,7 @@ function StaffPage() {
   return (
     <div>
       <PageHeader title="員工管理" description="員工資料、LINE 綁定、啟用狀態與手動 KPI 紀錄都在同一個 web 控制面。" />
+      {staff.error || kpi.error ? <div className="empty-state">{staff.error || kpi.error}</div> : null}
 
       <div className="admin-summary-grid">
         {summaryCards.map((card) => (

@@ -93,6 +93,20 @@ Final phase：
 - `orders_enabled`
 - `pos_enabled`
 
+## Phase: third feature enforcement
+
+已完成：
+
+- `repairs_enabled` 已套用至 `backend/src/routes/repairs.js` 的門市維修管理 API，並在 Sidebar / 更多頁隱藏維修管理入口。
+- `staff_management_enabled` 已套用至員工、出勤、KPI、薪資管理 API：`backend/src/routes/staff.js`、`attendance.js`、`kpi.js`、`payroll.js`，並在 Sidebar / 更多頁隱藏員工管理、出勤、KPI、薪資入口。
+- LINE/public repair flow continues to be allowed：LINE 客戶水路維持在 `/api/line-repair/*` 等 public/LIFF route，不因管理功能關閉而阻擋客戶送出水路預約。
+- 直接 URL 進入已關閉的維修或員工管理相關頁面時，對應 API 403 會顯示「此功能未啟用，請聯絡平台管理員。」。
+
+Final phase：
+
+- `orders_enabled`
+- `pos_enabled`
+
 ## 本次保留與未做事項
 
 已做：
@@ -112,11 +126,14 @@ Final phase：
 - 第二階段將庫存管理、購買確認書管理 API 套用 store feature enforcement
 - 第二階段將庫存管理、購買確認書管理前端選單套用 store feature 狀態
 - 客戶 public 購買確認書填寫與 token/PDF 讀取流程維持可用，不受管理員功能開關阻擋
+- 第三階段將維修管理 API 套用 store feature enforcement，LINE/public repair flow 維持可用
+- 第三階段將員工管理、出勤、KPI、薪資 API 套用 store feature enforcement
+- 第三階段將維修管理、員工管理、出勤、KPI、薪資前端選單套用 store feature 狀態
 
 未做：
 
-- POS、訂單、維修、員工管理等尚未套用 `store_features` route enforcement
-- 訂單、維修、員工管理等門市 ERP sidebar 尚未接入 store feature 狀態；目前完成第一、第二階段功能
+- POS、訂單尚未套用 `store_features` route enforcement
+- 訂單與 POS 門市 ERP sidebar 尚未接入 store feature 狀態；目前完成第一、第二、第三階段功能
 - 不調整 LINE/Telegram token 邏輯
 - 不變更 production config
 - 不改動既有門市登入與 POS/ERP 工作流

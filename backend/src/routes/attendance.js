@@ -1,12 +1,17 @@
 const express = require("express");
 const { pool } = require("../db");
 const { authenticate, authorize } = require("../middleware/auth");
+const { requireStoreFeature } = require("../middleware/storeFeature");
 const { createError } = require("../utils/errors");
 const { logKpi } = require("../services/kpiService");
 
 const router = express.Router();
 
-router.use(authenticate, authorize(["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"]));
+router.use(
+  authenticate,
+  authorize(["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"]),
+  requireStoreFeature("staff_management_enabled")
+);
 
 router.get("/", async (req, res, next) => {
   try {

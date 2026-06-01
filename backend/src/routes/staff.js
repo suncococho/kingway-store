@@ -1,11 +1,12 @@
 const express = require("express");
 const { pool } = require("../db");
 const { authenticate, authorize, requireStoreRole } = require("../middleware/auth");
+const { requireStoreFeature } = require("../middleware/storeFeature");
 const { hashPassword } = require("../utils/passwords");
 
 const router = express.Router();
 
-router.use(authenticate, authorize("ADMIN"));
+router.use(authenticate, authorize("ADMIN"), requireStoreFeature("staff_management_enabled"));
 
 const requireStaffManagementStoreRole = requireStoreRole(["owner", "admin"]);
 

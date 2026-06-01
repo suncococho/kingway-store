@@ -68,6 +68,7 @@ function PayrollPage() {
   return (
     <div>
       <PageHeader title="薪資摘要" description="依出勤紀錄彙整月度薪資參考資料。" />
+      {payroll.error ? <div className="empty-state">{payroll.error}</div> : null}
       <SectionTabs items={sectionItems} value={tab} onChange={changeTab} label="薪資子功能" />
 
       <div className="admin-summary-grid">

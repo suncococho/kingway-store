@@ -519,6 +519,7 @@ function RepairsPage() {
       
 
       <PageHeader title="維修管理" description="依照建立、檢查、報價、等待同意、維修、通知取車的 SOP 處理。" />
+      {repairs.error ? <div className="empty-state">{repairs.error}</div> : null}
       <section className="content-card sop-overview">
         <div className="sop-step-list">
           {sopSteps.map((step, index) => (

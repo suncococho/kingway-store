@@ -1,6 +1,7 @@
 const express = require("express");
 const { pool } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { requireStoreFeature } = require("../middleware/storeFeature");
 const { BASE_FEE, calculateStorageFee, validateRepairReservationDate } = require("../services/repairService");
 const { createError } = require("../utils/errors");
 const { logKpi } = require("../services/kpiService");
@@ -27,6 +28,7 @@ const REPAIR_ALLOWED_ROLES = ["ADMIN", "MANAGER", "STAFF", "CASHIER", "REPAIR", 
 router.use(authenticate);
 router.use(requireStoreScope());
 router.use(authorize(REPAIR_ALLOWED_ROLES));
+router.use(requireStoreFeature("repairs_enabled"));
 
 function mapReservationStatusLabel(status) {
   const labels = {

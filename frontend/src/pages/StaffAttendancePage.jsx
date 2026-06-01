@@ -95,6 +95,9 @@ function StaffAttendancePage() {
   return (
     <div>
       <PageHeader title="出勤管理" description="先看今天狀態，再看歷史紀錄與待確認事項，維持同一套營運工作台語言。" />
+      {attendance.error || checklist.error || kpi.error ? (
+        <div className="empty-state">{attendance.error || checklist.error || kpi.error}</div>
+      ) : null}
       <SectionTabs items={sectionItems} value={tab} onChange={changeTab} label="出勤子功能" />
 
       <div className="admin-summary-grid">
