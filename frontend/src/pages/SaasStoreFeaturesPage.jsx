@@ -242,7 +242,11 @@ function SaasStoreFeaturesPage() {
           }
         />
 
-        <div className="empty-state">功能關閉後，該店鋪人員將無法使用對應後台功能。第一階段已套用至：銷售報表、優惠券、發注/供應商。</div>
+        <div className="empty-state">
+          功能關閉後，該店鋪人員將無法使用對應後台功能。
+          第一階段已套用至：銷售報表、優惠券、發注/供應商。
+          第二階段已套用至：庫存管理、購買確認書。
+        </div>
 
         {saveError ? <div className="empty-state">{saveError}</div> : null}
         {success ? <div className="empty-state">{success}</div> : null}

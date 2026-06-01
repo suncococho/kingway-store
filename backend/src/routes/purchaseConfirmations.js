@@ -4,6 +4,7 @@ const path = require("path");
 const express = require("express");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { requireStoreFeature } = require("../middleware/storeFeature");
 const { writePurchaseConfirmationPdf } = require("../services/pdfService");
 const config = require("../config");
 const purchaseConfirmationContent = require("../content/purchaseConfirmationContent.json");
@@ -827,7 +828,12 @@ router.post("/manual", async (req, res, next) => {
   }
 });
 
-router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]));
+router.use(
+  authenticate,
+  requireStoreScope(),
+  authorize(["ADMIN", "MANAGER", "CASHIER"]),
+  requireStoreFeature("purchase_confirmations_enabled")
+);
 
 router.get("/", async (req, res, next) => {
   try {

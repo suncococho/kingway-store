@@ -141,6 +141,7 @@ function InventoryPage() {
   }));
   const selectedProduct = products.items.find((item) => String(item.id) === String(form.productId));
   const detailProduct = inventoryRows.find((item) => item.id === detailProductId) || null;
+  const featureError = movements.error || supplierRequests.error;
 
   const sectionItems = [
     { key: "OVERVIEW", label: "庫存總覽" },
@@ -277,6 +278,7 @@ function InventoryPage() {
   return (
     <div>
       <PageHeader title="庫存管理" description="庫存總覽、異動與供應商流程統一使用 POS 同一套視覺語言與資訊架構。" />
+      {featureError ? <div className="empty-state">{featureError}</div> : null}
       <SectionTabs
         items={sectionItems}
         value={section}

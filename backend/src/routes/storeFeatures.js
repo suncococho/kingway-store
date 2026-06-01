@@ -7,7 +7,9 @@ const router = express.Router();
 const STORE_STAFF_FEATURE_KEYS = [
   "sales_dashboard_enabled",
   "coupons_enabled",
-  "suppliers_enabled"
+  "suppliers_enabled",
+  "inventory_enabled",
+  "purchase_confirmations_enabled"
 ];
 
 function resolveStoreId(req) {

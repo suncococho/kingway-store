@@ -71,8 +71,27 @@ SaaS 平台管理與門市 ERP 必須分離。KINGWAY_TAINAN 是 `store_id=1` �
 
 Next phase：
 
-- inventory / repairs / orders enforcement。
-- 逐步處理 POS、購買確認書、員工管理與其他 feature 對應的 route 與 UI enforcement。
+- inventory / purchase confirmations enforcement。
+- 後續逐步處理 repairs、staff management、orders、POS 與其他 feature 對應的 route 與 UI enforcement。
+
+## Phase: second feature enforcement
+
+已完成：
+
+- `inventory_enabled` 已套用至 `backend/src/routes/inventory.js` 的門市庫存管理 API，並在 Sidebar / 更多頁隱藏庫存管理入口。
+- `purchase_confirmations_enabled` 已套用至 `backend/src/routes/purchaseConfirmations.js` 的門市管理員 API，並在 Sidebar / 更多頁隱藏購買確認書管理入口。
+- Public purchase confirmation flow continues to be allowed：`/api/purchase-confirmations/public/:token`、public PDF、manual public submit 與 LINE latest-order 入口維持在 staff auth boundary 之前，不因管理功能關閉而阻擋客戶填寫流程。
+- 直接 URL 進入已關閉的庫存管理或購買確認書管理時，對應 API 403 會顯示「此功能未啟用，請聯絡平台管理員。」。
+
+Next phase：
+
+- `repairs_enabled`
+- `staff_management_enabled`
+
+Final phase：
+
+- `orders_enabled`
+- `pos_enabled`
 
 ## 本次保留與未做事項
 
@@ -90,11 +109,14 @@ Next phase：
 - 平台管理畫面可編輯並儲存店鋪功能開關
 - 第一階段將銷售報表、優惠券、發注/供應商 API 套用 store feature enforcement
 - 第一階段將銷售報表、優惠券、發注/供應商前端選單套用 store feature 狀態
+- 第二階段將庫存管理、購買確認書管理 API 套用 store feature enforcement
+- 第二階段將庫存管理、購買確認書管理前端選單套用 store feature 狀態
+- 客戶 public 購買確認書填寫與 token/PDF 讀取流程維持可用，不受管理員功能開關阻擋
 
 未做：
 
-- POS、訂單、維修、庫存等尚未套用 `store_features` route enforcement
-- 庫存、訂單、維修等門市 ERP sidebar 尚未接入 store feature 狀態；目前只完成第一階段三個功能
+- POS、訂單、維修、員工管理等尚未套用 `store_features` route enforcement
+- 訂單、維修、員工管理等門市 ERP sidebar 尚未接入 store feature 狀態；目前完成第一、第二階段功能
 - 不調整 LINE/Telegram token 邏輯
 - 不變更 production config
 - 不改動既有門市登入與 POS/ERP 工作流

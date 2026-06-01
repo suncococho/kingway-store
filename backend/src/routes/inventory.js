@@ -1,6 +1,7 @@
 const express = require("express");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { requireStoreFeature } = require("../middleware/storeFeature");
 const { createError } = require("../utils/errors");
 const {
   createButtonMessage,
@@ -107,7 +108,7 @@ async function notifySupplierRequestTelegram({ requestId, requestType, supplierN
 
 
 
-router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "INVENTORY"]));
+router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "INVENTORY"]), requireStoreFeature("inventory_enabled"));
 
 router.get("/movements", async (req, res, next) => {
   try {

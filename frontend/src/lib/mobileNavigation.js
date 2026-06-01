@@ -3,7 +3,9 @@ import { filterMenuItemsForUser } from "./permissions";
 const FEATURE_ROUTE_MAP = {
   "/sales": "sales_dashboard_enabled",
   "/coupons": "coupons_enabled",
-  "/suppliers": "suppliers_enabled"
+  "/suppliers": "suppliers_enabled",
+  "/inventory": "inventory_enabled",
+  "/purchase-confirmations": "purchase_confirmations_enabled"
 };
 
 export const mobileMenuSections = [

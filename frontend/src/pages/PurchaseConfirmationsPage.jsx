@@ -187,6 +187,7 @@ function PurchaseConfirmationsPage() {
   return (
     <div>
       <PageHeader title="購買確認書管理" description="產生確認連結、檢視提交狀態、PDF 與交車確認，保留單一 canonical 頁面。" />
+      {confirmations.error ? <div className="empty-state">{confirmations.error}</div> : null}
       <SectionTabs items={sectionItems} value={tab} onChange={setTab} label="購買確認書子功能" />
       <section className="content-card form-card">
         <div className="section-header">
