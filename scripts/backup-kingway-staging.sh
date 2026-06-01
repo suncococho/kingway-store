@@ -5,6 +5,7 @@ REPO_DIR="/volume1/docker/kingway-store"
 BACKUP_ROOT="$REPO_DIR/backups/staging"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 BACKUP_DIR="$BACKUP_ROOT/$TIMESTAMP"
+SQL_TMP="$BACKUP_DIR/mysql_kingway_store.sql"
 MYSQL_CONTAINER="kingway-staging-mysql"
 MYSQL_DATABASE="kingway_store"
 MYSQL_USER="kingway"
@@ -17,6 +18,7 @@ else
 fi
 
 mkdir -p "$BACKUP_DIR"
+trap 'rm -f "$SQL_TMP"' EXIT
 
 log() {
   printf '%s\n' "$1"
@@ -26,7 +28,11 @@ log "== KINGWAY staging local backup =="
 log "Backup directory: $BACKUP_DIR"
 
 log "Backing up staging MySQL..."
-$DOCKER_CMD exec -e MYSQL_PWD=kingway "$MYSQL_CONTAINER"   sh -c "mysqldump -u$MYSQL_USER --single-transaction --quick --routines --triggers $MYSQL_DATABASE"   | gzip -c > "$BACKUP_DIR/mysql_kingway_store.sql.gz"
+$DOCKER_CMD exec -e MYSQL_PWD=kingway "$MYSQL_CONTAINER" \
+  sh -c "mysqldump -u$MYSQL_USER --single-transaction --quick --routines --triggers --no-tablespaces $MYSQL_DATABASE" \
+  > "$SQL_TMP"
+gzip -c "$SQL_TMP" > "$BACKUP_DIR/mysql_kingway_store.sql.gz"
+rm -f "$SQL_TMP"
 
 log "Backing up project files..."
 tar -C "$REPO_DIR"   --exclude='./node_modules'   --exclude='./backend/node_modules'   --exclude='./frontend/node_modules'   --exclude='./frontend/dist'   --exclude='./backups'   --exclude='./.git'   -czf "$BACKUP_DIR/project_files.tar.gz" .
