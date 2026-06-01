@@ -18,7 +18,14 @@ const {
 const router = express.Router();
 
 function getRequestStoreId(req) {
-  return Number(req.storeId || req.user?.store_id || req.user?.storeId || 1);
+  const rawStoreId = req.storeId || req.user?.store_id || req.user?.storeId || 1;
+  const storeId = Number(rawStoreId);
+  return Number.isFinite(storeId) && storeId > 0 ? storeId : 1;
+}
+
+async function hasProductsStoreIdColumn(connection = pool) {
+  const [rows] = await connection.query("SHOW COLUMNS FROM `products` LIKE 'store_id'");
+  return rows.length > 0;
 }
 const productsStorageDir = path.join(__dirname, "..", "..", "storage", "products");
 const allowedImageTypes = new Map([
@@ -77,16 +84,19 @@ async function getNextProductSku(connection, storeId, category, region = "C", sh
   const normalizedCategory = PRODUCT_CATEGORY_LABELS[normalizeProductCategory(category)] ? normalizeProductCategory(category) : "OT";
   const normalizedRegion = normalizeProductSku(region) || "C";
   const normalizedShelf = normalizeProductSku(shelf) || "S1";
-  const productColumns = await getTableColumns(connection, "products");
-  const hasStoreId = hasColumn(productColumns, "store_id");
+  const hasStoreId = await hasProductsStoreIdColumn(connection);
+  if (!hasStoreId) {
+    throw new Error("products.store_id 欄位不存在，無法生成 SKU");
+  }
+
   const [rows] = await connection.query(
     `
       SELECT sku
       FROM products
       WHERE sku LIKE ?
-        ${hasStoreId ? "AND store_id = ?" : ""}
+        AND store_id = ?
     `,
-    hasStoreId ? [`${normalizedRegion}-${normalizedCategory}-%`, storeId] : [`${normalizedRegion}-${normalizedCategory}-%`]
+    [`${normalizedRegion}-${normalizedCategory}-%`, storeId]
   );
 
   let maxSequence = 0;
@@ -110,10 +120,13 @@ router.get("/", async (req, res, next) => {
   try {
     const search = req.query.search ? `%${req.query.search}%` : null;
     const productColumns = await getTableColumns(pool, "products");
+    const hasStoreId = await hasProductsStoreIdColumn(pool);
+    if (!hasStoreId) {
+      return res.status(500).json({ message: "products.store_id 欄位不存在，請先更新資料表結構" });
+    }
 
     // PRODUCTS_STORE_ID_FILTER_V1
     const storeId = getRequestStoreId(req);
-    const hasStoreId = hasColumn(productColumns, "store_id");
     let sql = `
       SELECT
         ${selectColumn(productColumns, "products", "id", "id")},
@@ -137,10 +150,8 @@ router.get("/", async (req, res, next) => {
     const params = [];
     const whereClauses = [];
 
-    if (hasStoreId) {
-      whereClauses.push("store_id = ?");
-      params.push(storeId);
-    }
+    whereClauses.push("store_id = ?");
+    params.push(storeId);
 
     if (search) {
       const searchFields = ["sku", "name"].filter((column) => hasColumn(productColumns, column));
@@ -221,6 +232,11 @@ router.get("/next-sku", async (req, res, next) => {
 
 router.post("/", async (req, res, next) => {
   try {
+    const hasStoreId = await hasProductsStoreIdColumn(pool);
+    if (!hasStoreId) {
+      return res.status(500).json({ message: "products.store_id 欄位不存在，請先更新資料表結構" });
+    }
+
     const { sku, name, category, price, stock, reorderLevel, isActive, description, imageUrl, costPrice, location, inputterName, source } = req.body;
 
     if (!sku || !name || price === undefined || stock === undefined) {
