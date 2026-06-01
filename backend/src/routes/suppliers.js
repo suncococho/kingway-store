@@ -114,8 +114,9 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
   }
 }
 
-async function sendSupplierDecisionRequest(requestId, requestType, supplierName, sku, productName, quantity, note) {
+async function sendSupplierDecisionRequest(requestId, requestType, supplierName, sku, productName, quantity, note, storeId = 1) {
   const supplierGroupId = process.env.TELEGRAM_HQ_GROUP_ID;
+  const callbackStoreId = Number(storeId || 1);
   const title = requestType === "RETURN" ? "退貨申請" : "發注申請";
 
   const text = [
@@ -132,8 +133,8 @@ async function sendSupplierDecisionRequest(requestId, requestType, supplierName,
 
   await sendTelegramMessage(supplierGroupId, text, {
     inline_keyboard: [[
-      { text: "✅ 確認", callback_data: `supplier:approve:${requestId}` },
-      { text: "❌ 拒絕", callback_data: `supplier:reject:${requestId}` }
+      { text: "✅ 確認", callback_data: `supplier:approve:${requestId}:${callbackStoreId}` },
+      { text: "❌ 拒絕", callback_data: `supplier:reject:${requestId}:${callbackStoreId}` }
     ]]
   });
 }
@@ -227,7 +228,8 @@ router.post("/requests", async (req, res, next) => {
         sku,
         product.name,
         qty,
-        note
+        note,
+        storeId
       );
     } catch (e) {
       console.warn("Supplier decision request send failed:", e.message);

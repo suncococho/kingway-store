@@ -1480,7 +1480,7 @@ async function createTelegramOrderFromPayload(payload, telegramUser) {
     if (hasProductStoreId) {
       await connection.query("UPDATE products SET stock = stock - ? WHERE id = ? AND store_id = ?", [quantity, product.id, staffStoreId]);
     } else {
-      await connection.query("UPDATE products SET stock = stock - ? WHERE id = ?", [quantity, product.id]);
+      throw new Error("商品資料表缺少 store_id，無法安全扣庫存");
     }
     const inventoryColumns = await getTableColumns(connection, "inventory_movements");
     if (hasColumn(inventoryColumns, "reference_type") && hasColumn(inventoryColumns, "reference_id")) {

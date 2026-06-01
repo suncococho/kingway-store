@@ -1095,6 +1095,8 @@ router.post("/webhook", async (req, res) => {
       const parts = String(callbackQuery.data).split(":");
       const action = parts[1];
       const requestId = Number(parts[2]);
+      const callbackStoreId = Number(parts[3]);
+      const requestStoreIdFilter = Number.isSafeInteger(callbackStoreId) && callbackStoreId > 0 ? callbackStoreId : Number(telegramStoreId);
 
       if (!requestId || !["approve", "reject"].includes(action)) {
         if (callbackQuery.message?.chat?.id) {
@@ -1103,7 +1105,7 @@ router.post("/webhook", async (req, res) => {
         return res.json({ ok: true });
       }
 
-        const [[request]] = await pool.query(
+      const [[request]] = await pool.query(
         `
           SELECT
             sr.id,
@@ -1117,12 +1119,13 @@ router.post("/webhook", async (req, res) => {
             p.sku,
             p.name AS productName
           FROM supplier_requests sr
-          LEFT JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
-          LEFT JOIN products p ON p.id = sri.product_id
+          INNER JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
+          INNER JOIN products p ON p.id = sri.product_id
+            AND p.store_id = ?
           WHERE sr.id = ?
           LIMIT 1
         `,
-        [requestId]
+        [requestStoreIdFilter, requestId]
       );
 
       if (!request) {
@@ -1131,9 +1134,6 @@ router.post("/webhook", async (req, res) => {
         }
         return res.json({ ok: true });
       }
-
-      const requestStoreId = Number(request.product_store_id || 0);
-      const effectiveStoreId = requestStoreId > 0 ? requestStoreId : Number(telegramStoreId);
 
       if (["RECEIVED", "RETURN_CONFIRMED"].includes(request.status)) {
         if (callbackQuery.message?.chat?.id) {
@@ -1164,7 +1164,7 @@ router.post("/webhook", async (req, res) => {
 
           await pool.query(
             "UPDATE products SET stock = stock - ? WHERE id = ? AND store_id = ?",
-            [returnQty, request.product_id, effectiveStoreId]
+            [returnQty, request.product_id, requestStoreIdFilter]
           );
         }
       }

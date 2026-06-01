@@ -77,14 +77,16 @@ async function getNextProductSku(connection, storeId, category, region = "C", sh
   const normalizedCategory = PRODUCT_CATEGORY_LABELS[normalizeProductCategory(category)] ? normalizeProductCategory(category) : "OT";
   const normalizedRegion = normalizeProductSku(region) || "C";
   const normalizedShelf = normalizeProductSku(shelf) || "S1";
+  const productColumns = await getTableColumns(connection, "products");
+  const hasStoreId = hasColumn(productColumns, "store_id");
   const [rows] = await connection.query(
     `
       SELECT sku
       FROM products
       WHERE sku LIKE ?
-        AND store_id = ?
+        ${hasStoreId ? "AND store_id = ?" : ""}
     `,
-    [`${normalizedRegion}-${normalizedCategory}-%`, storeId]
+    hasStoreId ? [`${normalizedRegion}-${normalizedCategory}-%`, storeId] : [`${normalizedRegion}-${normalizedCategory}-%`]
   );
 
   let maxSequence = 0;
