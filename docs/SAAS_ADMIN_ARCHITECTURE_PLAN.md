@@ -4,7 +4,7 @@
 
 SaaS 平台管理與門市 ERP 必須分離。KINGWAY_TAINAN 是 `store_id=1` 的租戶店鋪，不是 SaaS 平台本身。
 
-本次第一版只建立平台管理員登入與 API 保護骨架：不新增 `store_features`，不做功能 ON/OFF 儲存，不變更 production config，不碰 LINE/Telegram token logic。
+目前已完成平台管理員登入、API 保護骨架，以及 `store_features` 的 DB 儲存/查詢。此階段只提供平台層級功能 ON/OFF 儲存與畫面管理，不變更 production config，不碰 LINE/Telegram token logic，也尚未套用實際業務 route enforcement。
 
 ## 身份邊界
 
@@ -15,6 +15,7 @@ SaaS 平台管理與門市 ERP 必須分離。KINGWAY_TAINAN 是 `store_id=1` �
 - 透過 `/platform-admin/login` 登入
 - 使用平台 token 存取 `/api/saas-admin/*`
 - 可看 SaaS 平台層級租戶店鋪總覽
+- 可讀寫各租戶店鋪的 `store_features` 功能開關
 
 ### 門市管理員 / 員工
 
@@ -52,10 +53,12 @@ SaaS 平台管理與門市 ERP 必須分離。KINGWAY_TAINAN 是 `store_id=1` �
 
 - `POST /api/platform-auth/login`
 - `GET /api/saas-admin/stores`
+- `GET /api/saas-admin/stores/:id/features`
+- `PATCH /api/saas-admin/stores/:id/features`
 
 `/api/saas-admin/*` 已套用 `backend/src/middleware/platformAuth.js` 的 `authenticatePlatformAdmin`，並要求平台角色屬於 `PLATFORM_OWNER`、`PLATFORM_ADMIN` 或 `SUPPORT`。middleware 會回查 `platform_admin_users`，停用帳號即使持有舊 token 也不能使用 SaaS admin API。既有 staff token 不能通過，平台 token 也不能通過門市 ERP 的既有 `authenticate`。
 
-本階段定位為 auth skeleton：先建立平台帳號、登入、token scope 與 API 邊界。`requirePlatformRole` 已提供，但尚未把每個 SaaS 管理功能細分到 `PLATFORM_OWNER`、`PLATFORM_ADMIN`、`SUPPORT`，細部權限 enforcement 留到下一階段。
+本階段定位為平台管理儲存階段：先建立平台帳號、登入、token scope、API 邊界與 `store_features` 設定儲存。實際 POS、訂單、維修、庫存等業務 route 是否依功能開關阻擋，留到下一階段逐項 enforcement。
 
 ## 本次保留與未做事項
 
@@ -68,11 +71,13 @@ SaaS 平台管理與門市 ERP 必須分離。KINGWAY_TAINAN 是 `store_id=1` �
 - 將 SaaS admin API 改為平台 token 專用
 - 新增 `/platform-admin/login` 與 `/platform-admin`
 - 移除門市 Sidebar 的 SaaS 管理入口
+- 建立 `store_features` 並為所有 stores backfill 預設 ON
+- 新增店鋪功能設定 GET/PATCH API
+- 平台管理畫面可編輯並儲存店鋪功能開關
 
 未做：
 
-- 不建立 `store_features`
-- 不儲存功能 ON/OFF
+- 尚未把 `store_features` 套用到實際業務 route enforcement
 - 不調整 LINE/Telegram token 邏輯
 - 不變更 production config
 - 不改動既有門市登入與 POS/ERP 工作流

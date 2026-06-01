@@ -229,7 +229,7 @@ function SaasStoreFeaturesPage() {
           }
           actions={
             <>
-              <Link to="/saas-admin" className="secondary-button">返回 SaaS 管理</Link>
+              <Link to="/platform-admin" className="secondary-button">返回 SaaS 管理</Link>
               <button
                 type="button"
                 className="primary-button inline-submit"

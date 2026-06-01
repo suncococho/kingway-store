@@ -4,6 +4,8 @@ import { getStoredToken, getStoredUser } from "./lib/auth";
 import { getDefaultRouteForUser } from "./lib/permissions";
 import LoginPage from "./pages/LoginPage";
 import PlatformLoginPage, { PlatformAdminPage } from "./pages/PlatformLoginPage";
+import SaasAdminPage from "./pages/SaasAdminPage";
+import SaasStoreFeaturesPage from "./pages/SaasStoreFeaturesPage";
 import DashboardPage from "./pages/DashboardPage";
 import CustomerStatusPage from "./pages/CustomerStatusPage";
 import CustomersPage from "./pages/CustomersPage";
@@ -64,6 +66,9 @@ function App() {
       <Route path="/products/new" element={<Navigate to="/products?section=CREATE" replace state={{ mode: "up" }} />} />
       <Route path="/platform-admin/login" element={<PlatformLoginPage />} />
       <Route path="/platform-admin" element={<PlatformAdminPage />} />
+      <Route path="/platform-admin/stores/:id/features" element={<SaasStoreFeaturesPage />} />
+      <Route path="/saas-admin" element={<SaasAdminPage />} />
+      <Route path="/saas-admin/stores/:id/features" element={<SaasStoreFeaturesPage />} />
       <Route path="/saas-admin/*" element={<Navigate to="/platform-admin" replace />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/" element={<Navigate to={token ? defaultProtectedRoute : "/login"} replace />} />

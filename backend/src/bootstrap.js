@@ -125,6 +125,48 @@ async function seedPlatformAdminFromEnv() {
   return { created: true, skipped: false };
 }
 
+async function ensureStoreFeaturesSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS store_features (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      store_id BIGINT UNSIGNED NOT NULL UNIQUE,
+      pos_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      orders_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      repairs_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      inventory_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      suppliers_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      coupons_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      purchase_confirmations_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      line_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      telegram_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      sales_dashboard_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      staff_management_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+
+  await addColumnIfMissing("store_features", "pos_enabled", "TINYINT(1) NOT NULL DEFAULT 1");
+  await addColumnIfMissing("store_features", "orders_enabled", "TINYINT(1) NOT NULL DEFAULT 1");
+  await addColumnIfMissing("store_features", "repairs_enabled", "TINYINT(1) NOT NULL DEFAULT 1");
+  await addColumnIfMissing("store_features", "inventory_enabled", "TINYINT(1) NOT NULL DEFAULT 1");
+  await addColumnIfMissing("store_features", "suppliers_enabled", "TINYINT(1) NOT NULL DEFAULT 1");
+  await addColumnIfMissing("store_features", "coupons_enabled", "TINYINT(1) NOT NULL DEFAULT 1");
+  await addColumnIfMissing("store_features", "purchase_confirmations_enabled", "TINYINT(1) NOT NULL DEFAULT 1");
+  await addColumnIfMissing("store_features", "line_enabled", "TINYINT(1) NOT NULL DEFAULT 1");
+  await addColumnIfMissing("store_features", "telegram_enabled", "TINYINT(1) NOT NULL DEFAULT 1");
+  await addColumnIfMissing("store_features", "sales_dashboard_enabled", "TINYINT(1) NOT NULL DEFAULT 1");
+  await addColumnIfMissing("store_features", "staff_management_enabled", "TINYINT(1) NOT NULL DEFAULT 1");
+
+  await pool.query(`
+    INSERT INTO store_features (store_id)
+    SELECT s.id
+    FROM stores s
+    LEFT JOIN store_features sf ON sf.store_id = s.id
+    WHERE sf.id IS NULL
+  `);
+}
+
 async function columnExists(tableName, columnName) {
   const [rows] = await pool.query(
     `
@@ -683,6 +725,7 @@ async function ensureV2Schema() {
 
   await ensurePlatformAdminUsersSchema();
   await seedPlatformAdminFromEnv();
+  await ensureStoreFeaturesSchema();
 
   await ensureAppSettingsSchema();
 
@@ -698,6 +741,7 @@ module.exports = {
   ensureDefaultStaff,
   ensurePlatformAdminUsersSchema,
   seedPlatformAdminFromEnv,
+  ensureStoreFeaturesSchema,
   ensureV2Schema,
   ensureStorageDirectories
 };

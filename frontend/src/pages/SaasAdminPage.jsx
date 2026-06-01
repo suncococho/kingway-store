@@ -27,7 +27,7 @@ function renderActionButtons(store) {
     <div className="compact-actions">
       {ACTION_LABELS.map((label) => (
         label === "功能設定" && store?.id ? (
-          <Link key={label} to={`/saas-admin/stores/${store.id}/features`} className="secondary-button">
+          <Link key={label} to={"/platform-admin/stores/" + store.id + "/features"} className="secondary-button">
             {label}
           </Link>
         ) : (
@@ -162,7 +162,7 @@ function SaasAdminPage() {
         <AdminSectionHeader
           eyebrow="SaaS 平台"
           title="租戶店鋪列表"
-          description="第一版為唯讀總覽；KINGWAY_TAINAN 顯示為租戶店鋪，不代表平台本身。設定按鈕先作為後續平台管理頁面的入口占位。"
+          description="平台層級檢視租戶店鋪，並可進入功能設定調整各店鋪模組開關。"
           badges={
             <>
               <StatusBadge tone="info">租戶店鋪總數 {data?.totalStores ?? stores.length}</StatusBadge>

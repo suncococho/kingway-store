@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
@@ -24,6 +24,16 @@ function getStatusTone(status) {
 function getSchemaGuardLabel(schemaGuard) {
   if (!schemaGuard) return "未取得";
   return schemaGuard.requireStoreIdSchema ? "嚴格模式" : "警告模式";
+}
+
+function renderStoreActions(store) {
+  return (
+    <div className="compact-actions">
+      <Link to={"/platform-admin/stores/" + store.id + "/features"} className="secondary-button">
+        功能設定
+      </Link>
+    </div>
+  );
 }
 
 function PlatformLoginPage() {
@@ -158,7 +168,12 @@ export function PlatformAdminPage() {
     { key: "productCount", label: "商品" },
     { key: "customerCount", label: "客戶" },
     { key: "orderCount", label: "訂單" },
-    { key: "repairCount", label: "維修" }
+    { key: "repairCount", label: "維修" },
+    {
+      key: "actions",
+      label: "管理入口",
+      render: (row) => renderStoreActions(row)
+    }
   ];
 
   function handleLogout() {
@@ -199,7 +214,7 @@ export function PlatformAdminPage() {
               <AdminSectionHeader
                 eyebrow="SaaS 平台"
                 title="租戶店鋪列表"
-                description="第一版僅提供平台層級唯讀總覽；功能開關與店鋪設定不在本次骨架中寫入。"
+                description="平台層級檢視租戶店鋪，並可進入功能設定調整各店鋪模組開關。"
                 badges={
                   <>
                     <StatusBadge tone="info">租戶店鋪總數 {data?.totalStores ?? stores.length}</StatusBadge>
@@ -216,6 +231,7 @@ export function PlatformAdminPage() {
                 cardTitle={(row) => row.code || "店鋪 " + row.id}
                 cardDescription={(row) => row.name || "未設定店鋪名稱"}
                 cardBadges={(row) => <StatusBadge tone={getStatusTone(row.status)}>{row.status || "-"}</StatusBadge>}
+                cardFooter={(row) => renderStoreActions(row)}
               />
             </section>
           </>

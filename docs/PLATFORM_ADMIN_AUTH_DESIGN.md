@@ -4,7 +4,7 @@
 
 SaaS 平台管理員身份必須與門市員工身份分離。KINGWAY_TAINAN 只是 `store_id=1` 的租戶店鋪，不是 SaaS 平台本身。
 
-本次第一版已建立平台管理員登入骨架，且不新增 `store_features`，不做功能 ON/OFF 儲存。
+目前已建立平台管理員登入骨架，並新增 `store_features` 供平台管理員儲存各租戶店鋪的功能 ON/OFF。
 
 ## 身份資料表
 
@@ -22,6 +22,10 @@ SaaS 平台管理員身份必須與門市員工身份分離。KINGWAY_TAINAN 只
 - `updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`
 
 `platform_admin_users` 沒有 `store_id`。平台管理員不屬於任何單一門市。
+
+### `store_features`
+
+`store_features` 是平台層級管理的租戶功能開關表，只能由 platform admin token 透過 `/api/saas-admin/*` 修改。門市 staff token 不可讀寫此設定。此階段只儲存設定，尚未套用到 POS、訂單、維修等實際業務 route enforcement。
 
 ### `staff_users`
 
