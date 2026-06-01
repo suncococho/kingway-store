@@ -1,6 +1,6 @@
 const express = require("express");
 const { pool } = require("../db");
-const { authenticatePlatformAdmin } = require("../middleware/auth");
+const { authenticatePlatformAdmin } = require("../middleware/platformAuth");
 
 const router = express.Router();
 
