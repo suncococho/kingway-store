@@ -1,77 +1,72 @@
 # Platform Admin Auth Design
 
-## Purpose
+## 目的
 
-The SaaS platform admin identity model must be separate from store staff identity. KINGWAY_TAINAN is a tenant store, not the SaaS platform. Platform admins manage stores, plans, integrations, feature flags, and platform status across tenants.
+SaaS 平台管理員身份必須與門市員工身份分離。KINGWAY_TAINAN 只是 `store_id=1` 的租戶店鋪，不是 SaaS 平台本身。
 
-This document is a design plan only. Do not create migrations until the schema and rollout are reviewed.
+本次第一版已建立平台管理員登入骨架，且不新增 `store_features`，不做功能 ON/OFF 儲存。
 
-## Planned Tables
+## 身份資料表
 
-### platform_admin_users
+### `platform_admin_users`
 
+平台管理員使用獨立資料表：
+
+- `id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY`
+- `email VARCHAR(190) NOT NULL UNIQUE`
+- `password_hash VARCHAR(255) NOT NULL`
+- `display_name VARCHAR(120) NOT NULL`
+- `role ENUM('PLATFORM_OWNER','PLATFORM_ADMIN','SUPPORT') NOT NULL DEFAULT 'PLATFORM_ADMIN'`
+- `is_active TINYINT(1) NOT NULL DEFAULT 1`
+- `created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`
+- `updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`
+
+`platform_admin_users` 沒有 `store_id`。平台管理員不屬於任何單一門市。
+
+### `staff_users`
+
+`staff_users` 仍然是門市 ERP 的員工帳號來源，並且是門市/租戶範圍身份。既有門市登入 `/login`、`/dashboard`、`/pos`、`/orders` 等流程保持不變。
+
+## 初始帳號 Seed
+
+Backend bootstrap 會讀取以下環境值：
+
+- `PLATFORM_ADMIN_EMAIL`
+- `PLATFORM_ADMIN_PASSWORD`
+- `PLATFORM_ADMIN_NAME`
+
+讀取來源優先使用 `process.env`，若缺少則可從 repo 根目錄 `.env.staging-restore` 讀取。三個值都存在時，且 email 尚未存在，才建立一筆 `PLATFORM_OWNER`。密碼使用既有 `backend/src/utils/passwords.js` 的 bcrypt hash，禁止儲存明文密碼。
+
+若任一值不存在，seed 會跳過，backend 不應因此啟動失敗。
+
+## Token 邊界
+
+平台登入 API：`POST /api/platform-auth/login`
+
+成功回傳平台 JWT，payload 包含：
+
+- `type: "platform_admin"`
+- `scope: "platform_admin"`
 - `id`
 - `email`
-- `password_hash`
-- `display_name`
-- `role`: `PLATFORM_OWNER` / `PLATFORM_ADMIN` / `SUPPORT`
-- `is_active`
-- `created_at`
-- `updated_at`
+- `displayName`
+- `role`
 
-Platform admin users have no `store_id`. They belong to the SaaS platform, not a store tenant.
+既有門市 staff token 不包含平台 scope，不能通過 `authenticatePlatformAdmin`。平台 token 也會被既有 `authenticate` 擋下，不能混入門市 ERP API。
 
-### platform_admin_sessions or JWT
+## Middleware
 
-Two implementation options are acceptable:
+新增平台專用 middleware：
 
-- `platform_admin_sessions`: server-side session records with revocation, expiry, user agent, and IP metadata.
-- Platform-admin JWT: separate signing purpose/audience from existing store ERP JWTs.
+- `authenticatePlatformAdmin`
+- `requirePlatformRole`
 
-Whichever option is selected, platform tokens must not be accepted as store staff tokens, and store staff tokens must not grant platform admin access.
+本次已將 `/api/saas-admin/*` 實際套用 `authenticatePlatformAdmin`，因此必須使用平台 token 存取。
 
-### platform_audit_logs
+## 前端路由
 
-Suggested fields:
+- `/platform-admin/login`：SaaS 本社平台管理員登入
+- `/platform-admin`：SaaS 平台管理中心
+- `/saas-admin/*`：暫時轉向 `/platform-admin`
 
-- `id`
-- `platform_admin_user_id`
-- `action`
-- `target_type`
-- `target_id`
-- `store_id`, nullable for platform-level actions
-- `metadata_json`
-- `created_at`
-
-Audit logs are required for store creation, plan changes, feature changes, integration changes, support access, and future impersonation.
-
-## Identity Boundaries
-
-- Platform admin users are stored in `platform_admin_users`.
-- Store staff remain in the existing store staff user model and must be scoped by `store_id`.
-- Platform admin can view all stores.
-- Store owner can only view and manage the owned store.
-- Store staff can only use the workflows allowed for their store role and store scope.
-- Platform admin authorization must not be inferred from KINGWAY_TAINAN `ADMIN` staff role.
-
-## Future Impersonation
-
-Optional support impersonation can be introduced later, but it must be explicit and audited.
-
-Requirements:
-
-- Record who started impersonation.
-- Record target store and target user/role.
-- Record start and end time.
-- Show visible UI state while impersonating.
-- Prevent sensitive secret viewing during impersonation unless separately authorized.
-- Never allow silent customer or staff data mutation without audit logs.
-
-## Rollout Plan
-
-1. Keep current `/saas-admin` as a temporary staging skeleton.
-2. Add `/platform-admin/login` and a platform-only auth boundary.
-3. Add platform layout routes under `/platform-admin`.
-4. Move SaaS store list and feature pages from `/saas-admin` into `/platform-admin`.
-5. Keep existing store ERP routes under store-scoped login and authorization.
-6. Add migrations only after the auth boundary and audit requirements are finalized.
+既有 `/login` 是門市管理員/員工登入，不是平台登入。

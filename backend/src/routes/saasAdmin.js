@@ -1,186 +1,8 @@
 const express = require("express");
 const { pool } = require("../db");
+const { authenticatePlatformAdmin } = require("../middleware/auth");
 
 const router = express.Router();
-
-function toNumber(value, fallback = 0) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function toText(value, fallback = "") {
-  if (value === null || value === undefined) return fallback;
-  return String(value);
-}
-
-
-
-const DEFAULT_STORE_FEATURES = [
-  {
-    key: "pos_enabled",
-    label: "POS",
-    enabled: true,
-    description: "門市結帳、新訂單建立與購物車流程。"
-  },
-  {
-    key: "orders_enabled",
-    label: "訂單管理",
-    enabled: true,
-    description: "一般訂單、預約單、訂金與尾款狀態管理。"
-  },
-  {
-    key: "repairs_enabled",
-    label: "維修管理",
-    enabled: true,
-    description: "維修預約、報價、完修、取車與問卷流程。"
-  },
-  {
-    key: "inventory_enabled",
-    label: "庫存管理",
-    enabled: true,
-    description: "商品庫存、庫位、警戒值與庫存異動。"
-  },
-  {
-    key: "suppliers_enabled",
-    label: "發注 / 退貨",
-    enabled: true,
-    description: "供應商發注、入庫、退貨與月結追蹤。"
-  },
-  {
-    key: "coupons_enabled",
-    label: "優惠券",
-    enabled: true,
-    description: "新好友優惠券與 Google 評論優惠券管理。"
-  },
-  {
-    key: "purchase_confirmations_enabled",
-    label: "購買確認書",
-    enabled: true,
-    description: "EBIKE 購買確認、簽名、PDF 與交車前確認。"
-  },
-  {
-    key: "line_enabled",
-    label: "LINE",
-    enabled: true,
-    description: "客戶 LINE 流程、LINE 綁定與門市通知入口。"
-  },
-  {
-    key: "telegram_enabled",
-    label: "Telegram",
-    enabled: true,
-    description: "既有 Telegram 通知橋接狀態，占位供後續逐店設定。"
-  },
-  {
-    key: "sales_dashboard_enabled",
-    label: "銷售儀表板",
-    enabled: true,
-    description: "銷售摘要、營業重點與管理者儀表板。"
-  },
-  {
-    key: "staff_management_enabled",
-    label: "員工管理",
-    enabled: true,
-    description: "員工資料、出勤、KPI 與薪資摘要。"
-  }
-];
-
-const FEATURE_KEYS = DEFAULT_STORE_FEATURES.map((feature) => feature.key);
-const FEATURE_KEY_SET = new Set(FEATURE_KEYS);
-
-function getSchemaGuardStatus() {
-  const requireStoreIdSchema = String(process.env.REQUIRE_STORE_ID_SCHEMA || "").toLowerCase() === "true";
-  return {
-    requireStoreIdSchema,
-    status: requireStoreIdSchema ? "STRICT_ON" : "WARN_ONLY"
-  };
-}
-
-function normalizeStore(row, fallbackId) {
-  return {
-    id: toNumber(row.id, fallbackId),
-    code: toText(row.code, "UNKNOWN"),
-    name: toText(row.code, "UNKNOWN"),
-    status: toText(row.status, "unknown"),
-    plan: toText(row.plan, "unknown")
-  };
-}
-
-async function ensureStoreFeatureRow(storeId) {
-  await pool.query("INSERT IGNORE INTO store_features (store_id) VALUES (?)", [storeId]);
-}
-
-async function getStoreFeatureRow(storeId) {
-  const columns = FEATURE_KEYS.join(", ");
-  const [rows] = await pool.query(
-    "SELECT " + columns + " FROM store_features WHERE store_id = ? LIMIT 1",
-    [storeId]
-  );
-
-  return rows[0] || null;
-}
-
-function buildFeatureList(featureRow) {
-  return DEFAULT_STORE_FEATURES.map((feature) => ({
-    key: feature.key,
-    label: feature.label,
-    enabled: featureRow ? Boolean(toNumber(featureRow[feature.key], 1)) : true,
-    description: feature.description
-  }));
-}
-
-async function buildStoreFeaturesPayload(storeId) {
-  const [[storeRow]] = await pool.query(
-    `
-      SELECT id, code, status, plan
-      FROM stores
-      WHERE id = ?
-      LIMIT 1
-    `,
-    [storeId]
-  );
-
-  if (!storeRow) {
-    return null;
-  }
-
-  await ensureStoreFeatureRow(storeId);
-  const featureRow = await getStoreFeatureRow(storeId);
-
-  return {
-    ok: true,
-    environment: toText(process.env.APP_ENV || process.env.NODE_ENV, "unknown"),
-    schemaGuard: getSchemaGuardStatus(),
-    store: normalizeStore(storeRow, storeId),
-    readOnly: false,
-    features: buildFeatureList(featureRow)
-  };
-}
-
-function parseFeatureUpdates(body) {
-  const source = body && body.features && typeof body.features === "object" && !Array.isArray(body.features)
-    ? body.features
-    : body || {};
-  const keys = Object.keys(source);
-  const unknownKeys = keys.filter((key) => !FEATURE_KEY_SET.has(key));
-
-  if (unknownKeys.length) {
-    return { error: "不支援的功能設定：" + unknownKeys.join(", ") };
-  }
-
-  const updates = {};
-  for (const key of keys) {
-    if (typeof source[key] !== "boolean") {
-      return { error: "功能設定 " + key + " 必須是 boolean" };
-    }
-    updates[key] = source[key] ? 1 : 0;
-  }
-
-  if (!Object.keys(updates).length) {
-    return { error: "沒有可更新的功能設定" };
-  }
-
-  return { updates };
-}
 
 function n(value, fallback = 0) {
   const parsed = Number(value);
@@ -192,6 +14,15 @@ function t(value, fallback = "") {
   return String(value);
 }
 
+function getSchemaGuardStatus() {
+  const requireStoreIdSchema = String(process.env.REQUIRE_STORE_ID_SCHEMA || "").toLowerCase() === "true";
+  return {
+    requireStoreIdSchema,
+    status: requireStoreIdSchema ? "STRICT_ON" : "WARN_ONLY"
+  };
+}
+
+router.use(authenticatePlatformAdmin);
 
 router.get("/stores", async (req, res, next) => {
   try {
@@ -224,10 +55,7 @@ router.get("/stores", async (req, res, next) => {
     return res.json({
       ok: true,
       environment: t(process.env.APP_ENV || process.env.NODE_ENV, "unknown"),
-      schemaGuard: {
-        requireStoreIdSchema: String(process.env.REQUIRE_STORE_ID_SCHEMA || "").toLowerCase() === "true",
-        status: String(process.env.REQUIRE_STORE_ID_SCHEMA || "").toLowerCase() === "true" ? "STRICT_ON" : "WARN_ONLY"
-      },
+      schemaGuard: getSchemaGuardStatus(),
       totalStores: stores.length,
       totals: stores.reduce((acc, store) => {
         acc.productCount += store.productCount;
@@ -240,62 +68,6 @@ router.get("/stores", async (req, res, next) => {
     });
   } catch (error) {
     console.error("[saasAdmin/stores] failed", error);
-    return next(error);
-  }
-});
-
-
-router.get("/stores/:id/features", async (req, res, next) => {
-  try {
-    const storeId = toNumber(req.params.id, 0);
-
-    if (!storeId) {
-      return res.status(400).json({ message: "店鋪 ID 不正確" });
-    }
-
-    const payload = await buildStoreFeaturesPayload(storeId);
-    if (!payload) {
-      return res.status(404).json({ message: "找不到店鋪" });
-    }
-
-    return res.json(payload);
-  } catch (error) {
-    console.error("[saasAdmin/features] failed", error);
-    return next(error);
-  }
-});
-
-router.patch("/stores/:id/features", async (req, res, next) => {
-  try {
-    const storeId = toNumber(req.params.id, 0);
-
-    if (!storeId) {
-      return res.status(400).json({ message: "店鋪 ID 不正確" });
-    }
-
-    const parsed = parseFeatureUpdates(req.body || {});
-    if (parsed.error) {
-      return res.status(400).json({ message: parsed.error });
-    }
-
-    const currentPayload = await buildStoreFeaturesPayload(storeId);
-    if (!currentPayload) {
-      return res.status(404).json({ message: "找不到店鋪" });
-    }
-
-    const updateKeys = Object.keys(parsed.updates);
-    const assignments = updateKeys.map((key) => key + " = ?").join(", ");
-    const values = updateKeys.map((key) => parsed.updates[key]);
-
-    await pool.query(
-      "UPDATE store_features SET " + assignments + " WHERE store_id = ?",
-      [...values, storeId]
-    );
-
-    const payload = await buildStoreFeaturesPayload(storeId);
-    return res.json(payload);
-  } catch (error) {
-    console.error("[saasAdmin/features] update failed", error);
     return next(error);
   }
 });

@@ -7,7 +7,12 @@ function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const user = getStoredUser();
-  const mobileMenuSections = getMobileMenuSectionsForUser(user);
+  const mobileMenuSections = getMobileMenuSectionsForUser(user)
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => item.to !== "/saas-admin")
+    }))
+    .filter((group) => group.items.length > 0);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 
   function handleLogout() {

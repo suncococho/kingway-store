@@ -3,6 +3,7 @@ import ProtectedLayout from "./components/ProtectedLayout";
 import { getStoredToken, getStoredUser } from "./lib/auth";
 import { getDefaultRouteForUser } from "./lib/permissions";
 import LoginPage from "./pages/LoginPage";
+import PlatformLoginPage, { PlatformAdminPage } from "./pages/PlatformLoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import CustomerStatusPage from "./pages/CustomerStatusPage";
 import CustomersPage from "./pages/CustomersPage";
@@ -24,8 +25,6 @@ import KPIPage from "./pages/KPIPage";
 import PayrollPage from "./pages/PayrollPage";
 import MorePage from "./pages/MorePage";
 import SettingsPage from "./pages/SettingsPage";
-import SaasAdminPage from "./pages/SaasAdminPage";
-import SaasStoreFeaturesPage from "./pages/SaasStoreFeaturesPage";
 import PurchaseConfirmPublicPage from "./pages/PurchaseConfirmPublicPage";
 import SurveyPublicPage from "./pages/SurveyPublicPage";
 import LineEntryPage from "./pages/LineEntryPage";
@@ -63,6 +62,9 @@ function App() {
       <Route path="/repairs/quote" element={<Navigate to="/repairs?tab=ESTIMATED" replace state={{ mode: "baojia" }} />} />
       <Route path="/baojia" element={<Navigate to="/repairs?tab=ESTIMATED" replace state={{ mode: "baojia" }} />} />
       <Route path="/products/new" element={<Navigate to="/products?section=CREATE" replace state={{ mode: "up" }} />} />
+      <Route path="/platform-admin/login" element={<PlatformLoginPage />} />
+      <Route path="/platform-admin" element={<PlatformAdminPage />} />
+      <Route path="/saas-admin/*" element={<Navigate to="/platform-admin" replace />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/" element={<Navigate to={token ? defaultProtectedRoute : "/login"} replace />} />
       <Route element={<ProtectedLayout />}>
@@ -87,8 +89,6 @@ function App() {
         <Route path="/kpi" element={<KPIPage />} />
         <Route path="/payroll" element={<PayrollPage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/saas-admin" element={<SaasAdminPage />} />
-        <Route path="/saas-admin/stores/:id/features" element={<SaasStoreFeaturesPage />} />
         <Route path="/more" element={<MorePage />} />
         <Route path="/trash" element={<TrashPage />} />
       </Route>

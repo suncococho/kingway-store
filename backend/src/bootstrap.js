@@ -4,6 +4,49 @@ const { pool } = require("./db");
 const { seedDefaultSettings } = require("./services/settingsService");
 const { hashPassword } = require("./utils/passwords");
 
+function readOptionalEnvFile(fileName) {
+  const envPath = path.join(__dirname, "..", "..", fileName);
+
+  if (!fs.existsSync(envPath)) {
+    return {};
+  }
+
+  const parsed = {};
+  const content = fs.readFileSync(envPath, "utf8");
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    let value = trimmed.slice(separatorIndex + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    parsed[key] = value;
+  }
+
+  return parsed;
+}
+
+function getPlatformAdminSeedConfig() {
+  const stagingRestoreEnv = readOptionalEnvFile(".env.staging-restore");
+  return {
+    email: (process.env.PLATFORM_ADMIN_EMAIL || stagingRestoreEnv.PLATFORM_ADMIN_EMAIL || "").trim().toLowerCase(),
+    password: process.env.PLATFORM_ADMIN_PASSWORD || stagingRestoreEnv.PLATFORM_ADMIN_PASSWORD || "",
+    displayName: (process.env.PLATFORM_ADMIN_NAME || stagingRestoreEnv.PLATFORM_ADMIN_NAME || "").trim()
+  };
+}
+
 async function ensureDefaultAdmin() {
   const username = process.env.DEFAULT_ADMIN_USERNAME || "admin";
   const password = process.env.DEFAULT_ADMIN_PASSWORD || "123456";
@@ -33,6 +76,53 @@ async function ensureDefaultAdmin() {
   );
 
   return true;
+}
+
+async function ensurePlatformAdminUsersSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS platform_admin_users (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      email VARCHAR(190) NOT NULL UNIQUE,
+      password_hash VARCHAR(255) NOT NULL,
+      display_name VARCHAR(120) NOT NULL,
+      role ENUM('PLATFORM_OWNER','PLATFORM_ADMIN','SUPPORT') NOT NULL DEFAULT 'PLATFORM_ADMIN',
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+}
+
+async function seedPlatformAdminFromEnv() {
+  const seed = getPlatformAdminSeedConfig();
+  if (!seed.email || !seed.password || !seed.displayName) {
+    return { created: false, skipped: true };
+  }
+
+  const [rows] = await pool.query(
+    `
+      SELECT id
+      FROM platform_admin_users
+      WHERE email = ?
+      LIMIT 1
+    `,
+    [seed.email]
+  );
+
+  if (rows[0]) {
+    return { created: false, skipped: false };
+  }
+
+  const passwordHash = await hashPassword(seed.password);
+  await pool.query(
+    `
+      INSERT INTO platform_admin_users (email, password_hash, display_name, role)
+      VALUES (?, ?, ?, 'PLATFORM_OWNER')
+    `,
+    [seed.email, passwordHash, seed.displayName]
+  );
+
+  return { created: true, skipped: false };
 }
 
 async function columnExists(tableName, columnName) {
@@ -256,37 +346,6 @@ async function ensureAppSettingsSchema() {
     "idx_app_settings_store_scope",
     "INDEX idx_app_settings_store_scope (store_id, setting_scope)"
   );
-}
-
-async function ensureStoreFeaturesSchema() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS store_features (
-      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-      store_id BIGINT UNSIGNED NOT NULL,
-      pos_enabled TINYINT(1) NOT NULL DEFAULT 1,
-      orders_enabled TINYINT(1) NOT NULL DEFAULT 1,
-      repairs_enabled TINYINT(1) NOT NULL DEFAULT 1,
-      inventory_enabled TINYINT(1) NOT NULL DEFAULT 1,
-      suppliers_enabled TINYINT(1) NOT NULL DEFAULT 1,
-      coupons_enabled TINYINT(1) NOT NULL DEFAULT 1,
-      purchase_confirmations_enabled TINYINT(1) NOT NULL DEFAULT 1,
-      line_enabled TINYINT(1) NOT NULL DEFAULT 1,
-      telegram_enabled TINYINT(1) NOT NULL DEFAULT 1,
-      sales_dashboard_enabled TINYINT(1) NOT NULL DEFAULT 1,
-      staff_management_enabled TINYINT(1) NOT NULL DEFAULT 1,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uk_store_features_store (store_id)
-    )
-  `);
-
-  await pool.query(`
-    INSERT INTO store_features (store_id)
-    SELECT s.id
-    FROM stores s
-    LEFT JOIN store_features sf ON sf.store_id = s.id
-    WHERE sf.store_id IS NULL
-  `);
 }
 
 async function shouldSeedStoreAwareSettings() {
@@ -622,8 +681,10 @@ async function ensureV2Schema() {
     )
   `);
 
+  await ensurePlatformAdminUsersSchema();
+  await seedPlatformAdminFromEnv();
+
   await ensureAppSettingsSchema();
-  await ensureStoreFeaturesSchema();
 
   await seedDefaultSettings((await shouldSeedStoreAwareSettings()) ? 1 : null);
 }
@@ -635,6 +696,8 @@ function ensureStorageDirectories() {
 module.exports = {
   ensureDefaultAdmin,
   ensureDefaultStaff,
+  ensurePlatformAdminUsersSchema,
+  seedPlatformAdminFromEnv,
   ensureV2Schema,
   ensureStorageDirectories
 };

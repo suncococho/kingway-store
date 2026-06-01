@@ -11,6 +11,7 @@ const { sendRepairPickupReminders } = require("./services/repairReminderService"
 const config = require("./config");
 const { pool } = require("./db");
 const authRoutes = require("./routes/auth");
+const platformAuthRoutes = require("./routes/platformAuth");
 const staffRoutes = require("./routes/staff");
 const customerRoutes = require("./routes/customers");
 const productRoutes = require("./routes/products");
@@ -386,6 +387,7 @@ app.get("/health", async (req, res, next) => {
 
 app.use("/api/settings", settingsRoutes);
 app.use("/api/system", systemStatusRoutes);
+app.use("/api/platform-auth", platformAuthRoutes);
 app.use("/api/saas-admin", saasAdminRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/sales", salesRoutes);
