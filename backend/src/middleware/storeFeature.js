@@ -33,9 +33,8 @@ function requireStoreFeature(featureKey) {
 
       await pool.query(
         `
-          INSERT INTO store_features (store_id)
+          INSERT IGNORE INTO store_features (store_id)
           VALUES (?)
-          ON DUPLICATE KEY UPDATE store_id = VALUES(store_id)
         `,
         [storeId]
       );
