@@ -259,7 +259,7 @@ Risk:
 - The previous tenant assignment relied on hidden DB defaults, triggers, or implicit schema behavior.
 - In a multi-store setup this can silently place repairs into the wrong tenant, commonly default store `1`.
 
-### HIGH: LINE customer lookup and repair creation are globally resolved / legacy-fallback based
+### HIGH: LINE customer lookup and repair creation are globally resolved / legacy-fallback based - Fixed 2026-06-02
 
 Files:
 
@@ -268,10 +268,23 @@ Files:
 - `backend/src/services/lineWorkflowService.js:1462-1493`
 - `backend/src/services/lineWorkflowService.js:2794-2885`
 
-Risk:
+Previous state:
 
-- LINE repair reservation can bind to the wrong tenant.
-- Ambiguous multi-store identities fall back to store `1` instead of failing safely.
+- `GET /api/line-repair/customer` allowed global customer lookup by `line_user_id`.
+- pending repair estimate lookup in LINE text flow allowed global repair lookup by `line_user_id`.
+- LINE repair progress lookup relied on `customer_id` without defensively carrying `repair_orders.store_id`.
+
+Fix completed:
+
+- `backend/src/routes/lineRepair.js` now resolves store context and applies `customers.store_id = resolvedStoreId` for `GET /api/line-repair/customer`.
+- `backend/src/services/lineWorkflowService.js` now resolves store context before pending repair estimate lookup and applies both `customers.store_id` and `repair_orders.store_id`.
+- LINE repair progress lookup now carries the scoped customer store into the `repair_orders` query.
+- legacy-compatible fallback to `store_id=1` remains possible through the existing resolver, and existing fallback workflow logging remains in place.
+
+Residual risk:
+
+- LINE repair reservation can still fall back to store `1` when context is ambiguous, by design.
+- Other HIGH findings in postback approve/reject and estimate approval flows are still open in this audit.
 
 ### HIGH: LINE repair approval / estimate actions ignore store scope
 

@@ -37,17 +37,26 @@ router.get("/customer", async (req, res, next) => {
       return res.json({ customer: null });
     }
 
+    const storeContext = await resolveLineWorkflowStoreContext({
+      lineUserId,
+      connection: pool,
+      reason: "line_repair_page_customer"
+    });
+    const resolvedStoreId = storeContext.storeId;
+
     const [rows] = await pool.query(
       `SELECT
          id,
          name,
          phone,
-         line_user_id AS lineUserId
+         line_user_id AS lineUserId,
+         store_id AS storeId
        FROM customers
        WHERE line_user_id = ?
+         AND store_id = ?
          AND COALESCE(crm_stage, '') <> 'deleted'
        LIMIT 1`,
-      [lineUserId]
+      [lineUserId, resolvedStoreId]
     );
 
     return res.json({ customer: rows[0] || null });

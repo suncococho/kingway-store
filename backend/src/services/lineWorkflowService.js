@@ -3536,19 +3536,29 @@ async function replyToLine(replyToken, messages, options = {}) {
   }
 }
 
-async function findPendingRepairEstimateByLineUserId(lineUserId) {
+async function findPendingRepairEstimateByLineUserId(lineUserId, storeId = null) {
+  const storeContext = await resolveLineWorkflowStoreContext({
+    storeId,
+    lineUserId,
+    connection: pool,
+    reason: "find_pending_repair_estimate"
+  });
+  const resolvedStoreId = storeContext.storeId;
+
   const [rows] = await pool.query(
     `
       SELECT ro.id
       FROM repair_orders ro
-      INNER JOIN customers c ON c.id = ro.customer_id
+      INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
       WHERE c.line_user_id = ?
+        AND c.store_id = ?
+        AND ro.store_id = ?
         AND ro.status = 'estimate_pending_approval'
         AND ro.customer_estimate_response = 'pending'
       ORDER BY ro.id DESC
       LIMIT 1
     `,
-    [lineUserId]
+    [lineUserId, resolvedStoreId, resolvedStoreId]
   );
 
   return rows[0] || null;
@@ -4137,6 +4147,7 @@ async function handleCustomerMessageEvent(event) {
   }
 
   const customer = await findOrCreateLineCustomer(lineUserId);
+  const customerStoreId = normalizeStoreId(customer?.storeId || customer?.store_id);
 
   const needsPhoneBinding =
     matchesKeyword(messageText, LINE_KEYWORDS.menu) ||
@@ -4327,10 +4338,11 @@ async function handleCustomerMessageEvent(event) {
         SELECT id, status, reservation_date AS reservationDate
         FROM repair_orders
         WHERE customer_id = ?
+          AND (? IS NULL OR store_id = ?)
         ORDER BY id DESC
         LIMIT 1
       `,
-      [customer.id]
+      [customer.id, customerStoreId, customerStoreId]
     );
     const [[latestOrder]] = await pool.query(
       `
