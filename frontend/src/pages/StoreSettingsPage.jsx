@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import AdminSectionHeader from "../components/AdminSectionHeader";
 import PageHeader from "../components/PageHeader";
-import { apiRequest } from "../lib/api";
+import { apiRequest, apiUploadImage } from "../lib/api";
 import { getStoredUser } from "../lib/auth";
 
 const DEFAULT_FORM = {
@@ -13,7 +13,8 @@ const DEFAULT_FORM = {
   timezone: "Asia/Taipei",
   defaultLanguage: "zh-TW",
   invoiceDisplayName: "",
-  businessNumber: ""
+  businessNumber: "",
+  logoUrl: ""
 };
 
 const LANGUAGE_OPTIONS = [
@@ -36,7 +37,8 @@ function normalizeForm(store) {
     timezone: String(store?.timezone || DEFAULT_FORM.timezone),
     defaultLanguage: String(store?.defaultLanguage || DEFAULT_FORM.defaultLanguage),
     invoiceDisplayName: String(store?.invoiceDisplayName || ""),
-    businessNumber: String(store?.businessNumber || "")
+    businessNumber: String(store?.businessNumber || ""),
+    logoUrl: String(store?.logoUrl || "")
   };
 }
 
@@ -47,6 +49,7 @@ function StoreSettingsPage() {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -105,6 +108,55 @@ function StoreSettingsPage() {
       setSuccessMessage("門市設定已儲存。");
     } catch (saveError) {
       setError(saveError.message || "儲存門市設定失敗");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleLogoUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file || !canEdit) {
+      return;
+    }
+
+    setUploadingLogo(true);
+    setError("");
+    setSuccessMessage("");
+
+    try {
+      const response = await apiUploadImage("/store/settings/logo", file);
+      setForm(normalizeForm(response?.store));
+      setSuccessMessage("門市 Logo 已更新。");
+    } catch (uploadError) {
+      setError(uploadError.message || "上傳門市 Logo 失敗");
+    } finally {
+      setUploadingLogo(false);
+    }
+  }
+
+  async function handleLogoRemove() {
+    if (!canEdit) {
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setSuccessMessage("");
+
+    try {
+      const response = await apiRequest("/store/settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          logoUrl: ""
+        })
+      });
+
+      setForm(normalizeForm(response?.store));
+      setSuccessMessage("門市 Logo 已移除。");
+    } catch (saveError) {
+      setError(saveError.message || "移除門市 Logo 失敗");
     } finally {
       setSaving(false);
     }
@@ -194,11 +246,51 @@ function StoreSettingsPage() {
             <AdminSectionHeader
               eyebrow="Logo"
               title="門市 Logo"
-              description="本階段先保留位置，後續再接上安全的 logo upload。"
+              description="Logo 會以目前登入門市為範圍獨立儲存，不會影響其他門市。"
             />
-            <div className="store-settings-placeholder-card">
-              <strong>Coming Soon</strong>
-              <p>Logo upload 將在後續 Phase 3 實作。</p>
+            <div className="store-settings-logo-card">
+              <div className="store-settings-logo-preview">
+                {form.logoUrl ? (
+                  <img src={form.logoUrl} alt="門市 Logo 預覽" className="store-settings-logo-image" />
+                ) : (
+                  <div className="store-settings-logo-empty">
+                    <strong>尚未上傳 Logo</strong>
+                    <p>建議使用透明背景 PNG 或 SVG，方便後續門市品牌延伸。</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="store-settings-logo-meta">
+                <div className="store-settings-logo-meta-title">目前品牌圖像</div>
+                <div className="store-settings-logo-meta-text">
+                  {form.logoUrl ? "已儲存目前門市專用 Logo。" : "目前仍使用系統預設文字品牌。"}
+                </div>
+              </div>
+
+              <div className="compact-actions store-settings-logo-actions">
+                <label className={`secondary-button${!canEdit || uploadingLogo || saving ? " disabled" : ""}`}>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                    onChange={handleLogoUpload}
+                    disabled={!canEdit || uploadingLogo || saving}
+                    hidden
+                  />
+                  {uploadingLogo ? "上傳中..." : "上傳 Logo"}
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={handleLogoRemove}
+                  disabled={!canEdit || !form.logoUrl || uploadingLogo || saving}
+                >
+                  移除 Logo
+                </button>
+              </div>
+
+              <p className="store-settings-logo-hint">
+                支援 JPG、PNG、WEBP、GIF、SVG，單檔上限 4MB。
+              </p>
             </div>
           </article>
 

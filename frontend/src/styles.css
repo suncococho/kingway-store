@@ -4508,6 +4508,90 @@ button:hover {
   background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(255, 255, 255, 0.98));
 }
 
+.store-settings-logo-card {
+  border: 1px solid #dbe4ef;
+  border-radius: 22px;
+  padding: 18px;
+  background: linear-gradient(180deg, rgba(247, 250, 252, 0.98), rgba(255, 255, 255, 0.98));
+}
+
+.store-settings-logo-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  border-radius: 18px;
+  border: 1px dashed #cbd5e1;
+  background:
+    linear-gradient(135deg, rgba(248, 250, 252, 0.95), rgba(255, 255, 255, 0.98)),
+    repeating-linear-gradient(
+      45deg,
+      rgba(148, 163, 184, 0.08),
+      rgba(148, 163, 184, 0.08) 12px,
+      rgba(255, 255, 255, 0.2) 12px,
+      rgba(255, 255, 255, 0.2) 24px
+    );
+  overflow: hidden;
+}
+
+.store-settings-logo-image {
+  display: block;
+  max-width: min(100%, 280px);
+  max-height: 160px;
+  object-fit: contain;
+}
+
+.store-settings-logo-empty {
+  text-align: center;
+  color: var(--text-muted);
+  max-width: 280px;
+}
+
+.store-settings-logo-empty strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-strong);
+}
+
+.store-settings-logo-empty p {
+  margin: 0;
+}
+
+.store-settings-logo-meta {
+  margin-top: 14px;
+}
+
+.store-settings-logo-meta-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.store-settings-logo-meta-text {
+  margin-top: 6px;
+  color: var(--text-strong);
+}
+
+.store-settings-logo-actions {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.store-settings-logo-actions .secondary-button.disabled {
+  opacity: 0.56;
+  pointer-events: none;
+}
+
+.store-settings-logo-hint {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
 .store-settings-placeholder-card strong {
   display: block;
   margin-bottom: 8px;
@@ -4600,5 +4684,9 @@ button:hover {
 
   .platform-store-settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .store-settings-logo-preview {
+    min-height: 180px;
   }
 }
