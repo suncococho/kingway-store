@@ -1,0 +1,265 @@
+"use strict";
+
+const crypto = require("crypto");
+const { withTransaction } = require("../db");
+const { hashPassword } = require("../utils/passwords");
+const { normalizeSlug } = require("../utils/publicStoreResolver");
+
+const STORE_STATUS = "active";
+const DEFAULT_PLAN = "trial";
+const DEFAULT_OWNER_ROLE = "ADMIN";
+const OWNER_ROLES = new Set(["ADMIN", "MANAGER"]);
+const FEATURE_KEYS = [
+  "pos_enabled",
+  "orders_enabled",
+  "repairs_enabled",
+  "inventory_enabled",
+  "suppliers_enabled",
+  "coupons_enabled",
+  "purchase_confirmations_enabled",
+  "line_enabled",
+  "telegram_enabled",
+  "sales_dashboard_enabled",
+  "staff_management_enabled"
+];
+
+class ProvisioningError extends Error {
+  constructor(status, message, details = null) {
+    super(message);
+    this.name = "ProvisioningError";
+    this.status = status;
+    this.details = details;
+  }
+}
+
+function normalizeCode(value) {
+  const code = String(value || "").trim().toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9_-]{1,78}[A-Z0-9]$/.test(code)) {
+    throw new ProvisioningError(400, "Invalid store code");
+  }
+  return code;
+}
+
+function normalizeName(value) {
+  const name = String(value || "").trim();
+  if (!name) {
+    throw new ProvisioningError(400, "Store name is required");
+  }
+  if (name.length > 150) {
+    throw new ProvisioningError(400, "Store name is too long");
+  }
+  return name;
+}
+
+function deriveSlugFromCode(code) {
+  return normalizeSlug(String(code || "").trim().toLowerCase().replace(/[_\s]+/g, "-"));
+}
+
+function normalizeRequestedSlug(value, code) {
+  const raw = String(value || "").trim();
+  const slug = normalizeSlug(raw || deriveSlugFromCode(code));
+  if (!slug) {
+    throw new ProvisioningError(400, "Invalid store slug");
+  }
+  return slug;
+}
+
+function normalizeUsername(value) {
+  const username = String(value || "").trim();
+  if (!/^[A-Za-z0-9_.-]{3,100}$/.test(username)) {
+    throw new ProvisioningError(400, "Invalid owner username");
+  }
+  return username;
+}
+
+function normalizeOwnerName(value, storeName) {
+  const ownerName = String(value || "").trim() || `${storeName} 店長`;
+  if (ownerName.length > 120) {
+    throw new ProvisioningError(400, "Owner name is too long");
+  }
+  return ownerName;
+}
+
+function normalizeOwnerRole(value) {
+  const role = String(value || DEFAULT_OWNER_ROLE).trim().toUpperCase();
+  if (!OWNER_ROLES.has(role)) {
+    throw new ProvisioningError(400, "Invalid owner role");
+  }
+  return role;
+}
+
+function normalizePlan(value) {
+  const plan = String(value || DEFAULT_PLAN).trim();
+  if (!plan) {
+    throw new ProvisioningError(400, "Invalid plan");
+  }
+  if (plan.length > 80) {
+    throw new ProvisioningError(400, "Plan is too long");
+  }
+  return plan;
+}
+
+function generateTemporaryPassword() {
+  return crypto.randomBytes(12).toString("base64url");
+}
+
+async function storesTableHasSlug(connection) {
+  const [rows] = await connection.query(
+    `
+      SELECT 1
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'stores'
+        AND COLUMN_NAME = 'slug'
+      LIMIT 1
+    `
+  );
+  return Boolean(rows[0]);
+}
+
+async function assertStoreCodeAvailable(connection, code) {
+  const [rows] = await connection.query("SELECT id FROM stores WHERE code = ? LIMIT 1", [code]);
+  if (rows[0]) {
+    throw new ProvisioningError(409, "Store code already exists");
+  }
+}
+
+async function assertStoreSlugAvailable(connection, slug, hasSlugColumn) {
+  if (hasSlugColumn) {
+    const [rows] = await connection.query("SELECT id FROM stores WHERE slug = ? LIMIT 1", [slug]);
+    if (rows[0]) {
+      throw new ProvisioningError(409, "Store slug already exists");
+    }
+    return;
+  }
+
+  const [rows] = await connection.query("SELECT id, code FROM stores");
+  const conflictingStore = rows.find((row) => deriveSlugFromCode(row.code) === slug);
+  if (conflictingStore) {
+    throw new ProvisioningError(409, "Store slug already exists");
+  }
+}
+
+async function assertOwnerUsernameAvailable(connection, username) {
+  const [rows] = await connection.query("SELECT id FROM staff_users WHERE username = ? LIMIT 1", [username]);
+  if (rows[0]) {
+    throw new ProvisioningError(409, "Owner username already exists");
+  }
+}
+
+async function insertStore(connection, payload, hasSlugColumn) {
+  if (hasSlugColumn) {
+    const [result] = await connection.query(
+      `
+        INSERT INTO stores (code, name, slug, status, plan)
+        VALUES (?, ?, ?, ?, ?)
+      `,
+      [payload.code, payload.name, payload.slug, STORE_STATUS, payload.plan]
+    );
+    return result.insertId;
+  }
+
+  const [result] = await connection.query(
+    `
+      INSERT INTO stores (code, name, status, plan)
+      VALUES (?, ?, ?, ?)
+    `,
+    [payload.code, payload.name, STORE_STATUS, payload.plan]
+  );
+  return result.insertId;
+}
+
+async function insertStoreFeatures(connection, storeId) {
+  const columns = FEATURE_KEYS.join(", ");
+  const placeholders = FEATURE_KEYS.map(() => "?").join(", ");
+  const values = FEATURE_KEYS.map(() => 1);
+
+  await connection.query(
+    `
+      INSERT INTO store_features (store_id, ${columns})
+      VALUES (?, ${placeholders})
+    `,
+    [storeId, ...values]
+  );
+}
+
+async function insertOwner(connection, payload) {
+  await connection.query(
+    `
+      INSERT INTO staff_users (username, password_hash, display_name, role, is_active, store_id)
+      VALUES (?, ?, ?, ?, 1, ?)
+    `,
+    [payload.ownerUsername, payload.passwordHash, payload.ownerName, payload.ownerRole, payload.storeId]
+  );
+}
+
+function sanitizeStoreResponse(store) {
+  return {
+    id: Number(store.id),
+    code: String(store.code),
+    name: String(store.name),
+    slug: String(store.slug),
+    status: String(store.status),
+    plan: String(store.plan)
+  };
+}
+
+async function provisionStore(input, actor = null) {
+  const code = normalizeCode(input?.code);
+  const name = normalizeName(input?.name);
+  const slug = normalizeRequestedSlug(input?.slug, code);
+  const ownerUsername = normalizeUsername(input?.ownerUsername);
+  const ownerRole = normalizeOwnerRole(input?.ownerRole);
+  const plan = normalizePlan(input?.plan);
+  const ownerName = normalizeOwnerName(input?.ownerName, name);
+  const providedPassword = typeof input?.ownerPassword === "string" ? input.ownerPassword.trim() : "";
+  const temporaryPassword = providedPassword || generateTemporaryPassword();
+  if (temporaryPassword.length < 8) {
+    throw new ProvisioningError(400, "Owner password must be at least 8 characters");
+  }
+
+  const passwordHash = await hashPassword(temporaryPassword);
+
+  return withTransaction(async (connection) => {
+    const hasSlugColumn = await storesTableHasSlug(connection);
+    await assertStoreCodeAvailable(connection, code);
+    await assertStoreSlugAvailable(connection, slug, hasSlugColumn);
+    await assertOwnerUsernameAvailable(connection, ownerUsername);
+
+    const storeId = await insertStore(connection, { code, name, slug, plan }, hasSlugColumn);
+    await insertStoreFeatures(connection, storeId);
+    await insertOwner(connection, {
+      ownerUsername,
+      passwordHash,
+      ownerName,
+      ownerRole,
+      storeId
+    });
+
+    return {
+      actor: actor ? { id: actor.id, email: actor.email, role: actor.role } : null,
+      store: sanitizeStoreResponse({
+        id: storeId,
+        code,
+        name,
+        slug,
+        status: STORE_STATUS,
+        plan
+      }),
+      owner: {
+        username: ownerUsername,
+        role: ownerRole,
+        displayName: ownerName
+      },
+      temporaryPassword: providedPassword ? null : temporaryPassword,
+      slugPersisted: hasSlugColumn
+    };
+  });
+}
+
+module.exports = {
+  FEATURE_KEYS,
+  ProvisioningError,
+  deriveSlugFromCode,
+  provisionStore
+};

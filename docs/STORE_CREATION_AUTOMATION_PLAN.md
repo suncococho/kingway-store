@@ -5,13 +5,30 @@ Branch: `beta/staging-architecture`
 
 ## Scope
 
-This step is documentation-only.
+Original draft was documentation-only. Phase 1 API provisioning is now implemented.
 
 Goal:
 
 - define how Platform Admin should create a new tenant store without manual SQL/script work
 - keep the current platform/store auth boundary intact
-- avoid changing production config, `.env`, LINE/Telegram logic, or DB data in this step
+- implement the first transactional provisioning API without touching frontend UI
+- avoid changing production config, `.env`, or LINE/Telegram logic in this step
+
+## Phase 1 Implemented
+
+Implemented on `2026-06-03`:
+
+- `POST /api/saas-admin/stores` is now available for `PLATFORM_OWNER` and `PLATFORM_ADMIN` tokens
+- the API creates `stores`, `store_features`, and owner `staff_users` inside one transaction
+- duplicate `code`, effective `slug`, and owner `username` are rejected before insert
+- if `ownerPassword` is omitted, the API generates a temporary password and returns it once in the response
+- if provisioning fails, all inserts are rolled back
+
+Current schema note:
+
+- staging `stores` still does not have a physical `slug` column
+- therefore Phase 1 validates and returns `slug`, and defends uniqueness against the current effective slug derived from `code`
+- when `stores.slug` is added later, the same service already supports persisting it directly
 
 ## 1. Current `stores` Creation Structure
 

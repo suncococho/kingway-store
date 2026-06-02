@@ -1,6 +1,12 @@
 const express = require("express");
 const { pool } = require("../db");
 const { authenticatePlatformAdmin, requirePlatformRole } = require("../middleware/platformAuth");
+const {
+  FEATURE_KEYS,
+  ProvisioningError,
+  deriveSlugFromCode,
+  provisionStore
+} = require("../services/storeProvisioningService");
 
 const router = express.Router();
 
@@ -36,8 +42,6 @@ const FEATURE_CONFIG = [
   { key: "staff_management_enabled", label: "員工管理", description: "出勤、KPI、薪資與營運檢查事項。" }
 ];
 
-const FEATURE_KEYS = FEATURE_CONFIG.map((feature) => feature.key);
-
 function rowToFeatures(row) {
   return FEATURE_CONFIG.map((feature) => ({
     ...feature,
@@ -48,7 +52,7 @@ function rowToFeatures(row) {
 async function getStore(storeId) {
   const [rows] = await pool.query(
     `
-      SELECT id, code, status, plan
+      SELECT id, code, name, status, plan
       FROM stores
       WHERE id = ?
       LIMIT 1
@@ -62,7 +66,8 @@ async function getStore(storeId) {
   return {
     id: n(store.id),
     code: t(store.code, "UNKNOWN"),
-    name: t(store.code, "UNKNOWN"),
+    name: t(store.name, t(store.code, "UNKNOWN")),
+    slug: deriveSlugFromCode(store.code),
     status: t(store.status, "unknown"),
     plan: t(store.plan, "unknown")
   };
@@ -107,6 +112,30 @@ function buildStoreFeatureResponse(store, featureRow) {
 
 router.use(authenticatePlatformAdmin);
 router.use(requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN", "SUPPORT"]));
+
+router.post("/stores", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
+  try {
+    const result = await provisionStore(req.body, req.platformAdmin);
+    return res.status(201).json({
+      ok: true,
+      store: result.store,
+      owner: {
+        username: result.owner.username
+      },
+      temporaryPassword: result.temporaryPassword
+    });
+  } catch (error) {
+    if (error instanceof ProvisioningError) {
+      return res.status(error.status).json({
+        message: error.message,
+        details: error.details || undefined
+      });
+    }
+
+    console.error("[saasAdmin/stores:create] failed", error);
+    return next(error);
+  }
+});
 
 router.get("/stores/:id/features", async (req, res, next) => {
   try {
@@ -172,6 +201,7 @@ router.get("/stores", async (req, res, next) => {
       SELECT
         CAST(s.id AS UNSIGNED) AS id,
         s.code,
+        s.name,
         s.status,
         s.plan,
         CAST((SELECT COUNT(*) FROM products p WHERE p.store_id = s.id) AS UNSIGNED) AS productCount,
@@ -185,7 +215,8 @@ router.get("/stores", async (req, res, next) => {
     const stores = rows.map((row) => ({
       id: n(row.id),
       code: t(row.code, "UNKNOWN"),
-      name: t(row.code, "UNKNOWN"),
+      name: t(row.name, t(row.code, "UNKNOWN")),
+      slug: deriveSlugFromCode(row.code),
       status: t(row.status, "unknown"),
       plan: t(row.plan, "unknown"),
       productCount: n(row.productCount),
