@@ -251,41 +251,26 @@ Fix completed 2026-06-02:
 - corrected public token submit `pdf_path` parameter count after adding the `store_id` predicate
 - manual submit `pdf_path` update now intentionally includes both `id` and `store_id` parameters
 
-### Medium: Handover Auto Purchase Request Helper Lacks Store Scope
+### High: Handover Auto Purchase Request Helper And Permanent Delete Cleanup Are Tenant-Scoped
 
 File: `backend/src/routes/orders.js`
 
-`createKingwayAutoPurchaseOrderOnHandover(orderId, staffId)`:
+`createKingwayAutoPurchaseOrderOnHandover(orderId, storeId, staffId)` now:
 
-- checks existing supplier requests without `store_id`
-- reads order items without `store_id`
-- inserts supplier request data without tenant context
+- verifies the parent order by `id` and `store_id` before any supplier write
+- checks existing supplier requests within the same store
+- reads order items within the same store
+- inserts supplier request data with `store_id`
 
-Risk:
+Permanent delete now:
 
-- supplier workflow data can be created without tenant ownership
-- duplicate detection is global by order marker
-
-Recommended fix:
-
-- pass `storeId` into the helper
-- filter order item reads by `store_id`
-- insert `store_id` into supplier request tables if schema supports it
-
-### Medium: Permanent Delete Dependent Cleanup Is Only Parent-Scoped
-
-File: `backend/src/routes/orders.js`
-
-Permanent delete first verifies the parent order by `id` and `store_id`, then deletes dependent rows by `order_id` only.
+- checks the parent deleted order by `id` and `store_id` before cleanup
+- deletes or clears child rows with matching `store_id` on `order_items`, `purchase_confirmations`, `coupons`, and `repair_orders`; `purchase_confirmation_tokens` stays gated by the verified parent order row because that table has no `store_id` column
+- returns 404 when a cross-tenant `order_id` does not belong to the current `req.storeId`
 
 Risk:
 
-- low if order ids are globally unique and referential integrity is clean
-- not ideal for defense-in-depth
-
-Recommended fix:
-
-- add `store_id` conditions to dependent deletes/updates where the child table has `store_id`
+- reduced to defense-in-depth only
 
 ### Medium: LINE Workflow Order Helpers And Staff Postbacks Are Global
 
@@ -354,7 +339,7 @@ Recommended fix:
 2. Fix `purchaseConfirmations.js` manual matching, LINE latest-order matching, and placeholder bugs.
 3. Fix `lineWorkflowService.js` purchase confirmation creation and order-related postbacks with store context.
 4. Scope `app.js` customer status order read/update endpoints or move them behind store middleware.
-5. Add defense-in-depth `store_id` predicates to permanent delete child cleanup, POS coupon update, and handover auto supplier helper.
+5. Completed in `backend/src/routes/orders.js`: permanent delete child cleanup and handover auto supplier helper now enforce `store_id` checks; POS coupon update remains for a separate pass.
 6. Add store 2 test data and API regression checks for direct id/order number access, purchase confirmation matching, LINE purchase confirmation, POS creation, and customer status updates.
 
 ## Files Likely Needing Code Changes

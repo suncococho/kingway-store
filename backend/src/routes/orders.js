@@ -429,11 +429,11 @@ router.delete("/:id/permanent", requireOrderManagementFeature, async (req, res, 
         throw createError("找不到已刪除訂單", 404);
       }
 
-      await connection.query("DELETE FROM order_items WHERE order_id = ?", [req.params.id]);
+      await connection.query("DELETE FROM order_items WHERE order_id = ? AND store_id = ?", [req.params.id, storeId]);
       await connection.query("DELETE FROM purchase_confirmation_tokens WHERE order_id = ?", [req.params.id]);
-      await connection.query("DELETE FROM purchase_confirmations WHERE order_id = ?", [req.params.id]);
-      await connection.query("UPDATE coupons SET order_id = NULL WHERE order_id = ?", [req.params.id]);
-      await connection.query("UPDATE repair_orders SET order_id = NULL WHERE order_id = ?", [req.params.id]);
+      await connection.query("DELETE FROM purchase_confirmations WHERE order_id = ? AND store_id = ?", [req.params.id, storeId]);
+      await connection.query("UPDATE coupons SET order_id = NULL WHERE order_id = ? AND store_id = ?", [req.params.id, storeId]);
+      await connection.query("UPDATE repair_orders SET order_id = NULL WHERE order_id = ? AND store_id = ?", [req.params.id, storeId]);
       await connection.query("DELETE FROM orders WHERE id = ? AND store_id = ?", [req.params.id, storeId]);
     });
 
@@ -1385,17 +1385,33 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
 });
 
 
-async function createKingwayAutoPurchaseOrderOnHandover(orderId, staffId = 1) {
+async function createKingwayAutoPurchaseOrderOnHandover(orderId, storeId, staffId = 1) {
+  const [orderRows] = await pool.query(
+    `
+      SELECT id
+      FROM orders
+      WHERE id = ?
+        AND store_id = ?
+      LIMIT 1
+    `,
+    [orderId, storeId]
+  );
+
+  if (!orderRows[0]) {
+    return null;
+  }
+
   const [[existing]] = await pool.query(
     `
       SELECT id
       FROM supplier_requests
-      WHERE request_type = 'PURCHASE_ORDER'
+      WHERE store_id = ?
+        AND request_type = 'PURCHASE_ORDER'
         AND supplier_name = 'KINGWAY'
         AND note LIKE ?
       LIMIT 1
     `,
-    [`%AUTO_FROM_HANDOVER_ORDER:${orderId}%`]
+    [storeId, `%AUTO_FROM_HANDOVER_ORDER:${orderId}%`]
   );
 
   if (existing) return null;
@@ -1409,9 +1425,10 @@ async function createKingwayAutoPurchaseOrderOnHandover(orderId, staffId = 1) {
         sku_snapshot AS sku
       FROM order_items
       WHERE order_id = ?
+        AND store_id = ?
         AND quantity > 0
     `,
-    [orderId]
+    [orderId, storeId]
   );
 
   if (!items.length) return null;
@@ -1419,11 +1436,11 @@ async function createKingwayAutoPurchaseOrderOnHandover(orderId, staffId = 1) {
   const [requestResult] = await pool.query(
     `
       INSERT INTO supplier_requests
-        (request_type, status, supplier_name, note, requested_by_staff_id)
+        (store_id, request_type, status, supplier_name, note, requested_by_staff_id)
       VALUES
-        ('PURCHASE_ORDER', 'PENDING_SUPPLIER', 'KINGWAY', ?, ?)
+        (?, 'PURCHASE_ORDER', 'PENDING_SUPPLIER', 'KINGWAY', ?, ?)
     `,
-    [`AUTO_FROM_HANDOVER_ORDER:${orderId}｜交車確認自動發注`, staffId || 1]
+    [storeId, `AUTO_FROM_HANDOVER_ORDER:${orderId}｜交車確認自動發注`, staffId || 1]
   );
 
   const requestId = requestResult.insertId;
@@ -1452,7 +1469,20 @@ async function createKingwayAutoPurchaseOrderOnHandover(orderId, staffId = 1) {
 router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), requireOrderManagementFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
-    // ORDERS_HANDOVER_STORE_SCOPE_V1
+    const [orderRows] = await pool.query(
+      `
+        SELECT id
+        FROM orders
+        WHERE id = ?
+          AND store_id = ?
+        LIMIT 1
+      `,
+      [req.params.id, storeId]
+    );
+
+    if (!orderRows[0]) {
+      return res.status(404).json({ message: "找不到訂單" });
+    }
 
     await pool.query(
       `
@@ -1503,7 +1533,7 @@ router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), requireOrd
 
     let autoPoId = null;
     try {
-      autoPoId = await createKingwayAutoPurchaseOrderOnHandover(req.params.id, req.user?.id || 1);
+      autoPoId = await createKingwayAutoPurchaseOrderOnHandover(req.params.id, storeId, req.user?.id || 1);
     } catch (autoPoError) {
       console.error("[auto-kingway-po handover failed]", autoPoError.message);
     }
