@@ -1521,6 +1521,7 @@ router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), requireOrd
 // Order invoice print data
 router.get("/:id/invoice", requireOrderManagementFeature, async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const orderKey = String(req.params.id || "").trim();
     const decodedOrderKey = decodeURIComponent(orderKey);
     const orderId = Number(decodedOrderKey);
@@ -1530,7 +1531,8 @@ router.get("/:id/invoice", requireOrderManagementFeature, async (req, res, next)
       orderKey,
       isNumericId,
       userId: req.user?.id,
-      username: req.user?.username
+      username: req.user?.username,
+      storeId
     });
 
     if (!orderKey) {
@@ -1545,14 +1547,17 @@ router.get("/:id/invoice", requireOrderManagementFeature, async (req, res, next)
           COALESCE(c.phone, o.customer_phone) AS resolved_customer_phone
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
-        WHERE ${isNumericId ? "o.id = ? OR o.order_no = ?" : "o.order_no = ?"}
+          AND c.store_id = o.store_id
+        WHERE ${isNumericId ? "(o.id = ? OR o.order_no = ?)" : "o.order_no = ?"}
+          AND o.store_id = ?
         LIMIT 1
       `,
-      isNumericId ? [orderId, decodedOrderKey] : [decodedOrderKey]
+      isNumericId ? [orderId, decodedOrderKey, storeId] : [decodedOrderKey, storeId]
     );
 
     console.log("[orders:invoice] orderRows", {
       orderKey,
+      storeId,
       count: orderRows.length,
       foundId: orderRows[0]?.id,
       foundOrderNo: orderRows[0]?.order_no
@@ -1603,13 +1608,15 @@ router.get("/:id/invoice", requireOrderManagementFeature, async (req, res, next)
           ${totalExpr} AS subtotal
         FROM order_items oi
         WHERE oi.order_id = ?
+          AND oi.store_id = ?
         ORDER BY oi.id
       `,
-      [order.id]
+      [order.id, storeId]
     );
 
     console.log("[orders:invoice] itemRows", {
       orderId: order.id,
+      storeId,
       count: itemRows.length
     });
 

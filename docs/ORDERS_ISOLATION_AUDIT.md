@@ -115,23 +115,24 @@ Authenticated `backend/src/routes/purchaseConfirmations.js` staff routes:
 
 ## Findings
 
-### High: Invoice Route Can Read Cross-Tenant Orders
+### High: Invoice Route Can Read Cross-Tenant Orders - Fixed 2026-06-02
 
 File: `backend/src/routes/orders.js`
 
-`GET /api/orders/:id/invoice` does not filter by `req.storeId`.
+`GET /api/orders/:id/invoice` previously did not filter by `req.storeId`.
 
 Risk:
 
 - authenticated staff from one tenant can request another tenant's order invoice by numeric id or `order_no`
-- item loading also uses only `order_id`, without `store_id`
-- this is the clearest direct order-number/id isolation gap
+- item loading also used only `order_id`, without `store_id`
+- this was the clearest direct order-number/id isolation gap
 
-Recommended fix:
+Fix completed:
 
-- add `o.store_id = ?` to invoice order lookup
-- add `oi.store_id = ?` to invoice item lookup
-- join customer with matching `store_id` where possible
+- added `o.store_id = ?` to invoice order lookup using the authenticated staff `req.storeId`
+- added `oi.store_id = ?` to invoice item lookup
+- joined customer with matching `store_id`
+- platform-admin invoice access was not added in this change; TODO: design a separate platform-admin invoice endpoint with explicit audit logging if needed
 
 ### High: Purchase Confirmation Manual Matching Is Global
 
