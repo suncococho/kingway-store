@@ -10,6 +10,7 @@ const config = require("../config");
 const { mapRepairStatusLabel, mapOrderStatusLabel, mapCategoryLabel } = require("../utils/displayLabels");
 const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
 const { applyRepairReservationDecision, isLineCustomerType, normalizeCustomerType } = require("../services/repairReservationService");
+const { notifyRepairReservationCreated } = require("../services/staffLineNotify");
 const {
   applyRepairEstimateCustomerResponse,
   createButtonMessage,
@@ -601,6 +602,26 @@ router.post("/",  async (req, res, next) => {
       console.error(
         `[LINE][repair_reservation] no target groups resolved for repair #${result.insertId} (requested: repair,admin)`
       );
+    }
+
+    try {
+      await notifyRepairReservationCreated({
+        repairId: result.insertId,
+        customerName: customer.name || `#${customerId}`,
+        customerPhone: customer.phone || null,
+        reservationDate,
+        reservationTime,
+        bikeModel,
+        issueDescription,
+        storeId,
+        sourceLabel: fromLine ? "LINE 維修預約" : "後台維修預約",
+        adminUrl: `${config.frontendBaseUrl}/repairs/${result.insertId}`
+      });
+    } catch (staffLineError) {
+      console.warn("[staff-line] repair reservation notification failed after creation", {
+        repairId: result.insertId,
+        message: staffLineError.message
+      });
     }
 
     return res.status(201).json({
