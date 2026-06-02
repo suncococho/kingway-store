@@ -434,6 +434,15 @@ Implemented on 2026-06-03 for Store Admin Phase 1:
 - load/save store profile settings
 - show success/error state
 
+Implemented on 2026-06-03 for Store Admin UI Phase 2:
+
+- added `/settings/store` Store Admin page
+- load current store profile via `GET /api/store/settings`
+- save current store profile via `PATCH /api/store/settings`
+- show loading, success, and error states
+- keep logo upload and LINE settings as `Coming Soon` placeholders
+- keep non-admin users read-only with disabled save actions
+
 ### Phase 3 logo upload
 
 - add `POST /api/store/settings/logo`

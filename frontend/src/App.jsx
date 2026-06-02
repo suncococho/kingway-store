@@ -27,6 +27,7 @@ import KPIPage from "./pages/KPIPage";
 import PayrollPage from "./pages/PayrollPage";
 import MorePage from "./pages/MorePage";
 import SettingsPage from "./pages/SettingsPage";
+import StoreSettingsPage from "./pages/StoreSettingsPage";
 import PurchaseConfirmPublicPage from "./pages/PurchaseConfirmPublicPage";
 import SurveyPublicPage from "./pages/SurveyPublicPage";
 import LineEntryPage from "./pages/LineEntryPage";
@@ -93,6 +94,7 @@ function App() {
         <Route path="/attendance" element={<Navigate to="/staff-attendance" replace />} />
         <Route path="/kpi" element={<KPIPage />} />
         <Route path="/payroll" element={<PayrollPage />} />
+        <Route path="/settings/store" element={<StoreSettingsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/more" element={<MorePage />} />
         <Route path="/trash" element={<TrashPage />} />
