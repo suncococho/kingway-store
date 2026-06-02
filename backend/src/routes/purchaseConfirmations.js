@@ -10,7 +10,10 @@ const {
   SOURCE,
   createPublicStoreContextMiddleware
 } = require("../utils/publicStoreResolver");
-const { writePurchaseConfirmationPdf } = require("../services/pdfService");
+const {
+  PURCHASE_CONFIRMATION_PDF_PUBLIC_PREFIX,
+  writePurchaseConfirmationPdf
+} = require("../services/pdfService");
 const config = require("../config");
 const purchaseConfirmationContent = require("../content/purchaseConfirmationContent.json");
 const { sendLineMessage } = require("../utils/line");
@@ -35,21 +38,167 @@ const resolvePublicStoreContext = createPublicStoreContextMiddleware({
   legacyFallbackAllowUnverifiedStore: true
 });
 const storageRoot = path.join(__dirname, "..", "..", "storage");
+const PURCHASE_CONFIRMATION_DOWNLOAD_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7;
+
+function createPurchaseConfirmationPdfAccessToken({ confirmationId, storeId, scope = "staff_download" }) {
+  const normalizedConfirmationId = Number(confirmationId);
+  const normalizedStoreId = Number(storeId);
+  if (!Number.isSafeInteger(normalizedConfirmationId) || normalizedConfirmationId <= 0) {
+    throw new Error("Invalid purchase confirmation id for PDF download token");
+  }
+  if (!Number.isSafeInteger(normalizedStoreId) || normalizedStoreId <= 0) {
+    throw new Error("Invalid store id for PDF download token");
+  }
+
+  return jwt.sign(
+    {
+      type: "purchase_confirmation_pdf_download",
+      confirmationId: normalizedConfirmationId,
+      storeId: normalizedStoreId,
+      scope
+    },
+    config.jwtSecret,
+    { expiresIn: PURCHASE_CONFIRMATION_DOWNLOAD_TOKEN_TTL_SECONDS }
+  );
+}
+
+function verifyPurchaseConfirmationPdfAccessToken(token, options = {}) {
+  try {
+    const decoded = jwt.verify(token, config.jwtSecret);
+    const confirmationId = Number(decoded?.confirmationId);
+    const storeId = Number(decoded?.storeId);
+    const scope = String(decoded?.scope || "").trim();
+    const allowedScopes = Array.isArray(options.allowedScopes) && options.allowedScopes.length
+      ? options.allowedScopes.map((value) => String(value || "").trim())
+      : null;
+
+    if (decoded?.type !== "purchase_confirmation_pdf_download") {
+      return null;
+    }
+    if (!Number.isSafeInteger(confirmationId) || confirmationId <= 0) {
+      return null;
+    }
+    if (!Number.isSafeInteger(storeId) || storeId <= 0) {
+      return null;
+    }
+    if (!scope) {
+      return null;
+    }
+    if (allowedScopes && !allowedScopes.includes(scope)) {
+      return null;
+    }
+    if (options.expectedConfirmationId && confirmationId !== Number(options.expectedConfirmationId)) {
+      return null;
+    }
+    if (options.expectedStoreId && storeId !== Number(options.expectedStoreId)) {
+      return null;
+    }
+
+    return { confirmationId, storeId, scope };
+  } catch (error) {
+    return null;
+  }
+}
 
 function buildPurchaseConfirmationPdfUrl(token) {
   return `${config.frontendBaseUrl}/api/purchase-confirmations/public/${token}/pdf`;
 }
 
-function buildManualPurchaseConfirmationPdfUrl(id) {
-  return `${config.frontendBaseUrl}/api/purchase-confirmations/manual/${id}/pdf`;
+function buildStaffPurchaseConfirmationPdfUrl(confirmationId, storeId) {
+  const accessToken = createPurchaseConfirmationPdfAccessToken({
+    confirmationId,
+    storeId,
+    scope: "staff_download"
+  });
+  return `${config.frontendBaseUrl}/api/purchase-confirmations/download/${encodeURIComponent(accessToken)}`;
+}
+
+function buildManualPurchaseConfirmationPdfUrl(id, storeId) {
+  const accessToken = createPurchaseConfirmationPdfAccessToken({
+    confirmationId: id,
+    storeId,
+    scope: "manual_download"
+  });
+  return `${config.frontendBaseUrl}/api/purchase-confirmations/manual/${id}/pdf?access=${encodeURIComponent(accessToken)}`;
 }
 
 function resolvePublicStoragePath(publicPath) {
-  if (!publicPath || !publicPath.startsWith("/files/")) {
+  if (!publicPath || !publicPath.startsWith(PURCHASE_CONFIRMATION_PDF_PUBLIC_PREFIX)) {
     return null;
   }
 
   return path.join(storageRoot, publicPath.replace(/^\/files\//, ""));
+}
+
+async function fetchPurchaseConfirmationPdfRecordById(confirmationId, storeId = null, options = {}) {
+  const normalizedConfirmationId = Number(confirmationId);
+  if (!Number.isSafeInteger(normalizedConfirmationId) || normalizedConfirmationId <= 0) {
+    return null;
+  }
+
+  const params = [normalizedConfirmationId];
+  const whereClauses = ["pc.id = ?"];
+  if (options.manualOnly) {
+    whereClauses.push("pc.token IS NULL");
+  }
+  if (storeId !== null && storeId !== undefined) {
+    params.push(Number(storeId));
+    whereClauses.push("pc.store_id = ?");
+  }
+
+  const [rows] = await pool.query(
+    `
+      SELECT
+        pc.id,
+        pc.token,
+        pc.status,
+        pc.store_id AS storeId,
+        pc.order_id AS orderId,
+        pc.pdf_path AS pdfPath,
+        o.order_no AS orderNo
+      FROM purchase_confirmations pc
+      LEFT JOIN orders o ON o.id = pc.order_id AND o.store_id = pc.store_id
+      WHERE ${whereClauses.join(" AND ")}
+      LIMIT 1
+    `,
+    params
+  );
+
+  return rows[0] || null;
+}
+
+async function fetchPurchaseConfirmationPdfRecordByToken(token, storeId) {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        pc.id,
+        pc.token,
+        pc.status,
+        pc.store_id AS storeId,
+        pc.order_id AS orderId,
+        pc.pdf_path AS pdfPath,
+        o.order_no AS orderNo
+      FROM purchase_confirmations pc
+      INNER JOIN orders o ON o.id = pc.order_id AND o.store_id = pc.store_id
+      WHERE pc.token = ?
+        AND pc.store_id = ?
+      LIMIT 1
+    `,
+    [token, storeId]
+  );
+
+  return rows[0] || null;
+}
+
+function sendPurchaseConfirmationPdfFile(res, confirmation, fileName) {
+  const absolutePath = resolvePublicStoragePath(confirmation?.pdfPath);
+  if (!confirmation || confirmation.status !== "COMPLETED" || !absolutePath || !fs.existsSync(absolutePath)) {
+    throw createError("找不到 PDF", 404);
+  }
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+  return res.sendFile(absolutePath);
 }
 
 function parseJsonArray(value) {
@@ -341,68 +490,70 @@ router.get("/public/:token", async (req, res, next) => {
 
 router.get("/public/:token/pdf", async (req, res, next) => {
   try {
-    const [rows] = await pool.query(
-      `
-        SELECT
-          pc.id,
-          pc.pdf_path AS pdfPath,
-          pc.status,
-          o.order_no AS orderNo
-        FROM purchase_confirmations pc
-        INNER JOIN orders o ON o.id = pc.order_id
-        WHERE pc.token = ?
-        LIMIT 1
-      `,
-      [req.params.token]
-    );
-
-    const confirmation = rows[0];
-    if (!confirmation || confirmation.status !== "COMPLETED" || !confirmation.pdfPath) {
+    const tokenRow = await fetchPurchaseConfirmationToken(req.params.token);
+    if (!tokenRow) {
       throw createError("找不到 PDF", 404);
     }
 
-    const absolutePath = resolvePublicStoragePath(confirmation.pdfPath);
-    if (!absolutePath || !fs.existsSync(absolutePath)) {
-      throw createError("PDF 檔案不存在", 404);
-    }
-
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename="purchase-confirmation-${confirmation.orderNo || confirmation.id}.pdf"`
+    const confirmation = await fetchPurchaseConfirmationPdfRecordByToken(req.params.token, tokenRow.storeId);
+    return sendPurchaseConfirmationPdfFile(
+      res,
+      confirmation,
+      `purchase-confirmation-${confirmation?.orderNo || confirmation?.id || "document"}.pdf`
     );
-    return res.sendFile(absolutePath);
   } catch (error) {
     return next(error);
   }
 });
 
-router.get("/manual/:id/pdf", async (req, res, next) => {
+router.get("/manual/:id/pdf", optionalStaffStoreContext, async (req, res, next) => {
   try {
-    const [rows] = await pool.query(
-      `
-        SELECT id, pdf_path AS pdfPath, status
-        FROM purchase_confirmations
-        WHERE id = ?
-          AND token IS NULL
-        LIMIT 1
-      `,
-      [req.params.id]
+    const confirmationId = Number(req.params.id);
+    const accessToken = String(req.query.access || "").trim();
+    const verifiedAccess = accessToken
+      ? verifyPurchaseConfirmationPdfAccessToken(accessToken, {
+          expectedConfirmationId: confirmationId,
+          allowedScopes: ["manual_download", "staff_download"]
+        })
+      : null;
+    const staffStoreId = Number(req.storeId || 0) || null;
+
+    if (!verifiedAccess && !staffStoreId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const scopedStoreId = verifiedAccess?.storeId || staffStoreId;
+    const confirmation = await fetchPurchaseConfirmationPdfRecordById(confirmationId, scopedStoreId, {
+      manualOnly: true
+    });
+    return sendPurchaseConfirmationPdfFile(
+      res,
+      confirmation,
+      `purchase-confirmation-manual-${confirmation?.id || confirmationId}.pdf`
     );
+  } catch (error) {
+    return next(error);
+  }
+});
 
-    const confirmation = rows[0];
-    if (!confirmation || confirmation.status !== "COMPLETED" || !confirmation.pdfPath) {
-      throw createError("找不到 PDF", 404);
+router.get("/download/:accessToken", async (req, res, next) => {
+  try {
+    const verifiedAccess = verifyPurchaseConfirmationPdfAccessToken(req.params.accessToken, {
+      allowedScopes: ["staff_download", "manual_download"]
+    });
+    if (!verifiedAccess) {
+      return res.status(401).json({ message: "Unauthorized" });
     }
 
-    const absolutePath = resolvePublicStoragePath(confirmation.pdfPath);
-    if (!absolutePath || !fs.existsSync(absolutePath)) {
-      throw createError("PDF 檔案不存在", 404);
-    }
-
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="purchase-confirmation-manual-${confirmation.id}.pdf"`);
-    return res.sendFile(absolutePath);
+    const confirmation = await fetchPurchaseConfirmationPdfRecordById(
+      verifiedAccess.confirmationId,
+      verifiedAccess.storeId
+    );
+    return sendPurchaseConfirmationPdfFile(
+      res,
+      confirmation,
+      `purchase-confirmation-${confirmation?.orderNo || confirmation?.id || verifiedAccess.confirmationId}.pdf`
+    );
   } catch (error) {
     return next(error);
   }
@@ -634,6 +785,7 @@ router.post("/public/:token", async (req, res, next) => {
     return res.status(201).json({
       id: confirmation.id,
       pdfPath: pdf.publicPath,
+      pdfUrl: buildPurchaseConfirmationPdfUrl(req.params.token),
       htmlSnapshot: confirmation.htmlSnapshot,
       message: "購買確認書已送出"
     });
@@ -885,7 +1037,7 @@ router.post("/manual", optionalStaffStoreContext, resolvePublicStoreContext, asy
       orderId: matchedOrder?.orderId || null,
       customerId: matchedCustomer?.id || null,
       pdfPath: pdf.publicPath,
-      pdfUrl: buildManualPurchaseConfirmationPdfUrl(insertResult.insertId),
+      pdfUrl: buildManualPurchaseConfirmationPdfUrl(insertResult.insertId, storeId),
       htmlSnapshot: snapshot,
       message: "購買確認書已送出"
     });
@@ -910,6 +1062,7 @@ router.get("/", async (req, res, next) => {
           pc.id,
           pc.token,
           pc.status,
+          pc.store_id AS storeId,
           pc.order_id AS orderId,
           pc.customer_id AS customerId,
           pc.buyer_name AS buyerName,
@@ -942,7 +1095,7 @@ router.get("/", async (req, res, next) => {
         ...row,
         deliveryChecks: parseJsonArray(row.deliveryChecksJson),
         staffExplanations: parseJsonArray(row.staffExplanationsJson),
-        pdfUrl: row.pdfPath ? (row.token ? buildPurchaseConfirmationPdfUrl(row.token) : buildManualPurchaseConfirmationPdfUrl(row.id)) : null
+        pdfUrl: row.pdfPath ? (row.token ? buildPurchaseConfirmationPdfUrl(row.token) : buildStaffPurchaseConfirmationPdfUrl(row.id, row.storeId)) : null
       }))
     );
   } catch (error) {
@@ -1071,6 +1224,20 @@ router.post("/generate-link", async (req, res, next) => {
         matchedProductCategories: order.matchedProductCategories ? order.matchedProductCategories.split(",") : []
       }
     });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/:id/pdf", async (req, res, next) => {
+  try {
+    const confirmationId = Number(req.params.id);
+    const confirmation = await fetchPurchaseConfirmationPdfRecordById(confirmationId, req.storeId);
+    return sendPurchaseConfirmationPdfFile(
+      res,
+      confirmation,
+      `purchase-confirmation-${confirmation?.orderNo || confirmation?.id || confirmationId}.pdf`
+    );
   } catch (error) {
     return next(error);
   }

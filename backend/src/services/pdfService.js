@@ -4,7 +4,19 @@ const PDFDocument = require("pdfkit");
 const purchaseConfirmationContent = require("../content/purchaseConfirmationContent.json");
 
 const storageDir = path.join(__dirname, "..", "..", "storage", "pdfs");
+const PURCHASE_CONFIRMATION_PDF_PUBLIC_PREFIX = "/files/pdfs/";
 const fontPath = path.join(__dirname, "..", "..", "assets", "fonts", "NotoSansCJKtc-Regular.ttf");
+
+function buildPurchaseConfirmationPdfFileName(confirmationId) {
+  return `purchase-confirmation-${confirmationId}.pdf`;
+}
+
+function buildPurchaseConfirmationPdfPublicPath(fileNameOrConfirmationId) {
+  const fileName = String(fileNameOrConfirmationId || "").includes(".pdf")
+    ? String(fileNameOrConfirmationId)
+    : buildPurchaseConfirmationPdfFileName(fileNameOrConfirmationId);
+  return `${PURCHASE_CONFIRMATION_PDF_PUBLIC_PREFIX}${fileName}`;
+}
 
 function ensureFontExists() {
   if (!fs.existsSync(fontPath)) {
@@ -137,7 +149,7 @@ async function writePurchaseConfirmationPdf({
 }) {
   ensureFontExists();
   fs.mkdirSync(storageDir, { recursive: true });
-  const fileName = `purchase-confirmation-${confirmationId}.pdf`;
+  const fileName = buildPurchaseConfirmationPdfFileName(confirmationId);
   const absolutePath = path.join(storageDir, fileName);
 
   await new Promise((resolve, reject) => {
@@ -165,10 +177,13 @@ async function writePurchaseConfirmationPdf({
 
   return {
     absolutePath,
-    publicPath: `/files/pdfs/${fileName}`
+    publicPath: buildPurchaseConfirmationPdfPublicPath(fileName)
   };
 }
 
 module.exports = {
+  PURCHASE_CONFIRMATION_PDF_PUBLIC_PREFIX,
+  buildPurchaseConfirmationPdfFileName,
+  buildPurchaseConfirmationPdfPublicPath,
   writePurchaseConfirmationPdf
 };

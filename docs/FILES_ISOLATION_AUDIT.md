@@ -264,53 +264,69 @@ Conclusion:
 
 ## Findings
 
-### HIGH: Global `/files/*` static mount bypasses all tenant checks
+### HIGH: Global `/files/*` static mount bypasses all tenant checks - Partially fixed 2026-06-03
 
 Files:
 
 - `backend/src/app.js:422`
+- `backend/src/routes/purchaseConfirmations.js`
 
-Risk:
+Previous state:
 
-- any file under runtime `storage/` becomes directly retrievable by path
-- static serving ignores tenant, auth, token, and row ownership
-- future file features inherit this exposure by default
+- any file under runtime `storage/` was directly retrievable by path.
+- static serving ignored tenant, auth, token, and row ownership.
 
-Example URLs:
+Fix completed in this step:
 
-- `/files/pdfs/purchase-confirmation-28.pdf`
-- `/files/products/1717370000000-abcd1234-bike.jpg`
+- direct public access to `/files/pdfs/*` is now blocked before the generic `/files/*` static mount.
+- purchase confirmation PDFs now require gated routes instead of direct static access.
 
-### HIGH: Purchase confirmation PDFs are stored under predictable public paths
+Residual risk:
 
-Files:
+- `/files/products/*` and other future static file categories are still public if their path is known.
+- the global `/files/*` mount still remains a tenant-isolation risk outside purchase confirmation PDFs.
 
-- `backend/src/services/pdfService.js:139-168`
-
-Risk:
-
-- generated file name is deterministic: `purchase-confirmation-${confirmationId}.pdf`
-- `confirmationId` is a numeric DB id
-- direct static path can bypass public token controls and store checks
-
-Example URL:
-
-- `/files/pdfs/purchase-confirmation-123.pdf`
-
-### HIGH: Manual purchase confirmation PDF route is public and id-based
+### HIGH: Purchase confirmation PDFs are stored under predictable public paths - Fixed 2026-06-03
 
 Files:
 
-- `backend/src/routes/purchaseConfirmations.js:380-405`
+- `backend/src/services/pdfService.js`
+- `backend/src/app.js`
+- `backend/src/routes/purchaseConfirmations.js`
 
-Risk:
+Previous state:
 
-- numeric id enumeration can expose another tenant's manual confirmation PDF
-- route has no authentication, no store scope, and no signed token
+- generated file name was deterministic: `purchase-confirmation-${confirmationId}.pdf`.
+- direct `/files/pdfs/...` access could bypass public token controls and store checks.
 
-Example URL:
+Fix completed:
 
-- `/api/purchase-confirmations/manual/77/pdf`
+- existing PDF files remain on disk, but `/files/pdfs/*` direct public access is blocked.
+- public customer download continues through `GET /api/purchase-confirmations/public/:token/pdf`.
+- staff-facing download can now use gated purchase-confirmation download URLs instead of static file paths.
+
+Residual note:
+
+- deterministic file naming still exists on disk, so the route gate must remain in front of storage access.
+
+### HIGH: Manual purchase confirmation PDF route is public and id-based - Fixed 2026-06-03
+
+Files:
+
+- `backend/src/routes/purchaseConfirmations.js`
+
+Previous state:
+
+- numeric id enumeration could expose another tenant's manual confirmation PDF.
+- the route had no authentication, no store scope, and no signed token.
+
+Fix completed:
+
+- `GET /api/purchase-confirmations/manual/:id/pdf` now requires either:
+  - an authenticated staff store context, or
+  - a signed download token bound to the confirmation id and store id.
+- staff direct download route now also exists with store-scoped confirmation lookup.
+- another tenant's numeric id now resolves to `401` or `404` instead of opening the PDF.
 
 ### MEDIUM: Product uploads are store-scoped on write but public on read
 
