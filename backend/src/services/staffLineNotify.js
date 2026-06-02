@@ -2,7 +2,7 @@ const { pool } = require("../db");
 const config = require("../config");
 
 const LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push";
-const STAFF_GROUP_TYPES = ["repair", "admin", "staff", "daily"];
+const STAFF_GROUP_TYPES = ["repair", "daily", "admin", "staff"];
 
 function maskLineGroupId(value) {
   const text = String(value || "").trim();
@@ -46,7 +46,7 @@ async function resolveStaffLineGroupTarget(connection = pool) {
       FROM line_group_registrations
       WHERE is_active = 1
         AND registration_type IN (?)
-      ORDER BY FIELD(registration_type, 'repair', 'admin', 'staff', 'daily'), updated_at DESC, id DESC
+      ORDER BY FIELD(registration_type, 'repair', 'daily', 'admin', 'staff'), updated_at DESC, id DESC
       LIMIT 1
     `,
     [STAFF_GROUP_TYPES]

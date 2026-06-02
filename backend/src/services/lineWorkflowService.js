@@ -10,6 +10,7 @@ const { getPublicStoreSettings } = require("./settingsService");
 const { sendInternalTelegram } = require("./telegramService");
 const { applyRepairReservationDecision, notifyRepairCustomer } = require("./repairReservationService");
 const { getTableColumns, hasColumn } = require("../utils/schema");
+const { notifyRepairReservationCreated } = require("./staffLineNotify");
 
 const lineAccessTokenOptionsStorage = new AsyncLocalStorage();
 
@@ -2955,6 +2956,25 @@ async function handleRepairReservationWizard(event) {
       targetGroupIds: deliveryResult.targetGroupIds,
       fromLine: true
     }, null);
+
+    try {
+      await notifyRepairReservationCreated({
+        repairId: result.repairId,
+        customerName: result.customer.name || "LINE 客戶",
+        customerPhone: result.customer.phone || null,
+        reservationDate: result.payload.reservationDate,
+        reservationTime: result.payload.reservationTime,
+        bikeModel: result.payload.bikeModel,
+        issueDescription: result.payload.issueDescription,
+        sourceLabel: "LINE 對話維修預約",
+        adminUrl: `${config.frontendBaseUrl}/repairs/${result.repairId}`
+      });
+    } catch (staffLineError) {
+      console.warn("[staff-line] line repair wizard notification failed after creation", {
+        repairId: result.repairId,
+        message: staffLineError.message
+      });
+    }
 
     if (event.replyToken) {
       await replyToLine(

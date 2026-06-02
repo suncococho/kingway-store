@@ -6,9 +6,11 @@ This task keeps the existing Telegram staff notification flow and adds one paral
 
 Applied now:
 
-- `backend/src/routes/repairs.js` repair reservation creation path.
+- `backend/src/routes/repairs.js` web/admin repair reservation creation path.
+- `backend/src/routes/lineRepair.js` LINE repair page creation path.
+- `backend/src/services/lineWorkflowService.js` LINE conversation wizard creation path.
 - Existing Telegram delivery through `sendToGroupsWithResult(["repair", "admin"], ...)` remains unchanged.
-- Staff LINE group delivery runs immediately after the existing Telegram notification result handling.
+- Staff LINE group delivery runs immediately after each successful repair reservation creation and after the existing group notification result handling.
 
 Not applied in this task:
 
@@ -28,11 +30,11 @@ Lookup table:
 Lookup policy:
 
 1. Active `repair` group
-2. Active `admin` group
-3. Active `staff` group
-4. Active `daily` group
+2. Active `daily` group
+3. Active `admin` group
+4. Active `staff` group
 
-The helper selects one active target ordered by the policy above, then newest registration.
+The helper selects one active target ordered by the policy above, then newest registration. This matches the daily-report group registration path and falls back to the `daily` group so the kw-mini test group can receive repair reservation notices when no `repair` group exists.
 
 Current group registration is created by the existing LINE group `/register` flow in `backend/src/routes/line.js`.
 
@@ -66,7 +68,7 @@ The staff LINE text is zh-TW and includes:
 
 ## Rollback Plan
 
-1. Remove the `notifyRepairReservationCreated` import and call from `backend/src/routes/repairs.js`.
+1. Remove the `notifyRepairReservationCreated` imports and calls from `backend/src/routes/repairs.js`, `backend/src/routes/lineRepair.js`, and `backend/src/services/lineWorkflowService.js`.
 2. Remove `backend/src/services/staffLineNotify.js`.
 3. Keep existing Telegram notification code unchanged.
 4. Keep existing LINE group registration DB rows unchanged.

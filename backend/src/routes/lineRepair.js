@@ -1,12 +1,14 @@
 const express = require("express");
 const dayjs = require("dayjs");
 const { pool } = require("../db");
+const config = require("../config");
 const {
   createRepairReservationFromSession,
   sendToGroupsWithResult,
   buildGroupApprovalMessage,
   logWorkflowEvent
 } = require("../services/lineWorkflowService");
+const { notifyRepairReservationCreated } = require("../services/staffLineNotify");
 
 const router = express.Router();
 
@@ -131,6 +133,25 @@ router.post("/create", async (req, res, next) => {
       },
       null
     );
+
+    try {
+      await notifyRepairReservationCreated({
+        repairId: result.repairId,
+        customerName: result.customer.name || "LINE 客戶",
+        customerPhone: result.customer.phone || null,
+        reservationDate: result.payload.reservationDate,
+        reservationTime: result.payload.reservationTime,
+        bikeModel: result.payload.bikeModel,
+        issueDescription: result.payload.issueDescription,
+        sourceLabel: "LINE 維修預約",
+        adminUrl: `${config.frontendBaseUrl}/repairs/${result.repairId}`
+      });
+    } catch (staffLineError) {
+      console.warn("[staff-line] line repair page notification failed after creation", {
+        repairId: result.repairId,
+        message: staffLineError.message
+      });
+    }
 
     return res.json({
       ok: true,
