@@ -7,6 +7,15 @@ import StatusBadge from "../components/StatusBadge";
 import { getStoredPlatformUser, platformRequest } from "../lib/platformAuth";
 
 const ACTION_LABELS = ["店鋪設定", "功能設定", "LINE 設定", "Telegram 設定", "POS 設定", "權限設定"];
+const DEFAULT_CREATE_FORM = {
+  code: "",
+  name: "",
+  slug: "",
+  ownerUsername: "",
+  ownerPassword: "",
+  ownerName: "",
+  plan: "trial"
+};
 
 function toNumber(value) {
   const numberValue = Number(value);
@@ -20,6 +29,16 @@ function getStatusTone(status) {
 function getSchemaGuardLabel(schemaGuard) {
   if (!schemaGuard) return "未取得";
   return schemaGuard.requireStoreIdSchema ? "嚴格模式" : "警告模式";
+}
+
+function normalizeSlugCandidate(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 function renderActionButtons(store) {
@@ -42,12 +61,30 @@ function renderActionButtons(store) {
 
 function SaasAdminPage() {
   const currentUser = getStoredPlatformUser();
-  const isAdmin = ["PLATFORM_OWNER", "PLATFORM_ADMIN", "SUPPORT"].includes(
-    String(currentUser?.role || "").trim().toUpperCase()
-  );
+  const currentRole = String(currentUser?.role || "").trim().toUpperCase();
+  const isAdmin = ["PLATFORM_OWNER", "PLATFORM_ADMIN", "SUPPORT"].includes(currentRole);
+  const canCreateStore = ["PLATFORM_OWNER", "PLATFORM_ADMIN"].includes(currentRole);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [createForm, setCreateForm] = useState(DEFAULT_CREATE_FORM);
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [createResult, setCreateResult] = useState(null);
+
+  async function loadStores() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await platformRequest("/saas-admin/stores");
+      setData(response);
+    } catch (err) {
+      setError(err.message || "載入 SaaS 平台管理資料失敗");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!isAdmin) {
@@ -55,22 +92,54 @@ function SaasAdminPage() {
       return;
     }
 
-    async function loadStores() {
-      setLoading(true);
-      setError("");
-
-      try {
-        const response = await platformRequest("/saas-admin/stores");
-        setData(response);
-      } catch (err) {
-        setError(err.message || "載入 SaaS 平台管理資料失敗");
-      } finally {
-        setLoading(false);
-      }
-    }
-
     loadStores();
   }, [isAdmin]);
+
+  function handleCreateFormChange(event) {
+    const { name, value } = event.target;
+    setCreateForm((current) => {
+      const next = { ...current, [name]: value };
+      if (name === "code" && !current.slug.trim()) {
+        next.slug = normalizeSlugCandidate(value);
+      }
+      if (name === "slug") {
+        next.slug = normalizeSlugCandidate(value);
+      }
+      return next;
+    });
+  }
+
+  async function handleCreateStore(event) {
+    event.preventDefault();
+    setCreateLoading(true);
+    setCreateError("");
+    setCreateResult(null);
+
+    try {
+      const payload = {
+        code: createForm.code.trim(),
+        name: createForm.name.trim(),
+        slug: createForm.slug.trim(),
+        ownerUsername: createForm.ownerUsername.trim(),
+        ownerPassword: createForm.ownerPassword.trim() || undefined,
+        ownerName: createForm.ownerName.trim() || undefined,
+        plan: createForm.plan.trim() || "trial"
+      };
+
+      const response = await platformRequest("/saas-admin/stores", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+
+      setCreateResult(response);
+      setCreateForm(DEFAULT_CREATE_FORM);
+      await loadStores();
+    } catch (submitError) {
+      setCreateError(submitError.message || "建立店鋪失敗");
+    } finally {
+      setCreateLoading(false);
+    }
+  }
 
   const stores = Array.isArray(data?.stores) ? data.stores : [];
 
@@ -102,6 +171,7 @@ function SaasAdminPage() {
     { key: "id", label: "ID" },
     { key: "code", label: "店鋪代碼" },
     { key: "name", label: "店鋪名稱" },
+    { key: "slug", label: "Slug" },
     {
       key: "status",
       label: "狀態",
@@ -158,6 +228,91 @@ function SaasAdminPage() {
         ))}
       </div>
 
+      {canCreateStore ? (
+        <section className="admin-panel">
+          <AdminSectionHeader
+            eyebrow="Platform Admin"
+            title="新增租戶店鋪"
+            description="建立新店鋪、預設功能開關與 owner 帳號。若不輸入密碼，系統會自動產生一次性臨時密碼。"
+          />
+
+          <form className="form-grid" onSubmit={handleCreateStore}>
+            <label className="form-field">
+              <span>店鋪代碼 code</span>
+              <input name="code" value={createForm.code} onChange={handleCreateFormChange} placeholder="KINGWAY_TAICHUNG" required />
+            </label>
+            <label className="form-field">
+              <span>店鋪名稱 name</span>
+              <input name="name" value={createForm.name} onChange={handleCreateFormChange} placeholder="KINGWAY 台中" required />
+            </label>
+            <label className="form-field">
+              <span>Slug</span>
+              <input name="slug" value={createForm.slug} onChange={handleCreateFormChange} placeholder="kingway-taichung" required />
+            </label>
+            <label className="form-field">
+              <span>Owner 帳號</span>
+              <input name="ownerUsername" value={createForm.ownerUsername} onChange={handleCreateFormChange} placeholder="taichung_owner" required />
+            </label>
+            <label className="form-field">
+              <span>Owner 密碼</span>
+              <input name="ownerPassword" type="text" value={createForm.ownerPassword} onChange={handleCreateFormChange} placeholder="留空則自動產生" />
+            </label>
+            <label className="form-field">
+              <span>Owner 顯示名稱</span>
+              <input name="ownerName" value={createForm.ownerName} onChange={handleCreateFormChange} placeholder="KINGWAY 台中 店長" />
+            </label>
+            <label className="form-field">
+              <span>方案 plan</span>
+              <input name="plan" value={createForm.plan} onChange={handleCreateFormChange} placeholder="trial" required />
+            </label>
+            <div className="compact-actions">
+              <button type="submit" className="primary-button" disabled={createLoading}>
+                {createLoading ? "建立中..." : "建立新店鋪"}
+              </button>
+            </div>
+          </form>
+
+          {createError ? <div className="empty-state">{createError}</div> : null}
+
+          {createResult?.store ? (
+            <div className="admin-panel" style={{ marginTop: 16 }}>
+              <AdminSectionHeader
+                eyebrow="Provisioning Result"
+                title="建立成功"
+                description="下方資訊僅顯示本次建立結果；若有臨時密碼，請立即保存。"
+              />
+              <div className="admin-summary-grid">
+                <article className="admin-summary-card">
+                  <div className="admin-summary-label">Store</div>
+                  <div className="admin-summary-value admin-summary-value-small">
+                    {createResult.store.code} / {createResult.store.name}
+                  </div>
+                </article>
+                <article className="admin-summary-card">
+                  <div className="admin-summary-label">Slug</div>
+                  <div className="admin-summary-value admin-summary-value-small">{createResult.store.slug || "-"}</div>
+                </article>
+                <article className="admin-summary-card">
+                  <div className="admin-summary-label">Owner</div>
+                  <div className="admin-summary-value admin-summary-value-small">{createResult.owner?.username || "-"}</div>
+                </article>
+                <article className="admin-summary-card">
+                  <div className="admin-summary-label">Plan / Status</div>
+                  <div className="admin-summary-value admin-summary-value-small">
+                    {createResult.store.plan || "-"} / {createResult.store.status || "-"}
+                  </div>
+                </article>
+              </div>
+              {createResult.temporaryPassword ? (
+                <div className="empty-state" style={{ marginTop: 12 }}>
+                  一次性臨時密碼: <strong>{createResult.temporaryPassword}</strong>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="admin-panel">
         <AdminSectionHeader
           eyebrow="SaaS 平台"
@@ -178,7 +333,7 @@ function SaasAdminPage() {
           rows={stores}
           emptyText="目前沒有店鋪資料。"
           cardTitle={(row) => row.code || `Store ${row.id}`}
-          cardDescription={(row) => row.name || "未設定店鋪名稱"}
+          cardDescription={(row) => `${row.name || "未設定店鋪名稱"}${row.slug ? ` / ${row.slug}` : ""}`}
           cardBadges={(row) => <StatusBadge tone={getStatusTone(row.status)}>{row.status || "-"}</StatusBadge>}
           cardFooter={(row) => renderActionButtons(row)}
         />

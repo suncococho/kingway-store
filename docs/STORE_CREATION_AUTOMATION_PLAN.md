@@ -14,6 +14,15 @@ Goal:
 - implement the first transactional provisioning API without touching frontend UI
 - avoid changing production config, `.env`, or LINE/Telegram logic in this step
 
+## Platform Admin UI Phase Started
+
+Started on `2026-06-03`:
+
+- `/platform-admin` now includes a new store provisioning form
+- the UI posts to `POST /api/saas-admin/stores` using platform admin token auth
+- success state shows store summary, owner username, and one-time temporary password when returned
+- store list reloads after successful provisioning
+
 ## Phase 1 Implemented
 
 Implemented on `2026-06-03`:
