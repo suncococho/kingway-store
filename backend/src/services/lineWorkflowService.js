@@ -3564,7 +3564,8 @@ async function findPendingRepairEstimateByLineUserId(lineUserId, storeId = null)
   return rows[0] || null;
 }
 
-async function findLinkedRepairJobOrder(repairId, connection = pool) {
+async function findLinkedRepairJobOrder(repairId, connection = pool, storeId = null) {
+  const scopedStoreId = normalizeStoreId(storeId);
   const [rows] = await connection.query(
     `
       SELECT
@@ -3573,13 +3574,14 @@ async function findLinkedRepairJobOrder(repairId, connection = pool) {
         o.order_no AS orderNo
       FROM repair_orders ro
       LEFT JOIN orders o
-        ON o.id = ro.order_id
-        OR o.repair_order_id = ro.id
+        ON (o.id = ro.order_id OR o.repair_order_id = ro.id)
+       AND o.store_id = ro.store_id
       WHERE ro.id = ?
+        AND (? IS NULL OR ro.store_id = ?)
       ORDER BY o.id DESC
       LIMIT 1
     `,
-    [repairId]
+     [repairId, scopedStoreId, scopedStoreId]
   );
 
   return rows[0] || null;
@@ -3603,20 +3605,22 @@ async function resolveRepairOrderCreatorStaffId(preferredStaffId, connection = p
   return rows[0]?.id || null;
 }
 
-async function ensureRepairJobOrder(repairId, staffId = null, connection = pool) {
-  const linkedOrder = await findLinkedRepairJobOrder(repairId, connection);
+async function ensureRepairJobOrder(repairId, staffId = null, connection = pool, options = {}) {
+  const scopedStoreId = normalizeStoreId(options.storeId);
+  const linkedOrder = await findLinkedRepairJobOrder(repairId, connection, scopedStoreId);
   if (linkedOrder?.orderId) {
     if (Number(linkedOrder.repairOrderLinkedOrderId || 0) !== Number(linkedOrder.orderId)) {
-      await connection.query("UPDATE repair_orders SET order_id = ? WHERE id = ?", [linkedOrder.orderId, repairId]);
+      await connection.query("UPDATE repair_orders SET order_id = ? WHERE id = ? AND (? IS NULL OR store_id = ?)", [linkedOrder.orderId, repairId, scopedStoreId, scopedStoreId]);
     }
     const [repairAmountRows] = await connection.query(
       `
         SELECT estimate_amount AS estimateAmount
         FROM repair_orders
         WHERE id = ?
+          AND (? IS NULL OR store_id = ?)
         LIMIT 1
       `,
-      [repairId]
+      [repairId, scopedStoreId, scopedStoreId]
     );
     console.log("[repair:quote-confirm]", {
       repair_id: Number(repairId),
@@ -3635,6 +3639,7 @@ async function ensureRepairJobOrder(repairId, staffId = null, connection = pool)
     `
       SELECT
         ro.id,
+        ro.store_id AS storeId,
         ro.customer_id AS customerId,
         ro.estimate_amount AS estimateAmount,
         ro.issue_description AS issueDescription,
@@ -3645,12 +3650,13 @@ async function ensureRepairJobOrder(repairId, staffId = null, connection = pool)
         c.phone AS customerPhone,
         COALESCE(ro.customer_type, c.customer_type, 'LINE') AS customerType
       FROM repair_orders ro
-      INNER JOIN customers c ON c.id = ro.customer_id
+      INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
       WHERE ro.id = ?
+        AND (? IS NULL OR ro.store_id = ?)
       LIMIT 1
       FOR UPDATE
     `,
-    [repairId]
+     [repairId, scopedStoreId, scopedStoreId]
   );
 
   const repair = repairRows[0];
@@ -3675,6 +3681,7 @@ async function ensureRepairJobOrder(repairId, staffId = null, connection = pool)
   ].filter(Boolean).join("\n");
 
   const insertColumns = [
+    ...(hasColumn(orderColumns, "store_id") ? ["store_id"] : []),
     "order_no",
     "customer_id",
     "customer_name",
@@ -3696,6 +3703,7 @@ async function ensureRepairJobOrder(repairId, staffId = null, connection = pool)
     ...(hasColumn(orderColumns, "source") ? ["source"] : [])
   ];
   const insertValues = [
+    ...(hasColumn(orderColumns, "store_id") ? [repair.storeId] : []),
     orderNo,
     repair.customerId,
     repair.customerName || null,
@@ -3722,7 +3730,7 @@ async function ensureRepairJobOrder(repairId, staffId = null, connection = pool)
     insertValues
   );
 
-  await connection.query("UPDATE repair_orders SET order_id = ? WHERE id = ?", [orderResult.insertId, repairId]);
+  await connection.query("UPDATE repair_orders SET order_id = ? WHERE id = ? AND (? IS NULL OR store_id = ?)", [orderResult.insertId, repairId, scopedStoreId || repair.storeId, scopedStoreId || repair.storeId]);
   console.log("[repair:quote-confirm]", {
     repair_id: Number(repairId),
     existing_order_id: null,
@@ -3835,7 +3843,9 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
       );
     }
 
-    const linkedOrder = approved ? await ensureRepairJobOrder(repairId, staffId, tx) : null;
+    const linkedOrder = approved ? await ensureRepairJobOrder(repairId, staffId, tx, {
+      storeId: scopedStoreId || repair.storeId
+    }) : null;
     if (approved && linkedOrder?.orderId) {
       const orderColumns = await getOrdersTableColumns(tx);
       const orderStatus = await normalizeRepairLinkedOrderStatus(tx, repair.status);
@@ -3847,8 +3857,8 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
       if (hasColumn(orderColumns, "source")) {
         updates.push("source = 'repair_quote'");
       }
-      params.push(linkedOrder.orderId);
-      await tx.query(`UPDATE orders SET ${updates.join(", ")} WHERE id = ?`, params);
+      params.push(linkedOrder.orderId, scopedStoreId || repair.storeId, scopedStoreId || repair.storeId);
+      await tx.query("UPDATE orders SET " + updates.join(", ") + " WHERE id = ? AND (? IS NULL OR store_id = ?)", params);
     }
 
     await tx.query(

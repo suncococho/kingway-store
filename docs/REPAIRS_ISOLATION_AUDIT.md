@@ -309,18 +309,26 @@ Residual risk:
 
 - linked repair order creation remains a separate HIGH finding and was not changed in this step.
 
-### HIGH: Estimate approval can create linked orders without explicit `store_id`
+### HIGH: Estimate approval can create linked orders without explicit `store_id` - Fixed 2026-06-03
 
 File:
 
-- `backend/src/services/lineWorkflowService.js:3586-3705`
+- `backend/src/services/lineWorkflowService.js:3567-3863`
 
-`ensureRepairJobOrder(...)` inserts into `orders` without explicitly setting `store_id`.
+Previous state:
 
-Risk:
+- `ensureRepairJobOrder(...)` inserted into `orders` without explicitly setting `store_id`.
 
-- Repair-to-order linkage can create or relink a job order into the wrong tenant.
-- This can propagate repair isolation problems into `orders`.
+Fix completed:
+
+- linked repair order lookup now stays on the source repair store.
+- repair-to-order creation now carries `repair_orders.store_id` into the new `orders` row.
+- linked order backfill and later order status updates now stay on the same store scope.
+- the source repair row is joined back to a same-store customer before order creation.
+
+Residual note:
+
+- this estimate approval flow does not create `order_items`, so no `order_items.store_id` write was needed in this step.
 
 ### MEDIUM: Repair list / detail routes rely on customer-store join instead of row-store ownership
 
