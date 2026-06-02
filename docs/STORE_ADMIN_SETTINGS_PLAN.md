@@ -217,6 +217,14 @@ Platform notes:
 - store target must come from `:id`
 - audit logging should record platform actor id/email and target store id
 
+Implemented on 2026-06-03 for Platform Admin settings API Phase:
+
+- added `GET /api/saas-admin/stores/:id/settings`
+- added `PATCH /api/saas-admin/stores/:id/settings`
+- require platform admin token and target store existence check
+- reuse the same STORE_PROFILE allowlist and partial update logic as Store Admin API
+- keep LINE token/secret/access token fields blocked from storage
+
 ## 5. DB Design
 
 ## Recommended DB structure

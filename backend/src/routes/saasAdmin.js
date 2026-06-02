@@ -7,6 +7,10 @@ const {
   deriveSlugFromCode,
   provisionStore
 } = require("../services/storeProvisioningService");
+const {
+  getStoreProfileSettings,
+  saveStoreProfileSettings
+} = require("../services/storeProfileSettingsService");
 
 const router = express.Router();
 
@@ -110,6 +114,14 @@ function buildStoreFeatureResponse(store, featureRow) {
   };
 }
 
+function buildStoreSettingsResponse(store, settings) {
+  return {
+    ok: true,
+    store,
+    settings
+  };
+}
+
 router.use(authenticatePlatformAdmin);
 router.use(requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN", "SUPPORT"]));
 
@@ -191,6 +203,50 @@ router.patch("/stores/:id/features", async (req, res, next) => {
     return res.json(buildStoreFeatureResponse(store, featureRow));
   } catch (error) {
     console.error("[saasAdmin/storeFeatures:patch] failed", error);
+    return next(error);
+  }
+});
+
+router.get("/stores/:id/settings", async (req, res, next) => {
+  try {
+    const storeId = n(req.params.id, 0);
+    if (!storeId) {
+      return res.status(404).json({ message: "Store not found" });
+    }
+
+    const store = await getStore(storeId);
+    if (!store) {
+      return res.status(404).json({ message: "Store not found" });
+    }
+
+    const settings = await getStoreProfileSettings(storeId);
+    return res.json(buildStoreSettingsResponse(store, settings));
+  } catch (error) {
+    console.error("[saasAdmin/storeSettings:get] failed", error);
+    return next(error);
+  }
+});
+
+router.patch("/stores/:id/settings", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
+  try {
+    const storeId = n(req.params.id, 0);
+    if (!storeId) {
+      return res.status(404).json({ message: "Store not found" });
+    }
+
+    const store = await getStore(storeId);
+    if (!store) {
+      return res.status(404).json({ message: "Store not found" });
+    }
+
+    const settings = await saveStoreProfileSettings(storeId, req.body || {}, req.platformAdmin?.id || null);
+    return res.json(buildStoreSettingsResponse(store, settings));
+  } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
+
+    console.error("[saasAdmin/storeSettings:patch] failed", error);
     return next(error);
   }
 });
