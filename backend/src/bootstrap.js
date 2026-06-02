@@ -365,7 +365,7 @@ async function ensureAppSettingsSchema() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_settings (
       store_id BIGINT UNSIGNED NULL,
-      setting_scope ENUM('STORE', 'SYSTEM') NOT NULL,
+      setting_scope ENUM('STORE', 'SYSTEM', 'STORE_PROFILE') NOT NULL,
       payload_json LONGTEXT NOT NULL,
       updated_by_staff_id BIGINT UNSIGNED NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -376,11 +376,16 @@ async function ensureAppSettingsSchema() {
   `);
 
   await addColumnIfMissing("app_settings", "store_id", "BIGINT UNSIGNED NULL");
+
+  const appSettingsScopeType = await getColumnDefinition("app_settings", "setting_scope");
+  if (!enumColumnIncludes(appSettingsScopeType, "STORE_PROFILE")) {
+    await pool.query("ALTER TABLE app_settings MODIFY COLUMN setting_scope ENUM('STORE', 'SYSTEM', 'STORE_PROFILE') NOT NULL");
+  }
   await pool.query(`
     UPDATE app_settings
     SET store_id = 1
     WHERE store_id IS NULL
-      AND setting_scope IN ('STORE', 'SYSTEM')
+      AND setting_scope IN ('STORE', 'SYSTEM', 'STORE_PROFILE')
   `);
 
   await ensureIndexIfMissing(

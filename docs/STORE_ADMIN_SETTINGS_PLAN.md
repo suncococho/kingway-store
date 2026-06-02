@@ -39,13 +39,13 @@ Recommended normalized payload shape:
 
 ```json
 {
-  "storeName": "KINGWAY 台南門市",
+  "displayName": "KINGWAY 台南門市",
   "address": "台南市東區...",
   "phone": "06-000-0000",
   "logoUrl": "/files/public-logos/store-1/logo.png",
   "businessHours": "每日 13:00 - 21:00",
-  "taxBusinessNumber": "12345678",
-  "receiptDisplayName": "KINGWAY 台南門市",
+  "businessNumber": "12345678",
+  "invoiceDisplayName": "KINGWAY 台南門市",
   "defaultLanguage": "zh-TW",
   "timezone": "Asia/Taipei",
   "lineSettings": {
@@ -142,13 +142,13 @@ Response shape:
 ```json
 {
   "store": {
-    "storeName": "KINGWAY 台南門市",
+    "displayName": "KINGWAY 台南門市",
     "address": "台南市東區...",
     "phone": "06-000-0000",
     "logoUrl": "/files/public-logos/store-1/logo.png",
     "businessHours": "每日 13:00 - 21:00",
-    "taxBusinessNumber": "12345678",
-    "receiptDisplayName": "KINGWAY 台南門市",
+    "businessNumber": "12345678",
+    "invoiceDisplayName": "KINGWAY 台南門市",
     "defaultLanguage": "zh-TW",
     "timezone": "Asia/Taipei",
     "lineSettings": {
@@ -417,6 +417,15 @@ Secret handling rules:
 - add `PATCH /api/store/settings`
 - add platform admin read/write variant for `:id`
 - enforce `req.storeId` and platform role boundaries
+
+Implemented on 2026-06-03 for Store Admin Phase 1:
+
+- added `STORE_PROFILE` store-scoped settings payload
+- implemented `GET /api/store/settings`
+- implemented `PATCH /api/store/settings`
+- restricted writes to store `ADMIN` and `MANAGER`
+- blocked raw token or secret-like fields inside `lineSettings`
+- kept logo upload and platform-admin override for later phases
 
 ### Phase 2 UI
 

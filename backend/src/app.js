@@ -33,6 +33,7 @@ const attendanceRoutes = require("./routes/attendance");
 const kpiRoutes = require("./routes/kpi");
 const payrollRoutes = require("./routes/payroll");
 const settingsRoutes = require("./routes/settings");
+const storeSettingsRoutes = require("./routes/storeSettings");
 const debugRoutes = require("./routes/debug");
 const { errorHandler } = require("./middleware/errorHandler");
 const { sendDailyReport, TAIPEI_TZ } = require("./services/reportService");
@@ -393,6 +394,7 @@ app.get("/health", async (req, res, next) => {
   }
 });
 
+app.use("/api/store", storeSettingsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/system", systemStatusRoutes);
 app.use("/api/platform-auth", platformAuthRoutes);
