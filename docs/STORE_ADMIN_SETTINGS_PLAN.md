@@ -464,6 +464,15 @@ Implemented on 2026-06-03 for Store Admin UI Phase 2:
 - show target store profile values
 - allow override with audit trail
 
+Implemented on 2026-06-03 for Platform Admin UI Phase 4:
+
+- added Platform Admin store settings inspector/editor UI
+- added `設定` action in the platform store list
+- load target store settings via `GET /api/saas-admin/stores/:id/settings`
+- save target store settings via `PATCH /api/saas-admin/stores/:id/settings`
+- show selected store name/code plus loading, success, and error states
+- keep LINE settings and logo upload as `Coming Soon` placeholders
+
 ### Phase 5 LINE settings integration
 
 - keep separate tab or section
