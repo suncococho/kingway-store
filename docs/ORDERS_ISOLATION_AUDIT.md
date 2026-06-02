@@ -171,22 +171,25 @@ Fix completed:
 - called `createPurchaseConfirmationForOrder(order.id, pool, { storeId })`
 - scoped token lookup and confirmation token update through the related order `store_id`
 
-### High: LINE Workflow Purchase Confirmation Helper Is Global
+### High: LINE Workflow Purchase Confirmation Helper Is Global - Fixed 2026-06-02
 
 File: `backend/src/services/lineWorkflowService.js`
 
-The purchase confirmation creation flow in the LINE workflow searches eligible paid EBIKE orders, pending confirmations, and inserts `purchase_confirmations` without `store_id`.
+The LINE workflow purchase confirmation helper previously allowed null store context, so eligible orders, existing tokens, pending confirmations, and inserted confirmation rows could be resolved without a firm tenant scope.
 
 Risk:
 
-- LINE-triggered purchase confirmation can select or create confirmation data across tenants
-- inserted confirmation can have `store_id` missing even though the table has a `store_id` column
+- LINE-triggered purchase confirmation could select or create confirmation data across tenants
+- staff LINE postback handover confirmation could update another tenant order by id
 
-Recommended fix:
+Fix completed:
 
-- carry store context into LINE workflow helper calls
-- filter customer/order/pending confirmation queries by `store_id`
-- insert `store_id` into `purchase_confirmations`
+- added LINE workflow store context resolution for explicit `storeId`, staff store, LINE customer store, and legacy fallback
+- scoped `createPurchaseConfirmationForOrder` token reuse through the related order `store_id`
+- scoped LINE customer purchase-confirmation token creation by customer `line_user_id` plus `store_id`, order `store_id`, order item `store_id`, and pending confirmation `store_id`
+- inserted LINE workflow `purchase_confirmations` with the resolved `store_id`
+- scoped `purchase_handover_confirm` postback updates to `orders.store_id` and `purchase_confirmations.store_id`
+- legacy context that cannot resolve a store still falls back to `store_id=1` to preserve KINGWAY_TAINAN behavior and logs `line_workflow_legacy_store_fallback` for follow-up
 
 ### High: Customer Status Order Endpoints Are Not Store-Scoped - Fixed 2026-06-02
 

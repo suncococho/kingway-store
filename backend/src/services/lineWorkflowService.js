@@ -407,7 +407,12 @@ async function bindPhoneAndIssueNewFriendCoupon(lineUserId, phone) {
 }
 
 async function createPurchaseConfirmationForOrder(orderId, connection = pool, options = {}) {
-  const storeId = options.storeId || null;
+  const storeContext = await resolveLineWorkflowStoreContext({
+    storeId: options.storeId,
+    connection,
+    reason: "purchase_confirmation_order_helper"
+  });
+  const storeId = storeContext.storeId;
   const normalizedCustomerPhone = sqlNormalizedPhone("c.phone");
   const [rows] = await connection.query(
     `
@@ -509,16 +514,18 @@ async function createPurchaseConfirmationForOrder(orderId, connection = pool, op
 
   const [existing] = await connection.query(
     `
-      SELECT token
-      FROM purchase_confirmation_tokens
-      WHERE order_id = ?
-        AND customer_id = ?
-        AND used_at IS NULL
-        AND expires_at >= NOW()
-      ORDER BY id DESC
+      SELECT pct.token
+      FROM purchase_confirmation_tokens pct
+      INNER JOIN orders o ON o.id = pct.order_id
+      WHERE pct.order_id = ?
+        AND pct.customer_id = ?
+        AND o.store_id = ?
+        AND pct.used_at IS NULL
+        AND pct.expires_at >= NOW()
+      ORDER BY pct.id DESC
       LIMIT 1
     `,
-    [orderId, targetCustomerId]
+     [orderId, targetCustomerId, effectiveStoreId]
   );
 
   if (existing[0]) {
@@ -1420,6 +1427,49 @@ function parseStaffCommand(messageText) {
 function normalizeStoreId(value) {
   const normalized = Number(value || 0);
   return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : null;
+}
+
+async function logLegacyLineWorkflowStoreFallback(reason, payload = {}, connection = pool) {
+  const logPayload = { reason, fallbackStoreId: 1, ...payload };
+  console.warn("[line:store-scope] legacy fallback", logPayload);
+  try {
+    await logWorkflowEvent("line_workflow_legacy_store_fallback", "STORE", 1, logPayload, null, connection);
+  } catch (error) {
+    console.warn("[line:store-scope] fallback log failed", { reason, error: error?.message || String(error) });
+  }
+}
+
+async function resolveLineWorkflowStoreContext({ storeId = null, lineUserId = null, staffId = null, connection = pool, reason = "line_workflow" } = {}) {
+  const explicitStoreId = normalizeStoreId(storeId) || normalizeStoreId(lineAccessTokenOptionsStorage.getStore()?.storeId);
+  if (explicitStoreId) {
+    return { storeId: explicitStoreId, source: "explicit", legacyFallback: false };
+  }
+
+  if (staffId) {
+    const [[staff]] = await connection.query("SELECT store_id AS storeId FROM staff_users WHERE id = ? LIMIT 1", [staffId]);
+    const staffStoreId = normalizeStoreId(staff?.storeId);
+    if (staffStoreId) {
+      return { storeId: staffStoreId, source: "staff", legacyFallback: false };
+    }
+  }
+
+  if (lineUserId) {
+    const [stores] = await connection.query(
+      "SELECT DISTINCT store_id AS storeId FROM customers WHERE line_user_id = ? AND store_id IS NOT NULL ORDER BY store_id ASC",
+      [lineUserId]
+    );
+    const storeIds = stores.map((row) => normalizeStoreId(row.storeId)).filter(Boolean);
+    if (storeIds.length === 1) {
+      return { storeId: storeIds[0], source: "line_customer", legacyFallback: false };
+    }
+    if (storeIds.length > 1) {
+      await logLegacyLineWorkflowStoreFallback(reason, { lineUserId, matchedStoreIds: storeIds }, connection);
+      return { storeId: 1, source: "legacy_fallback_ambiguous_line_user", legacyFallback: true };
+    }
+  }
+
+  await logLegacyLineWorkflowStoreFallback(reason, { lineUserId: lineUserId || null, staffId: staffId || null }, connection);
+  return { storeId: 1, source: "legacy_fallback", legacyFallback: true };
 }
 
 async function findProductBySku(sku, connection = pool, storeId = null) {
@@ -2329,14 +2379,21 @@ async function findPendingPurchaseConfirmationTokenForLineUser(lineUserId) {
     return null;
   }
 
+  const storeContext = await resolveLineWorkflowStoreContext({
+    lineUserId,
+    reason: "purchase_confirmation_line_user"
+  });
+  const storeId = storeContext.storeId;
+
   const [customers] = await pool.query(
     `
-      SELECT id, phone
+      SELECT id, phone, store_id AS storeId
       FROM customers
       WHERE line_user_id = ?
+        AND store_id = ?
       LIMIT 1
     `,
-    [lineUserId]
+    [lineUserId, storeId]
   );
 
   const customer = customers[0];
@@ -2353,13 +2410,16 @@ async function findPendingPurchaseConfirmationTokenForLineUser(lineUserId) {
       SELECT o.id AS orderId
       FROM orders o
       LEFT JOIN customers oc ON oc.id = o.customer_id
-      WHERE o.status = 'COMPLETED'
+        AND oc.store_id = o.store_id
+      WHERE o.store_id = ?
+        AND o.status = 'COMPLETED'
         AND o.final_payment_status = 'PAID'
         AND EXISTS (
           SELECT 1
           FROM order_items oi
           WHERE oi.order_id = o.id
-        AND oi.product_category_snapshot = 'EB'
+            AND oi.store_id = o.store_id
+            AND oi.product_category_snapshot IN ('EB', 'EBIKE')
         )
         AND (
           o.customer_id = ?
@@ -2370,6 +2430,7 @@ async function findPendingPurchaseConfirmationTokenForLineUser(lineUserId) {
           SELECT 1
           FROM purchase_confirmations pc
           WHERE pc.order_id = o.id
+            AND pc.store_id = o.store_id
             AND (
               pc.status = 'COMPLETED'
               OR pc.submitted_at IS NOT NULL
@@ -2380,7 +2441,7 @@ async function findPendingPurchaseConfirmationTokenForLineUser(lineUserId) {
       ORDER BY o.created_at DESC, o.id DESC
       LIMIT 1
     `,
-    [customer.id, normalizedPhone, normalizedPhone]
+    [storeId, customer.id, normalizedPhone, normalizedPhone]
   );
 
   const order = orders[0];
@@ -2391,16 +2452,18 @@ async function findPendingPurchaseConfirmationTokenForLineUser(lineUserId) {
   return withTransaction(async (connection) => {
     const [existingTokens] = await connection.query(
       `
-        SELECT token
-        FROM purchase_confirmation_tokens
-        WHERE order_id = ?
-          AND customer_id = ?
-          AND used_at IS NULL
-          AND expires_at >= NOW()
-        ORDER BY id DESC
+        SELECT pct.token
+        FROM purchase_confirmation_tokens pct
+        INNER JOIN orders o ON o.id = pct.order_id
+        WHERE pct.order_id = ?
+          AND pct.customer_id = ?
+          AND o.store_id = ?
+          AND pct.used_at IS NULL
+          AND pct.expires_at >= NOW()
+        ORDER BY pct.id DESC
         LIMIT 1
       `,
-      [order.orderId, customer.id]
+       [order.orderId, customer.id, storeId]
     );
 
     if (existingTokens[0]) {
@@ -2416,11 +2479,12 @@ async function findPendingPurchaseConfirmationTokenForLineUser(lineUserId) {
         FROM purchase_confirmations
         WHERE order_id = ?
           AND customer_id = ?
+          AND store_id = ?
           AND status = 'PENDING'
         ORDER BY id DESC
         LIMIT 1
       `,
-      [order.orderId, customer.id]
+       [order.orderId, customer.id, storeId]
     );
 
     await connection.query(
@@ -2438,16 +2502,17 @@ async function findPendingPurchaseConfirmationTokenForLineUser(lineUserId) {
           SET token = ?,
               status = 'PENDING'
           WHERE id = ?
+            AND store_id = ?
         `,
-        [token, pendingConfirmations[0].id]
+        [token, pendingConfirmations[0].id, storeId]
       );
     } else {
       await connection.query(
         `
-          INSERT INTO purchase_confirmations (token, customer_id, order_id, status, created_at)
-          VALUES (?, ?, ?, 'PENDING', NOW())
+          INSERT INTO purchase_confirmations (store_id, token, customer_id, order_id, status, created_at)
+          VALUES (?, ?, ?, ?, 'PENDING', NOW())
         `,
-        [token, customer.id, order.orderId]
+        [storeId, token, customer.id, order.orderId]
       );
     }
 
@@ -3042,7 +3107,7 @@ function buildGroupApprovalMessage(type, payload) {
         "請確認交車或查看 PDF。"
       ],
       [
-        createPostbackAction("確認交車", "purchase_handover_confirm", payload.orderId),
+        createPostbackAction("確認交車", "purchase_handover_confirm", payload.orderId, { storeId: payload.storeId }),
         createUriAction("查看 PDF", payload.pdfUrl),
         createUriAction("前往訂單", buildStaffPageUrl("/orders"))
       ]
@@ -4296,6 +4361,7 @@ async function handleLinePostback(event) {
   const params = new URLSearchParams(event.postback.data || "");
   const action = params.get("action");
   const id = Number(params.get("id"));
+  const postbackStoreId = normalizeStoreId(params.get("storeId") || params.get("store_id"));
   const sourceLineUserId = event.source?.userId || null;
 
   if (!action) {
@@ -4331,10 +4397,11 @@ async function handleLinePostback(event) {
   }
 
   let staffId = null;
+  let staffStoreId = null;
   if (sourceLineUserId) {
     const [staffRows] = await pool.query(
       `
-        SELECT id
+        SELECT id, store_id AS storeId
         FROM staff_users
         WHERE line_user_id = ?
         LIMIT 1
@@ -4342,6 +4409,7 @@ async function handleLinePostback(event) {
       [sourceLineUserId]
     );
     staffId = staffRows[0]?.id || null;
+    staffStoreId = normalizeStoreId(staffRows[0]?.storeId);
   }
 
   if (action === "repair_reservation_approve" || action === "repair_reservation_reject") {
@@ -4527,16 +4595,33 @@ async function handleLinePostback(event) {
   }
 
   if (action === "purchase_handover_confirm") {
-    await withTransaction(async (connection) => {
-      await connection.query(
+    const handoverStoreContext = await resolveLineWorkflowStoreContext({
+      storeId: postbackStoreId || staffStoreId,
+      staffId,
+      connection: pool,
+      reason: "purchase_handover_postback"
+    });
+    const handoverStoreId = handoverStoreContext.storeId;
+    const result = await withTransaction(async (connection) => {
+      const [orderUpdate] = await connection.query(
         `
           UPDATE orders
           SET handover_confirmed_at = NOW(),
               handover_confirmed_by_staff_id = ?
           WHERE id = ?
+            AND store_id = ?
         `,
-        [staffId, id]
+        [staffId, id, handoverStoreId]
       );
+
+      if (!orderUpdate.affectedRows) {
+        await logWorkflowEvent("order_handover_confirm_blocked", "ORDER", id, {
+          source: "line_postback",
+          storeId: handoverStoreId,
+          reason: "order_not_in_store_scope"
+        }, staffId, connection);
+        return { updated: false };
+      }
 
       await connection.query(
         `
@@ -4544,12 +4629,21 @@ async function handleLinePostback(event) {
           SET handover_confirmed_at = NOW(),
               handover_confirmed_by_staff_id = ?
           WHERE order_id = ?
+            AND store_id = ?
         `,
-        [staffId, id]
+        [staffId, id, handoverStoreId]
       );
 
-      await logWorkflowEvent("order_handover_confirmed", "ORDER", id, { source: "line_postback" }, staffId, connection);
+      await logWorkflowEvent("order_handover_confirmed", "ORDER", id, { source: "line_postback", storeId: handoverStoreId }, staffId, connection);
+      return { updated: true };
     });
+
+    if (!result.updated) {
+      if (event.replyToken) {
+        await replyToLine(event.replyToken, withStaffQuickReply([{ type: "text", text: "找不到此店別可確認交車的訂單。" }]));
+      }
+      return true;
+    }
 
     await sendToGroups(["admin", "staff"], [{ type: "text", text: `訂單 #${id} 已於內部群組確認交車。` }]);
     if (event.replyToken) {
