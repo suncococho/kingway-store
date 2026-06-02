@@ -2791,7 +2791,7 @@ function validateRepairReservationTime(value) {
   return value;
 }
 
-async function createRepairReservationFromSession(lineUserId) {
+async function createRepairReservationFromSession(lineUserId, options = {}) {
   return withTransaction(async (connection) => {
     const session = await getLineChatSession(lineUserId, REPAIR_RESERVATION_FLOW, connection);
     if (!session || session.stepKey !== REPAIR_RESERVATION_STEPS.confirm) {
@@ -2799,7 +2799,14 @@ async function createRepairReservationFromSession(lineUserId) {
     }
 
     const payload = normalizeLineChatPayload(session.payload);
-    const customer = await findOrCreateLineCustomer(lineUserId);
+    const storeContext = await resolveLineWorkflowStoreContext({
+      storeId: options.storeId || payload.storeId || null,
+      lineUserId,
+      connection,
+      reason: "repair_reservation_create"
+    });
+    const resolvedStoreId = storeContext.storeId;
+    const customer = await findOrCreateLineCustomer(lineUserId, "LINE 客戶", resolvedStoreId);
     if (!customer.phone) {
       return { phoneRequired: true };
     }
@@ -2810,7 +2817,8 @@ async function createRepairReservationFromSession(lineUserId) {
       `
         SELECT id
         FROM repair_orders
-        WHERE customer_id = ?
+        WHERE store_id = ?
+          AND customer_id = ?
           AND reservation_date = ?
           AND COALESCE(reservation_time, '') = COALESCE(?, '')
           AND status IN (
@@ -2827,6 +2835,7 @@ async function createRepairReservationFromSession(lineUserId) {
         LIMIT 1
       `,
       [
+        resolvedStoreId,
         customer.id,
         payload.reservationDate,
         payload.reservationTime || ""
@@ -2850,11 +2859,12 @@ async function createRepairReservationFromSession(lineUserId) {
     const [repairResult] = await connection.query(
       `
         INSERT INTO repair_orders (
-          customer_id, customer_type, source, bike_model, issue_description, reservation_date, reservation_day, reservation_time, base_fee, reservation_status, status
+          store_id, customer_id, customer_type, source, bike_model, issue_description, reservation_date, reservation_day, reservation_time, base_fee, reservation_status, status
         )
-        VALUES (?, 'LINE', 'LINE', ?, ?, ?, ?, ?, 400, 'pending_approval', 'checking')
+        VALUES (?, ?, 'LINE', 'LINE', ?, ?, ?, ?, ?, 400, 'pending_approval', 'checking')
       `,
       [
+        resolvedStoreId,
         customer.id,
         payload.bikeModel,
         payload.issueDescription,
@@ -4732,6 +4742,7 @@ module.exports = {
   createPurchaseConfirmationForOrder,
   createRepairReservationFromSession,
   createUriAction,
+  resolveLineWorkflowStoreContext,
   findOrCreateLineCustomer,
   handleCustomerMessageEvent,
   handleLineSlashCommand,

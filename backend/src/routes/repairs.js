@@ -537,11 +537,12 @@ router.post("/",  async (req, res, next) => {
     const [result] = await pool.query(
       `
         INSERT INTO repair_orders (
-          customer_id, customer_type, source, bike_model, issue_description, reservation_date, reservation_day, reservation_time, base_fee, reservation_status, status
+          store_id, customer_id, customer_type, source, bike_model, issue_description, reservation_date, reservation_day, reservation_time, base_fee, reservation_status, status
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
+        storeId,
         customerId,
         normalizedCustomerType,
         fromLine ? "LINE" : "WEB",

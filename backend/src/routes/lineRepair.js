@@ -6,7 +6,8 @@ const {
   createRepairReservationFromSession,
   sendToGroupsWithResult,
   buildGroupApprovalMessage,
-  logWorkflowEvent
+  logWorkflowEvent,
+  resolveLineWorkflowStoreContext
 } = require("../services/lineWorkflowService");
 const { notifyRepairReservationCreated } = require("../services/staffLineNotify");
 
@@ -71,6 +72,13 @@ router.post("/create", async (req, res, next) => {
       return res.status(400).json({ message: "請填寫完整維修資訊" });
     }
 
+    const storeContext = await resolveLineWorkflowStoreContext({
+      lineUserId,
+      connection: pool,
+      reason: "line_repair_page_create"
+    });
+    const resolvedStoreId = storeContext.storeId;
+
     await pool.query(
       `
         INSERT INTO line_chat_sessions (line_user_id, flow_type, step_key, payload)
@@ -87,12 +95,15 @@ router.post("/create", async (req, res, next) => {
           reservationDate,
           reservationTime,
           bikeModel,
-          issueDescription
+          issueDescription,
+          storeId: resolvedStoreId
         })
       ]
     );
 
-    const result = await createRepairReservationFromSession(lineUserId);
+    const result = await createRepairReservationFromSession(lineUserId, {
+      storeId: resolvedStoreId
+    });
 
     if (result?.phoneRequired) {
       return res.status(400).json({ message: "請先回 LINE 對話輸入手機號碼完成綁定。" });

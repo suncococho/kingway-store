@@ -234,18 +234,29 @@ References:
 
 ## Findings
 
-### HIGH: Repair creation does not explicitly persist `store_id`
+### HIGH: Repair creation does not explicitly persist `store_id` - Fixed 2026-06-02
 
 Files:
 
 - `backend/src/routes/repairs.js:537-556`
 - `backend/src/services/lineWorkflowService.js:2850-2865`
 
-Both repair creation paths insert into `repair_orders` without an explicit `store_id` column.
+Previous state:
+
+- both repair creation paths inserted into `repair_orders` without an explicit `store_id` column.
+
+Fix completed:
+
+- `backend/src/routes/repairs.js` now inserts `repair_orders.store_id = req.storeId` for admin/web repair creation.
+- `backend/src/routes/lineRepair.js` now resolves store context before page-based LINE creation and passes it into the wizard creation path.
+- `backend/src/services/lineWorkflowService.js` now resolves store context from explicit input, session payload, and LINE customer context, then inserts new `repair_orders` rows with explicit `store_id`.
+- legacy-compatible fallback to `store_id=1` remains possible through the existing store-context resolver, and fallback events continue to be logged.
+
+Residual risk:
 
 Risk:
 
-- Tenant assignment relies on hidden DB defaults, triggers, or implicit schema behavior.
+- The previous tenant assignment relied on hidden DB defaults, triggers, or implicit schema behavior.
 - In a multi-store setup this can silently place repairs into the wrong tenant, commonly default store `1`.
 
 ### HIGH: LINE customer lookup and repair creation are globally resolved / legacy-fallback based
