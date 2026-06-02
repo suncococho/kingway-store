@@ -36,8 +36,14 @@ const settingsRoutes = require("./routes/settings");
 const debugRoutes = require("./routes/debug");
 const { errorHandler } = require("./middleware/errorHandler");
 const { sendDailyReport, TAIPEI_TZ } = require("./services/reportService");
+const { authenticate, authorize, requireStoreScope } = require("./middleware/auth");
 
 const app = express();
+const customerStatusStaffAuth = [
+  authenticate,
+  requireStoreScope(),
+  authorize(["ADMIN", "MANAGER", "CASHIER", "REPAIR"])
+];
 const telegramWebhookRoutes = require("./routes/telegramWebhook");
 
 app.use(cors());
@@ -127,16 +133,17 @@ app.post("/api/line-support/create", async (req, res, next) => {
   }
 });
 
-app.get("/api/customer-status", async (req, res, next) => {
+app.get("/api/customer-status", ...customerStatusStaffAuth, async (req, res, next) => {
   try {
+    const storeId = req.storeId;
     const q = String(req.query.q || "").trim();
     if (!q) return res.json({ customer: null, orders: [], repairs: [] });
 
     const like = `%${q}%`;
 
     const [customers] = await pool.query(
-      "SELECT id, name, phone, line_user_id AS lineUserId FROM customers WHERE phone LIKE ? OR name LIKE ? OR line_user_id = ? ORDER BY updated_at DESC LIMIT 1",
-      [like, like, q]
+      "SELECT id, name, phone, line_user_id AS lineUserId FROM customers WHERE store_id = ? AND (phone LIKE ? OR name LIKE ? OR line_user_id = ?) ORDER BY updated_at DESC LIMIT 1",
+      [storeId, like, like, q]
     );
 
     const customer = customers[0] || null;
@@ -148,10 +155,11 @@ app.get("/api/customer-status", async (req, res, next) => {
               unpaid_balance AS unpaidBalance, final_payment_status AS finalPaymentStatus,
               payment_method AS paymentMethod, status, business_date AS businessDate
        FROM orders
-       WHERE customer_id = ? OR customer_phone = ?
+       WHERE store_id = ?
+         AND (customer_id = ? OR customer_phone = ?)
        ORDER BY id DESC
        LIMIT 20`,
-      [customer.id, customer.phone]
+      [storeId, customer.id, customer.phone]
     );
 
     const [repairs] = await pool.query(
@@ -160,10 +168,11 @@ app.get("/api/customer-status", async (req, res, next) => {
               inspection_fee AS inspectionFee, parts_fee AS partsFee, labor_fee AS laborFee,
               storage_fee AS storageFee, completed_at AS completedAt, picked_up_at AS pickedUpAt
        FROM repair_orders
-       WHERE customer_id = ?
+       WHERE store_id = ?
+         AND customer_id = ?
        ORDER BY id DESC
        LIMIT 20`,
-      [customer.id]
+      [storeId, customer.id]
     );
 
     const [pendingPurchaseConfirmations] = await pool.query(
@@ -171,7 +180,9 @@ app.get("/api/customer-status", async (req, res, next) => {
               o.order_no AS orderNo
        FROM purchase_confirmations pc
        LEFT JOIN orders o ON o.id = pc.order_id
-       WHERE pc.status = 'PENDING'
+         AND o.store_id = pc.store_id
+       WHERE pc.store_id = ?
+         AND pc.status = 'PENDING'
          AND pc.token IS NOT NULL
          AND (
            pc.customer_id = ?
@@ -180,17 +191,18 @@ app.get("/api/customer-status", async (req, res, next) => {
          )
        ORDER BY pc.id DESC
        LIMIT 10`,
-      [customer.id, customer.id, customer.phone]
+      [storeId, customer.id, customer.id, customer.phone]
     );
 
     const [coupons] = await pool.query(
       `SELECT id, code, coupon_type AS couponType, amount, status, is_used AS isUsed,
               eligible_category AS eligibleCategory, issued_at AS issuedAt, used_at AS usedAt
        FROM coupons
-       WHERE customer_id = ?
+       WHERE store_id = ?
+         AND customer_id = ?
        ORDER BY id DESC
        LIMIT 20`,
-      [customer.id]
+      [storeId, customer.id]
     );
 
     return res.json({ customer, orders, repairs, pendingPurchaseConfirmations, coupons });
@@ -200,67 +212,91 @@ app.get("/api/customer-status", async (req, res, next) => {
 });
 
 
-app.post("/api/customer-status/orders/:id/payment", async (req, res, next) => {
+app.post("/api/customer-status/orders/:id/payment", ...customerStatusStaffAuth, async (req, res, next) => {
   try {
-    await pool.query(
+    const [result] = await pool.query(
       `UPDATE orders
        SET unpaid_balance = 0,
            final_payment_status = 'PAID',
            final_paid_at = NOW()
-       WHERE id = ?`,
-      [req.params.id]
+       WHERE id = ?
+         AND store_id = ?`,
+      [req.params.id, req.storeId]
     );
-    res.json({ ok: true });
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "找不到訂單" });
+    }
+
+    return res.json({ ok: true });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 
-app.post("/api/customer-status/orders/:id/deliver", async (req, res, next) => {
+app.post("/api/customer-status/orders/:id/deliver", ...customerStatusStaffAuth, async (req, res, next) => {
   try {
-    await pool.query(
+    const [result] = await pool.query(
       `UPDATE orders
        SET status = 'COMPLETED',
            handover_confirmed_at = NOW()
-       WHERE id = ?`,
-      [req.params.id]
+       WHERE id = ?
+         AND store_id = ?`,
+      [req.params.id, req.storeId]
     );
-    res.json({ ok: true });
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "找不到訂單" });
+    }
+
+    return res.json({ ok: true });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 
-app.post("/api/customer-status/repairs/:id/payment", async (req, res, next) => {
+app.post("/api/customer-status/repairs/:id/payment", ...customerStatusStaffAuth, async (req, res, next) => {
   try {
-    await pool.query(
+    const [result] = await pool.query(
       `UPDATE repair_orders
        SET estimate_amount = 0,
            inspection_fee = 0,
            parts_fee = 0,
            labor_fee = 0,
            storage_fee = 0
-       WHERE id = ?`,
-      [req.params.id]
+       WHERE id = ?
+         AND store_id = ?`,
+      [req.params.id, req.storeId]
     );
-    res.json({ ok: true });
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "找不到維修單" });
+    }
+
+    return res.json({ ok: true });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 
-app.post("/api/customer-status/repairs/:id/pickup", async (req, res, next) => {
+app.post("/api/customer-status/repairs/:id/pickup", ...customerStatusStaffAuth, async (req, res, next) => {
   try {
-    await pool.query(
+    const [result] = await pool.query(
       `UPDATE repair_orders
        SET status = 'picked_up',
            picked_up_at = NOW()
-       WHERE id = ?`,
-      [req.params.id]
+       WHERE id = ?
+         AND store_id = ?`,
+      [req.params.id, req.storeId]
     );
-    res.json({ ok: true });
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "找不到維修單" });
+    }
+
+    return res.json({ ok: true });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 

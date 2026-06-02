@@ -191,7 +191,7 @@ Recommended fix:
 - filter customer/order/pending confirmation queries by `store_id`
 - insert `store_id` into `purchase_confirmations`
 
-### High: Customer Status Order Endpoints Are Not Store-Scoped
+### High: Customer Status Order Endpoints Are Not Store-Scoped - Fixed 2026-06-02
 
 File: `backend/src/app.js`
 
@@ -203,14 +203,17 @@ Routes:
 
 Risk:
 
-- customer lookup, order lookup, pending purchase confirmation lookup, and coupon lookup do not filter by `store_id`
-- payment and delivery endpoints update `orders` by id only
-- if these routes are exposed to staff or tooling, they can read or mutate another tenant's orders
+- customer lookup, order lookup, pending purchase confirmation lookup, and coupon lookup previously did not filter by `store_id`
+- payment and delivery endpoints previously updated `orders` by id only
+- staff or tooling could read or mutate another tenant's orders
 
-Recommended fix:
+Fix completed:
 
-- put these endpoints behind the same staff/store middleware as order admin routes, or resolve explicit store context
-- add `store_id` filters to customer/order/purchase confirmation/coupon queries and order updates
+- treated `/api/customer-status` as a store staff API and added staff authentication plus required store context
+- filtered customer, order, repair, pending purchase confirmation, and coupon reads by authenticated `req.storeId`
+- added `orders.store_id = req.storeId` predicates to payment and delivery updates
+- added `repair_orders.store_id = req.storeId` predicates to customer-status repair actions for the same endpoint family
+- public/customer-token status access was not added in this change; TODO: design a separate token-based public customer status endpoint if customer-facing LINE pages need this data
 
 ### Medium: Public Token Purchase Confirmation Should Carry Store Scope Defensively
 
