@@ -134,45 +134,42 @@ Fix completed:
 - joined customer with matching `store_id`
 - platform-admin invoice access was not added in this change; TODO: design a separate platform-admin invoice endpoint with explicit audit logging if needed
 
-### High: Purchase Confirmation Manual Matching Is Global
+### High: Purchase Confirmation Manual Matching Is Global - Fixed 2026-06-02
 
 File: `backend/src/routes/purchaseConfirmations.js`
 
-`findManualPurchaseConfirmationMatch(phone)` searches customers and orders globally by phone. It does not accept or apply a store context.
+`findManualPurchaseConfirmationMatch(phone)` previously searched customers and orders globally by phone and the manual route could fall back to `store_id=1` after an unscoped match.
 
 Risk:
 
-- same phone across tenants can match the wrong tenant order/customer
-- the manual route derives `storeId` from `matchedOrder?.storeId || matchedCustomer?.storeId || 1`, but the match query does not select `storeId`, so it can silently fall back to `store_id=1`
-- purchase confirmation rows may be created under the wrong store
+- same phone across tenants could match the wrong tenant order/customer
+- manual confirmation rows could be created under the wrong store
 
-Recommended fix:
+Fix completed:
 
-- resolve public store context for manual confirmation
-- filter customer and order matching by that `store_id`
-- select and propagate `storeId`
-- avoid defaulting to `1` after a cross-tenant search
+- added optional staff store context and public store context resolution to `POST /api/purchase-confirmations/manual`
+- changed manual matching to `findManualPurchaseConfirmationMatch(phone, storeId)`
+- filtered order, customer, and order item matching by the resolved `store_id`
+- inserted and updated manual `purchase_confirmations` with the resolved `store_id` instead of deriving store from a global match
 
-### High: LINE Latest Order Purchase Confirmation Is Global
+### High: LINE Latest Order Purchase Confirmation Is Global - Fixed 2026-06-02
 
 File: `backend/src/routes/purchaseConfirmations.js`
 
-`POST /api/purchase-confirmations/line/latest-order`:
-
-- finds customer by `line_user_id` without `store_id`
-- finds latest paid EBIKE order without `store_id`
-- calls `createPurchaseConfirmationForOrder(order.id)` without `{ storeId }`
+`POST /api/purchase-confirmations/line/latest-order` previously looked up the customer and latest order without store scope.
 
 Risk:
 
-- a LINE user id or phone reused across store channels can select another tenant's latest order
-- generated confirmation token may point to another tenant's order
+- a LINE user id or phone reused across store channels could select another tenant's latest order
+- generated confirmation token could point to another tenant's order
 
-Recommended fix:
+Fix completed:
 
-- resolve public store context
-- filter customer and latest order queries by `store_id`
-- call `createPurchaseConfirmationForOrder(order.id, pool, { storeId })`
+- added optional staff store context and public store context resolution to the latest-order route
+- filtered `line_user_id` customer lookup by `store_id`
+- filtered latest order lookup by `orders.store_id`
+- called `createPurchaseConfirmationForOrder(order.id, pool, { storeId })`
+- scoped token lookup and confirmation token update through the related order `store_id`
 
 ### High: LINE Workflow Purchase Confirmation Helper Is Global
 
@@ -226,11 +223,11 @@ Risk:
 - lower than authenticated direct id routes because a valid token is required
 - still fragile if token rows, order rows, or confirmation rows become inconsistent
 
-Recommended fix:
+Partial fix completed 2026-06-02:
 
-- include `store_id` in `fetchPurchaseConfirmationToken`
-- apply token row `store_id` to item queries and confirmation updates where possible
-- keep public token behavior intact
+- `fetchPurchaseConfirmationToken` now returns the related order `store_id` and joins customer rows within the same store
+- public token item lookup, confirmation lookup, insert, update, pending cancellation, and PDF path update now carry token row `store_id`
+- public token possession remains the access model; TODO: if a future bearer-token public flow is added, document and validate how that bearer token resolves store context
 
 ### Medium: Public Purchase Confirmation Submit Has Placeholder Bugs
 
@@ -246,10 +243,10 @@ Risk:
 - purchase confirmation submission or PDF path persistence may fail
 - not strictly a tenant leak by itself, but it blocks or corrupts the confirmation workflow
 
-Recommended fix:
+Fix completed 2026-06-02:
 
-- correct parameter counts
-- apply `store_id` predicates only when the corresponding parameter is passed
+- corrected public token submit `pdf_path` parameter count after adding the `store_id` predicate
+- manual submit `pdf_path` update now intentionally includes both `id` and `store_id` parameters
 
 ### Medium: Handover Auto Purchase Request Helper Lacks Store Scope
 

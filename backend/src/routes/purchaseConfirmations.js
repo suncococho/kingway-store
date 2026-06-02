@@ -1,10 +1,15 @@
 const crypto = require("crypto");
+const jwt = require("jsonwebtoken");
 const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { requireStoreFeature } = require("../middleware/storeFeature");
+const {
+  SOURCE,
+  createPublicStoreContextMiddleware
+} = require("../utils/publicStoreResolver");
 const { writePurchaseConfirmationPdf } = require("../services/pdfService");
 const config = require("../config");
 const purchaseConfirmationContent = require("../content/purchaseConfirmationContent.json");
@@ -23,6 +28,12 @@ const {
 } = require("../services/lineWorkflowService");
 
 const router = express.Router();
+const resolvePublicStoreContext = createPublicStoreContextMiddleware({
+  db: pool,
+  legacyFallbackMode: SOURCE.LEGACY_KINGWAY_FALLBACK,
+  legacyFallbackStoreId: 1,
+  legacyFallbackAllowUnverifiedStore: true
+});
 const storageRoot = path.join(__dirname, "..", "..", "storage");
 
 function buildPurchaseConfirmationPdfUrl(token) {
@@ -67,6 +78,43 @@ function stringifyUtf8SafeJson(value) {
 
 function toUtf8SafeText(value) {
   return Buffer.from(String(value || ""), "utf8").toString("utf8");
+}
+
+function getBearerToken(req) {
+  const authHeader = req.headers.authorization || "";
+  return authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+}
+
+function optionalStaffStoreContext(req, res, next) {
+  const token = getBearerToken(req);
+  if (!token) return next();
+
+  try {
+    const decoded = jwt.verify(token, config.jwtSecret);
+    if (decoded?.type === "platform_admin") {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const storeId = decoded.storeId ?? decoded.store_id ?? null;
+    if (!storeId) {
+      return next();
+    }
+
+    req.user = decoded;
+    req.user.role = String(req.user.role || "").toUpperCase().trim();
+    req.storeId = storeId;
+    req.store_id = storeId;
+    req.storeRole = decoded.storeRole ?? null;
+    req.store_role = req.storeRole;
+    return next();
+  } catch (error) {
+    return next();
+  }
+}
+
+function getPurchaseConfirmationStoreId(req) {
+  const resolved = Number(req.storeId || req.publicStoreContext?.storeId || 1);
+  return Number.isSafeInteger(resolved) && resolved > 0 ? resolved : 1;
 }
 
 function normalizePhoneForMatch(value) {
@@ -126,7 +174,7 @@ function normalizeManualPurchaseConfirmationPayload(body) {
   };
 }
 
-async function findManualPurchaseConfirmationMatch(phone) {
+async function findManualPurchaseConfirmationMatch(phone, storeId) {
   const normalizedPhone = normalizePhoneForMatch(phone);
   if (!normalizedPhone) {
     return { normalizedPhone, customer: null, order: null };
@@ -143,16 +191,20 @@ async function findManualPurchaseConfirmationMatch(phone) {
         COALESCE(o.customer_id, c.id) AS customerId,
         COALESCE(c.name, o.customer_name) AS customerName,
         COALESCE(c.phone, o.customer_phone) AS customerPhone,
+        o.store_id AS storeId,
         MAX(CASE WHEN oi.product_category_snapshot = 'EB' THEN 1 ELSE 0 END) AS hasEbike,
         MAX(CASE WHEN oi.product_category_snapshot IS NOT NULL THEN 1 ELSE 0 END) AS hasCategoryData
       FROM orders o
       LEFT JOIN customers c ON c.id = o.customer_id
+        AND c.store_id = o.store_id
       LEFT JOIN order_items oi ON oi.order_id = o.id
-      WHERE (
+        AND oi.store_id = o.store_id
+      WHERE o.store_id = ?
+        AND (
           (${normalizedCustomerPhone}) = ?
           OR (${normalizedOrderCustomerPhone}) = ?
         )
-      GROUP BY o.id, o.order_no, o.customer_id, c.id, c.name, c.phone, o.customer_name, o.customer_phone, o.created_at
+      GROUP BY o.id, o.order_no, o.customer_id, c.id, c.name, c.phone, o.customer_name, o.customer_phone, o.store_id, o.created_at
       ORDER BY
         CASE
           WHEN MAX(CASE WHEN oi.product_category_snapshot = 'EB' THEN 1 ELSE 0 END) = 1 THEN 0
@@ -163,14 +215,14 @@ async function findManualPurchaseConfirmationMatch(phone) {
         o.id DESC
       LIMIT 1
     `,
-    [normalizedPhone, normalizedPhone]
+    [storeId, normalizedPhone, normalizedPhone]
   );
 
   if (orders[0]) {
     return {
       normalizedPhone,
       customer: orders[0].customerId
-        ? { id: orders[0].customerId, name: orders[0].customerName, phone: orders[0].customerPhone }
+        ? { id: orders[0].customerId, name: orders[0].customerName, phone: orders[0].customerPhone, storeId: orders[0].storeId }
         : null,
       order: orders[0]
     };
@@ -179,13 +231,14 @@ async function findManualPurchaseConfirmationMatch(phone) {
   const normalizedStandaloneCustomerPhone = sqlNormalizedPhone("phone");
   const [customers] = await pool.query(
     `
-      SELECT id, name, phone
+      SELECT id, name, phone, store_id AS storeId
       FROM customers
-      WHERE (${normalizedStandaloneCustomerPhone}) = ?
+      WHERE store_id = ?
+        AND (${normalizedStandaloneCustomerPhone}) = ?
       ORDER BY updated_at DESC, id DESC
       LIMIT 1
     `,
-    [normalizedPhone]
+    [storeId, normalizedPhone]
   );
 
   return {
@@ -234,8 +287,9 @@ router.get("/public/:token", async (req, res, next) => {
         SELECT product_name_snapshot AS productName, quantity, unit_price AS unitPrice, line_total AS lineTotal
         FROM order_items
         WHERE order_id = ?
+          AND store_id = ?
       `,
-      [tokenRow.orderId]
+      [tokenRow.orderId, tokenRow.storeId]
     );
 
     const [confirmationRows] = await pool.query(
@@ -252,9 +306,10 @@ router.get("/public/:token", async (req, res, next) => {
           html_snapshot AS htmlSnapshot
         FROM purchase_confirmations
         WHERE token = ?
+          AND store_id = ?
         LIMIT 1
       `,
-      [req.params.token]
+      [req.params.token, tokenRow.storeId]
     );
 
     const existing = confirmationRows[0] || null;
@@ -422,9 +477,10 @@ router.post("/public/:token", async (req, res, next) => {
           SELECT id
           FROM purchase_confirmations
           WHERE token = ?
+            AND store_id = ?
           LIMIT 1
         `,
-        [req.params.token]
+        [req.params.token, tokenRow.storeId]
       );
 
       let confirmationId;
@@ -447,6 +503,7 @@ router.post("/public/:token", async (req, res, next) => {
               submitted_at = NOW(),
               status = 'COMPLETED'
             WHERE id = ?
+              AND store_id = ?
           `,
           [
             String(buyerName).trim(),
@@ -457,7 +514,8 @@ router.post("/public/:token", async (req, res, next) => {
             signatureData,
             snapshot,
             tokenRow.lineUserId || null,
-            confirmationId
+            confirmationId,
+            tokenRow.storeId
           ]
         );
       } else {
@@ -478,9 +536,10 @@ router.post("/public/:token", async (req, res, next) => {
               signature_data,
               html_snapshot,
               confirmed_by_line_user_id,
-              submitted_at
+              submitted_at,
+              store_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, 1, 1, ?, ?, ?, NOW())
+            VALUES (?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, 1, 1, ?, ?, ?, NOW(), ?)
           `,
           [
             req.params.token,
@@ -493,7 +552,8 @@ router.post("/public/:token", async (req, res, next) => {
             JSON.stringify(confirmedStaffExplanations),
             signatureData,
             snapshot,
-            tokenRow.lineUserId || null
+            tokenRow.lineUserId || null,
+            tokenRow.storeId
           ]
         );
         confirmationId = insertResult.insertId;
@@ -515,8 +575,9 @@ router.post("/public/:token", async (req, res, next) => {
           WHERE order_id = ?
             AND id <> ?
             AND status = 'PENDING'
+            AND store_id = ?
         `,
-        [tokenRow.orderId, confirmationId]
+        [tokenRow.orderId, confirmationId, tokenRow.storeId]
       );
 
       return {
@@ -552,7 +613,7 @@ router.post("/public/:token", async (req, res, next) => {
         WHERE id = ?
             AND store_id = ?
       `,
-      [pdf.publicPath, confirmation.id]
+      [pdf.publicPath, confirmation.id, tokenRow.storeId]
     );
 
     await logKpi(null, "PURCHASE_CONFIRMATION_COMPLETED", "PURCHASE_CONFIRMATION", confirmation.id, 5);
@@ -582,9 +643,10 @@ router.post("/public/:token", async (req, res, next) => {
 });
 
 
-router.post("/line/latest-order", async (req, res, next) => {
+router.post("/line/latest-order", optionalStaffStoreContext, resolvePublicStoreContext, async (req, res, next) => {
   try {
     const crypto = require("crypto");
+    const storeId = getPurchaseConfirmationStoreId(req);
     const lineUserId = String(req.body.lineUserId || "").trim();
     const displayName = String(req.body.displayName || "").trim();
 
@@ -597,9 +659,10 @@ router.post("/line/latest-order", async (req, res, next) => {
         SELECT id, name, phone, line_user_id AS lineUserId
         FROM customers
         WHERE line_user_id = ?
+          AND store_id = ?
         LIMIT 1
       `,
-      [lineUserId]
+      [lineUserId, storeId]
     );
 
     if (!customer || !customer.phone) {
@@ -608,8 +671,8 @@ router.post("/line/latest-order", async (req, res, next) => {
 
     if (displayName && (!customer.name || customer.name === "LINE 客戶" || customer.name === "LINE ??")) {
       await pool.query(
-        "UPDATE customers SET name = ? WHERE id = ?",
-        [displayName, customer.id]
+        "UPDATE customers SET name = ? WHERE id = ? AND store_id = ?",
+        [displayName, customer.id, storeId]
       );
       customer.name = displayName;
     }
@@ -618,31 +681,33 @@ router.post("/line/latest-order", async (req, res, next) => {
       `
         SELECT id, customer_id AS customerId, customer_phone AS customerPhone
         FROM orders
-        WHERE customer_id = ?
-           OR customer_phone = ?
+        WHERE store_id = ?
+          AND (customer_id = ? OR customer_phone = ?)
         ORDER BY id DESC
         LIMIT 1
       `,
-      [customer.id, customer.phone]
+      [storeId, customer.id, customer.phone]
     );
 
     if (!order) {
       return res.status(404).json({ message: "尚未找到可建立購買確認書的訂單。" });
     }
 
-    await createPurchaseConfirmationForOrder(order.id);
+    await createPurchaseConfirmationForOrder(order.id, pool, { storeId });
 
     let [[tokenRow]] = await pool.query(
       `
-        SELECT token
-        FROM purchase_confirmation_tokens
-        WHERE order_id = ?
-          AND used_at IS NULL
-          AND expires_at >= NOW()
-        ORDER BY id DESC
+        SELECT pct.token
+        FROM purchase_confirmation_tokens pct
+        INNER JOIN orders o ON o.id = pct.order_id
+        WHERE pct.order_id = ?
+          AND o.store_id = ?
+          AND pct.used_at IS NULL
+          AND pct.expires_at >= NOW()
+        ORDER BY pct.id DESC
         LIMIT 1
       `,
-      [order.id]
+      [order.id, storeId]
     );
 
     if (!tokenRow?.token) {
@@ -661,10 +726,11 @@ router.post("/line/latest-order", async (req, res, next) => {
           UPDATE purchase_confirmations
           SET token = ?
           WHERE order_id = ?
+            AND store_id = ?
           ORDER BY id DESC
           LIMIT 1
         `,
-        [token, order.id]
+        [token, order.id, storeId]
       );
 
       tokenRow = { token };
@@ -683,7 +749,7 @@ router.post("/line/latest-order", async (req, res, next) => {
 
 
 
-router.post("/manual", async (req, res, next) => {
+router.post("/manual", optionalStaffStoreContext, resolvePublicStoreContext, async (req, res, next) => {
   try {
     const {
       buyerName,
@@ -726,14 +792,13 @@ router.post("/manual", async (req, res, next) => {
       throw createError(purchaseConfirmationContent.errors.finalConfirmationAccepted, 400);
     }
 
-    const match = await findManualPurchaseConfirmationMatch(buyerPhone);
+    const storeId = getPurchaseConfirmationStoreId(req);
+    const match = await findManualPurchaseConfirmationMatch(buyerPhone, storeId);
     const matchedOrder = match.order;
     const matchedCustomer = match.customer;
     const matchedOrderNo = matchedOrder?.orderNo || null;
     const matchedCustomerName = matchedCustomer?.name || buyerName;
     const matchedCustomerPhone = matchedCustomer?.phone || buyerPhone;
-      // PURCHASE_CONFIRM_MANUAL_STORE_ID_V1
-      const storeId = Number(matchedOrder?.storeId || matchedCustomer?.storeId || 1);
 
     const submittedAt = new Date().toISOString();
     const snapshot = toUtf8SafeText(buildPurchaseConfirmationSnapshot({
@@ -765,7 +830,7 @@ router.post("/manual", async (req, res, next) => {
           signature_data,
           html_snapshot,
           submitted_at,
-            store_id
+          store_id
         )
         VALUES (NULL, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, 1, 1, ?, ?, NOW(), ?)
       `,
@@ -779,7 +844,7 @@ router.post("/manual", async (req, res, next) => {
         stringifyUtf8SafeJson(confirmedStaffExplanations),
         signatureData,
         snapshot,
-          storeId
+        storeId
       ]
     );
 
@@ -800,6 +865,7 @@ router.post("/manual", async (req, res, next) => {
         UPDATE purchase_confirmations
         SET pdf_path = ?
         WHERE id = ?
+          AND store_id = ?
       `,
       [pdf.publicPath, insertResult.insertId, storeId]
     );
@@ -1020,13 +1086,14 @@ async function fetchPurchaseConfirmationToken(token) {
         pct.customer_id AS customerId,
         pct.expires_at AS expiresAt,
         pct.used_at AS usedAt,
+        o.store_id AS storeId,
         c.name AS customerName,
         c.phone AS customerPhone,
         c.line_user_id AS lineUserId,
         o.order_no AS orderNo
       FROM purchase_confirmation_tokens pct
-      INNER JOIN customers c ON c.id = pct.customer_id
       INNER JOIN orders o ON o.id = pct.order_id
+      INNER JOIN customers c ON c.id = pct.customer_id AND c.store_id = o.store_id
       WHERE pct.token = ?
       LIMIT 1
     `,
