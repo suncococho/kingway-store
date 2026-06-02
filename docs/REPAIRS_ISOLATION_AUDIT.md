@@ -286,7 +286,7 @@ Residual risk:
 - LINE repair reservation can still fall back to store `1` when context is ambiguous, by design.
 - Other HIGH findings in postback approve/reject and estimate approval flows are still open in this audit.
 
-### HIGH: LINE repair approval / estimate actions ignore store scope
+### HIGH: LINE repair approval / estimate actions ignore store scope - Fixed 2026-06-02
 
 Files:
 
@@ -294,10 +294,20 @@ Files:
 - `backend/src/services/lineWorkflowService.js:3757-3812`
 - `backend/src/services/lineWorkflowService.js:4382-4467`
 
-Risk:
+Previous state:
 
-- Another tenant's repair id can be mutated by LINE postback if known.
-- `postbackStoreId` is currently unused for repair actions.
+- Another tenant's repair id could be mutated by LINE postback if known.
+- `postbackStoreId` was parsed but not used for repair actions.
+
+Fix completed:
+
+- LINE postbacks now resolve store context before reservation and estimate repair updates.
+- Reservation and estimate customer-response updates now require matching `repair_orders.id + store_id` when postback scope is supplied.
+- Cross-tenant postbacks now resolve to 0 rows or safe failure instead of mutating another tenant's repair row.
+
+Residual risk:
+
+- linked repair order creation remains a separate HIGH finding and was not changed in this step.
 
 ### HIGH: Estimate approval can create linked orders without explicit `store_id`
 

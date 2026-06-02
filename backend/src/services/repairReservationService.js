@@ -17,6 +17,11 @@ function isLineCustomerType(value) {
   return normalizeCustomerType(value) === "LINE";
 }
 
+function normalizeStoreId(value) {
+  const normalized = Number(value || 0);
+  return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : null;
+}
+
 function buildGroupConfirmedBy(source, staffId, actorLabel) {
   if (actorLabel) {
     return actorLabel;
@@ -44,6 +49,7 @@ async function applyRepairReservationDecision(
   connection = pool,
   options = {}
 ) {
+  const scopedStoreId = normalizeStoreId(options.storeId);
   const [rows] = await connection.query(
     `
       SELECT
@@ -56,11 +62,12 @@ async function applyRepairReservationDecision(
         COALESCE(ro.customer_type, c.customer_type, 'LINE') AS customerType,
         c.line_user_id AS lineUserId
       FROM repair_orders ro
-      INNER JOIN customers c ON c.id = ro.customer_id
+      INNER JOIN customers c ON c.id = ro.customer_id AND (? IS NULL OR c.store_id = ?)
       WHERE ro.id = ?
+        AND (? IS NULL OR ro.store_id = ?)
       LIMIT 1
     `,
-    [repairId]
+    [scopedStoreId, scopedStoreId, repairId, scopedStoreId, scopedStoreId]
   );
 
   if (!rows[0]) {
@@ -90,8 +97,9 @@ async function applyRepairReservationDecision(
             group_confirmed_at = NOW(),
             group_confirmed_by = ?
         WHERE id = ?
+          AND (? IS NULL OR store_id = ?)
       `,
-      [nextStatus, nextReservationStatus, approved ? 1 : 0, groupConfirmedBy, repairId]
+      [nextStatus, nextReservationStatus, approved ? 1 : 0, groupConfirmedBy, repairId, scopedStoreId, scopedStoreId]
     );
 
     await connection.query(
@@ -117,8 +125,9 @@ async function applyRepairReservationDecision(
             group_confirmed_at = COALESCE(group_confirmed_at, NOW()),
             group_confirmed_by = COALESCE(group_confirmed_by, ?)
         WHERE id = ?
+          AND (? IS NULL OR store_id = ?)
       `,
-      [approved ? 1 : 0, groupConfirmedBy, repairId]
+      [approved ? 1 : 0, groupConfirmedBy, repairId, scopedStoreId, scopedStoreId]
     );
   }
 

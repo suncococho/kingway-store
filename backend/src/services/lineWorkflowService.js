@@ -3774,22 +3774,25 @@ async function backfillApprovedRepairOrders(limit = 50, connection = pool) {
     : run(connection);
 }
 
-async function applyRepairEstimateCustomerResponse(repairId, approved, staffId = null, connection = pool, source = "line_postback") {
+async function applyRepairEstimateCustomerResponse(repairId, approved, staffId = null, connection = pool, source = "line_postback", options = {}) {
+  const scopedStoreId = normalizeStoreId(options.storeId);
   const run = async (tx) => {
     const repairColumns = await getRepairOrdersTableColumns(tx);
     const [repairRows] = await tx.query(
       `
         SELECT
           id,
+          store_id AS storeId,
           status,
           ${hasColumn(repairColumns, "quote_status") ? "quote_status" : "'pending'"} AS quoteStatus,
           customer_estimate_response AS customerEstimateResponse
         FROM repair_orders
         WHERE id = ?
+          AND (? IS NULL OR store_id = ?)
         LIMIT 1
         FOR UPDATE
       `,
-      [repairId]
+      [repairId, scopedStoreId, scopedStoreId]
     );
 
     const repair = repairRows[0];
@@ -3825,9 +3828,9 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
       if (approved && hasColumn(repairColumns, "customer_confirmed_at")) {
         updateSql.push("customer_confirmed_at = COALESCE(customer_confirmed_at, NOW())");
       }
-      updateParams.push(repairId);
+      updateParams.push(repairId, scopedStoreId, scopedStoreId);
       await tx.query(
-        `UPDATE repair_orders SET ${updateSql.join(", ")} WHERE id = ?`,
+        "UPDATE repair_orders SET " + updateSql.join(", ") + " WHERE id = ? AND (? IS NULL OR store_id = ?)",
         updateParams
       );
     }
@@ -4458,8 +4461,16 @@ async function handleLinePostback(event) {
 
   if (action === "repair_reservation_approve" || action === "repair_reservation_reject") {
     const approved = action === "repair_reservation_approve";
+    const reservationPostbackStoreContext = await resolveLineWorkflowStoreContext({
+      storeId: postbackStoreId || staffStoreId,
+      lineUserId: sourceLineUserId,
+      staffId,
+      connection: pool,
+      reason: "line_repair_reservation_postback"
+    });
     const result = await applyRepairReservationDecision(id, approved, staffId, "line_postback", pool, {
-      logWorkflowEvent
+      logWorkflowEvent,
+      storeId: reservationPostbackStoreContext.storeId
     });
     if (!result) {
       return true;
@@ -4485,7 +4496,16 @@ async function handleLinePostback(event) {
 
   if (action === "repair_estimate_approve" || action === "repair_estimate_reject") {
     const approved = action === "repair_estimate_approve";
-    await applyRepairEstimateCustomerResponse(id, approved, staffId, pool, "line_postback");
+    const estimatePostbackStoreContext = await resolveLineWorkflowStoreContext({
+      storeId: postbackStoreId || staffStoreId,
+      lineUserId: sourceLineUserId,
+      staffId,
+      connection: pool,
+      reason: "line_repair_estimate_postback"
+    });
+    await applyRepairEstimateCustomerResponse(id, approved, staffId, pool, "line_postback", {
+      storeId: estimatePostbackStoreContext.storeId
+    });
     if (event.replyToken) {
       await replyToLine(
         event.replyToken,
