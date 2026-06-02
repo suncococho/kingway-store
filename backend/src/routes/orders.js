@@ -781,10 +781,11 @@ router.post("/", requirePosFeature, async (req, res, next) => {
                 order_id = ?
             WHERE code IN (?)
               AND customer_id = ?
+              AND store_id = ?
               AND is_used = 0
               AND status IN ('issued', 'approved')
           `,
-          [orderResult.insertId, couponCodes, resolvedCustomerId]
+          [orderResult.insertId, couponCodes, resolvedCustomerId, storeId]
         );
       }
 

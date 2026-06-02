@@ -292,35 +292,27 @@ Recommended fix:
 - carry store context through LINE workflow sessions and postback payloads
 - derive and validate order `store_id` before updates
 
-### Low: LINE Order Coupon Handling Is Not Store-Scoped
+### High: Coupon Flows Are Tenant-Scoped - Fixed 2026-06-02
 
-File: `backend/src/routes/lineOrder.js`
+Files:
 
-The core LINE order create flow is store-scoped, but new-friend coupon lookup/insert in that route does not apply `store_id`.
+- `backend/src/routes/lineOrder.js`
+- `backend/src/routes/coupons.js`
+- `backend/src/routes/lineGoogleReview.js`
+- `backend/src/services/lineWorkflowService.js`
+- `backend/src/routes/orders.js`
 
-Risk:
+The coupon flows now scope reads and writes by the resolved tenant store:
 
-- order creation isolation is mostly intact
-- coupon eligibility or issuance can cross tenant boundaries
-
-Recommended fix:
-
-- apply `store_id` to coupon lookup/insert if the schema supports it
-
-### Low: POS Coupon Update Needs Store Predicate
-
-File: `backend/src/routes/orders.js`
-
-POS order creation updates coupons by code/customer/status/category but not by `store_id`.
+- LINE new-friend coupon lookup and insert in `lineOrder.js` use `store_id`
+- staff coupon listing, issue, Google review approval, rejection, and cancel in `coupons.js` use `store_id`
+- LINE Google review request and customer lookups in `lineGoogleReview.js` use the customer store
+- LINE workflow new-friend binding and Google review coupon handling in `lineWorkflowService.js` use the customer or resolved store
+- POS coupon application during order creation in `orders.js` now requires `store_id`
 
 Risk:
 
-- low because the customer was selected in store scope
-- better to include `store_id` for defense-in-depth
-
-Recommended fix:
-
-- add `store_id = ?` to coupon update when using coupons during POS order creation
+- reduced to tenant-scoped behavior for the coupon paths covered in this task
 
 ## Direct Questions Answered
 
@@ -330,8 +322,8 @@ Recommended fix:
 4. Order update `PATCH /api/orders/:id`: store-scoped; no immediate issue found.
 5. Order delete: soft delete and restore are store-scoped; permanent dependent cleanup should add child `store_id` predicates.
 6. Purchase confirmation PDF: public token PDF is bearer-token based; manual and LINE latest-order matching are higher risk than token PDF itself.
-7. LINE order flow: `lineOrder.js` core order creation is store-scoped; LINE workflow purchase-confirmation helpers are not.
-8. POS order creation: core order creation is store-scoped; coupon update should add `store_id` defensively.
+7. LINE order flow: `lineOrder.js` core order creation and new-friend coupon flow are store-scoped; LINE workflow coupon helpers now follow the resolved store.
+8. POS order creation: core order creation and coupon update are store-scoped.
 
 ## Recommended Fix Order
 
@@ -339,7 +331,7 @@ Recommended fix:
 2. Fix `purchaseConfirmations.js` manual matching, LINE latest-order matching, and placeholder bugs.
 3. Fix `lineWorkflowService.js` purchase confirmation creation and order-related postbacks with store context.
 4. Scope `app.js` customer status order read/update endpoints or move them behind store middleware.
-5. Completed in `backend/src/routes/orders.js`: permanent delete child cleanup and handover auto supplier helper now enforce `store_id` checks; POS coupon update remains for a separate pass.
+5. Completed in `backend/src/routes/lineOrder.js`, `backend/src/routes/coupons.js`, `backend/src/routes/lineGoogleReview.js`, `backend/src/services/lineWorkflowService.js`, and `backend/src/routes/orders.js`: coupon flows now enforce store scope.
 6. Add store 2 test data and API regression checks for direct id/order number access, purchase confirmation matching, LINE purchase confirmation, POS creation, and customer status updates.
 
 ## Files Likely Needing Code Changes

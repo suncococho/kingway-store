@@ -18,7 +18,7 @@ router.get("/customer", async (req, res, next) => {
     if (!lineUserId) return res.json({ customer: null });
 
     const [rows] = await pool.query(
-      `SELECT id, name, phone, line_user_id AS lineUserId
+      `SELECT id, name, phone, line_user_id AS lineUserId, store_id AS storeId
        FROM customers
        WHERE line_user_id = ?
          AND COALESCE(crm_stage, '') <> 'deleted'
@@ -47,7 +47,7 @@ router.post("/request", async (req, res, next) => {
     if (!lineUserId) return res.status(400).json({ message: "缺少 LINE 使用者資料" });
 
     const [customers] = await pool.query(
-      `SELECT id, name, phone, line_user_id AS lineUserId
+      `SELECT id, name, phone, line_user_id AS lineUserId, store_id AS storeId
        FROM customers
        WHERE line_user_id = ?
          AND COALESCE(crm_stage, '') <> 'deleted'
@@ -57,15 +57,17 @@ router.post("/request", async (req, res, next) => {
 
     const customer = customers[0];
     if (!customer) return res.status(404).json({ message: "尚未找到綁定客戶" });
+    const storeId = Number(customer.storeId || 1);
 
     const [existing] = await pool.query(
       `SELECT id, code, status, is_used AS isUsed, used_at AS usedAt, order_id AS orderId
        FROM coupons
        WHERE customer_id = ?
          AND coupon_type = 'google_review'
+         AND store_id = ?
        ORDER BY id DESC
        LIMIT 1`,
-      [customer.id]
+      [customer.id, storeId]
     );
 
     if (existing[0]) {
@@ -110,11 +112,12 @@ router.post("/request", async (req, res, next) => {
     const [latestOrder] = await pool.query(
       `SELECT id
        FROM orders
-       WHERE customer_id = ?
-          OR customer_phone = ?
+       WHERE (customer_id = ?
+          OR customer_phone = ?)
+         AND store_id = ?
        ORDER BY id DESC
        LIMIT 1`,
-      [customer.id, customer.phone || ""]
+      [customer.id, customer.phone || "", storeId]
     );
 
     const orderId = latestOrder[0]?.id || null;
@@ -122,9 +125,9 @@ router.post("/request", async (req, res, next) => {
 
     const [result] = await pool.query(
       `INSERT INTO coupons
-       (code, coupon_type, amount, customer_id, order_id, status, eligible_category)
-       VALUES (?, 'google_review', 1500, ?, ?, 'pending_approval', 'EBIKE')`,
-      [code, customer.id, orderId]
+       (store_id, code, coupon_type, amount, customer_id, order_id, status, eligible_category)
+       VALUES (?, ?, 'google_review', 1500, ?, ?, 'pending_approval', 'EBIKE')`,
+      [storeId, code, customer.id, orderId]
     );
 
     const deliveryResult = await sendToGroupsWithResult(["admin", "staff", "daily"], [

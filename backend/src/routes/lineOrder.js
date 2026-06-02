@@ -209,10 +209,12 @@ router.post("/create", async (req, res, next) => {
       let [couponRows] = await tx.query(
         `SELECT id, code, amount, status
          FROM coupons
-         WHERE customer_id = ? AND coupon_type = 'new_friend'
+         WHERE customer_id = ?
+           AND coupon_type = 'new_friend'
+           AND store_id = ?
          ORDER BY id DESC
          LIMIT 1`,
-        [customer.id]
+        [customer.id, storeId]
       );
 
       const newFriendCouponEnabled =
@@ -224,9 +226,9 @@ router.post("/create", async (req, res, next) => {
       if (newFriendCouponEnabled && !coupon) {
         const code = `NEW${customer.id}${Date.now().toString().slice(-5)}`;
         const [couponResult] = await tx.query(
-          `INSERT INTO coupons (code, coupon_type, amount, customer_id, status, eligible_category)
-           VALUES (?, 'new_friend', 500, ?, 'issued', 'EBIKE')`,
-          [code, customer.id]
+          `INSERT INTO coupons (store_id, code, coupon_type, amount, customer_id, status, eligible_category)
+           VALUES (?, ?, 'new_friend', 500, ?, 'issued', 'EBIKE')`,
+          [storeId, code, customer.id]
         );
         coupon = { id: couponResult.insertId, code, amount: 500, status: "issued" };
       }

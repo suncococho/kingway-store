@@ -290,15 +290,24 @@ async function claimLineWebhookEvent(event, routePath, connection = pool) {
   }
 }
 
-async function findOrCreateLineCustomer(lineUserId, fallbackName = "LINE 客戶") {
+async function findOrCreateLineCustomer(lineUserId, fallbackName = "LINE 客戶", storeId = null) {
+  const storeContext = await resolveLineWorkflowStoreContext({
+    storeId,
+    lineUserId,
+    connection: pool,
+    reason: "find_or_create_line_customer"
+  });
+  const resolvedStoreId = storeContext.storeId;
+
   const [existing] = await pool.query(
     `
       SELECT *
       FROM customers
       WHERE line_user_id = ?
+        AND store_id = ?
       LIMIT 1
     `,
-    [lineUserId]
+    [lineUserId, resolvedStoreId]
   );
 
   if (existing[0]) {
@@ -307,10 +316,10 @@ async function findOrCreateLineCustomer(lineUserId, fallbackName = "LINE 客戶"
 
   const [result] = await pool.query(
     `
-      INSERT INTO customers (name, line_user_id, line_display_name, crm_stage, last_contact_at)
-      VALUES (?, ?, ?, 'new_line_friend', NOW())
+      INSERT INTO customers (name, line_user_id, line_display_name, crm_stage, last_contact_at, store_id)
+      VALUES (?, ?, ?, 'new_line_friend', NOW(), ?)
     `,
-    [fallbackName, lineUserId, fallbackName]
+    [fallbackName, lineUserId, fallbackName, resolvedStoreId]
   );
 
   await pool.query(
@@ -325,34 +334,44 @@ async function findOrCreateLineCustomer(lineUserId, fallbackName = "LINE 客戶"
     id: result.insertId,
     name: fallbackName,
     line_user_id: lineUserId,
-    phone: null
+    phone: null,
+    store_id: resolvedStoreId,
+    storeId: resolvedStoreId
   };
 }
 
 async function bindPhoneAndIssueNewFriendCoupon(lineUserId, phone) {
   return withTransaction(async (connection) => {
+    const storeContext = await resolveLineWorkflowStoreContext({
+      lineUserId,
+      connection,
+      reason: "new_friend_coupon_binding"
+    });
+    const storeId = storeContext.storeId;
+
     const [matches] = await connection.query(
       `
-        SELECT id, name, phone, line_user_id AS lineUserId
+        SELECT id, name, phone, line_user_id AS lineUserId, store_id AS storeId
         FROM customers
-        WHERE line_user_id = ? OR phone = ?
+        WHERE (line_user_id = ? OR phone = ?)
+          AND store_id = ?
         ORDER BY line_user_id = ? DESC, id DESC
         LIMIT 1
         FOR UPDATE
       `,
-      [lineUserId, phone, lineUserId]
+      [lineUserId, phone, storeId, lineUserId]
     );
 
     let customer = matches[0];
     if (!customer) {
       const [inserted] = await connection.query(
         `
-          INSERT INTO customers (name, phone, line_user_id, line_display_name, crm_stage, last_contact_at)
-          VALUES ('LINE 客戶', ?, ?, 'LINE 客戶', 'phone_bound', NOW())
+          INSERT INTO customers (name, phone, line_user_id, line_display_name, crm_stage, last_contact_at, store_id)
+          VALUES ('LINE 客戶', ?, ?, 'LINE 客戶', 'phone_bound', NOW(), ?)
         `,
-        [phone, lineUserId]
+        [phone, lineUserId, storeId]
       );
-      customer = { id: inserted.insertId, name: "LINE 客戶", phone, lineUserId };
+      customer = { id: inserted.insertId, name: "LINE 客戶", phone, lineUserId, storeId, store_id: storeId };
     } else {
       const updates = [];
       const params = [];
@@ -375,9 +394,10 @@ async function bindPhoneAndIssueNewFriendCoupon(lineUserId, phone) {
         FROM coupons
         WHERE customer_id = ?
           AND coupon_type = 'new_friend'
+          AND store_id = ?
         LIMIT 1
       `,
-      [customer.id]
+      [customer.id, storeId]
     );
 
     let coupon = duplicate[0] || null;
@@ -385,10 +405,10 @@ async function bindPhoneAndIssueNewFriendCoupon(lineUserId, phone) {
       const code = makeCode("NF");
       const [couponResult] = await connection.query(
         `
-          INSERT INTO coupons (code, coupon_type, amount, customer_id, status, eligible_category)
-          VALUES (?, 'new_friend', 500, ?, 'issued', 'EB')
+          INSERT INTO coupons (store_id, code, coupon_type, amount, customer_id, status, eligible_category)
+          VALUES (?, ?, 'new_friend', 500, ?, 'issued', 'EB')
         `,
-        [code, customer.id]
+        [storeId, code, customer.id]
       );
       coupon = { id: couponResult.insertId, code };
     }
@@ -4188,10 +4208,11 @@ async function handleCustomerMessageEvent(event) {
         FROM coupons
         WHERE customer_id = ?
           AND coupon_type = 'new_friend'
+          AND store_id = ?
         ORDER BY id DESC
         LIMIT 1
       `,
-      [customer.id]
+      [customer.id, customerStoreId]
     );
 
     if (event.replyToken) {
@@ -4214,11 +4235,12 @@ async function handleCustomerMessageEvent(event) {
         FROM coupons
         WHERE customer_id = ?
           AND coupon_type = 'google_review'
+          AND store_id = ?
           AND status IN ('pending_approval', 'issued')
         ORDER BY id DESC
         LIMIT 1
       `,
-      [customer.id]
+      [customer.id, customerStoreId]
     );
 
     if (existingCoupons[0]) {
@@ -4241,10 +4263,10 @@ async function handleCustomerMessageEvent(event) {
     const code = makeCode("GR");
     const [result] = await pool.query(
       `
-        INSERT INTO coupons (code, coupon_type, amount, customer_id, status, eligible_category)
-          VALUES (?, 'google_review', 1500, ?, 'pending_approval', 'EB')
+        INSERT INTO coupons (store_id, code, coupon_type, amount, customer_id, status, eligible_category)
+          VALUES (?, ?, 'google_review', 1500, ?, 'pending_approval', 'EB')
       `,
-      [code, customer.id]
+      [customerStoreId, code, customer.id]
     );
 
     await sendToGroups(["admin", "staff"], [
@@ -4488,15 +4510,24 @@ async function handleLinePostback(event) {
 
   if (action === "google_review_approve" || action === "google_review_reject") {
     const approved = action === "google_review_approve";
+    const googleReviewStoreContext = await resolveLineWorkflowStoreContext({
+      storeId: staffStoreId || postbackStoreId,
+      staffId,
+      connection: pool,
+      reason: "google_review_postback"
+    });
+    const googleReviewStoreId = googleReviewStoreContext.storeId;
     const [rows] = await pool.query(
       `
         SELECT cp.id, cp.code, cp.amount, cp.order_id AS orderId, cp.customer_id AS customerId, c.line_user_id AS lineUserId
         FROM coupons cp
-        INNER JOIN customers c ON c.id = cp.customer_id
-        WHERE cp.id = ? AND cp.coupon_type = 'google_review'
+        INNER JOIN customers c ON c.id = cp.customer_id AND c.store_id = ?
+        WHERE cp.id = ?
+          AND cp.coupon_type = 'google_review'
+          AND cp.store_id = ?
         LIMIT 1
       `,
-      [id]
+      [googleReviewStoreId, id, googleReviewStoreId]
     );
 
     if (!rows[0]) {
@@ -4512,6 +4543,7 @@ async function handleLinePostback(event) {
             rejected_at = ?,
             rejection_reason = ?
         WHERE id = ?
+          AND store_id = ?
       `,
       [
         approved ? "issued" : "rejected",
@@ -4519,7 +4551,8 @@ async function handleLinePostback(event) {
         approved ? new Date() : null,
         approved ? null : new Date(),
         approved ? null : "內部群組審核拒絕",
-        id
+        id,
+        googleReviewStoreId
       ]
     );
 
@@ -4545,8 +4578,9 @@ async function handleLinePostback(event) {
               total_amount = GREATEST(total_amount - ?, 0),
               unpaid_balance = GREATEST(unpaid_balance - ?, 0)
           WHERE id = ?
+            AND store_id = ?
         `,
-        [amount, amount, amount, rows[0].orderId]
+        [amount, amount, amount, rows[0].orderId, googleReviewStoreId]
       );
 
       await pool.query(
@@ -4556,8 +4590,9 @@ async function handleLinePostback(event) {
               is_used = 1,
               used_at = NOW()
           WHERE id = ?
+            AND store_id = ?
         `,
-        [id]
+        [id, googleReviewStoreId]
       );
 
       await pool.query(
@@ -4567,8 +4602,9 @@ async function handleLinePostback(event) {
               is_used = 1,
               used_at = NOW()
           WHERE id = ?
+            AND store_id = ?
         `,
-        [id]
+        [id, googleReviewStoreId]
       );
 
       await logWorkflowEvent("google_review_discount_applied", "ORDER", rows[0].orderId, {
