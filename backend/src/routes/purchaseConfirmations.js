@@ -8,7 +8,8 @@ const { authenticate, authorize, requireStoreScope } = require("../middleware/au
 const { requireStoreFeature } = require("../middleware/storeFeature");
 const {
   SOURCE,
-  createPublicStoreContextMiddleware
+  createPublicStoreContextMiddleware,
+  resolvePublicStoreContext: resolvePublicStoreContextHelper
 } = require("../utils/publicStoreResolver");
 const {
   PURCHASE_CONFIRMATION_PDF_PUBLIC_PREFIX,
@@ -39,6 +40,55 @@ const resolvePublicStoreContext = createPublicStoreContextMiddleware({
 });
 const storageRoot = path.join(__dirname, "..", "..", "storage");
 const PURCHASE_CONFIRMATION_DOWNLOAD_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7;
+
+function getRequestedPublicStoreCode(req) {
+  return String(req.query?.store || req.query?.storeCode || req.query?.store_code || "").trim();
+}
+
+function appendStoreQuery(url, storeCode) {
+  const normalizedUrl = String(url || "").trim();
+  const normalizedStoreCode = String(storeCode || "").trim();
+  if (!normalizedUrl || !normalizedStoreCode) {
+    return normalizedUrl;
+  }
+
+  const separator = normalizedUrl.includes("?") ? "&" : "?";
+  return `${normalizedUrl}${separator}store=${encodeURIComponent(normalizedStoreCode)}`;
+}
+
+async function resolveRequestedPublicStoreContext(req) {
+  const requestedStoreCode = getRequestedPublicStoreCode(req);
+  if (!requestedStoreCode) {
+    return null;
+  }
+
+  return resolvePublicStoreContextHelper(req, {
+    db: pool,
+    allowQueryStoreCode: true,
+    legacyFallbackMode: null,
+    logResolved: false,
+    logUnresolved: false,
+    purpose: "purchase_confirmation_public"
+  });
+}
+
+async function assertPurchaseConfirmationStoreMatch(req, tokenRow) {
+  const requestedStoreCode = getRequestedPublicStoreCode(req);
+  if (!requestedStoreCode) {
+    return null;
+  }
+
+  const storeContext = await resolveRequestedPublicStoreContext(req);
+  if (!storeContext?.storeId) {
+    throw createError("找不到有效的門市資訊", 404);
+  }
+
+  if (Number(storeContext.storeId) !== Number(tokenRow?.storeId)) {
+    throw createError("找不到購買確認連結", 404);
+  }
+
+  return storeContext;
+}
 
 function createPurchaseConfirmationPdfAccessToken({ confirmationId, storeId, scope = "staff_download" }) {
   const normalizedConfirmationId = Number(confirmationId);
@@ -430,6 +480,7 @@ router.get("/public/:token", async (req, res, next) => {
     if (!tokenRow) {
       throw createError("找不到購買確認連結", 404);
     }
+    const storeContext = await assertPurchaseConfirmationStoreMatch(req, tokenRow);
 
     const [items] = await pool.query(
       `
@@ -466,6 +517,8 @@ router.get("/public/:token", async (req, res, next) => {
     return res.json({
       orderId: tokenRow.orderId,
       customerId: tokenRow.customerId,
+      storeId: tokenRow.storeId,
+      storeCode: storeContext?.storeCode || null,
       customerName: tokenRow.customerName,
       customerPhone: tokenRow.customerPhone,
       orderNo: tokenRow.orderNo,
@@ -494,6 +547,7 @@ router.get("/public/:token/pdf", async (req, res, next) => {
     if (!tokenRow) {
       throw createError("找不到 PDF", 404);
     }
+    await assertPurchaseConfirmationStoreMatch(req, tokenRow);
 
     const confirmation = await fetchPurchaseConfirmationPdfRecordByToken(req.params.token, tokenRow.storeId);
     return sendPurchaseConfirmationPdfFile(
@@ -604,6 +658,7 @@ router.post("/public/:token", async (req, res, next) => {
     if (!tokenRow) {
       throw createError("找不到購買確認連結", 404);
     }
+    const storeContext = await assertPurchaseConfirmationStoreMatch(req, tokenRow);
 
     if (tokenRow.usedAt) {
       throw createError("此購買確認連結已使用", 409);
@@ -785,7 +840,7 @@ router.post("/public/:token", async (req, res, next) => {
     return res.status(201).json({
       id: confirmation.id,
       pdfPath: pdf.publicPath,
-      pdfUrl: buildPurchaseConfirmationPdfUrl(req.params.token),
+      pdfUrl: appendStoreQuery(buildPurchaseConfirmationPdfUrl(req.params.token), storeContext?.storeCode),
       htmlSnapshot: confirmation.htmlSnapshot,
       message: "購買確認書已送出"
     });

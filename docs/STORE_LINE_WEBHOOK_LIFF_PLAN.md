@@ -10,6 +10,7 @@ Branch: `beta/staging-architecture`
 - Phase 3 LIFF resolver implemented on `2026-06-03`
 - Phase 3-B frontend resolver display implemented on `2026-06-03`
 - Phase 3-C LIFF create store context implemented on `2026-06-03`
+- Phase 3-D purchase confirmation store context implemented on `2026-06-03`
 - implemented scope:
   - `POST /api/line/webhook/:webhookPathToken`
   - `store_line_settings.webhook_path` lookup only
@@ -22,7 +23,8 @@ Branch: `beta/staging-architecture`
   - `/repair-reservation?store=<storeCode>` display-only store context banner
   - LIFF order / repair create requests now send `storeCode` when a public store context is explicitly resolved
   - backend LINE order / repair create routes now resolve `store_id` from trusted public store context, not public `storeId`
-  - purchase confirmation flow remains unchanged in this phase; store-context UI is TODO
+  - `/purchase-confirm/:token?store=<storeCode>` now resolves explicit store context for banner display
+  - public purchase confirmation GET/POST/PDF routes now reject explicit query-store mismatch against token-owned `store_id`
 - not implemented in Phase 1:
   - real event processing
   - reply / push

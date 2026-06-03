@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import liff from "@line/liff";
-import { useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 import SignaturePad from "../components/SignaturePad";
 import { apiRequest } from "../lib/api";
 
@@ -60,12 +60,33 @@ const EMPTY_FORM = {
   signatureData: ""
 };
 
+const LEGACY_STORE_CONTEXT = {
+  storeId: 1,
+  storeCode: "KINGWAY_TAINAN",
+  storeName: "KINGWAY 台南",
+  isExplicitStore: false
+};
+
+function buildResolvedStoreContext(response, requestedStoreCode) {
+  return {
+    storeId: Number(response?.store?.storeId || 0) || LEGACY_STORE_CONTEXT.storeId,
+    storeCode: response?.store?.storeCode || requestedStoreCode || LEGACY_STORE_CONTEXT.storeCode,
+    storeName: response?.store?.storeName || LEGACY_STORE_CONTEXT.storeName,
+    isExplicitStore: true
+  };
+}
+
 function PurchaseConfirmPublicPage() {
   const { token } = useParams();
+  const location = useLocation();
   const isManual = !token;
+  const requestedStoreCode = String(new URLSearchParams(location.search).get("store") || "").trim();
   const [data, setData] = useState(isManual ? { content: DEFAULT_CONTENT } : null);
   const [loading, setLoading] = useState(!isManual);
   const [error, setError] = useState("");
+  const [storeLoading, setStoreLoading] = useState(Boolean(!isManual && requestedStoreCode));
+  const [storeContext, setStoreContext] = useState(null);
+  const [storeError, setStoreError] = useState("");
   const [profileName, setProfileName] = useState("");
   const [pdfUrl, setPdfUrl] = useState("");
   const [form, setForm] = useState(EMPTY_FORM);
@@ -75,6 +96,30 @@ function PurchaseConfirmPublicPage() {
   const [termsOpen, setTermsOpen] = useState(false);
 
   useEffect(() => {
+    async function loadRequestedStoreContext() {
+      if (isManual || !requestedStoreCode) {
+        setStoreContext(null);
+        setStoreError("");
+        setStoreLoading(false);
+        return null;
+      }
+
+      setStoreLoading(true);
+      try {
+        const response = await apiRequest(`/storefront/resolve-store?store=${encodeURIComponent(requestedStoreCode)}`);
+        const resolvedStoreContext = buildResolvedStoreContext(response, requestedStoreCode);
+        setStoreContext(resolvedStoreContext);
+        setStoreError("");
+        return resolvedStoreContext;
+      } catch (resolveError) {
+        setStoreContext(null);
+        setStoreError(resolveError.message || "找不到有效的門市資訊");
+        return null;
+      } finally {
+        setStoreLoading(false);
+      }
+    }
+
     if (isManual) {
       async function redirectToLatestOrderConfirmation() {
         try {
@@ -146,10 +191,19 @@ function PurchaseConfirmPublicPage() {
     }
 
     async function load() {
+      const resolvedStoreContext = await loadRequestedStoreContext();
+      if (requestedStoreCode && !resolvedStoreContext) {
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       setError("");
       try {
-        const response = await apiRequest(`/purchase-confirmations/public/${token}`);
+        const storeQuery = resolvedStoreContext?.isExplicitStore
+          ? `?store=${encodeURIComponent(resolvedStoreContext.storeCode)}`
+          : "";
+        const response = await apiRequest(`/purchase-confirmations/public/${token}${storeQuery}`);
         setData(response);
         setForm({
           buyerName: sessionStorage.getItem("lineProfileName") || response.buyerName || response.customerName || "",
@@ -169,7 +223,7 @@ function PurchaseConfirmPublicPage() {
     }
 
     load();
-  }, [isManual, token]);
+  }, [isManual, requestedStoreCode, token]);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -247,10 +301,20 @@ function PurchaseConfirmPublicPage() {
             ...zhPayload
           };
 
-      const response = await apiRequest(isManual ? "/purchase-confirmations/manual" : `/purchase-confirmations/public/${token}`, {
+      const publicPath = !isManual && storeContext?.isExplicitStore
+        ? `/purchase-confirmations/public/${token}?store=${encodeURIComponent(storeContext.storeCode)}`
+        : `/purchase-confirmations/public/${token}`;
+      const response = await apiRequest(isManual ? "/purchase-confirmations/manual" : publicPath, {
         method: "POST",
         body: JSON.stringify(payload)
       });
+
+      if (!isManual && storeContext?.isExplicitStore) {
+        const storeQuery = `?store=${encodeURIComponent(storeContext.storeCode)}`;
+        if (response?.pdfUrl && !String(response.pdfUrl).includes("store=")) {
+          response.pdfUrl = `${response.pdfUrl}${response.pdfUrl.includes("?") ? "&" : "?"}${storeQuery.slice(1)}`;
+        }
+      }
       setPdfUrl(response.pdfUrl || "");
       if (isManual) {
         const matchedText = response.matchStatus === "matched_order"
@@ -296,11 +360,27 @@ function PurchaseConfirmPublicPage() {
     return <div className="public-page">載入中...</div>;
   }
 
+  if (!isManual && storeLoading) {
+    return <div className="public-page">載入中...</div>;
+  }
+
+  if (!isManual && storeError) {
+    return (
+      <div className="public-page">
+        <div className="public-card">
+          <h1>{"購買確認書"}</h1>
+          <p>{storeError}</p>
+        </div>
+      </div>
+    );
+  }
+
   if (error) {
     return (
       <div className="public-page">
         <div className="public-card">
           <h1>{"購買確認書"}</h1>
+          {storeContext?.isExplicitStore ? <p>{`門市：${storeContext.storeName}`}</p> : null}
           <p>{error}</p>
         </div>
       </div>
@@ -323,6 +403,7 @@ function PurchaseConfirmPublicPage() {
       <div className="public-page">
         <div className="public-card">
           <h1>{"購買確認書已完成"}</h1>
+          {storeContext?.isExplicitStore ? <p>{`門市：${storeContext.storeName}`}</p> : null}
           <p>{"感謝您完成購買確認書，KINGWAY 已保存您的確認紀錄。"}</p>
           {pdfUrl ? (
             <a className="primary-button" href={pdfUrl} target="_blank" rel="noreferrer">
@@ -338,6 +419,7 @@ function PurchaseConfirmPublicPage() {
     <div className="public-page">
       <form className={`public-card purchase-confirm-card ${isManual ? "manual-tablet-card" : ""}`} onSubmit={handleSubmit}>
         <h1>{"購買確認書"}</h1>
+        {storeContext?.isExplicitStore ? <p>{`門市：${storeContext.storeName}`}</p> : null}
         <p>{"請依序完成下列購買確認項目，內容確認無誤後再簽名送出。"}</p>
         {manualSuccess ? (
           <div className="page-section">

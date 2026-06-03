@@ -43,8 +43,9 @@ Owner: Platform staging validation for 1-week operability
 - 완료:  
   - `/line-order?store=<storeCode>`  
   - `/repair-reservation?store=<storeCode>`  
+  - `/purchase-confirm/:token?store=<storeCode>`  
   - resolver API(`GET /api/storefront/resolve-store`) 연동 완료.
-- 상태: `purchase-confirm`는 페이지/흐름 정합성 정리와 UI 표시 확인이 미완료.
+- 상태: order/repair/purchase-confirm 공개 진입의 기본 store context 연결은 완료. purchase-confirm entry LIFF 및 운영 QA는 추가 검증 필요.
 
 10. LINE webhook/tokenized route 상태
 - 완료:  
@@ -68,7 +69,6 @@ Owner: Platform staging validation for 1-week operability
 
 ## 3) 미완료 항목
 
-- `purchase-confirm`의 store context UI/검증 일관성 완료
 - storefront/매장 관리자 화면에서 Free/Premium preset 변경의 완전 UX 정합성
 - 멀티테넌시 교차 침투 테스트 자동화(상품/주문/POS/수리)
 - 실제 운영에서 store별 LINE runtime 토큰 분리 적용(4B~4D)
@@ -77,15 +77,15 @@ Owner: Platform staging validation for 1-week operability
 
 ## 4) 블로커
 
-1. `purchase-confirm` store context와 공개 링크 정책이 마무리되지 않아 전체 고객 플로우가 1주 내 완전 보장되지 않음.
-2. 매장별 라인 토큰/채널 격리와 staff 그룹 메시징 분리는 아직 실행 전 상태여서 “완전 SaaS형 운영” 보증이 미흡.
-3. v1 출시 전 자동화된 멀티테넌시 회귀(교차 매장 침투) 테스트가 부족.
+1. 매장별 라인 토큰/채널 격리와 staff 그룹 메시징 분리는 아직 실행 전 상태여서 “완전 SaaS형 운영” 보증이 미흡.
+2. v1 출시 전 자동화된 멀티테넌시 회귀(교차 매장 침투) 테스트가 부족.
+3. purchase-confirm entry LIFF와 운영 링크 배포 규칙은 추가 QA가 필요.
 
 ## 5) 7일 안에 꼭 해야 하는 것
 
 1. Free/Premium preset 적용/표시/롤백(검증 가능한 운영 버튼/상태) 정리.
 2. 신규 owner 온보딩 SOP + 비밀번호 전달/회수 정책 확정.
-3. `purchase-confirm` 및 LIFF store context 상호검증(유효/무효 storeCode 처리 포함) 완료.
+3. purchase-confirm entry LIFF 및 배포 링크 패턴 QA 완료.
 4. 멀티스토어 침투 테스트 10개 항목(상품/주문/POS/수리/setting/line flow) 실행.
 5. webhook legacy 보존 하에 store tokenized route의 운영 경계 문서화 및 대응 시나리오 확정.
 
@@ -98,7 +98,7 @@ Owner: Platform staging validation for 1-week operability
 
 ## 7) 다음 구현 1순위
 
-- `purchase-confirm`와 고객 공개 흐름의 store context 완결 + 멀티테넌시 침투 테스트 배치.
+- 멀티테넌시 침투 테스트 배치와 purchase-confirm entry LIFF QA 마감.
 
 ## 8) 모델 추천 (Spark / 5.4 구분)
 
