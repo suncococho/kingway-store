@@ -3,7 +3,11 @@ const { AsyncLocalStorage } = require("async_hooks");
 const dayjs = require("dayjs");
 const { pool, withTransaction } = require("../db");
 const config = require("../config");
-const { resolveLineAccessToken, sendLineMessage: sendLinePushMessage } = require("../utils/line");
+const {
+  normalizeLineSendOptions,
+  resolveLineAccessToken,
+  sendLineMessage: sendLinePushMessage
+} = require("../utils/line");
 const { createError } = require("../utils/errors");
 const { validateRepairReservationDate } = require("./repairService");
 const { getPublicStoreSettings } = require("./settingsService");
@@ -15,15 +19,15 @@ const { notifyRepairReservationCreated } = require("./staffLineNotify");
 const lineAccessTokenOptionsStorage = new AsyncLocalStorage();
 
 function getScopedLineAccessTokenOptions(options = {}) {
-  const scopedOptions = lineAccessTokenOptionsStorage.getStore() || {};
-  return {
+  const scopedOptions = normalizeLineSendOptions(lineAccessTokenOptionsStorage.getStore() || {});
+  return normalizeLineSendOptions({
     ...scopedOptions,
     ...(options || {})
-  };
+  });
 }
 
 function runWithLineAccessTokenOptions(options = {}, callback) {
-  return lineAccessTokenOptionsStorage.run(options || {}, callback);
+  return lineAccessTokenOptionsStorage.run(normalizeLineSendOptions(options), callback);
 }
 
 async function sendLineMessage(configArg, to, messages, options = {}) {
@@ -3478,7 +3482,8 @@ async function handleStaffRepairEstimateWizard(event) {
 
 async function replyToLine(replyToken, messages, options = {}) {
   try {
-    const channelAccessToken = resolveLineAccessToken(config, getScopedLineAccessTokenOptions(options));
+    const resolvedOptions = getScopedLineAccessTokenOptions(options);
+    const channelAccessToken = resolveLineAccessToken(config, resolvedOptions);
 
     if (!channelAccessToken) {
       console.log("[line:reply] skip no-channel-access-token");
@@ -3496,7 +3501,8 @@ async function replyToLine(replyToken, messages, options = {}) {
             altText: message?.altText || null,
             hasQuickReply: Boolean(message?.quickReply)
           }))
-        : []
+        : [],
+      context: resolvedOptions.context
     });
 
     const response = await fetch("https://api.line.me/v2/bot/message/reply", {

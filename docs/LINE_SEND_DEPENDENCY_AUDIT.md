@@ -5,6 +5,12 @@ Branch: `beta/staging-architecture`
 
 작성 목적: Store-scoped LINE webhook/LIFF 단계(현재 4 이전)에서 LINE 발송 의존성 정리 및 마이그레이션 위험점 추출.
 
+상태:
+
+- Phase 4A implemented on `2026-06-03`
+- 구현 범위: `sendLineMessage` / `replyToLine` 의 `options.context` 정규화 및 내부 전달만 추가
+- 비구현 범위: store token resolver, 실제 token switching, 실제 LINE 동작 변경
+
 제약 요약:
 
 - production config `.env` 미수정
@@ -142,6 +148,15 @@ LOW
 - `send`/`reply` 런타임에 store context 메타만 추가
   - `storeId`, `storeCode`, `lineChannelId`, `channelAccessTokenRef`, `channelSecretRef`
 - 기존 동작(legacy 경로·메시지 패턴) 불변 유지
+- 구현 상태:
+  - `backend/src/utils/line.js`
+    - `normalizeLineSendContext(context = {})`
+    - `normalizeLineSendOptions(options = {})`
+    - `sendLineMessage(config, to, messages, options = {})`는 `options.context` 허용
+  - `backend/src/services/lineWorkflowService.js`
+    - `replyToLine(replyToken, messages, options = {})`는 `options.context` 허용
+    - `runWithLineAccessTokenOptions(options, callback)`는 normalized context 저장
+  - token 선택 우선순위는 기존과 동일하며 global `LINE_CHANNEL_ACCESS_TOKEN` 동작 유지
 
 ### Phase 4B: store token resolver 추가
 

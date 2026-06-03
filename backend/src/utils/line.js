@@ -15,12 +15,35 @@ function verifyLineSignature(rawBody, channelSecret, signature) {
   return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
+function normalizeLineSendContext(context = {}) {
+  return {
+    storeId: context.storeId ?? null,
+    storeCode: context.storeCode ?? null,
+    lineChannelId: context.lineChannelId ?? null,
+    channelAccessTokenRef: context.channelAccessTokenRef ?? null,
+    channelSecretRef: context.channelSecretRef ?? null,
+    source: context.source ?? null
+  };
+}
+
+function normalizeLineSendOptions(options = {}) {
+  const normalizedOptions = options && typeof options === "object" ? { ...options } : {};
+  const contextSource = normalizedOptions.context && typeof normalizedOptions.context === "object"
+    ? normalizedOptions.context
+    : normalizedOptions;
+
+  normalizedOptions.context = normalizeLineSendContext(contextSource);
+  return normalizedOptions;
+}
+
 function resolveLineAccessToken(config, options = {}) {
-  return options.channelAccessToken || options.accessToken || config.line.channelAccessToken;
+  const normalizedOptions = normalizeLineSendOptions(options);
+  return normalizedOptions.channelAccessToken || normalizedOptions.accessToken || config.line.channelAccessToken;
 }
 
 async function sendLineMessage(config, to, messages, options = {}) {
-  const channelAccessToken = resolveLineAccessToken(config, options);
+  const normalizedOptions = normalizeLineSendOptions(options);
+  const channelAccessToken = resolveLineAccessToken(config, normalizedOptions);
 
   if (!channelAccessToken) {
     throw new Error("LINE channel access token is not configured");
@@ -47,6 +70,8 @@ async function sendLineMessage(config, to, messages, options = {}) {
 }
 
 module.exports = {
+  normalizeLineSendContext,
+  normalizeLineSendOptions,
   verifyLineSignature,
   resolveLineAccessToken,
   sendLineMessage
