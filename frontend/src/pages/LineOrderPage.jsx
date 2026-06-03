@@ -3,9 +3,27 @@ import liff from "@line/liff";
 import { apiRequest } from "../lib/api";
 
 const LIFF_ID = import.meta.env.VITE_LIFF_ID || "2010080463-s7I6a2BG";
+const LEGACY_STORE_CONTEXT = {
+  storeCode: "KINGWAY_TAINAN",
+  storeName: "KINGWAY 台南",
+  customerOaName: "KINGWAY 台南門市 LINE"
+};
+
+function buildCustomerOaName(response, fallbackStoreName) {
+  const configured = String(response?.lineSettings?.customerOaName || "").trim();
+  if (configured) {
+    return configured;
+  }
+
+  const baseName = String(response?.store?.storeName || fallbackStoreName || LEGACY_STORE_CONTEXT.storeName).trim();
+  return baseName ? `${baseName} LINE` : LEGACY_STORE_CONTEXT.customerOaName;
+}
 
 function LineOrderPage() {
   const [loading, setLoading] = useState(true);
+  const [storeLoading, setStoreLoading] = useState(true);
+  const [storeContext, setStoreContext] = useState(LEGACY_STORE_CONTEXT);
+  const [storeError, setStoreError] = useState("");
   const [lineUserId, setLineUserId] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -23,7 +41,41 @@ function LineOrderPage() {
   const isBound = /^09\d{8}$/.test(String(phone || ""));
 
   useEffect(() => {
+    async function loadStoreContext() {
+      const params = new URLSearchParams(window.location.search);
+      const storeCode = String(params.get("store") || "").trim();
+
+      if (!storeCode) {
+        setStoreContext(LEGACY_STORE_CONTEXT);
+        setStoreError("");
+        setStoreLoading(false);
+        return true;
+      }
+
+      try {
+        const response = await apiRequest(`/storefront/resolve-store?store=${encodeURIComponent(storeCode)}`);
+        setStoreContext({
+          storeCode: response?.store?.storeCode || storeCode,
+          storeName: response?.store?.storeName || LEGACY_STORE_CONTEXT.storeName,
+          customerOaName: buildCustomerOaName(response, response?.store?.storeName)
+        });
+        setStoreError("");
+        return true;
+      } catch (resolveError) {
+        setStoreError(resolveError.message || "找不到有效的門市資訊");
+        return false;
+      } finally {
+        setStoreLoading(false);
+      }
+    }
+
     async function init() {
+      const storeResolved = await loadStoreContext();
+      if (!storeResolved) {
+        setLoading(false);
+        return;
+      }
+
       try {
         await liff.init({ liffId: LIFF_ID });
 
@@ -149,6 +201,11 @@ function LineOrderPage() {
     return (
       <div className="line-order-page">
         <div className="line-order-wrap">
+          {storeLoading ? null : (
+            <div className={`line-order-alert ${storeError ? "error" : ""}`}>
+              {storeError ? storeError : `${storeContext.storeName} / ${storeContext.customerOaName}`}
+            </div>
+          )}
           <div className="line-order-form">資料讀取中...</div>
         </div>
       </div>
@@ -166,7 +223,13 @@ function LineOrderPage() {
           </div>
         </div>
 
-        {!isBound ? (
+        {storeLoading ? null : (
+          <div className={`line-order-alert ${storeError ? "error" : ""}`}>
+            {storeError ? storeError : `目前門市：${storeContext.storeName} / ${storeContext.customerOaName}`}
+          </div>
+        )}
+
+        {storeError ? null : !isBound ? (
           <div className="line-order-form">
             <h2 style={{ marginTop: 0 }}>請先完成電話綁定</h2>
 

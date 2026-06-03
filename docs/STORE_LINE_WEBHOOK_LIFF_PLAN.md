@@ -8,6 +8,7 @@ Branch: `beta/staging-architecture`
 - Phase 1 route skeleton implemented on `2026-06-03`
 - Phase 2 signature verification implemented on `2026-06-03`
 - Phase 3 LIFF resolver implemented on `2026-06-03`
+- Phase 3-B frontend resolver display implemented on `2026-06-03`
 - implemented scope:
   - `POST /api/line/webhook/:webhookPathToken`
   - `store_line_settings.webhook_path` lookup only
@@ -16,6 +17,9 @@ Branch: `beta/staging-architecture`
   - safe response only after successful verification
   - `GET /api/storefront/resolve-store?store=<storeCode>`
   - safe store context resolution by `storeCode` / slug hint
+  - `/line-order?store=<storeCode>` display-only store context banner
+  - `/repair-reservation?store=<storeCode>` display-only store context banner
+  - purchase confirmation flow remains unchanged in this phase; store-context UI is TODO
 - not implemented in Phase 1:
   - real event processing
   - reply / push

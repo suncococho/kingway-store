@@ -4,9 +4,27 @@ import { apiRequest } from "../lib/api";
 import LinePhoneBindGate from "./LinePhoneBindGate";
 
 const LIFF_ID = import.meta.env.VITE_LIFF_ID || "2010080463-s7I6a2BG";
+const LEGACY_STORE_CONTEXT = {
+  storeCode: "KINGWAY_TAINAN",
+  storeName: "KINGWAY 台南",
+  customerOaName: "KINGWAY 台南門市 LINE"
+};
+
+function buildCustomerOaName(response, fallbackStoreName) {
+  const configured = String(response?.lineSettings?.customerOaName || "").trim();
+  if (configured) {
+    return configured;
+  }
+
+  const baseName = String(response?.store?.storeName || fallbackStoreName || LEGACY_STORE_CONTEXT.storeName).trim();
+  return baseName ? `${baseName} LINE` : LEGACY_STORE_CONTEXT.customerOaName;
+}
 
 function LineRepairRequestPage() {
   const [loading, setLoading] = useState(true);
+  const [storeLoading, setStoreLoading] = useState(true);
+  const [storeContext, setStoreContext] = useState(LEGACY_STORE_CONTEXT);
+  const [storeError, setStoreError] = useState("");
   const [customer, setCustomer] = useState(null);
   const [profileName, setProfileName] = useState("");
   const [lineUserId, setLineUserId] = useState("");
@@ -19,7 +37,41 @@ function LineRepairRequestPage() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
+    async function loadStoreContext() {
+      const params = new URLSearchParams(window.location.search);
+      const storeCode = String(params.get("store") || "").trim();
+
+      if (!storeCode) {
+        setStoreContext(LEGACY_STORE_CONTEXT);
+        setStoreError("");
+        setStoreLoading(false);
+        return true;
+      }
+
+      try {
+        const response = await apiRequest(`/storefront/resolve-store?store=${encodeURIComponent(storeCode)}`);
+        setStoreContext({
+          storeCode: response?.store?.storeCode || storeCode,
+          storeName: response?.store?.storeName || LEGACY_STORE_CONTEXT.storeName,
+          customerOaName: buildCustomerOaName(response, response?.store?.storeName)
+        });
+        setStoreError("");
+        return true;
+      } catch (resolveError) {
+        setStoreError(resolveError.message || "找不到有效的門市資訊");
+        return false;
+      } finally {
+        setStoreLoading(false);
+      }
+    }
+
     async function init() {
+      const storeResolved = await loadStoreContext();
+      if (!storeResolved) {
+        setLoading(false);
+        return;
+      }
+
       try {
         await liff.init({ liffId: LIFF_ID });
         if (!liff.isLoggedIn()) {
@@ -98,7 +150,17 @@ function LineRepairRequestPage() {
   }
 
   if (loading) {
-    return <div className="line-customer-page"><section className="line-customer-summary">資料讀取中...</section></div>;
+    return (
+      <div className="line-customer-page">
+        {!storeLoading ? (
+          <section className="line-customer-summary">
+            <div className="line-customer-summary-title">{storeError ? "門市資訊" : storeContext.storeName}</div>
+            <div>{storeError ? storeError : storeContext.customerOaName}</div>
+          </section>
+        ) : null}
+        <section className="line-customer-summary">資料讀取中...</section>
+      </div>
+    );
   }
 
   if (done) {
@@ -124,7 +186,14 @@ function LineRepairRequestPage() {
         <p>請填寫車款、希望到店日期與問題描述。</p>
       </section>
 
-      {(!customer || !customer.phone) ? (
+      {!storeLoading ? (
+        <section className="line-customer-summary">
+          <div className="line-customer-summary-title">{storeError ? "門市資訊" : storeContext.storeName}</div>
+          <div>{storeError ? storeError : `目前 OA：${storeContext.customerOaName}`}</div>
+        </section>
+      ) : null}
+
+      {storeError ? null : (!customer || !customer.phone) ? (
         <LinePhoneBindGate
           lineUserId={lineUserId}
           onBound={(phone) => setCustomer((current) => ({ ...(current || {}), phone }))}
