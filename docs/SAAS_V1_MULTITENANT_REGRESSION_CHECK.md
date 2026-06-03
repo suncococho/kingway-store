@@ -4,6 +4,10 @@
 브랜치: `beta/staging-architecture`
 검증 대상 실행 환경: `http://127.0.0.1:3010` (현재 라이브 백엔드)
 
+실제 검사 DB 대상:
+- staging backend(3010)는 실행 DB를 `127.0.0.1:3310`( `kingway_store` ) 기준으로 사용.
+- 127.0.0.1:3306는 별도 개발 DB로 판단되어 `/api` 실시간 검증과 구분 필요.
+
 ## 1) 실행 요약
 
 - 본 점검은 DB/Docker 볼륨 삭제/초기화 없이 non-destructive 방식으로 수행
@@ -14,7 +18,7 @@
 | # | 점검 항목 | 실행 결과 | 근거/코멘트 |
 |---|---|---|---|
 | 1 | store 1 admin token 확보 가능 여부 | 통과 | `/api/login` + `admin/123456`로 JWT 발급 성공 (`storeId:1`). (`admin/admin123`은 인증 오류) |
-| 2 | store 4 owner token 확보 가능 여부 | 실패 | `/api/platform-auth/login` 요청 시 `401 Unauthorized`(인증 계정 미스매치 또는 미지원 경로); `/api/saas-admin` 하위 라우트는 토큰이 있어도 `401 Unauthorized`로 권한/컨텍스트 미스매치 표시 |
+| 2 | store 4 owner token 확보 가능 여부 | 재확인 필요 | 이전 감사는 127.0.0.1:3306(개발 DB) 기준으로 판단되었음. staging backend(3010) 대상 DB는 127.0.0.1:3310이며, 여기서 `stores`, `platform_admin_users`, `staff_users.store_id`가 존재하고 `platform_ui_owner_20260603f`(store_id=4) 계정이 확인됨. 다만 `/api/platform-auth/login`/`/api/saas-admin` store 4 owner 실제 로그인 성공/권한 플로우는 별도 실검증 필요 |
 | 3 | store 1이 store 4 리소스 접근 차단 | 실패(유효성 미검증) | JWT `storeId`를 조작한 테스트 토큰으로 비교: `storeId=1`, `storeId=4`에서 `/api/products` 응답 본문 길이가 동일(sha1 동일), `/api/settings` 반환 storeName 동일, `/api/orders`/`/api/customers`/`/api/repairs`는 둘 다 500(`Unknown column ... store_id`) |
 | 4 | store 4가 자기 리소스 접근 가능 | 부분실패/미완료 | `storeId=4` 토큰으로 `/api/products`는 200이나 동일 데이터셋 반환(격리 안 됨), `/api/settings` 도 `KINGWAY 台南門市` 동일, `/api/orders`/`/api/customers`/`/api/repairs`는 `Unknown column` 500로 실제 접근 판별 불가 |
 | 5 | purchase-confirm token + wrong store 차단 | 통과 | 유효 토큰 호출: `/api/purchase-confirmations/public/10cc8...` + `store=FAKECODE`는 `404 Not Found` (`找不到有效的門市資訊`). `store=KINGWAY_TAINAN` 또는 미지정은 정상 조회 |
@@ -32,7 +36,8 @@
 ## 3) 직접 실행 못 한 항목(이유)
 
 1. `store 4 owner` 공식 토큰 생성 경로의 전면 재현
-   - `admin/123456`은 로그인 가능하나( `storeId:1` ), `store 4 owner` 계정/컨텍스트가 DB/인증 흐름에서 재현되지 않음
+   - 기존 오판 원인은 DB 타깃 혼선이었음. 3306(개발 DB)에서는 대상 테이블/컬럼이 없어 보이지 않았으나, 3310에서는 `platform_ui_owner_20260603f`(store_id=4)가 존재.
+   - 현재는 3010 기준(3310)에서 store 4 owner 로그인 성공 경로를 다시 실증해야 함
 2. 멀티테넌트 fixture 기반 교차 조회 데이터셋(상호 이질적 storeId=1/4 테스트 데이터)
    - 런타임 DB가 store_id 기반 스키마와 어긋나 `/api/orders`, `/api/customers`, `/api/repairs`가 `Unknown column` 에러로 조기 종료됨
 
@@ -44,14 +49,14 @@
 ## 5) 현재 blocker (최우선)
 
 1. `/store 4 owner`용 인증/권한 컨텍스트가 멀티스토어 구조에서 재현되지 않음(실패의 주된 blocker)
-2. 주요 엔티티의 멀티테넌시 키 미적용/미존재(`o.store_id`, `c.store_id` 등)로 tenant 분기/격리가 깨짐 가능
+2. 실행 검증 시 DB/포트 혼선(3306 vs 3310) 제거 미확인 상태이며, 3010 staging에서 `store 4 owner` 로그인 flow를 다시 실검증해야 함
 3. `/api/line-order`, `/api/line-repair`는 현재 invalid store에서 404로 차단되지만, storeId 기반 교차 접근 검증을 위한 멀티스토어 사용자 컨텍스트가 없어 심층 검증 미완료
 4. 구매확인서 public 라우트는 store parameter 조작에 대해 현재 `FAKECODE` 차단은 확인됨
 5. `/files` 정적 경로와 `manual` PDF 라우트가 인증/권한 검증 없이 노출
 
 ## 6) 출시 전 반드시 고쳐야 할 항목
 
-- 멀티테넌시 스키마 정합성(실행 DB에 `stores`, `store_id` 기반 컬럼/조인, `platform admin`/`saas-admin` 라우트와 인증 컨텍스트 정합성)
+- 검증 단계에서 DB/포트 혼선 방지(현재 기준: 3010→3310)와 `store 4 owner` 로그인 실검증 경로 고정 실행이 우선
 - `/api/store-features/me` 및 `saas-admin` 계열의 role/policy 정합성 정비(현재 `401` 발생 구간)
 - `/files` 정적 노출 최소화 및 PDF 접근용 짧은 만료 토큰/권한 기반 라우팅 강화
 - 주문/고객/수리/설정 조회 엔드포인트의 store scope 필수화
