@@ -4,9 +4,11 @@ import { apiRequest } from "../lib/api";
 
 const LIFF_ID = import.meta.env.VITE_LIFF_ID || "2010080463-s7I6a2BG";
 const LEGACY_STORE_CONTEXT = {
+  storeId: 1,
   storeCode: "KINGWAY_TAINAN",
   storeName: "KINGWAY 台南",
-  customerOaName: "KINGWAY 台南門市 LINE"
+  customerOaName: "KINGWAY 台南門市 LINE",
+  isExplicitStore: false
 };
 
 function buildCustomerOaName(response, fallbackStoreName) {
@@ -49,32 +51,39 @@ function LineOrderPage() {
         setStoreContext(LEGACY_STORE_CONTEXT);
         setStoreError("");
         setStoreLoading(false);
-        return true;
+        return LEGACY_STORE_CONTEXT;
       }
 
       try {
         const response = await apiRequest(`/storefront/resolve-store?store=${encodeURIComponent(storeCode)}`);
-        setStoreContext({
+        const nextStoreContext = {
+          storeId: Number(response?.store?.storeId || 0) || LEGACY_STORE_CONTEXT.storeId,
           storeCode: response?.store?.storeCode || storeCode,
           storeName: response?.store?.storeName || LEGACY_STORE_CONTEXT.storeName,
-          customerOaName: buildCustomerOaName(response, response?.store?.storeName)
-        });
+          customerOaName: buildCustomerOaName(response, response?.store?.storeName),
+          isExplicitStore: true
+        };
+        setStoreContext(nextStoreContext);
         setStoreError("");
-        return true;
+        return nextStoreContext;
       } catch (resolveError) {
         setStoreError(resolveError.message || "找不到有效的門市資訊");
-        return false;
+        return null;
       } finally {
         setStoreLoading(false);
       }
     }
 
     async function init() {
-      const storeResolved = await loadStoreContext();
-      if (!storeResolved) {
+      const resolvedStoreContext = await loadStoreContext();
+      if (!resolvedStoreContext) {
         setLoading(false);
         return;
       }
+
+      const storeQuery = resolvedStoreContext.isExplicitStore
+        ? `&store=${encodeURIComponent(resolvedStoreContext.storeCode)}`
+        : "";
 
       try {
         await liff.init({ liffId: LIFF_ID });
@@ -99,7 +108,7 @@ function LineOrderPage() {
         setBindName(profile.displayName || "LINE 客戶");
 
         const customerData = await apiRequest(
-          `/line-order/customer?lineUserId=${encodeURIComponent(profile.userId)}&displayName=${encodeURIComponent(profile.displayName || "")}`
+          `/line-order/customer?lineUserId=${encodeURIComponent(profile.userId)}&displayName=${encodeURIComponent(profile.displayName || "")}${storeQuery}`
         );
 
         if (customerData?.customer) {
@@ -108,8 +117,7 @@ function LineOrderPage() {
           setBindName(customerData.customer.name || profile.displayName || "LINE 客戶");
         }
 
-        const productRes = await fetch("/api/line-order/ebikes");
-        const productData = await productRes.json();
+        const productData = await apiRequest(`/line-order/ebikes${resolvedStoreContext.isExplicitStore ? `?store=${encodeURIComponent(resolvedStoreContext.storeCode)}` : ""}`);
         setProducts(Array.isArray(productData) ? productData : []);
       } catch (e) {
         console.error(e);
@@ -164,14 +172,18 @@ function LineOrderPage() {
     try {
       setSubmitting(true);
 
-      const res = await fetch("/api/line-order/create", {
+      const storeQuery = storeContext.isExplicitStore
+        ? `?store=${encodeURIComponent(storeContext.storeCode)}`
+        : "";
+      const res = await fetch(`/api/line-order/create${storeQuery}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           lineUserId,
           name: name || "LINE 客戶",
           phone,
-          productId: Number(selected)
+          productId: Number(selected),
+          storeCode: storeContext.isExplicitStore ? storeContext.storeCode : undefined
         })
       });
 

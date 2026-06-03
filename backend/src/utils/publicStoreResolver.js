@@ -608,7 +608,14 @@ function getStoreCodeFromRequest(req, options = {}) {
   }
 
   if (options.allowQueryStoreCode) {
-    return normalizeStoreCode(req.query?.store || req.query?.storeCode || req.query?.store_code);
+    const queryStoreCode = normalizeStoreCode(req.query?.store || req.query?.storeCode || req.query?.store_code);
+    if (queryStoreCode) {
+      return queryStoreCode;
+    }
+  }
+
+  if (options.allowBodyStoreCode) {
+    return normalizeStoreCode(req.body?.store || req.body?.storeCode || req.body?.store_code);
   }
 
   return "";
@@ -926,6 +933,7 @@ module.exports = {
   normalizeHostname,
   normalizeStoreCode,
   normalizeSlug,
+  getStoreCodeFromRequest,
   createPublicStoreContextMiddleware,
   resolveLineWebhookChannelContext,
   resolvePublicStoreContext,

@@ -4,27 +4,72 @@ const { pool, withTransaction } = require("../db");
 const { BOT_NOTIFY, sendTelegramMessage } = require("../services/telegramService");
 const {
   SOURCE,
-  createPublicStoreContextMiddleware
+  createPublicStoreContextMiddleware,
+  getStoreCodeFromRequest
 } = require("../utils/publicStoreResolver");
 
 const router = express.Router();
 const resolvePublicStoreContext = createPublicStoreContextMiddleware({
   db: pool,
+  allowQueryStoreCode: true,
+  allowBodyStoreCode: true,
   legacyFallbackMode: SOURCE.LEGACY_KINGWAY_FALLBACK,
   legacyFallbackStoreId: 1,
   legacyFallbackAllowUnverifiedStore: true
 });
 
-function getLineOrderStoreId(req) {
+function getRequestedStoreCode(req) {
+  return getStoreCodeFromRequest(req, {
+    allowQueryStoreCode: true,
+    allowBodyStoreCode: true
+  });
+}
+
+function resolveLineOrderStoreContext(req) {
+  const requestedStoreCode = getRequestedStoreCode(req);
+  const publicContext = req.publicStoreContext || null;
+
+  if (requestedStoreCode) {
+    const resolvedStoreId = Number(publicContext?.storeId || 0);
+    if (
+      Number.isSafeInteger(resolvedStoreId) &&
+      resolvedStoreId > 0 &&
+      publicContext?.source === SOURCE.STORE_CODE &&
+      publicContext?.storeCode === requestedStoreCode &&
+      publicContext?.legacyFallbackUsed !== true
+    ) {
+      return {
+        ok: true,
+        storeId: resolvedStoreId,
+        storeCode: publicContext.storeCode
+      };
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      message: "找不到有效的門市代碼"
+    };
+  }
+
   const resolved = Number(req.publicStoreContext?.storeId || 1);
-  return Number.isSafeInteger(resolved) && resolved > 0 ? resolved : 1;
+  return {
+    ok: true,
+    storeId: Number.isSafeInteger(resolved) && resolved > 0 ? resolved : 1,
+    storeCode: null
+  };
 }
 
 router.use(resolvePublicStoreContext);
 
 router.get("/customer", async (req, res, next) => {
   try {
-    const storeId = getLineOrderStoreId(req);
+    const storeContext = resolveLineOrderStoreContext(req);
+    if (!storeContext.ok) {
+      return res.status(storeContext.status).json({ message: storeContext.message });
+    }
+
+    const storeId = storeContext.storeId;
     const lineUserId = String(req.query.lineUserId || "").trim();
     const displayName = String(req.query.displayName || "").trim();
 
@@ -117,7 +162,12 @@ router.get("/customer", async (req, res, next) => {
 
 router.get("/ebikes", async (req, res, next) => {
   try {
-    const storeId = getLineOrderStoreId(req);
+    const storeContext = resolveLineOrderStoreContext(req);
+    if (!storeContext.ok) {
+      return res.status(storeContext.status).json({ message: storeContext.message });
+    }
+
+    const storeId = storeContext.storeId;
     const [rows] = await pool.query(`
       SELECT id, sku, name, price, stock, image_url AS imageUrl
       FROM products
@@ -136,7 +186,12 @@ router.get("/ebikes", async (req, res, next) => {
 
 router.post("/create", async (req, res, next) => {
   try {
-    const storeId = getLineOrderStoreId(req);
+    const storeContext = resolveLineOrderStoreContext(req);
+    if (!storeContext.ok) {
+      return res.status(storeContext.status).json({ message: storeContext.message });
+    }
+
+    const storeId = storeContext.storeId;
     const { lineUserId, productId, name, phone } = req.body;
 
     if (!productId) {

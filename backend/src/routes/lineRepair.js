@@ -3,6 +3,11 @@ const dayjs = require("dayjs");
 const { pool } = require("../db");
 const config = require("../config");
 const {
+  SOURCE,
+  createPublicStoreContextMiddleware,
+  getStoreCodeFromRequest
+} = require("../utils/publicStoreResolver");
+const {
   createRepairReservationFromSession,
   sendToGroupsWithResult,
   buildGroupApprovalMessage,
@@ -12,6 +17,14 @@ const {
 const { notifyRepairReservationCreated } = require("../services/staffLineNotify");
 
 const router = express.Router();
+const resolvePublicStoreContext = createPublicStoreContextMiddleware({
+  db: pool,
+  allowQueryStoreCode: true,
+  allowBodyStoreCode: true,
+  legacyFallbackMode: SOURCE.LEGACY_KINGWAY_FALLBACK,
+  legacyFallbackStoreId: 1,
+  legacyFallbackAllowUnverifiedStore: true
+});
 
 const REPAIR_RESERVATION_FLOW = "repair_reservation";
 
@@ -29,6 +42,57 @@ function getReservationDay(date) {
   return map[day] || "Sunday";
 }
 
+function getRequestedStoreCode(req) {
+  return getStoreCodeFromRequest(req, {
+    allowQueryStoreCode: true,
+    allowBodyStoreCode: true
+  });
+}
+
+async function resolveLineRepairStoreContext(req, lineUserId, reason) {
+  const requestedStoreCode = getRequestedStoreCode(req);
+  const publicContext = req.publicStoreContext || null;
+
+  if (requestedStoreCode) {
+    const resolvedStoreId = Number(publicContext?.storeId || 0);
+    if (
+      Number.isSafeInteger(resolvedStoreId) &&
+      resolvedStoreId > 0 &&
+      publicContext?.source === SOURCE.STORE_CODE &&
+      publicContext?.storeCode === requestedStoreCode &&
+      publicContext?.legacyFallbackUsed !== true
+    ) {
+      return {
+        ok: true,
+        storeId: resolvedStoreId,
+        storeCode: publicContext.storeCode,
+        source: "public_store_code",
+        legacyFallback: false
+      };
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      message: "找不到有效的門市代碼"
+    };
+  }
+
+  const storeContext = await resolveLineWorkflowStoreContext({
+    lineUserId,
+    connection: pool,
+    reason
+  });
+
+  return {
+    ok: true,
+    ...storeContext,
+    storeCode: null
+  };
+}
+
+router.use(resolvePublicStoreContext);
+
 router.get("/customer", async (req, res, next) => {
   try {
     const lineUserId = String(req.query.lineUserId || "").trim();
@@ -37,11 +101,11 @@ router.get("/customer", async (req, res, next) => {
       return res.json({ customer: null });
     }
 
-    const storeContext = await resolveLineWorkflowStoreContext({
-      lineUserId,
-      connection: pool,
-      reason: "line_repair_page_customer"
-    });
+    const storeContext = await resolveLineRepairStoreContext(req, lineUserId, "line_repair_page_customer");
+    if (!storeContext.ok) {
+      return res.status(storeContext.status).json({ message: storeContext.message });
+    }
+
     const resolvedStoreId = storeContext.storeId;
 
     const [rows] = await pool.query(
@@ -81,11 +145,11 @@ router.post("/create", async (req, res, next) => {
       return res.status(400).json({ message: "請填寫完整維修資訊" });
     }
 
-    const storeContext = await resolveLineWorkflowStoreContext({
-      lineUserId,
-      connection: pool,
-      reason: "line_repair_page_create"
-    });
+    const storeContext = await resolveLineRepairStoreContext(req, lineUserId, "line_repair_page_create");
+    if (!storeContext.ok) {
+      return res.status(storeContext.status).json({ message: storeContext.message });
+    }
+
     const resolvedStoreId = storeContext.storeId;
 
     await pool.query(
@@ -105,7 +169,8 @@ router.post("/create", async (req, res, next) => {
           reservationTime,
           bikeModel,
           issueDescription,
-          storeId: resolvedStoreId
+          storeId: resolvedStoreId,
+          storeCode: storeContext.storeCode || null
         })
       ]
     );
