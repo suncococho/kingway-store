@@ -5,6 +5,7 @@ const SOURCE = {
   SIGNED_TOKEN: "signed_token",
   LINE_CHANNEL: "line_channel",
   LIFF_ID: "liff_id",
+  STORE_CODE: "store_code",
   STORE_SLUG: "store_slug",
   HOSTNAME: "hostname",
   LEGACY_KINGWAY_FALLBACK: "legacy_kingway_fallback",
@@ -15,6 +16,7 @@ const RESOLVER_SOURCE_PRIORITY = [
   SOURCE.SIGNED_TOKEN,
   SOURCE.LINE_CHANNEL,
   SOURCE.LIFF_ID,
+  SOURCE.STORE_CODE,
   SOURCE.STORE_SLUG,
   SOURCE.HOSTNAME,
   SOURCE.LEGACY_KINGWAY_FALLBACK
@@ -86,6 +88,14 @@ function normalizeSlug(value) {
   return slug;
 }
 
+function normalizeStoreCode(value) {
+  const code = String(value || "").trim().toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9_-]{1,118}[A-Z0-9]$/.test(code)) {
+    return "";
+  }
+  return code;
+}
+
 function createEmptyContext(req, options = {}) {
   return {
     storeId: null,
@@ -94,6 +104,7 @@ function createEmptyContext(req, options = {}) {
     sourceResolved: false,
     confidence: "none",
     hostname: normalizeHostname(req.headers?.["x-forwarded-host"] || req.headers?.host || ""),
+    storeCode: null,
     slug: null,
     liffId: null,
     lineChannelId: null,
@@ -584,6 +595,59 @@ async function resolveByLiffId(req, options, context) {
   });
 }
 
+function getStoreCodeFromRequest(req, options = {}) {
+  const paramStoreCode = req.params?.storeCode;
+  if (paramStoreCode) {
+    return normalizeStoreCode(paramStoreCode);
+  }
+
+  if (options.allowQueryStoreCode) {
+    return normalizeStoreCode(req.query?.store || req.query?.storeCode || req.query?.store_code);
+  }
+
+  return "";
+}
+
+async function resolveByStoreCode(req, options, context) {
+  const storeCode = getStoreCodeFromRequest(req, options);
+  if (!storeCode) {
+    recordAttempt(context, SOURCE.STORE_CODE, "missing_or_invalid");
+    return null;
+  }
+
+  if (!(await tableExists(options.db, "stores"))) {
+    recordAttempt(context, SOURCE.STORE_CODE, "stores_table_missing", { storeCode });
+    return null;
+  }
+
+  const tenantIdSelect = await getStoreTenantIdSelect(options.db);
+  const [rows] = await options.db.query(
+    `
+      SELECT s.id, s.code AS storeCode, s.slug, s.name, ${tenantIdSelect}
+      FROM stores s
+      WHERE s.code = ?
+        AND s.status = 'active'
+      LIMIT 1
+    `,
+    [storeCode]
+  );
+
+  if (!rows[0]) {
+    recordAttempt(context, SOURCE.STORE_CODE, "not_found", { storeCode });
+    return null;
+  }
+
+  recordAttempt(context, SOURCE.STORE_CODE, "resolved", { storeId: rows[0].id, storeCode });
+  return finalizeContext(context, {
+    storeId: rows[0].id,
+    tenantId: rows[0].tenantId || null,
+    source: SOURCE.STORE_CODE,
+    confidence: "medium",
+    storeCode: rows[0].storeCode || storeCode,
+    slug: rows[0].slug || null
+  });
+}
+
 function getSlugFromRequest(req, options = {}) {
   const paramSlug = req.params?.storeSlug || req.params?.slug;
   if (paramSlug) {
@@ -802,6 +866,7 @@ async function resolvePublicStoreContext(req, options = {}) {
     resolveBySignedToken,
     resolveByLineChannel,
     resolveByLiffId,
+    resolveByStoreCode,
     resolveBySlug,
     resolveByHostname
   ];
@@ -852,10 +917,10 @@ module.exports = {
   TRUST_BOUNDARY_RULES,
   RESERVED_SLUGS,
   normalizeHostname,
+  normalizeStoreCode,
   normalizeSlug,
   createPublicStoreContextMiddleware,
   resolveLineWebhookChannelContext,
   resolvePublicStoreContext,
   verifySignedContextToken
 };
-

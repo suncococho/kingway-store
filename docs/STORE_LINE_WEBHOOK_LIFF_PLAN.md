@@ -7,12 +7,15 @@ Branch: `beta/staging-architecture`
 
 - Phase 1 route skeleton implemented on `2026-06-03`
 - Phase 2 signature verification implemented on `2026-06-03`
+- Phase 3 LIFF resolver implemented on `2026-06-03`
 - implemented scope:
   - `POST /api/line/webhook/:webhookPathToken`
   - `store_line_settings.webhook_path` lookup only
   - `channel_secret_ref` lookup and `env:` secret resolution
   - per-store `X-Line-Signature` verification
   - safe response only after successful verification
+  - `GET /api/storefront/resolve-store?store=<storeCode>`
+  - safe store context resolution by `storeCode` / slug hint
 - not implemented in Phase 1:
   - real event processing
   - reply / push
