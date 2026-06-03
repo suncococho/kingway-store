@@ -8,8 +8,14 @@ Branch: `beta/staging-architecture`
 상태:
 
 - Phase 4A implemented on `2026-06-03`
+- Phase 4B implemented on `2026-06-04`
 - 구현 범위: `sendLineMessage` / `replyToLine` 의 `options.context` 정규화 및 내부 전달만 추가
-- 비구현 범위: store token resolver, 실제 token switching, 실제 LINE 동작 변경
+- 구현 범위 추가:
+  - `storeLineSettingsService.resolveStoreLineCredentials({ storeId, storeCode, purpose })`
+  - `storeLineSettingsService.getMaskedLineCredentialStatus({ storeId, storeCode })`
+  - `store_line_settings.channel_access_token_ref` / `channel_secret_ref`의 `env:NAME` 해석
+  - raw token/secret 비노출, masked status만 반환
+- 비구현 범위: 실제 token switching, 실제 LINE 동작 변경
 
 제약 요약:
 
@@ -163,6 +169,12 @@ LOW
 - `store_line_settings.channel_access_token_ref` 해석기 추가
 - `env:NAME` 방식 해석 + 실패 안전 응답
 - raw token/secret는 로그/응답 미노출
+- 구현 상태:
+  - `backend/src/services/storeLineSettingsService.js`
+  - storeId 또는 storeCode로 `stores` + `store_line_settings`를 조회
+  - `channel_access_token_ref`, `channel_secret_ref` 모두 `env:` 해석 지원
+  - 반환 status는 `present`, `source`, `maskedLabel`, `resolvable`만 노출
+  - 실제 `sendLineMessage` / `replyToLine` token 선택 로직은 아직 미변경
 
 ### Phase 4C: tokenized webhook에서만 store token 사용
 

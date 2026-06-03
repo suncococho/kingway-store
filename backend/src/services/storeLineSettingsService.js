@@ -174,6 +174,90 @@ function maskSecretValue(ref, present) {
   return "";
 }
 
+function maskCredentialName(name) {
+  const normalized = normalizeText(name);
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.length <= 6) {
+    return `${normalized.slice(0, 1)}***${normalized.slice(-1)}`;
+  }
+
+  return `${normalized.slice(0, 4)}***${normalized.slice(-2)}`;
+}
+
+function parseCredentialRef(ref) {
+  const normalized = normalizeText(ref);
+  if (!normalized) {
+    return {
+      type: "none",
+      name: ""
+    };
+  }
+
+  if (ENV_REF_PATTERN.test(normalized)) {
+    return {
+      type: "env",
+      name: normalized.slice(4)
+    };
+  }
+
+  return {
+    type: "unsupported",
+    name: normalized
+  };
+}
+
+function buildMaskedCredentialStatus(ref, present) {
+  const parsedRef = parseCredentialRef(ref);
+  const envValue = parsedRef.type === "env" ? process.env[parsedRef.name] : "";
+  const hasResolvedValue = Boolean(envValue);
+
+  if (parsedRef.type === "env") {
+    return {
+      present: true,
+      source: "env",
+      maskedLabel: `env:${maskCredentialName(parsedRef.name)}`,
+      resolvable: hasResolvedValue
+    };
+  }
+
+  if (parsedRef.type === "unsupported") {
+    return {
+      present: true,
+      source: "unsupported_ref",
+      maskedLabel: "ref:unsupported",
+      resolvable: false
+    };
+  }
+
+  if (present) {
+    return {
+      present: true,
+      source: "pending_storage",
+      maskedLabel: MASKED_PENDING_STORAGE,
+      resolvable: false
+    };
+  }
+
+  return {
+    present: false,
+    source: "none",
+    maskedLabel: "",
+    resolvable: false
+  };
+}
+
+function buildResolvedCredential(status, ref) {
+  if (status.source !== "env" || !status.resolvable) {
+    return null;
+  }
+
+  const parsedRef = parseCredentialRef(ref);
+  return parsedRef.name ? process.env[parsedRef.name] || null : null;
+}
+
 function mapRowToSettings(row, apiBaseUrl) {
   const webhookPath = normalizeText(row?.webhookPath || row?.webhook_path);
   const channelSecretPresent = normalizeBoolean(row?.channelSecretPresent ?? row?.channel_secret_present, false);
@@ -231,6 +315,49 @@ async function loadStoreLineSettingsRow(storeId) {
   return rows[0] || null;
 }
 
+async function loadStoreLineSettingsScope({ storeId = null, storeCode = null } = {}) {
+  if (!storeId && !storeCode) {
+    throw createStoreLineSettingsError("storeId 또는 storeCode가 필요합니다");
+  }
+
+  const filters = [];
+  const values = [];
+
+  if (storeId) {
+    filters.push("s.id = ?");
+    values.push(storeId);
+  }
+
+  if (storeCode) {
+    filters.push("s.code = ?");
+    values.push(storeCode);
+  }
+
+  const [rows] = await pool.query(
+    `
+      SELECT
+        s.id AS storeId,
+        s.code AS storeCode,
+        sls.line_enabled AS lineEnabled,
+        sls.channel_id AS channelId,
+        sls.channel_secret_ref AS channelSecretRef,
+        sls.channel_secret_present AS channelSecretPresent,
+        sls.channel_access_token_ref AS channelAccessTokenRef,
+        sls.channel_access_token_present AS channelAccessTokenPresent,
+        sls.webhook_path AS webhookPath,
+        sls.customer_oa_name AS customerOaName,
+        sls.updated_at AS updatedAt
+      FROM stores s
+      LEFT JOIN store_line_settings sls ON sls.store_id = s.id
+      WHERE ${filters.join(" OR ")}
+      LIMIT 1
+    `,
+    values
+  );
+
+  return rows[0] || null;
+}
+
 async function getStoreLineSettings(storeId, options = {}) {
   const row = await loadStoreLineSettingsRow(storeId);
   if (!row) {
@@ -241,6 +368,56 @@ async function getStoreLineSettings(storeId, options = {}) {
   }
 
   return mapRowToSettings(row, options.apiBaseUrl);
+}
+
+async function resolveStoreLineCredentials({ storeId = null, storeCode = null, purpose = null } = {}) {
+  const scopedRow = await loadStoreLineSettingsScope({ storeId, storeCode });
+  if (!scopedRow) {
+    return {
+      storeId: storeId ?? null,
+      storeCode: storeCode ?? null,
+      purpose: normalizeText(purpose) || null,
+      lineEnabled: false,
+      found: false,
+      channelAccessToken: null,
+      channelSecret: null,
+      channelAccessTokenStatus: buildMaskedCredentialStatus(null, false),
+      channelSecretStatus: buildMaskedCredentialStatus(null, false)
+    };
+  }
+
+  const channelAccessTokenStatus = buildMaskedCredentialStatus(
+    scopedRow.channelAccessTokenRef,
+    normalizeBoolean(scopedRow.channelAccessTokenPresent, false)
+  );
+  const channelSecretStatus = buildMaskedCredentialStatus(
+    scopedRow.channelSecretRef,
+    normalizeBoolean(scopedRow.channelSecretPresent, false)
+  );
+
+  return {
+    storeId: scopedRow.storeId ?? null,
+    storeCode: scopedRow.storeCode ?? null,
+    purpose: normalizeText(purpose) || null,
+    lineEnabled: normalizeBoolean(scopedRow.lineEnabled, false),
+    found: true,
+    channelAccessToken: buildResolvedCredential(channelAccessTokenStatus, scopedRow.channelAccessTokenRef),
+    channelSecret: buildResolvedCredential(channelSecretStatus, scopedRow.channelSecretRef),
+    channelAccessTokenStatus,
+    channelSecretStatus
+  };
+}
+
+async function getMaskedLineCredentialStatus({ storeId = null, storeCode = null } = {}) {
+  const resolved = await resolveStoreLineCredentials({ storeId, storeCode, purpose: "status" });
+  return {
+    storeId: resolved.storeId,
+    storeCode: resolved.storeCode,
+    found: resolved.found,
+    lineEnabled: resolved.lineEnabled,
+    channelAccessToken: resolved.channelAccessTokenStatus,
+    channelSecret: resolved.channelSecretStatus
+  };
 }
 
 function normalizePatchPayload(input, current) {
@@ -405,5 +582,7 @@ module.exports = {
   STORE_LINE_SETTINGS_DEFAULTS,
   createStoreLineSettingsError,
   getStoreLineSettings,
+  getMaskedLineCredentialStatus,
+  resolveStoreLineCredentials,
   saveStoreLineSettings
 };
