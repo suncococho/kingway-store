@@ -4,6 +4,7 @@ const { pool } = require("../db");
 const config = require("../config");
 const { authenticate, authorize } = require("../middleware/auth");
 const { verifyLineSignature } = require("../utils/line");
+const { resolveSecretRef } = require("../utils/lineSecretResolver");
 const { sendDailyReport } = require("../services/reportService");
 const { logKpi } = require("../services/kpiService");
 const {
@@ -49,6 +50,7 @@ async function findStoreLineSettingsByWebhookPathToken(webhookPathToken) {
         store_id AS storeId,
         line_enabled AS lineEnabled,
         channel_id AS channelId,
+        channel_secret_ref AS channelSecretRef,
         channel_secret_present AS channelSecretPresent,
         channel_access_token_present AS channelAccessTokenPresent,
         webhook_path AS webhookPath,
@@ -101,11 +103,47 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
       channelAccessTokenPresent: Boolean(row.channelAccessTokenPresent)
     });
 
+    const secretResult = resolveSecretRef(row.channelSecretRef);
+    if (!secretResult.resolved) {
+      console.warn("[line:webhook:skeleton] secret unavailable", {
+        storeId: row.storeId,
+        webhookPathTokenHash,
+        reason: secretResult.reason,
+        channelSecretPresent: Boolean(row.channelSecretPresent)
+      });
+      return res.status(503).json({
+        ok: false,
+        mode: "route_skeleton_only",
+        resolved: true,
+        signatureVerified: false,
+        message: "找不到可用的 LINE channel secret 設定"
+      });
+    }
+
+    const signature = req.headers["x-line-signature"];
+    const rawBody = req.rawBody || "";
+    const signatureVerified = verifyLineSignature(rawBody, secretResult.secret, signature);
+
+    if (!signatureVerified) {
+      console.warn("[line:webhook:skeleton] invalid signature", {
+        storeId: row.storeId,
+        webhookPathTokenHash
+      });
+      return res.status(401).json({
+        ok: false,
+        mode: "route_skeleton_only",
+        resolved: true,
+        signatureVerified: false,
+        message: "Invalid LINE signature"
+      });
+    }
+
     return res.status(501).json({
       ok: true,
       mode: "route_skeleton_only",
       resolved: true,
       implemented: false,
+      signatureVerified: true,
       storeId: row.storeId,
       lineEnabled: Boolean(row.lineEnabled),
       channelIdPresent: Boolean(row.channelId),
