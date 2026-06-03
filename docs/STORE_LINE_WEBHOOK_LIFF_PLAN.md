@@ -3,6 +3,19 @@
 Date: 2026-06-03
 Branch: `beta/staging-architecture`
 
+## Status
+
+- Phase 1 route skeleton implemented on `2026-06-03`
+- implemented scope:
+  - `POST /api/line/webhook/:webhookPathToken`
+  - `store_line_settings.webhook_path` lookup only
+  - safe response only
+- not implemented in Phase 1:
+  - signature verification
+  - real event processing
+  - reply / push
+  - customer/order/repair/coupon writes
+
 ## 1. Purpose
 
 This document defines the recommended SaaS design for store-scoped LINE webhook and LIFF routing in the KINGWAY multi-store architecture.

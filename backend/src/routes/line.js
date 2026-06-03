@@ -1,10 +1,9 @@
+const crypto = require("crypto");
 const express = require("express");
 const { pool } = require("../db");
 const config = require("../config");
 const { authenticate, authorize } = require("../middleware/auth");
 const { verifyLineSignature } = require("../utils/line");
-const { resolveSecretRef } = require("../utils/lineSecretResolver");
-const { resolveLineWebhookChannelContext } = require("../utils/publicStoreResolver");
 const { sendDailyReport } = require("../services/reportService");
 const { logKpi } = require("../services/kpiService");
 const {
@@ -27,112 +26,95 @@ const {
 
 const router = express.Router();
 
-
-function isTokenizedLineWebhookEnabled() {
-  return process.env.NODE_ENV === "staging" || process.env.LINE_TOKENIZED_WEBHOOK_ENABLED === "true";
+function normalizeWebhookPathToken(value) {
+  return String(value || "").trim();
 }
 
-function resolveTokenizedLineAccessTokenOptions(lineStoreContext) {
-  const metadata = {
-    storeId: lineStoreContext?.storeId || null,
-    tenantId: lineStoreContext?.tenantId || null,
-    lineChannelId: lineStoreContext?.lineChannelId || null,
-    webhookPathTokenHash: lineStoreContext?.webhookPathTokenHash || null,
-    hasChannelAccessTokenRef: Boolean(lineStoreContext?.channelAccessTokenRef)
-  };
+function buildWebhookPathFromToken(webhookPathToken) {
+  return `/api/line/webhook/${webhookPathToken}`;
+}
 
-  if (!isTokenizedLineWebhookEnabled()) {
-    console.log("[line:webhook:tokenized] access token disabled", metadata);
-    return {};
+function hashWebhookPathToken(webhookPathToken) {
+  if (!webhookPathToken) {
+    return null;
   }
 
-  if (!lineStoreContext?.channelAccessTokenRef) {
-    console.warn("[line:webhook:tokenized] access token ref missing", metadata);
-    return {};
-  }
+  return `sha256:${crypto.createHash("sha256").update(webhookPathToken).digest("hex").slice(0, 16)}`;
+}
 
-  const tokenResult = resolveSecretRef(lineStoreContext.channelAccessTokenRef);
-  if (!tokenResult.resolved) {
-    console.warn("[line:webhook:tokenized] access token unavailable", {
-      ...metadata,
-      reason: tokenResult.reason
-    });
-    return {};
-  }
+async function findStoreLineSettingsByWebhookPathToken(webhookPathToken) {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        store_id AS storeId,
+        line_enabled AS lineEnabled,
+        channel_id AS channelId,
+        channel_secret_present AS channelSecretPresent,
+        channel_access_token_present AS channelAccessTokenPresent,
+        webhook_path AS webhookPath,
+        staff_group_enabled AS staffGroupEnabled,
+        updated_at AS updatedAt
+      FROM store_line_settings
+      WHERE webhook_path = ?
+      LIMIT 1
+    `,
+    [buildWebhookPathFromToken(webhookPathToken)]
+  );
 
-  console.log("[line:webhook:tokenized] access token resolved", metadata);
-  return { channelAccessToken: tokenResult.secret };
+  return rows[0] || null;
 }
 
 
 router.post("/webhook/:webhookPathToken", async (req, res, next) => {
   try {
-    const lineStoreContext = await resolveLineWebhookChannelContext(req, {
-      db: pool,
-      logger: console
+    const webhookPathToken = normalizeWebhookPathToken(req.params.webhookPathToken);
+    const webhookPathTokenHash = hashWebhookPathToken(webhookPathToken);
+
+    if (!/^[A-Za-z0-9_-]{1,190}$/.test(webhookPathToken)) {
+      return res.status(400).json({
+        ok: false,
+        mode: "route_skeleton_only",
+        resolved: false,
+        message: "webhookPathToken 格式不正確"
+      });
+    }
+
+    const row = await findStoreLineSettingsByWebhookPathToken(webhookPathToken);
+
+    if (!row) {
+      console.warn("[line:webhook:skeleton] mapping not found", {
+        webhookPathTokenHash
+      });
+      return res.status(404).json({
+        ok: false,
+        mode: "route_skeleton_only",
+        resolved: false,
+        message: "找不到對應的門市 LINE webhook 設定"
+      });
+    }
+
+    console.log("[line:webhook:skeleton] mapping resolved", {
+      storeId: row.storeId,
+      webhookPathTokenHash,
+      channelIdPresent: Boolean(row.channelId),
+      channelSecretPresent: Boolean(row.channelSecretPresent),
+      channelAccessTokenPresent: Boolean(row.channelAccessTokenPresent)
     });
-    req.lineStoreContext = lineStoreContext;
 
-    if (!lineStoreContext.resolved) {
-      return res.status(lineStoreContext.failure?.status || 404).json({
-        ok: false,
-        mode: "resolver_only",
-        message: "找不到可用的 LINE webhook channel 對應",
-        reason: lineStoreContext.failure?.reason || "unresolved"
-      });
-    }
-
-    const channelSecretRef = lineStoreContext.channelSecretRef;
-    const secretResult = resolveSecretRef(channelSecretRef);
-    if (!secretResult.resolved) {
-      console.warn("[line:webhook:signature] secret unavailable", {
-        storeId: lineStoreContext.storeId,
-        tenantId: lineStoreContext.tenantId,
-        lineChannelId: lineStoreContext.lineChannelId,
-        webhookPathTokenHash: lineStoreContext.webhookPathTokenHash,
-        reason: secretResult.reason
-      });
-      return res.status(503).json({
-        ok: false,
-        mode: "signature_verification_failed",
-        reason: "line_channel_secret_unavailable"
-      });
-    }
-
-    const signature = req.headers["x-line-signature"];
-    const rawBody = req.rawBody || "";
-    if (!verifyLineSignature(rawBody, secretResult.secret, signature)) {
-      console.warn("[line:webhook:signature] invalid", {
-        storeId: lineStoreContext.storeId,
-        tenantId: lineStoreContext.tenantId,
-        lineChannelId: lineStoreContext.lineChannelId,
-        webhookPathTokenHash: lineStoreContext.webhookPathTokenHash
-      });
-      return res.status(401).json({
-        ok: false,
-        mode: "signature_verification_failed",
-        reason: "invalid_line_signature"
-      });
-    }
-      const lineAccessTokenOptions = resolveTokenizedLineAccessTokenOptions(lineStoreContext);
-      req.lineStoreContext = {
-        ...lineStoreContext,
-        signatureVerified: true
-      };
-      req.lineAccessTokenOptions = lineAccessTokenOptions;
-
-      console.log("[line:webhook:signature] verified forward", {
-        storeId: lineStoreContext.storeId,
-        tenantId: lineStoreContext.tenantId,
-        lineChannelId: lineStoreContext.lineChannelId,
-        webhookPathTokenHash: lineStoreContext.webhookPathTokenHash,
-        mode: "signature_verified_forward",
-        tokenizedAccessTokenInjected: Boolean(lineAccessTokenOptions.channelAccessToken)
-      });
-
-      req.url = "/webhook";
-      req.originalUrl = `${req.baseUrl || ""}/webhook`;
-      return runWithLineAccessTokenOptions(lineAccessTokenOptions, () => router.handle(req, res, next));
+    return res.status(501).json({
+      ok: true,
+      mode: "route_skeleton_only",
+      resolved: true,
+      implemented: false,
+      storeId: row.storeId,
+      lineEnabled: Boolean(row.lineEnabled),
+      channelIdPresent: Boolean(row.channelId),
+      channelSecretPresent: Boolean(row.channelSecretPresent),
+      channelAccessTokenPresent: Boolean(row.channelAccessTokenPresent),
+      staffGroupEnabled: Boolean(row.staffGroupEnabled),
+      webhookConfigured: Boolean(row.webhookPath),
+      updatedAt: row.updatedAt || null
+    });
   } catch (error) {
     return next(error);
   }
