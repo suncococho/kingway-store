@@ -7,7 +7,24 @@ Branch: `beta/staging-architecture`
 
 This document defines the design for store-scoped LINE settings in the KINGWAY multi-store SaaS architecture.
 
-This is a design-only phase.
+Backend-only API Phase was implemented on `2026-06-03`.
+
+Implemented in this phase:
+
+- idempotent bootstrap for `store_line_settings`
+- `GET /api/store/settings/line`
+- `PATCH /api/store/settings/line`
+- masked response behavior for token/secret fields
+- `req.storeId`-scoped persistence only
+
+Still not implemented in this phase:
+
+- Store Admin UI
+- Platform Admin LINE settings UI/API
+- actual LINE webhook/runtime switching
+- actual LIFF resolver switching
+- raw secret encrypted-at-rest persistence
+- any customer-facing OA flow changes
 
 Do not use this document as approval to:
 
@@ -17,7 +34,7 @@ Do not use this document as approval to:
 - change the existing customer LINE OA / Business flow
 - change the existing legacy webhook behavior
 - deploy credential changes
-- implement the API in this phase
+- change runtime credential resolution without a later approved phase
 
 Primary references:
 
@@ -56,6 +73,33 @@ This phase does not implement:
 - Telegram removal
 - legacy `/api/line/webhook` removal
 - store-scoped reply/push runtime changes
+
+## 3-1. Current implemented backend scope
+
+The current backend API stores a dedicated store-scoped LINE settings record in `store_line_settings`.
+
+Stored fields:
+
+- `line_enabled`
+- `channel_id`
+- `channel_secret_ref`
+- `channel_secret_present`
+- `channel_access_token_ref`
+- `channel_access_token_present`
+- `liff_url`
+- `login_auth_url`
+- `webhook_path`
+- `customer_oa_name`
+- `staff_group_enabled`
+- `updated_by_staff_id`
+
+Important limitation:
+
+- the current project only has an `env:` secret-ref resolver
+- there is no DB encryption helper for raw LINE secret/token values
+- therefore this phase does not persist raw `channelSecret` or raw `channelAccessToken`
+- if a caller sends a non-empty raw secret/token, the API records only presence metadata and returns a masked pending-storage state
+- if a caller sends `env:SECRET_NAME`, the API stores that secret ref and still returns only a masked value
 
 ## 4. Design Principles
 

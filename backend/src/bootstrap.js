@@ -167,6 +167,50 @@ async function ensureStoreFeaturesSchema() {
   `);
 }
 
+async function ensureStoreLineSettingsSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS store_line_settings (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      store_id BIGINT UNSIGNED NOT NULL,
+      line_enabled TINYINT(1) NOT NULL DEFAULT 0,
+      channel_id VARCHAR(120) NULL,
+      channel_secret_ref VARCHAR(255) NULL,
+      channel_secret_present TINYINT(1) NOT NULL DEFAULT 0,
+      channel_access_token_ref VARCHAR(255) NULL,
+      channel_access_token_present TINYINT(1) NOT NULL DEFAULT 0,
+      liff_url VARCHAR(500) NULL,
+      login_auth_url VARCHAR(500) NULL,
+      webhook_path VARCHAR(255) NULL,
+      customer_oa_name VARCHAR(190) NULL,
+      staff_group_enabled TINYINT(1) NOT NULL DEFAULT 0,
+      updated_by_staff_id BIGINT UNSIGNED NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_store_line_settings_store (store_id),
+      UNIQUE KEY uk_store_line_settings_channel_id (channel_id),
+      UNIQUE KEY uk_store_line_settings_webhook_path (webhook_path)
+    )
+  `);
+
+  await addColumnIfMissing("store_line_settings", "store_id", "BIGINT UNSIGNED NOT NULL");
+  await addColumnIfMissing("store_line_settings", "line_enabled", "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumnIfMissing("store_line_settings", "channel_id", "VARCHAR(120) NULL");
+  await addColumnIfMissing("store_line_settings", "channel_secret_ref", "VARCHAR(255) NULL");
+  await addColumnIfMissing("store_line_settings", "channel_secret_present", "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumnIfMissing("store_line_settings", "channel_access_token_ref", "VARCHAR(255) NULL");
+  await addColumnIfMissing("store_line_settings", "channel_access_token_present", "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumnIfMissing("store_line_settings", "liff_url", "VARCHAR(500) NULL");
+  await addColumnIfMissing("store_line_settings", "login_auth_url", "VARCHAR(500) NULL");
+  await addColumnIfMissing("store_line_settings", "webhook_path", "VARCHAR(255) NULL");
+  await addColumnIfMissing("store_line_settings", "customer_oa_name", "VARCHAR(190) NULL");
+  await addColumnIfMissing("store_line_settings", "staff_group_enabled", "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumnIfMissing("store_line_settings", "updated_by_staff_id", "BIGINT UNSIGNED NULL");
+
+  await ensureIndexIfMissing("store_line_settings", "uk_store_line_settings_store", "UNIQUE INDEX uk_store_line_settings_store (store_id)");
+  await ensureIndexIfMissing("store_line_settings", "uk_store_line_settings_channel_id", "UNIQUE INDEX uk_store_line_settings_channel_id (channel_id)");
+  await ensureIndexIfMissing("store_line_settings", "uk_store_line_settings_webhook_path", "UNIQUE INDEX uk_store_line_settings_webhook_path (webhook_path)");
+}
+
 async function columnExists(tableName, columnName) {
   const [rows] = await pool.query(
     `
@@ -731,6 +775,7 @@ async function ensureV2Schema() {
   await ensurePlatformAdminUsersSchema();
   await seedPlatformAdminFromEnv();
   await ensureStoreFeaturesSchema();
+  await ensureStoreLineSettingsSchema();
 
   await ensureAppSettingsSchema();
 
@@ -747,6 +792,7 @@ module.exports = {
   ensurePlatformAdminUsersSchema,
   seedPlatformAdminFromEnv,
   ensureStoreFeaturesSchema,
+  ensureStoreLineSettingsSchema,
   ensureV2Schema,
   ensureStorageDirectories
 };

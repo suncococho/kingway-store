@@ -7,6 +7,10 @@ const {
   normalizeStoreProfilePayload,
   saveStoreProfileSettings
 } = require("../services/storeProfileSettingsService");
+const {
+  getStoreLineSettings,
+  saveStoreLineSettings
+} = require("../services/storeLineSettingsService");
 
 const router = express.Router();
 const storeLogoRootDir = path.join(__dirname, "..", "..", "storage", "store-logos");
@@ -28,6 +32,15 @@ function requireStoreProfileWriteRole(req, res, next) {
 
 router.use(authenticate, requireStoreScope());
 
+function getApiBaseUrl(req) {
+  const configured = String(process.env.API_BASE_URL || "").trim().replace(/\/$/, "");
+  if (configured) {
+    return configured;
+  }
+
+  return `${req.protocol}://${req.get("host")}`;
+}
+
 router.get("/settings", async (req, res, next) => {
   try {
     const store = await getStoreProfileSettings(req.storeId);
@@ -42,6 +55,36 @@ router.patch("/settings", requireStoreProfileWriteRole, async (req, res, next) =
     const store = await saveStoreProfileSettings(req.storeId, req.body || {}, req.user?.id || null);
     return res.json({ store });
   } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/settings/line", async (req, res, next) => {
+  try {
+    const lineSettings = await getStoreLineSettings(req.storeId, {
+      apiBaseUrl: getApiBaseUrl(req)
+    });
+    return res.json({ lineSettings });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.patch("/settings/line", requireStoreProfileWriteRole, async (req, res, next) => {
+  try {
+    const lineSettings = await saveStoreLineSettings(
+      req.storeId,
+      req.body || {},
+      req.user?.id || null,
+      {
+        apiBaseUrl: getApiBaseUrl(req)
+      }
+    );
+    return res.json({ lineSettings });
+  } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
     return next(error);
   }
 });
