@@ -10,6 +10,13 @@
 - `backend/src/routes/line.js`의 legacy `POST /api/line/webhook`는 webhook 이벤트 처리에서 `replyToLine` 호출 시 context를 주입하지 않아 실질적으로 global token이 사용된다.
 - 고객 발송/푸시 라우트 및 서비스(고객 알림, 주문, 수리, 쿠폰, 정기 리포트)는 실행상 모두 global token 경로에 묶여 있으며(현재 runtime 동작), resolver 준비만 있는 상태이다.
 
+현재 구현 상태(2026-06-04):
+
+- `POST /api/line/webhook/:webhookPathToken`는 signature 검증 성공 후 `resolveStoreLineCredentials()`를 실제 호출한다.
+- resolver가 `accessToken`, `channelSecret`를 모두 해석하면 `req.lineContext = { storeId, storeCode, accessToken, channelSecret }`를 저장한다.
+- 아직 tokenized webhook 경로에서 reply/push는 실행하지 않으며, 상태 응답만 반환한다.
+- legacy `POST /api/line/webhook`는 global token 경로를 유지한다.
+
 ## 2) store resolver 준비된 위치
 
 - 4B에서 준비된 resolver는 `backend/src/services/storeLineSettingsService.js`에 구현됨.
@@ -58,6 +65,11 @@
 - legacy `POST /api/line/webhook`는 global token과 기존 처리 방식 유지.
 - tokenized 경로에서만 store context + channel secret/token 정합성 검사 후, 토큰 없음/해석 실패 시 명시 실패 처리.
 - `resolveStoreLineCredentials` 기반으로 상태만 선검증하고, 다른 라우트로 확장하지 않는다.
+- 현재 응답 기준:
+  - 성공: `200`, `mode: "tokenized_webhook"`, `credentialsResolved: true`
+  - credential 미해결: `503`
+  - invalid signature: `401`
+  - invalid token path / mapping miss: `404`
 
 ## 6) 실패 fallback 정책
 
@@ -93,4 +105,3 @@
 - KINGWAY_TAINAN(기존 단일점) 전환은 마지막 단계.
 - 현재는 tokenized webhook + store-scoped send 흐름을 먼저 다른 store 경로 또는 staging 검증 store로 제한.
 - store별 503/no-send/실패 분기에서 교차 유출이 없는지 통과 후 마지막에 KINGWAY_TAINAN을 적용한다.
-

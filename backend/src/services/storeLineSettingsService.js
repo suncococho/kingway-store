@@ -379,6 +379,8 @@ async function resolveStoreLineCredentials({ storeId = null, storeCode = null, p
       purpose: normalizeText(purpose) || null,
       lineEnabled: false,
       found: false,
+      credentialsResolved: false,
+      accessToken: null,
       channelAccessToken: null,
       channelSecret: null,
       channelAccessTokenStatus: buildMaskedCredentialStatus(null, false),
@@ -394,6 +396,8 @@ async function resolveStoreLineCredentials({ storeId = null, storeCode = null, p
     scopedRow.channelSecretRef,
     normalizeBoolean(scopedRow.channelSecretPresent, false)
   );
+  const accessToken = buildResolvedCredential(channelAccessTokenStatus, scopedRow.channelAccessTokenRef);
+  const channelSecret = buildResolvedCredential(channelSecretStatus, scopedRow.channelSecretRef);
 
   return {
     storeId: scopedRow.storeId ?? null,
@@ -401,8 +405,10 @@ async function resolveStoreLineCredentials({ storeId = null, storeCode = null, p
     purpose: normalizeText(purpose) || null,
     lineEnabled: normalizeBoolean(scopedRow.lineEnabled, false),
     found: true,
-    channelAccessToken: buildResolvedCredential(channelAccessTokenStatus, scopedRow.channelAccessTokenRef),
-    channelSecret: buildResolvedCredential(channelSecretStatus, scopedRow.channelSecretRef),
+    credentialsResolved: Boolean(accessToken && channelSecret),
+    accessToken,
+    channelAccessToken: accessToken,
+    channelSecret,
     channelAccessTokenStatus,
     channelSecretStatus
   };

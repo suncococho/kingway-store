@@ -22,7 +22,9 @@ function normalizeLineSendContext(context = {}) {
     lineChannelId: context.lineChannelId ?? null,
     channelAccessTokenRef: context.channelAccessTokenRef ?? null,
     channelSecretRef: context.channelSecretRef ?? null,
-    source: context.source ?? null
+    source: context.source ?? null,
+    purpose: context.purpose ?? null,
+    credentialsResolved: context.credentialsResolved ?? null
   };
 }
 

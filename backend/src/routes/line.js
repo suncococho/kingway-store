@@ -5,6 +5,7 @@ const config = require("../config");
 const { authenticate, authorize } = require("../middleware/auth");
 const { verifyLineSignature } = require("../utils/line");
 const { resolveSecretRef } = require("../utils/lineSecretResolver");
+const { resolveStoreLineCredentials } = require("../services/storeLineSettingsService");
 const { sendDailyReport } = require("../services/reportService");
 const { logKpi } = require("../services/kpiService");
 const {
@@ -73,11 +74,12 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
     const webhookPathTokenHash = hashWebhookPathToken(webhookPathToken);
 
     if (!/^[A-Za-z0-9_-]{1,190}$/.test(webhookPathToken)) {
-      return res.status(400).json({
+      return res.status(404).json({
         ok: false,
-        mode: "route_skeleton_only",
+        mode: "tokenized_webhook",
         resolved: false,
-        message: "webhookPathToken 格式不正確"
+        credentialsResolved: false,
+        message: "找不到對應的門市 LINE webhook 設定"
       });
     }
 
@@ -89,8 +91,9 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
       });
       return res.status(404).json({
         ok: false,
-        mode: "route_skeleton_only",
+        mode: "tokenized_webhook",
         resolved: false,
+        credentialsResolved: false,
         message: "找不到對應的門市 LINE webhook 設定"
       });
     }
@@ -113,9 +116,10 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
       });
       return res.status(503).json({
         ok: false,
-        mode: "route_skeleton_only",
+        mode: "tokenized_webhook",
         resolved: true,
         signatureVerified: false,
+        credentialsResolved: false,
         message: "找不到可用的 LINE channel secret 設定"
       });
     }
@@ -131,20 +135,53 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
       });
       return res.status(401).json({
         ok: false,
-        mode: "route_skeleton_only",
+        mode: "tokenized_webhook",
         resolved: true,
         signatureVerified: false,
+        credentialsResolved: false,
         message: "Invalid LINE signature"
       });
     }
 
-    return res.status(501).json({
-      ok: true,
-      mode: "route_skeleton_only",
-      resolved: true,
-      implemented: false,
-      signatureVerified: true,
+    const resolvedCredentials = await resolveStoreLineCredentials({
       storeId: row.storeId,
+      purpose: "tokenized_webhook"
+    });
+
+    if (!resolvedCredentials.credentialsResolved || !resolvedCredentials.accessToken || !resolvedCredentials.channelSecret) {
+      console.warn("[line:webhook:skeleton] credentials unavailable", {
+        storeId: row.storeId,
+        webhookPathTokenHash,
+        accessTokenSource: resolvedCredentials.channelAccessTokenStatus?.source || "none",
+        channelSecretSource: resolvedCredentials.channelSecretStatus?.source || "none",
+        accessTokenResolvable: Boolean(resolvedCredentials.channelAccessTokenStatus?.resolvable),
+        channelSecretResolvable: Boolean(resolvedCredentials.channelSecretStatus?.resolvable)
+      });
+      return res.status(503).json({
+        ok: false,
+        mode: "tokenized_webhook",
+        resolved: true,
+        signatureVerified: true,
+        credentialsResolved: false,
+        message: "找不到可用的門市 LINE credentials"
+      });
+    }
+
+    req.lineContext = {
+      storeId: resolvedCredentials.storeId,
+      storeCode: resolvedCredentials.storeCode,
+      accessToken: resolvedCredentials.accessToken,
+      channelSecret: resolvedCredentials.channelSecret
+    };
+
+    return res.status(200).json({
+      ok: true,
+      mode: "tokenized_webhook",
+      resolved: true,
+      signatureVerified: true,
+      credentialsResolved: true,
+      storeId: resolvedCredentials.storeId,
+      storeCode: resolvedCredentials.storeCode,
       lineEnabled: Boolean(row.lineEnabled),
       channelIdPresent: Boolean(row.channelId),
       channelSecretPresent: Boolean(row.channelSecretPresent),
