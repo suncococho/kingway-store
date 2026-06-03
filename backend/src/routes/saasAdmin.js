@@ -3,6 +3,8 @@ const { pool } = require("../db");
 const { authenticatePlatformAdmin, requirePlatformRole } = require("../middleware/platformAuth");
 const {
   FEATURE_KEYS,
+  FEATURE_PRESETS,
+  PLAN_PRESET_KEYS,
   ProvisioningError,
   deriveSlugFromCode,
   provisionStore
@@ -110,6 +112,7 @@ function buildStoreFeatureResponse(store, featureRow) {
     ok: true,
     readOnly: false,
     store,
+    presetKeys: PLAN_PRESET_KEYS,
     features: rowToFeatures(featureRow)
   };
 }
@@ -203,6 +206,45 @@ router.patch("/stores/:id/features", async (req, res, next) => {
     return res.json(buildStoreFeatureResponse(store, featureRow));
   } catch (error) {
     console.error("[saasAdmin/storeFeatures:patch] failed", error);
+    return next(error);
+  }
+});
+
+router.post("/stores/:id/features/preset", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
+  try {
+    const storeId = n(req.params.id, 0);
+    if (!storeId) {
+      return res.status(404).json({ message: "Store not found" });
+    }
+
+    const store = await getStore(storeId);
+    if (!store) {
+      return res.status(404).json({ message: "Store not found" });
+    }
+
+    const presetKey = String(req.body?.preset || "").trim().toUpperCase();
+    const preset = FEATURE_PRESETS[presetKey];
+    if (!preset) {
+      return res.status(400).json({ message: "Invalid preset" });
+    }
+
+    await ensureStoreFeatureRow(storeId);
+
+    const updates = FEATURE_KEYS.map((key) => key + " = ?");
+    const values = FEATURE_KEYS.map((key) => (preset[key] ? 1 : 0));
+    values.push(storeId);
+
+    await pool.query("UPDATE store_features SET " + updates.join(", ") + " WHERE store_id = ?", values);
+    await pool.query("UPDATE stores SET plan = ? WHERE id = ?", [presetKey.toLowerCase(), storeId]);
+
+    const nextStore = await getStore(storeId);
+    const featureRow = await getStoreFeatureRow(storeId);
+    return res.json({
+      ...buildStoreFeatureResponse(nextStore, featureRow),
+      appliedPreset: presetKey
+    });
+  } catch (error) {
+    console.error("[saasAdmin/storeFeatures:preset] failed", error);
     return next(error);
   }
 });

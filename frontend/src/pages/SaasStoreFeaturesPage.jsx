@@ -34,6 +34,16 @@ function featuresToDraft(features) {
   }, {});
 }
 
+function getPresetSummary(presetKey) {
+  if (presetKey === "FREE") {
+    return "Free：保留 POS、訂單、維修、庫存與 LINE 基本能力。";
+  }
+  if (presetKey === "PREMIUM") {
+    return "Premium：開啟進階報表、優惠券、供應商、購買確認書與員工管理。";
+  }
+  return "";
+}
+
 function SaasStoreFeaturesPage() {
   const { id } = useParams();
   const currentUser = getStoredPlatformUser();
@@ -47,6 +57,7 @@ function SaasStoreFeaturesPage() {
   const [error, setError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [success, setSuccess] = useState("");
+  const [presetLoading, setPresetLoading] = useState("");
 
   useEffect(() => {
     if (!isAdmin) {
@@ -130,6 +141,27 @@ function SaasStoreFeaturesPage() {
       setSaveError(err.message || "儲存店鋪功能設定失敗");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function applyPreset(presetKey) {
+    setPresetLoading(presetKey);
+    setSaveError("");
+    setSuccess("");
+
+    try {
+      const response = await platformRequest(`/saas-admin/stores/${id}/features/preset`, {
+        method: "POST",
+        body: JSON.stringify({ preset: presetKey })
+      });
+
+      setData(response);
+      setDraftFeatures(featuresToDraft(response.features));
+      setSuccess(`${presetKey} preset 已套用。`);
+    } catch (err) {
+      setSaveError(err.message || "套用 preset 失敗");
+    } finally {
+      setPresetLoading("");
     }
   }
 
@@ -232,9 +264,25 @@ function SaasStoreFeaturesPage() {
               <Link to="/platform-admin" className="secondary-button">返回 SaaS 管理</Link>
               <button
                 type="button"
+                className="secondary-button"
+                onClick={() => applyPreset("FREE")}
+                disabled={saving || presetLoading === "PREMIUM" || presetLoading === "FREE"}
+              >
+                {presetLoading === "FREE" ? "套用中..." : "Free 適用"}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => applyPreset("PREMIUM")}
+                disabled={saving || presetLoading === "FREE" || presetLoading === "PREMIUM"}
+              >
+                {presetLoading === "PREMIUM" ? "套用中..." : "Premium 適用"}
+              </button>
+              <button
+                type="button"
                 className="primary-button inline-submit"
                 onClick={saveFeatures}
-                disabled={saving || !features.length || !hasChanges}
+                disabled={saving || Boolean(presetLoading) || !features.length || !hasChanges}
               >
                 {saving ? "儲存中..." : "儲存設定"}
               </button>
@@ -249,6 +297,12 @@ function SaasStoreFeaturesPage() {
           第三階段已套用至：維修系統、員工管理。
           第四階段已套用至：訂單管理。
           最終階段已套用至：POS 系統。
+        </div>
+
+        <div className="empty-state">
+          {getPresetSummary("FREE")}
+          {" "}
+          {getPresetSummary("PREMIUM")}
         </div>
 
         {saveError ? <div className="empty-state">{saveError}</div> : null}

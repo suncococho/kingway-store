@@ -22,6 +22,35 @@ const FEATURE_KEYS = [
   "sales_dashboard_enabled",
   "staff_management_enabled"
 ];
+const PLAN_PRESET_KEYS = ["FREE", "PREMIUM"];
+const FEATURE_PRESETS = {
+  FREE: {
+    pos_enabled: true,
+    orders_enabled: true,
+    repairs_enabled: true,
+    inventory_enabled: true,
+    suppliers_enabled: false,
+    coupons_enabled: false,
+    purchase_confirmations_enabled: false,
+    line_enabled: true,
+    telegram_enabled: false,
+    sales_dashboard_enabled: false,
+    staff_management_enabled: false
+  },
+  PREMIUM: {
+    pos_enabled: true,
+    orders_enabled: true,
+    repairs_enabled: true,
+    inventory_enabled: true,
+    suppliers_enabled: true,
+    coupons_enabled: true,
+    purchase_confirmations_enabled: true,
+    line_enabled: true,
+    telegram_enabled: false,
+    sales_dashboard_enabled: true,
+    staff_management_enabled: true
+  }
+};
 
 class ProvisioningError extends Error {
   constructor(status, message, details = null) {
@@ -172,7 +201,7 @@ async function insertStore(connection, payload, hasSlugColumn) {
 async function insertStoreFeatures(connection, storeId) {
   const columns = FEATURE_KEYS.join(", ");
   const placeholders = FEATURE_KEYS.map(() => "?").join(", ");
-  const values = FEATURE_KEYS.map(() => 1);
+  const values = FEATURE_KEYS.map((key) => (FEATURE_PRESETS.FREE[key] ? 1 : 0));
 
   await connection.query(
     `
@@ -259,6 +288,8 @@ async function provisionStore(input, actor = null) {
 
 module.exports = {
   FEATURE_KEYS,
+  FEATURE_PRESETS,
+  PLAN_PRESET_KEYS,
   ProvisioningError,
   deriveSlugFromCode,
   provisionStore
