@@ -298,11 +298,16 @@ function StoreSettingsPage() {
             <AdminSectionHeader
               eyebrow="LINE"
               title="LINE 設定"
-              description="本階段不實作 LINE token/secret 編輯，只保留設定區塊位置。"
+              description="LINE OA、Webhook 與 LIFF 已獨立到安全設定頁，避免與一般門市資料混在一起。"
             />
             <div className="store-settings-placeholder-card">
-              <strong>Coming Soon</strong>
-              <p>LINE settings 之後會獨立成安全的設定流程。</p>
+              <strong>前往獨立設定頁</strong>
+              <p>可在專用頁面查看遮罩後的 token / secret 狀態，並安全更新目前門市的 LINE 設定。</p>
+              <div className="store-settings-logo-actions">
+                <Link to="/settings/line" className="primary-button inline-submit">
+                  開啟 LINE 設定
+                </Link>
+              </div>
             </div>
           </article>
         </section>

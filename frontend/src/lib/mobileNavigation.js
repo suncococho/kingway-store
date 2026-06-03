@@ -52,6 +52,7 @@ export const mobileMenuSections = [
     heading: "系統管理",
     items: [
       { to: "/settings/store", label: "門市設定", description: "門市名稱、地址、營業時間與對外文字" },
+      { to: "/settings/line", label: "LINE 設定", description: "LINE OA、Webhook 與 LIFF 安全設定" },
       { to: "/settings?section=system", label: "系統設定", description: "LINE 狀態、通知預設與 POS 預設" },
       { to: "/trash", label: "已刪除資料", description: "復原或永久刪除訂單 / 維修單" }
     ]
