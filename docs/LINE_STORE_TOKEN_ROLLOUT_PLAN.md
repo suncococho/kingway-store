@@ -25,9 +25,12 @@
   - `getMaskedLineCredentialStatus({ storeId, storeCode })`
 - 조회 범위:
   - `stores` + `store_line_settings`에서 `storeId` 또는 `storeCode`로 조회.
-- env 참조 해석:
-  - `env:NAME` 형식만 해석하고 raw 값은 반환/로그/응답에서 노출하지 않음.
+- credential 해석:
+  - direct DB 저장값과 `env:NAME` 형식을 모두 해석한다.
+  - direct 저장값이 있으면 우선 사용하고, 없으면 `env:` ref를 해석한다.
 - 반환은 상태 메타(`present`, `source`, `maskedLabel`, `resolvable`) 중심이며 raw token은 내부에서만 사용하도록 구성됨.
+- `GET /api/store/settings/line` 및 `PATCH /api/store/settings/line` 응답은 raw token/secret을 반환하지 않는다.
+- `env:` 방식은 optional advanced mode로 유지한다.
 
 ## 3) 안전하게 먼저 적용할 경로 (Phase 4C 권장)
 
@@ -94,11 +97,12 @@
 
 ## 8) 실제 LINE 발송 전 필요한 env 준비
 
-- store가 `env:NAME`를 사용한다면:
+- store가 `env:NAME` optional advanced mode를 사용한다면:
   - 5대 env 이름과 실제 값(`LINE_CHANNEL_ACCESS_TOKEN`/`LINE_CHANNEL_SECRET` 별개로) 매핑 정책 확정.
   - `.env`가 아니라 배포 환경의 runtime secret source로만 주입.
 - `LINE_CHANNEL_ACCESS_TOKEN`, `LINE_CHANNEL_SECRET`는 legacy fallback 용으로 유지하되, Phase 4C에서는 tokenized 경로에서 우선순위 전환 실험만 제한 적용.
 - `NODE` 레벨에서 process.env 접근이 4B 상태에서 mask/오염 없이 동작하는지 재확인.
+- direct DB 저장값은 staging/SaaS 전환용으로 구현되었지만, encrypted-at-rest 전환 TODO가 남아 있다.
 
 ## 9) KINGWAY_TAINAN migration
 

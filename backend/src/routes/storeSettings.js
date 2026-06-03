@@ -64,6 +64,7 @@ router.get("/settings/line", async (req, res, next) => {
     const lineSettings = await getStoreLineSettings(req.storeId, {
       apiBaseUrl: getApiBaseUrl(req)
     });
+    res.set("Cache-Control", "no-store");
     return res.json({ lineSettings });
   } catch (error) {
     return next(error);
@@ -80,6 +81,7 @@ router.patch("/settings/line", requireStoreProfileWriteRole, async (req, res, ne
         apiBaseUrl: getApiBaseUrl(req)
       }
     );
+    res.set("Cache-Control", "no-store");
     return res.json({ lineSettings });
   } catch (error) {
     if (error?.statusCode) {

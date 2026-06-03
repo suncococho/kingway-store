@@ -4,7 +4,6 @@ const { pool } = require("../db");
 const config = require("../config");
 const { authenticate, authorize } = require("../middleware/auth");
 const { verifyLineSignature } = require("../utils/line");
-const { resolveSecretRef } = require("../utils/lineSecretResolver");
 const { resolveStoreLineCredentials } = require("../services/storeLineSettingsService");
 const { sendDailyReport } = require("../services/reportService");
 const { logKpi } = require("../services/kpiService");
@@ -106,12 +105,17 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
       channelAccessTokenPresent: Boolean(row.channelAccessTokenPresent)
     });
 
-    const secretResult = resolveSecretRef(row.channelSecretRef);
-    if (!secretResult.resolved) {
+    const resolvedCredentials = await resolveStoreLineCredentials({
+      storeId: row.storeId,
+      purpose: "tokenized_webhook"
+    });
+
+    if (!resolvedCredentials.channelSecret) {
       console.warn("[line:webhook:skeleton] secret unavailable", {
         storeId: row.storeId,
         webhookPathTokenHash,
-        reason: secretResult.reason,
+        channelSecretSource: resolvedCredentials.channelSecretStatus?.source || "none",
+        channelSecretResolvable: Boolean(resolvedCredentials.channelSecretStatus?.resolvable),
         channelSecretPresent: Boolean(row.channelSecretPresent)
       });
       return res.status(503).json({
@@ -126,7 +130,7 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
 
     const signature = req.headers["x-line-signature"];
     const rawBody = req.rawBody || "";
-    const signatureVerified = verifyLineSignature(rawBody, secretResult.secret, signature);
+    const signatureVerified = verifyLineSignature(rawBody, resolvedCredentials.channelSecret, signature);
 
     if (!signatureVerified) {
       console.warn("[line:webhook:skeleton] invalid signature", {
@@ -142,11 +146,6 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
         message: "Invalid LINE signature"
       });
     }
-
-    const resolvedCredentials = await resolveStoreLineCredentials({
-      storeId: row.storeId,
-      purpose: "tokenized_webhook"
-    });
 
     if (!resolvedCredentials.credentialsResolved || !resolvedCredentials.accessToken || !resolvedCredentials.channelSecret) {
       console.warn("[line:webhook:skeleton] credentials unavailable", {

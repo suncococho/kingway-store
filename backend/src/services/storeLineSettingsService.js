@@ -4,6 +4,7 @@ const { pool } = require("../db");
 const DEFAULT_WEBHOOK_PREFIX = "/api/line/webhook/";
 const ENV_REF_PATTERN = /^env:[A-Z][A-Z0-9_]*$/;
 const MASKED_SAFE_REF = "已設定（安全參照）";
+const MASKED_DIRECT_STORED = "已設定（直接儲存）";
 const MASKED_PENDING_STORAGE = "已提供（未安全儲存）";
 
 const STORE_LINE_SETTINGS_DEFAULTS = {
@@ -85,7 +86,7 @@ function normalizeOptionalUrl(value, label) {
 }
 
 function isMaskedSecretPlaceholder(value) {
-  return value === MASKED_SAFE_REF || value === MASKED_PENDING_STORAGE;
+  return value === MASKED_SAFE_REF || value === MASKED_DIRECT_STORED || value === MASKED_PENDING_STORAGE;
 }
 
 function normalizeWebhookPath(value) {
@@ -122,10 +123,15 @@ function buildWebhookUrl(apiBaseUrl, webhookPath) {
   return `${base}${webhookPath}`;
 }
 
-function parseSecretInput(input, currentRef, currentPresent, label) {
+function hasDirectCredentialValue(value) {
+  return typeof value === "string" && value.length > 0;
+}
+
+function parseSecretInput(input, currentRef, currentDirectValue, currentPresent) {
   if (input === undefined) {
     return {
       ref: currentRef,
+      directValue: currentDirectValue,
       present: currentPresent
     };
   }
@@ -133,14 +139,16 @@ function parseSecretInput(input, currentRef, currentPresent, label) {
   const normalized = normalizeText(input);
   if (!normalized) {
     return {
-      ref: null,
-      present: false
+      ref: currentRef,
+      directValue: currentDirectValue,
+      present: currentPresent
     };
   }
 
   if (isMaskedSecretPlaceholder(normalized)) {
     return {
       ref: currentRef,
+      directValue: currentDirectValue,
       present: currentPresent
     };
   }
@@ -148,30 +156,16 @@ function parseSecretInput(input, currentRef, currentPresent, label) {
   if (ENV_REF_PATTERN.test(normalized)) {
     return {
       ref: normalized,
+      directValue: null,
       present: true
     };
   }
 
-  if (normalized.includes(":")) {
-    throw createStoreLineSettingsError(`${label} 僅支援 env:SECRET_NAME 形式的安全參照`);
-  }
-
   return {
-    ref: currentRef,
+    ref: null,
+    directValue: normalized,
     present: true
   };
-}
-
-function maskSecretValue(ref, present) {
-  if (ref) {
-    return MASKED_SAFE_REF;
-  }
-
-  if (present) {
-    return MASKED_PENDING_STORAGE;
-  }
-
-  return "";
 }
 
 function maskCredentialName(name) {
@@ -209,10 +203,19 @@ function parseCredentialRef(ref) {
   };
 }
 
-function buildMaskedCredentialStatus(ref, present) {
+function buildMaskedCredentialStatus(ref, directValue, present) {
   const parsedRef = parseCredentialRef(ref);
   const envValue = parsedRef.type === "env" ? process.env[parsedRef.name] : "";
   const hasResolvedValue = Boolean(envValue);
+
+  if (hasDirectCredentialValue(directValue)) {
+    return {
+      present: true,
+      source: "direct",
+      maskedLabel: MASKED_DIRECT_STORED,
+      resolvable: true
+    };
+  }
 
   if (parsedRef.type === "env") {
     return {
@@ -249,13 +252,17 @@ function buildMaskedCredentialStatus(ref, present) {
   };
 }
 
-function buildResolvedCredential(status, ref) {
-  if (status.source !== "env" || !status.resolvable) {
-    return null;
+function buildResolvedCredential(status, ref, directValue) {
+  if (status.source === "direct" && status.resolvable) {
+    return directValue || null;
   }
 
-  const parsedRef = parseCredentialRef(ref);
-  return parsedRef.name ? process.env[parsedRef.name] || null : null;
+  if (status.source === "env" && status.resolvable) {
+    const parsedRef = parseCredentialRef(ref);
+    return parsedRef.name ? process.env[parsedRef.name] || null : null;
+  }
+
+  return null;
 }
 
 function mapRowToSettings(row, apiBaseUrl) {
@@ -264,14 +271,32 @@ function mapRowToSettings(row, apiBaseUrl) {
   const channelAccessTokenPresent = normalizeBoolean(row?.channelAccessTokenPresent ?? row?.channel_access_token_present, false);
   const channelSecretRef = normalizeText(row?.channelSecretRef || row?.channel_secret_ref);
   const channelAccessTokenRef = normalizeText(row?.channelAccessTokenRef || row?.channel_access_token_ref);
+  const channelSecretDirectValue = normalizeText(row?.channelSecretDirectValue || row?.channel_secret_direct_value);
+  const channelAccessTokenDirectValue = normalizeText(
+    row?.channelAccessTokenDirectValue || row?.channel_access_token_direct_value
+  );
+  const channelSecretStatus = buildMaskedCredentialStatus(
+    channelSecretRef,
+    channelSecretDirectValue,
+    channelSecretPresent
+  );
+  const channelAccessTokenStatus = buildMaskedCredentialStatus(
+    channelAccessTokenRef,
+    channelAccessTokenDirectValue,
+    channelAccessTokenPresent
+  );
 
   return {
     lineEnabled: normalizeBoolean(row?.lineEnabled ?? row?.line_enabled, false),
     channelId: normalizeText(row?.channelId || row?.channel_id),
-    channelSecret: maskSecretValue(channelSecretRef, channelSecretPresent),
+    channelSecret: channelSecretStatus.maskedLabel,
     channelSecretPresent,
-    channelAccessToken: maskSecretValue(channelAccessTokenRef, channelAccessTokenPresent),
+    channelSecretSource: channelSecretStatus.source,
+    channelSecretResolvable: channelSecretStatus.resolvable,
+    channelAccessToken: channelAccessTokenStatus.maskedLabel,
     channelAccessTokenPresent,
+    channelAccessTokenSource: channelAccessTokenStatus.source,
+    channelAccessTokenResolvable: channelAccessTokenStatus.resolvable,
     liffUrl: normalizeText(row?.liffUrl || row?.liff_url),
     loginAuthUrl: normalizeText(row?.loginAuthUrl || row?.login_auth_url),
     webhookPath,
@@ -295,8 +320,10 @@ async function loadStoreLineSettingsRow(storeId) {
         line_enabled AS lineEnabled,
         channel_id AS channelId,
         channel_secret_ref AS channelSecretRef,
+        channel_secret_direct_value AS channelSecretDirectValue,
         channel_secret_present AS channelSecretPresent,
         channel_access_token_ref AS channelAccessTokenRef,
+        channel_access_token_direct_value AS channelAccessTokenDirectValue,
         channel_access_token_present AS channelAccessTokenPresent,
         liff_url AS liffUrl,
         login_auth_url AS loginAuthUrl,
@@ -341,8 +368,10 @@ async function loadStoreLineSettingsScope({ storeId = null, storeCode = null } =
         sls.line_enabled AS lineEnabled,
         sls.channel_id AS channelId,
         sls.channel_secret_ref AS channelSecretRef,
+        sls.channel_secret_direct_value AS channelSecretDirectValue,
         sls.channel_secret_present AS channelSecretPresent,
         sls.channel_access_token_ref AS channelAccessTokenRef,
+        sls.channel_access_token_direct_value AS channelAccessTokenDirectValue,
         sls.channel_access_token_present AS channelAccessTokenPresent,
         sls.webhook_path AS webhookPath,
         sls.customer_oa_name AS customerOaName,
@@ -383,21 +412,31 @@ async function resolveStoreLineCredentials({ storeId = null, storeCode = null, p
       accessToken: null,
       channelAccessToken: null,
       channelSecret: null,
-      channelAccessTokenStatus: buildMaskedCredentialStatus(null, false),
-      channelSecretStatus: buildMaskedCredentialStatus(null, false)
+      channelAccessTokenStatus: buildMaskedCredentialStatus(null, "", false),
+      channelSecretStatus: buildMaskedCredentialStatus(null, "", false)
     };
   }
 
   const channelAccessTokenStatus = buildMaskedCredentialStatus(
     scopedRow.channelAccessTokenRef,
+    normalizeText(scopedRow.channelAccessTokenDirectValue),
     normalizeBoolean(scopedRow.channelAccessTokenPresent, false)
   );
   const channelSecretStatus = buildMaskedCredentialStatus(
     scopedRow.channelSecretRef,
+    normalizeText(scopedRow.channelSecretDirectValue),
     normalizeBoolean(scopedRow.channelSecretPresent, false)
   );
-  const accessToken = buildResolvedCredential(channelAccessTokenStatus, scopedRow.channelAccessTokenRef);
-  const channelSecret = buildResolvedCredential(channelSecretStatus, scopedRow.channelSecretRef);
+  const accessToken = buildResolvedCredential(
+    channelAccessTokenStatus,
+    scopedRow.channelAccessTokenRef,
+    normalizeText(scopedRow.channelAccessTokenDirectValue)
+  );
+  const channelSecret = buildResolvedCredential(
+    channelSecretStatus,
+    scopedRow.channelSecretRef,
+    normalizeText(scopedRow.channelSecretDirectValue)
+  );
 
   return {
     storeId: scopedRow.storeId ?? null,
@@ -432,14 +471,14 @@ function normalizePatchPayload(input, current) {
   const channelSecretState = parseSecretInput(
     body.channelSecret,
     current.channelSecretRef,
-    current.channelSecretPresent,
-    "channelSecret"
+    current.channelSecretDirectValue,
+    current.channelSecretPresent
   );
   const channelAccessTokenState = parseSecretInput(
     body.channelAccessToken,
     current.channelAccessTokenRef,
-    current.channelAccessTokenPresent,
-    "channelAccessToken"
+    current.channelAccessTokenDirectValue,
+    current.channelAccessTokenPresent
   );
 
   const requestedWebhookPath = Object.prototype.hasOwnProperty.call(body, "webhookPath")
@@ -456,8 +495,10 @@ function normalizePatchPayload(input, current) {
       ? normalizeText(body.channelId).slice(0, 120)
       : current.channelId,
     channelSecretRef: channelSecretState.ref,
+    channelSecretDirectValue: channelSecretState.directValue,
     channelSecretPresent: channelSecretState.present,
     channelAccessTokenRef: channelAccessTokenState.ref,
+    channelAccessTokenDirectValue: channelAccessTokenState.directValue,
     channelAccessTokenPresent: channelAccessTokenState.present,
     liffUrl: Object.prototype.hasOwnProperty.call(body, "liffUrl")
       ? normalizeOptionalUrl(body.liffUrl, "liffUrl")
@@ -486,8 +527,10 @@ async function saveStoreLineSettings(storeId, payload, updatedByStaffId = null, 
         lineEnabled: normalizeBoolean(existingRow.lineEnabled, false),
         channelId: normalizeText(existingRow.channelId),
         channelSecretRef: normalizeText(existingRow.channelSecretRef),
+        channelSecretDirectValue: normalizeText(existingRow.channelSecretDirectValue),
         channelSecretPresent: normalizeBoolean(existingRow.channelSecretPresent, false),
         channelAccessTokenRef: normalizeText(existingRow.channelAccessTokenRef),
+        channelAccessTokenDirectValue: normalizeText(existingRow.channelAccessTokenDirectValue),
         channelAccessTokenPresent: normalizeBoolean(existingRow.channelAccessTokenPresent, false),
         liffUrl: normalizeText(existingRow.liffUrl),
         loginAuthUrl: normalizeText(existingRow.loginAuthUrl),
@@ -499,8 +542,10 @@ async function saveStoreLineSettings(storeId, payload, updatedByStaffId = null, 
         lineEnabled: false,
         channelId: "",
         channelSecretRef: "",
+        channelSecretDirectValue: "",
         channelSecretPresent: false,
         channelAccessTokenRef: "",
+        channelAccessTokenDirectValue: "",
         channelAccessTokenPresent: false,
         liffUrl: "",
         loginAuthUrl: "",
@@ -515,8 +560,10 @@ async function saveStoreLineSettings(storeId, payload, updatedByStaffId = null, 
     normalized.lineEnabled ? 1 : 0,
     normalized.channelId || null,
     normalized.channelSecretRef || null,
+    normalized.channelSecretDirectValue || null,
     normalized.channelSecretPresent ? 1 : 0,
     normalized.channelAccessTokenRef || null,
+    normalized.channelAccessTokenDirectValue || null,
     normalized.channelAccessTokenPresent ? 1 : 0,
     normalized.liffUrl || null,
     normalized.loginAuthUrl || null,
@@ -534,8 +581,10 @@ async function saveStoreLineSettings(storeId, payload, updatedByStaffId = null, 
         SET line_enabled = ?,
             channel_id = ?,
             channel_secret_ref = ?,
+            channel_secret_direct_value = ?,
             channel_secret_present = ?,
             channel_access_token_ref = ?,
+            channel_access_token_direct_value = ?,
             channel_access_token_present = ?,
             liff_url = ?,
             login_auth_url = ?,
@@ -555,8 +604,10 @@ async function saveStoreLineSettings(storeId, payload, updatedByStaffId = null, 
             line_enabled,
             channel_id,
             channel_secret_ref,
+            channel_secret_direct_value,
             channel_secret_present,
             channel_access_token_ref,
+            channel_access_token_direct_value,
             channel_access_token_present,
             liff_url,
             login_auth_url,
@@ -566,7 +617,7 @@ async function saveStoreLineSettings(storeId, payload, updatedByStaffId = null, 
             updated_by_staff_id,
             store_id
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         values
       );
@@ -583,6 +634,7 @@ async function saveStoreLineSettings(storeId, payload, updatedByStaffId = null, 
 }
 
 module.exports = {
+  MASKED_DIRECT_STORED,
   MASKED_PENDING_STORAGE,
   MASKED_SAFE_REF,
   STORE_LINE_SETTINGS_DEFAULTS,

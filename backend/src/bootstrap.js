@@ -175,8 +175,10 @@ async function ensureStoreLineSettingsSchema() {
       line_enabled TINYINT(1) NOT NULL DEFAULT 0,
       channel_id VARCHAR(120) NULL,
       channel_secret_ref VARCHAR(255) NULL,
+      channel_secret_direct_value TEXT NULL,
       channel_secret_present TINYINT(1) NOT NULL DEFAULT 0,
       channel_access_token_ref VARCHAR(255) NULL,
+      channel_access_token_direct_value TEXT NULL,
       channel_access_token_present TINYINT(1) NOT NULL DEFAULT 0,
       liff_url VARCHAR(500) NULL,
       login_auth_url VARCHAR(500) NULL,
@@ -196,8 +198,10 @@ async function ensureStoreLineSettingsSchema() {
   await addColumnIfMissing("store_line_settings", "line_enabled", "TINYINT(1) NOT NULL DEFAULT 0");
   await addColumnIfMissing("store_line_settings", "channel_id", "VARCHAR(120) NULL");
   await addColumnIfMissing("store_line_settings", "channel_secret_ref", "VARCHAR(255) NULL");
+  await addColumnIfMissing("store_line_settings", "channel_secret_direct_value", "TEXT NULL");
   await addColumnIfMissing("store_line_settings", "channel_secret_present", "TINYINT(1) NOT NULL DEFAULT 0");
   await addColumnIfMissing("store_line_settings", "channel_access_token_ref", "VARCHAR(255) NULL");
+  await addColumnIfMissing("store_line_settings", "channel_access_token_direct_value", "TEXT NULL");
   await addColumnIfMissing("store_line_settings", "channel_access_token_present", "TINYINT(1) NOT NULL DEFAULT 0");
   await addColumnIfMissing("store_line_settings", "liff_url", "VARCHAR(500) NULL");
   await addColumnIfMissing("store_line_settings", "login_auth_url", "VARCHAR(500) NULL");

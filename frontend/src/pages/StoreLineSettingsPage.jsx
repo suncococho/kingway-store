@@ -100,7 +100,7 @@ function StoreLineSettingsPage() {
 
   const readOnlyHint = useMemo(() => {
     if (canEdit) {
-      return "可維護目前門市的 LINE OA、LIFF 與安全憑證狀態。原始 token / secret 不會顯示在畫面上。";
+      return "可維護目前門市的 LINE OA、LIFF 與憑證狀態。Channel Secret 與 Access Token 可直接輸入儲存，原始值不會顯示在畫面或 API 回應中。";
     }
 
     return "目前帳號僅可檢視，若需修改請使用 ADMIN 或 MANAGER 帳號。";
@@ -203,11 +203,11 @@ function StoreLineSettingsPage() {
                 <strong>{formatEnabled(form.lineEnabled)}</strong>
               </div>
               <div className="line-settings-status-card">
-                <span>Channel Secret</span>
+                <span>Channel Secret 狀態</span>
                 <strong>{formatStatus(form.channelSecretPresent)}</strong>
               </div>
               <div className="line-settings-status-card">
-                <span>Access Token</span>
+                <span>Access Token 狀態</span>
                 <strong>{formatStatus(form.channelAccessTokenPresent)}</strong>
               </div>
               <div className="line-settings-status-card">
@@ -282,7 +282,7 @@ function StoreLineSettingsPage() {
                   name="channelSecret"
                   value={drafts.channelSecret}
                   onChange={handleSecretDraftChange}
-                  placeholder="留空表示保留既有設定；可輸入 env:LINE_CHANNEL_SECRET_STORE_1"
+                  placeholder="留空表示保留既有設定；可直接輸入，或使用進階 env:STORE4_LINE_CHANNEL_SECRET"
                   disabled={!canEdit || saving}
                 />
               </label>
@@ -298,7 +298,7 @@ function StoreLineSettingsPage() {
                   name="channelAccessToken"
                   value={drafts.channelAccessToken}
                   onChange={handleSecretDraftChange}
-                  placeholder="留空表示保留既有設定；可輸入 env:LINE_CHANNEL_ACCESS_TOKEN_STORE_1"
+                  placeholder="留空表示保留既有設定；可直接輸入，或使用進階 env:STORE4_LINE_CHANNEL_ACCESS_TOKEN"
                   disabled={!canEdit || saving}
                 />
               </label>
@@ -337,7 +337,7 @@ function StoreLineSettingsPage() {
         <aside className="line-settings-side-column">
           <article className="admin-panel">
             <AdminSectionHeader
-              eyebrow="Webhook"
+              eyebrow="Webhook 設定"
               title="Webhook 顯示"
               description="只顯示目前設定與未來候選路徑，不會在此頁切換既有正式 webhook。"
             />
@@ -359,9 +359,9 @@ function StoreLineSettingsPage() {
 
           <article className="admin-panel">
             <AdminSectionHeader
-              eyebrow="Audit"
+              eyebrow="更新記錄"
               title="更新資訊"
-              description="敏感值不會顯示原文，僅保留狀態與最後更新資訊。"
+              description="敏感值不會顯示原文。直接儲存與 env 參照都只會顯示遮罩狀態。"
             />
             <div className="line-settings-side-card">
               <div className="line-settings-detail-block">
@@ -374,7 +374,9 @@ function StoreLineSettingsPage() {
               </div>
               <div className="line-settings-detail-block">
                 <span>安全提示</span>
-                <strong className="line-settings-break">畫面只顯示遮罩後結果。留空儲存不會覆蓋既有 token / secret。</strong>
+                <strong className="line-settings-break">
+                  畫面只顯示「已設定」與遮罩標示。留空儲存不會覆蓋既有 token / secret，本階段不提供清除功能。
+                </strong>
               </div>
             </div>
           </article>

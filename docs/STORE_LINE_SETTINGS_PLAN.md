@@ -8,6 +8,7 @@ Branch: `beta/staging-architecture`
 This document defines the design for store-scoped LINE settings in the KINGWAY multi-store SaaS architecture.
 
 Backend-only API Phase was implemented on `2026-06-03`.
+Store Admin direct credential input support was implemented on `2026-06-04`.
 
 Implemented in this phase:
 
@@ -16,6 +17,9 @@ Implemented in this phase:
 - `PATCH /api/store/settings/line`
 - masked response behavior for token/secret fields
 - `req.storeId`-scoped persistence only
+- Store Admin UI direct input support for `channelSecret` / `channelAccessToken`
+- DB-backed direct credential storage for store-scoped LINE settings
+- `env:` reference mode retained as optional advanced mode
 
 Still not implemented in this phase:
 
@@ -83,8 +87,10 @@ Stored fields:
 - `line_enabled`
 - `channel_id`
 - `channel_secret_ref`
+- `channel_secret_direct_value`
 - `channel_secret_present`
 - `channel_access_token_ref`
+- `channel_access_token_direct_value`
 - `channel_access_token_present`
 - `liff_url`
 - `login_auth_url`
@@ -93,13 +99,14 @@ Stored fields:
 - `staff_group_enabled`
 - `updated_by_staff_id`
 
-Important limitation:
+Current implementation note:
 
-- the current project only has an `env:` secret-ref resolver
-- there is no DB encryption helper for raw LINE secret/token values
-- therefore this phase does not persist raw `channelSecret` or raw `channelAccessToken`
-- if a caller sends a non-empty raw secret/token, the API records only presence metadata and returns a masked pending-storage state
-- if a caller sends `env:SECRET_NAME`, the API stores that secret ref and still returns only a masked value
+- the resolver now supports both DB-stored direct values and `env:` references
+- the current project still does not have a dedicated DB encryption helper for these store-scoped LINE credentials
+- therefore direct values are currently stored as plain DB values only as a minimal implementation for staging/SaaS migration
+- raw `channelSecret` and raw `channelAccessToken` must never be returned in API responses or logs
+- `env:SECRET_NAME` mode remains available as optional advanced mode
+- TODO: replace plain direct storage with encrypted-at-rest storage before production-grade rollout
 
 ## 4. Design Principles
 
@@ -123,6 +130,7 @@ Raw values must never be:
 - written to backend logs
 - included in thrown error messages
 - shown in Platform Admin status views
+- printed in test scripts or curl output captures
 
 ### 4-3. Legacy-safe rollout
 
@@ -255,9 +263,19 @@ Fields:
 
 - `channelId`
 - `channelSecretRef`
+- `channelSecretDirectValue` (internal only, not returned)
 - `channelAccessTokenRef`
+- `channelAccessTokenDirectValue` (internal only, not returned)
 - masked display fields
 - rotation metadata
+
+Rules:
+
+- Store Admin may submit a direct `channelSecret` / `channelAccessToken` value to `PATCH /api/store/settings/line`
+- Store Admin may alternatively submit `env:NAME` for advanced deployments
+- GET/PATCH responses must return masked labels only, such as `已設定（直接儲存）` or masked `env:` labels
+- empty string input means keep the existing stored value
+- clearing an existing secret/token is not part of this phase
 
 Rules:
 
