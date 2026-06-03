@@ -237,6 +237,12 @@ async function getStoreTenantIdSelect(db, tableAlias = "s") {
     : "NULL AS tenantId";
 }
 
+async function getStoreSlugSelect(db, tableAlias = "s") {
+  return (await columnExists(db, "stores", "slug"))
+    ? `${tableAlias}.slug AS slug`
+    : "NULL AS slug";
+}
+
 async function fetchActiveStore(db, storeId) {
   if (!storeId || !(await tableExists(db, "stores"))) {
     return null;
@@ -621,9 +627,10 @@ async function resolveByStoreCode(req, options, context) {
   }
 
   const tenantIdSelect = await getStoreTenantIdSelect(options.db);
+  const slugSelect = await getStoreSlugSelect(options.db);
   const [rows] = await options.db.query(
     `
-      SELECT s.id, s.code AS storeCode, s.slug, s.name, ${tenantIdSelect}
+      SELECT s.id, s.code AS storeCode, ${slugSelect}, s.name, ${tenantIdSelect}
       FROM stores s
       WHERE s.code = ?
         AND s.status = 'active'

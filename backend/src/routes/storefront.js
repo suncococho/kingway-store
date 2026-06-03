@@ -6,6 +6,7 @@ const {
 } = require("../utils/publicStoreResolver");
 
 const router = express.Router();
+const columnExistsCache = new Map();
 
 const resolveStorefrontContext = createPublicStoreContextMiddleware({
   db: pool,
@@ -15,14 +16,37 @@ const resolveStorefrontContext = createPublicStoreContextMiddleware({
   logResolved: false
 });
 
+async function columnExists(tableName, columnName) {
+  const cacheKey = `${tableName}.${columnName}`;
+  if (columnExistsCache.has(cacheKey)) {
+    return columnExistsCache.get(cacheKey);
+  }
+
+  const [rows] = await pool.query(
+    `
+      SELECT COUNT(*) AS columnCount
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = ?
+        AND COLUMN_NAME = ?
+    `,
+    [tableName, columnName]
+  );
+  const exists = Number(rows[0]?.columnCount || 0) > 0;
+  columnExistsCache.set(cacheKey, exists);
+  return exists;
+}
+
 async function loadResolvedStoreSnapshot(storeId) {
+  const hasStoreSlug = await columnExists("stores", "slug");
+  const slugSelect = hasStoreSlug ? "s.slug AS slug," : "NULL AS slug,";
   const [rows] = await pool.query(
     `
       SELECT
         s.id AS storeId,
         s.code AS storeCode,
         s.name AS storeName,
-        s.slug,
+        ${slugSelect}
         s.status AS storeStatus,
         sls.line_enabled AS lineEnabled,
         sls.channel_id AS channelId,
