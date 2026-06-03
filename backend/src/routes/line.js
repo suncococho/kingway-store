@@ -66,6 +66,37 @@ async function findStoreLineSettingsByWebhookPathToken(webhookPathToken) {
   return rows[0] || null;
 }
 
+function buildTokenizedWebhookRouteDecision(event) {
+  const eventType = event?.type || "unknown";
+  const sourceType = event?.source?.type || null;
+  const messageType = event?.message?.type || null;
+  const hasReplyToken = Boolean(event?.replyToken);
+
+  let intendedHandler = "unknown";
+  let wouldHandle = false;
+
+  if (eventType === "postback") {
+    intendedHandler = "postback";
+    wouldHandle = true;
+  } else if (eventType === "follow") {
+    intendedHandler = "follow";
+    wouldHandle = true;
+  } else if (eventType === "message" && messageType === "text") {
+    intendedHandler = "message_text";
+    wouldHandle = true;
+  } else if (eventType === "message" && messageType) {
+    intendedHandler = `message_${messageType}`;
+  }
+
+  return {
+    eventType,
+    hasReplyToken,
+    sourceType,
+    messageType,
+    wouldHandle,
+    intendedHandler
+  };
+}
 
 router.post("/webhook/:webhookPathToken", async (req, res, next) => {
   try {
@@ -75,7 +106,9 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
     if (!/^[A-Za-z0-9_-]{1,190}$/.test(webhookPathToken)) {
       return res.status(404).json({
         ok: false,
-        mode: "tokenized_webhook",
+        mode: "tokenized_webhook_dry_run",
+        dryRun: true,
+        sendSuppressed: true,
         resolved: false,
         credentialsResolved: false,
         message: "找不到對應的門市 LINE webhook 設定"
@@ -90,7 +123,9 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
       });
       return res.status(404).json({
         ok: false,
-        mode: "tokenized_webhook",
+        mode: "tokenized_webhook_dry_run",
+        dryRun: true,
+        sendSuppressed: true,
         resolved: false,
         credentialsResolved: false,
         message: "找不到對應的門市 LINE webhook 設定"
@@ -120,7 +155,9 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
       });
       return res.status(503).json({
         ok: false,
-        mode: "tokenized_webhook",
+        mode: "tokenized_webhook_dry_run",
+        dryRun: true,
+        sendSuppressed: true,
         resolved: true,
         signatureVerified: false,
         credentialsResolved: false,
@@ -139,7 +176,9 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
       });
       return res.status(401).json({
         ok: false,
-        mode: "tokenized_webhook",
+        mode: "tokenized_webhook_dry_run",
+        dryRun: true,
+        sendSuppressed: true,
         resolved: true,
         signatureVerified: false,
         credentialsResolved: false,
@@ -158,7 +197,9 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
       });
       return res.status(503).json({
         ok: false,
-        mode: "tokenized_webhook",
+        mode: "tokenized_webhook_dry_run",
+        dryRun: true,
+        sendSuppressed: true,
         resolved: true,
         signatureVerified: true,
         credentialsResolved: false,
@@ -169,18 +210,34 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
     req.lineContext = {
       storeId: resolvedCredentials.storeId,
       storeCode: resolvedCredentials.storeCode,
-      accessToken: resolvedCredentials.accessToken,
-      channelSecret: resolvedCredentials.channelSecret
+      lineChannelId: row.channelId || null,
+      source: "tokenized_webhook_dry_run",
+      purpose: "tokenized_webhook_dry_run",
+      credentialsResolved: true
     };
+
+    const events = Array.isArray(req.body?.events) ? req.body.events : [];
+    const routeDecisions = events.map(buildTokenizedWebhookRouteDecision);
+
+    console.log("[line:webhook:dry-run] analyzed", {
+      storeId: resolvedCredentials.storeId,
+      webhookPathTokenHash,
+      eventCount: routeDecisions.length,
+      intendedHandlers: routeDecisions.map((decision) => decision.intendedHandler)
+    });
 
     return res.status(200).json({
       ok: true,
-      mode: "tokenized_webhook",
+      mode: "tokenized_webhook_dry_run",
+      dryRun: true,
+      sendSuppressed: true,
       resolved: true,
       signatureVerified: true,
       credentialsResolved: true,
       storeId: resolvedCredentials.storeId,
       storeCode: resolvedCredentials.storeCode,
+      eventCount: routeDecisions.length,
+      routeDecisions,
       lineEnabled: Boolean(row.lineEnabled),
       channelIdPresent: Boolean(row.channelId),
       channelSecretPresent: Boolean(row.channelSecretPresent),

@@ -36,7 +36,7 @@
 ## 3) legacy /api/line/webhook는 절대 제외
 - legacy `/api/line/webhook`는 기존 global credential / 기존 워크플로우를 유지한다.
 - legacy 경로는 dry-run 대상에 포함하지 않는다.
-- dry-run 응답/로그는 legacy 라우트의 성공/실패 규칙과 혼동되지 않도록 `mode: "tokenized_webhook"`와 분리한다.
+- dry-run 응답/로그는 legacy 라우트의 성공/실패 규칙과 혼동되지 않도록 `mode: "tokenized_webhook_dry_run"`와 분리한다.
 
 ## 4) dry-run에서 할 일
 
@@ -52,7 +52,7 @@
 
 3. events 파싱
 - `req.body.events`를 array로 정규화한다.
-- 개별 event에서 최소 필드를 추출해 `eventCount`, `eventType`, `source.type`, `source.userId`, `replyToken` 존재 여부를 수집한다.
+- 개별 event에서 최소 필드를 추출해 `eventCount`, `eventType`, `source.type`, `message.type`, `replyToken` 존재 여부를 수집한다.
 - malformed body는 `400` 또는 `503`로 종료하고 후속 처리 미실행.
 
 4. replyToken 존재 여부 확인
@@ -62,11 +62,11 @@
 
 5. route decision만 기록
 - 기존 이벤트 핸들러 호출 대신, 이벤트 유형별로 routeDecision만 결정한다.
-  - `follow` + `replyToken`: `route: "follow.welcome"`, `replyPlanned: true`
-  - `postback`: `route: "postback.handlers"`, `handler: "handleLinePostback"`
-  - `message` + group/room + `/register`: `route: "staff.launcher"`
-  - `message` + text + 기타: `route: "message.handlers"`
-  - 알 수 없는 이벤트: `route: "unhandled"`
+  - `follow`: `intendedHandler: "follow"`, `wouldHandle: true`
+  - `postback`: `intendedHandler: "postback"`, `wouldHandle: true`
+  - `message` + `text`: `intendedHandler: "message_text"`, `wouldHandle: true`
+  - `message` + 기타 타입: `intendedHandler: "message_<type>"`, `wouldHandle: false`
+  - 알 수 없는 이벤트: `intendedHandler: "unknown"`, `wouldHandle: false`
 - `dryRun: true`가 반드시 포함된 응답 메타로 실제 처리/발송이 아님을 명시한다.
 
 ## 5) dry-run response 예시
@@ -75,7 +75,7 @@
 ```json
 {
   "ok": true,
-  "mode": "tokenized_webhook",
+  "mode": "tokenized_webhook_dry_run",
   "dryRun": true,
   "resolved": true,
   "signatureVerified": true,
@@ -83,20 +83,22 @@
   "storeId": 4,
   "storeCode": "KINGWAY_TAINAN_STG4",
   "eventCount": 2,
-  "events": [
+  "routeDecisions": [
     {
       "eventType": "follow",
+      "messageType": null,
       "sourceType": "user",
       "hasReplyToken": true,
-      "routeDecision": "follow.welcome",
-      "sendSuppressed": true
+      "wouldHandle": true,
+      "intendedHandler": "follow"
     },
     {
       "eventType": "message",
+      "messageType": "text",
       "sourceType": "group",
-      "hasReplyToken": false,
-      "routeDecision": "message.handlers",
-      "sendSuppressed": true
+      "hasReplyToken": true,
+      "wouldHandle": true,
+      "intendedHandler": "message_text"
     }
   ],
   "sendSuppressed": true,
@@ -108,7 +110,7 @@
 ```json
 {
   "ok": false,
-  "mode": "tokenized_webhook",
+  "mode": "tokenized_webhook_dry_run",
   "dryRun": true,
   "resolved": true,
   "signatureVerified": false,
@@ -121,7 +123,7 @@
 ```json
 {
   "ok": false,
-  "mode": "tokenized_webhook",
+  "mode": "tokenized_webhook_dry_run",
   "dryRun": true,
   "resolved": true,
   "signatureVerified": false,
@@ -155,7 +157,7 @@
 ## 8) Phase 4D-1 구현 범위
 - `POST /api/line/webhook/:webhookPathToken`에 dry-run 처리 한정 구현
 - `credentialsResolved` 및 `signatureVerified` 상태 분기 고정
-- 이벤트별 routeDecision 수집 저장소(`line_webhook_events` + 기존 로그)만 활용
+- 이벤트별 `routeDecisions` 응답과 기존 로그만 활용
 - `dryRun: true`, `sendSuppressed: true` 응답 고정
 - 실제 reply/push 호출 코드 경로는 호출하지 않음
 - legacy `/api/line/webhook` 경로는 비변경
