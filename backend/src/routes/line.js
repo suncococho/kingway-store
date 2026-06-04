@@ -3,7 +3,7 @@ const express = require("express");
 const { pool } = require("../db");
 const config = require("../config");
 const { authenticate, authorize } = require("../middleware/auth");
-const { verifyLineSignature } = require("../utils/line");
+const { verifyLineSignature, sendLineReply } = require("../utils/line");
 const { resolveStoreLineCredentials } = require("../services/storeLineSettingsService");
 const { sendDailyReport } = require("../services/reportService");
 const { logKpi } = require("../services/kpiService");
@@ -50,6 +50,7 @@ async function findStoreLineSettingsByWebhookPathToken(webhookPathToken) {
         store_id AS storeId,
         line_enabled AS lineEnabled,
         channel_id AS channelId,
+        channel_access_token_ref AS channelAccessTokenRef,
         channel_secret_ref AS channelSecretRef,
         channel_secret_present AS channelSecretPresent,
         channel_access_token_present AS channelAccessTokenPresent,
@@ -71,6 +72,7 @@ function buildTokenizedWebhookRouteDecision(event) {
   const sourceType = event?.source?.type || null;
   const messageType = event?.message?.type || null;
   const hasReplyToken = Boolean(event?.replyToken);
+  const messageText = messageType === "text" ? String(event?.message?.text || "") : null;
 
   let intendedHandler = "unknown";
   let wouldHandle = false;
@@ -93,9 +95,19 @@ function buildTokenizedWebhookRouteDecision(event) {
     hasReplyToken,
     sourceType,
     messageType,
+    messageText,
     wouldHandle,
     intendedHandler
   };
+}
+
+function isLimitedTokenizedReplyEvent(event) {
+  return (
+    event?.type === "message" &&
+    event?.message?.type === "text" &&
+    Boolean(event?.replyToken) &&
+    (event.message.text === "ping" || event.message.text === "PING")
+  );
 }
 
 router.post("/webhook/:webhookPathToken", async (req, res, next) => {
@@ -207,17 +219,88 @@ router.post("/webhook/:webhookPathToken", async (req, res, next) => {
       });
     }
 
-    req.lineContext = {
+    const lineContext = {
       storeId: resolvedCredentials.storeId,
       storeCode: resolvedCredentials.storeCode,
       lineChannelId: row.channelId || null,
-      source: "tokenized_webhook_dry_run",
-      purpose: "tokenized_webhook_dry_run",
+      channelAccessTokenRef: row.channelAccessTokenRef || null,
+      channelSecretRef: row.channelSecretRef || null,
+      source: "tokenized_webhook_reply",
+      purpose: "tokenized_webhook_reply",
       credentialsResolved: true
     };
+    req.lineContext = lineContext;
 
     const events = Array.isArray(req.body?.events) ? req.body.events : [];
     const routeDecisions = events.map(buildTokenizedWebhookRouteDecision);
+    const replyCandidates = events.filter(isLimitedTokenizedReplyEvent);
+
+    if (replyCandidates.length > 0) {
+      try {
+        for (const event of replyCandidates) {
+          await sendLineReply(config, event.replyToken, [{ type: "text", text: "pong" }], {
+            channelAccessToken: resolvedCredentials.accessToken,
+            accessToken: resolvedCredentials.accessToken,
+            allowConfigFallback: false,
+            context: lineContext
+          });
+        }
+
+        console.log("[line:webhook:tokenized-reply] delivered", {
+          storeId: resolvedCredentials.storeId,
+          webhookPathTokenHash,
+          replyAttemptedCount: replyCandidates.length,
+          lineChannelId: row.channelId || null
+        });
+
+        return res.status(200).json({
+          ok: true,
+          mode: "tokenized_webhook_reply",
+          dryRun: false,
+          sendSuppressed: false,
+          resolved: true,
+          signatureVerified: true,
+          credentialsResolved: true,
+          replyAttempted: true,
+          replyDelivered: true,
+          replyAttemptedCount: replyCandidates.length,
+          replyMessage: "pong",
+          storeScopedTokenUsed: true,
+          storeId: resolvedCredentials.storeId,
+          storeCode: resolvedCredentials.storeCode,
+          eventCount: routeDecisions.length,
+          routeDecisions
+        });
+      } catch (error) {
+        console.warn("[line:webhook:tokenized-reply] failed", {
+          storeId: resolvedCredentials.storeId,
+          webhookPathTokenHash,
+          replyAttemptedCount: replyCandidates.length,
+          lineApiStatus: error.lineApiStatus || null,
+          safeDetails: error.safeDetails || error.message
+        });
+
+        return res.status(error.statusCode || 502).json({
+          ok: false,
+          mode: "tokenized_webhook_reply",
+          dryRun: false,
+          sendSuppressed: true,
+          resolved: true,
+          signatureVerified: true,
+          credentialsResolved: true,
+          replyAttempted: true,
+          replyDelivered: false,
+          replyAttemptedCount: replyCandidates.length,
+          storeScopedTokenUsed: true,
+          storeId: resolvedCredentials.storeId,
+          storeCode: resolvedCredentials.storeCode,
+          eventCount: routeDecisions.length,
+          routeDecisions,
+          message: "LINE reply failed safely",
+          safeError: error.safeDetails || error.message
+        });
+      }
+    }
 
     console.log("[line:webhook:dry-run] analyzed", {
       storeId: resolvedCredentials.storeId,

@@ -21,14 +21,16 @@
 아래 대상만 4D-2에서 tokenized route로 실제 전환 대상.
 
 1. `POST /api/line/webhook/:webhookPathToken`
-2. `replyToLine` 호출 경로를 토큰화 컨텍스트 기반으로 이동
-3. 1차는 reply 케이스 중심 (`postback`, `message`, `follow` 등 tokenized webhook 이벤트 핸들러 경로)
+2. store-scoped access token만 사용하는 제한적 reply 경로 허용
+3. 1차는 `message:text` 이벤트 중 정확히 `ping` 또는 `PING`만 실제 reply
 4. push 전환은 별도 하위 단계로 둬서 reply 안정화 후 단계적 확장
 
 적용 기준:
 
 - `replyToken`이 있는 이벤트만 reply 전환 대상(요청 메시지 유효 이벤트에 한정).
 - `credentialsResolved=true` 및 `resolvable` 조건 충족 시에만 실제 호출 허용.
+- 실제 reply payload는 고정값 `pong`.
+- `postback`, `follow`, `unfollow`, 기타 text/message 이벤트는 계속 dry-run 유지.
 
 ## 3) legacy webhook 제외
 
@@ -128,6 +130,19 @@ Phase 4D-2 기본 fallback:
    - 500 또는 명시된 fail-fast 경로 유지
 5. 운영적 폴백
    - 문제 발견 시 deploy rollback로 `dry-run-only` 또는 `handler 비활성화`
+
+## 8.1) 현재 구현 상태 (2026-06-04)
+
+- 실제 reply는 `POST /api/line/webhook/:webhookPathToken`에서만 시도한다.
+- 다음 조건이 모두 충족될 때만 실제 `reply` 호출:
+  - `credentialsResolved=true`
+  - `event.type === "message"`
+  - `event.message.type === "text"`
+  - `replyToken` 존재
+  - text가 정확히 `ping` 또는 `PING`
+- reply는 store-scoped `accessToken`만 사용하며 global fallback을 허용하지 않는다.
+- reply 실패 시 응답에는 `sendSuppressed: true`, `storeScopedTokenUsed: true`, `safeError`만 남기고 raw token/secret은 노출하지 않는다.
+- 위 조건에 해당하지 않는 모든 이벤트는 기존 `tokenized_webhook_dry_run` 응답을 유지한다.
 
 ## 9) 테스트 계획
 

@@ -40,7 +40,63 @@ function normalizeLineSendOptions(options = {}) {
 
 function resolveLineAccessToken(config, options = {}) {
   const normalizedOptions = normalizeLineSendOptions(options);
-  return normalizedOptions.channelAccessToken || normalizedOptions.accessToken || config.line.channelAccessToken;
+  const scopedAccessToken = normalizedOptions.channelAccessToken || normalizedOptions.accessToken || null;
+
+  if (normalizedOptions.allowConfigFallback === false) {
+    return scopedAccessToken;
+  }
+
+  return scopedAccessToken || config.line.channelAccessToken;
+}
+
+function buildSafeLineApiError(responseStatus, details) {
+  const normalizedDetails = String(details || "").trim();
+  let safeDetails = normalizedDetails;
+
+  try {
+    const parsed = JSON.parse(normalizedDetails);
+    if (parsed && typeof parsed === "object") {
+      safeDetails = parsed.message || parsed.details || parsed.reason || normalizedDetails;
+    }
+  } catch (error) {
+    safeDetails = normalizedDetails;
+  }
+
+  return {
+    message: `LINE API request failed: ${responseStatus}`,
+    safeDetails: safeDetails ? String(safeDetails).slice(0, 300) : null
+  };
+}
+
+async function sendLineReply(config, replyToken, messages, options = {}) {
+  const normalizedOptions = normalizeLineSendOptions(options);
+  const channelAccessToken = resolveLineAccessToken(config, normalizedOptions);
+
+  if (!channelAccessToken) {
+    throw new Error("LINE channel access token is not configured");
+  }
+
+  const response = await fetch("https://api.line.me/v2/bot/message/reply", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${channelAccessToken}`
+    },
+    body: JSON.stringify({
+      replyToken,
+      messages
+    })
+  });
+
+  if (!response.ok) {
+    const details = await response.text();
+    const safeError = buildSafeLineApiError(response.status, details);
+    const error = new Error(safeError.message);
+    error.statusCode = 502;
+    error.lineApiStatus = response.status;
+    error.safeDetails = safeError.safeDetails;
+    throw error;
+  }
 }
 
 async function sendLineMessage(config, to, messages, options = {}) {
@@ -76,5 +132,6 @@ module.exports = {
   normalizeLineSendOptions,
   verifyLineSignature,
   resolveLineAccessToken,
+  sendLineReply,
   sendLineMessage
 };
