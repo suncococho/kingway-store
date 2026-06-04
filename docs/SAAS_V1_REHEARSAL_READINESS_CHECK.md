@@ -52,6 +52,26 @@
 - Store 1 repair detail access for repair `83` returned `404`; existing store 1 repairs remained unchanged
 - Backend log recorded `repair_notify_skipped_staging` and no `api.line.me` outbound log was observed during rehearsal run
 
+## Rehearsal Step 6
+
+- Status: completed on 2026-06-04
+- `purchase_confirmations_enabled` enabled for rehearsal store `5`
+- Rehearsal purchase-confirm order created: `id=199`, `store_id=5`, `final_payment_status=PAID`
+- EBIKE condition satisfied by order item `id=387`, `product_id=766`, `product_category_snapshot=EB`
+- Purchase confirmation created: `id=42`, `store_id=5`; token generated and later marked used after public submit
+- Public token validation passed:
+  - valid token without store -> `200`
+  - valid token with `store=KW_REHEARSAL_202606` -> `200`
+  - wrong store -> `404`
+  - invalid store -> `404`
+- PDF validation passed:
+  - matching store -> `200`
+  - wrong store -> `404`
+- Store 1 isolation held:
+  - store 1 order detail access for order `199` returned `404`
+  - store 1 pending links did not include order `199`
+- No LINE push was triggered during the rehearsal flow; no `api.line.me` outbound log was observed
+
 ## 1) 실행 가능 항목(Non-destructive readiness)
 
 ### API/라우트 가시성 확인
