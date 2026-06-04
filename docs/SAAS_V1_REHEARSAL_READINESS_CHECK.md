@@ -23,6 +23,15 @@
 - Raw `channelSecret` / `channelAccessToken` values were not populated and not exposed
 - Rehearsal LINE settings row created under `store_id=5`; existing store 1 LINE settings remained unchanged
 
+## Rehearsal Step 3
+
+- Status: completed on 2026-06-04
+- Product created: `id=765`, `sku=KW_REHEARSAL_BIKE_001`, `store_id=5`
+- Rehearsal owner product list returned the product under store scope `5`
+- Store 1 product list did not return the rehearsal product
+- Store 1 direct `PATCH /api/products/765` attempt returned `404`
+- Existing store 1 products remained unchanged
+
 ## 1) 실행 가능 항목(Non-destructive readiness)
 
 ### API/라우트 가시성 확인
