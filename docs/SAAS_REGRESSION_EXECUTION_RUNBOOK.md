@@ -340,6 +340,25 @@ bash scripts/regression/multitenant-smoke.sh
 - `store5 coupons status`
 - 위 항목은 계정 env가 반영되면 동일 명령으로 즉시 재실행해 PASS/FAIL/SKIP를 대체 갱신해야 함.
 
+### 11-3) rehearsal owner password reset 실행 기록
+
+- 실행일: `2026-06-04`
+- 대상 DB: `127.0.0.1:3310` (staging restore)
+- 대상 계정: `kw_rehearsal_owner` / `store_id=5`
+- 조치:
+  - 신규 임시 비밀번호를 생성하고 bcrypt hash로 변환
+  - `staff_users`에서 `username='kw_rehearsal_owner' AND store_id=5` 조건의 단일 row만 `password_hash` 업데이트
+  - raw password는 문서/로그/실행 출력에 기록하지 않음
+  - 비밀번호는 사용자에게 별도 안전 전달 필요
+- 로그인 검증:
+  - `POST /api/login` -> `200`
+  - `user.storeId=5` 확인
+- smoke script 재실행:
+  - 명령: `BASE_URL=http://127.0.0.1:3010` + `STORE1_USERNAME=admin` + `STORE5_USERNAME=kw_rehearsal_owner` + 계정 env 주입
+  - 결과: `PASS=16 FAIL=0 SKIP=0`
+- 민감정보 노출:
+  - raw password/token 직접 출력 없음
+
 ## 12) release sign-off 항목
 
 - [ ] 마지막 실행 24시간 내 PASS 비율 95% 이상(500은 긴급 조치 대상)
