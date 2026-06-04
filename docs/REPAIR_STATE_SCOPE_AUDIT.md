@@ -11,12 +11,11 @@
 2. `POST /api/repairs/:id/customer-response`  
    - `applyRepairEstimateCustomerResponse` 호출 시 `storeId` 미전달 (`options.storeId`가 null), 내부 조회/갱신이 `id` 기반 + `(? IS NULL OR store_id = ?)` 형식이라 비어 있으면 store scope 해제가 됩니다.
 3. `POST /api/repairs/:id/reject`  
-   - 미들웨어/`assertRepairBelongsToStore` 통과 후에도 `UPDATE repair_orders ... WHERE id = ?` 이며, `store_id` 조건이 없습니다.
+   - fixed (2026-06-04): route 내부 `SELECT/UPDATE repair_orders`가 `id = ? AND store_id = ?`를 함께 사용하도록 수정됨.
 4. `POST /api/repairs/:id/complete`  
-   - `repair_orders` 조회(`SELECT ... WHERE id = ?`)와 상태 업데이트(`UPDATE repair_orders ... WHERE id = ?`) 모두 store 조건이 없습니다.
-   - `repair_orders.survey_id` 후처리 업데이트도 `WHERE id = ?`만 사용.
+   - fixed (2026-06-04): `repair_orders` 조회/상태 업데이트/`survey_id` 후처리 모두 `id = ? AND store_id = ?`를 함께 사용하도록 수정됨.
 5. `POST /api/repairs/:id/pickup`  
-   - 완료/픽업 업데이트 및 연계 주문 업데이트(`UPDATE orders ... WHERE repair_order_id = ? OR id = (SELECT order_id FROM repair_orders WHERE id = ?)`) 모두 `store_id` 제한 없음.
+   - fixed (2026-06-04): `repair_orders` 조회/픽업 업데이트와 연계 `orders` 업데이트 모두 `store_id` scope를 직접 조건화함.
 6. LINE postback `repair_reservation_approve` / `repair_reservation_reject`  
    - `lineWorkflowService.js`에서 `resolveLineWorkflowStoreContext` 결과 기반으로 서비스 호출하지만, resolver는 staff/line-context로 추론할 때 다가맡음/중첩 매장인 경우 기본값 `1` 폴백이 가능.
 7. LINE postback `repair_estimate_approve` / `repair_estimate_reject`  
@@ -132,3 +131,12 @@
 ## 다음 구현 1순위
 
 `repairs.js`의 `complete`, `pickup`, `reject`를 포함한 상태 변경 DML에 `store_id`를 항상 동시조건으로 강제하고, `lineWorkflowService`의 estimate 처리 함수군(`getRepairOrderForQuotation`, `sendRepairEstimateQuotation`, `applyRepairEstimateCustomerResponse`)에 `storeId`를 필수 파라미터로 정규화하여 멀티테넌시 우회 지점을 제거하는 것입니다.
+
+## 1차 수정 완료
+
+- `backend/src/routes/repairs.js`
+  - `POST /api/repairs/:id/reject`: `repair_orders` 조회/업데이트에 `store_id = req.storeId` 강제.
+  - `POST /api/repairs/:id/complete`: 대상 조회, 상태 확인, 완수 업데이트, `survey_id` 연결 업데이트에 `store_id = req.storeId` 강제.
+  - `POST /api/repairs/:id/pickup`: 대상 조회, 픽업 업데이트, 연계 `orders` 완료 처리에 `store_id = req.storeId` 강제.
+- `assertRepairBelongsToStore`도 `repair_orders.store_id`를 직접 확인하도록 보강.
+- `lineWorkflowService` estimate/customer-response 체인은 이번 단계에서 미수정.

@@ -118,15 +118,20 @@ function assertRepairEditable(row) {
 }
 
 async function assertRepairBelongsToStore(repairId, storeId, connection = pool) {
+  if (!storeId) {
+    throw createError("缺少門市範圍", 403);
+  }
+
   const [rows] = await connection.query(
     `
       SELECT ro.id
       FROM repair_orders ro
       INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ?
       WHERE ro.id = ?
+        AND ro.store_id = ?
       LIMIT 1
     `,
-    [storeId, repairId]
+    [storeId, repairId, storeId]
   );
 
   if (!rows[0]) {
@@ -930,9 +935,10 @@ router.post("/:id/reject",  async (req, res, next) => {
         SELECT status, completed_at AS completedAt, picked_up_at AS pickedUpAt
         FROM repair_orders
         WHERE id = ?
+          AND store_id = ?
         LIMIT 1
       `,
-      [req.params.id]
+      [req.params.id, storeId]
     );
     if (!stateRows[0]) {
       throw createError("找不到維修工單", 404);
@@ -947,8 +953,9 @@ router.post("/:id/reject",  async (req, res, next) => {
             customer_estimate_responded_at = NOW(),
             approved_by_staff_id = ?
         WHERE id = ?
+          AND store_id = ?
       `,
-      [req.user.id, req.params.id]
+      [req.user.id, req.params.id, storeId]
     );
 
     await pool.query(
@@ -975,8 +982,9 @@ router.post("/:id/complete",  async (req, res, next) => {
         FROM repair_orders ro
         INNER JOIN customers c ON c.id = ro.customer_id
         WHERE ro.id = ?
+          AND ro.store_id = ?
       `,
-      [req.params.id]
+      [req.params.id, storeId]
     );
 
     if (!repairs[0]) {
@@ -989,9 +997,10 @@ router.post("/:id/complete",  async (req, res, next) => {
         SELECT status
         FROM repair_orders
         WHERE id = ?
+          AND store_id = ?
         LIMIT 1
       `,
-      [req.params.id]
+      [req.params.id, storeId]
     );
     if (String(repairStateRows[0]?.status || "").trim() === "repairing") {
       // OK
@@ -1005,8 +1014,9 @@ router.post("/:id/complete",  async (req, res, next) => {
         SET status = 'completed_waiting_pickup',
             completed_at = NOW()
         WHERE id = ?
+          AND store_id = ?
       `,
-      [req.params.id]
+      [req.params.id, storeId]
     );
 
     await pool.query(
@@ -1026,7 +1036,10 @@ router.post("/:id/complete",  async (req, res, next) => {
         `,
         [repairs[0].customerId, repairs[0].orderId || null, req.params.id, surveyToken]
       );
-      await pool.query("UPDATE repair_orders SET survey_id = ? WHERE id = ?", [surveyResult.insertId, req.params.id]);
+      await pool.query(
+        "UPDATE repair_orders SET survey_id = ? WHERE id = ? AND store_id = ?",
+        [surveyResult.insertId, req.params.id, storeId]
+      );
       const surveyLink = `${config.frontendBaseUrl}/surveys/${surveyToken}`;
       await sendLineMessage(config, repairs[0].lineUserId, [
         {
@@ -1111,8 +1124,9 @@ router.post("/:id/pickup",  async (req, res, next) => {
         SELECT status, completed_at AS completedAt, picked_up_at AS pickedUpAt
         FROM repair_orders
         WHERE id = ?
+          AND store_id = ?
       `,
-      [req.params.id]
+      [req.params.id, storeId]
     );
 
     if (!repairs[0]) {
@@ -1136,8 +1150,9 @@ router.post("/:id/pickup",  async (req, res, next) => {
             picked_up_at = NOW(),
             storage_fee = ?
         WHERE id = ?
+          AND store_id = ?
       `,
-      [storageFee, req.params.id]
+      [storageFee, req.params.id, storeId]
     );
 
     await pool.query(
@@ -1152,10 +1167,18 @@ router.post("/:id/pickup",  async (req, res, next) => {
       `
         UPDATE orders
         SET status = 'COMPLETED'
-        WHERE repair_order_id = ?
-           OR id = (SELECT order_id FROM repair_orders WHERE id = ?)
+        WHERE store_id = ?
+          AND (
+            repair_order_id = ?
+            OR id = (
+              SELECT order_id
+              FROM repair_orders
+              WHERE id = ?
+                AND store_id = ?
+            )
+          )
       `,
-      [req.params.id, req.params.id]
+      [storeId, req.params.id, req.params.id, storeId]
     );
 
     await logKpi(req.user.id, "REPAIR_PICKED_UP", "REPAIR_ORDER", req.params.id, 4);
