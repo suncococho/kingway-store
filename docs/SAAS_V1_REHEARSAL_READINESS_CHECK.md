@@ -42,6 +42,16 @@
 - Rehearsal owner could list and read the order
 - Store 1 order detail access for order `198` returned `404`; existing store 1 orders remained unchanged
 
+## Rehearsal Step 5
+
+- Status: completed on 2026-06-04
+- Staging suppression enabled for repair reservation staff LINE notify when `NODE_ENV=staging` or `APP_ENV=staging_restore` or `STAGING_MODE=true`
+- Repair created: `id=83`, `store_id=5`, `source=WEB`, `status=reserved`
+- Customer linked: `id=156`, `name=KW_REHEARSAL_REPAIR_CUSTOMER`, `store_id=5`
+- Rehearsal owner could list and read the repair order
+- Store 1 repair detail access for repair `83` returned `404`; existing store 1 repairs remained unchanged
+- Backend log recorded `repair_notify_skipped_staging` and no `api.line.me` outbound log was observed during rehearsal run
+
 ## 1) 실행 가능 항목(Non-destructive readiness)
 
 ### API/라우트 가시성 확인

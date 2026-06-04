@@ -66,6 +66,14 @@ function getRepairSourceLabel(source, customerType) {
   return "現場客戶";
 }
 
+function isStagingRepairNotifySuppressed() {
+  const nodeEnv = String(process.env.NODE_ENV || config.nodeEnv || "").trim().toLowerCase();
+  const appEnv = String(process.env.APP_ENV || config.appEnv || "").trim().toLowerCase();
+  const stagingMode = String(process.env.STAGING_MODE || "").trim().toLowerCase();
+
+  return nodeEnv === "staging" || appEnv === "staging_restore" || stagingMode === "true";
+}
+
 function normalizeRepairProductImageUrl(imageUrl) {
   const value = String(imageUrl || "").trim();
   if (!value) {
@@ -605,24 +613,31 @@ router.post("/",  async (req, res, next) => {
       );
     }
 
-    try {
-      await notifyRepairReservationCreated({
+    if (isStagingRepairNotifySuppressed()) {
+      console.info("[staff-line] repair_notify_skipped_staging", {
         repairId: result.insertId,
-        customerName: customer.name || `#${customerId}`,
-        customerPhone: customer.phone || null,
-        reservationDate,
-        reservationTime,
-        bikeModel,
-        issueDescription,
-        storeId,
-        sourceLabel: fromLine ? "LINE 維修預約" : "後台維修預約",
-        adminUrl: `${config.frontendBaseUrl}/repairs/${result.insertId}`
+        storeId
       });
-    } catch (staffLineError) {
-      console.warn("[staff-line] repair reservation notification failed after creation", {
-        repairId: result.insertId,
-        message: staffLineError.message
-      });
+    } else {
+      try {
+        await notifyRepairReservationCreated({
+          repairId: result.insertId,
+          customerName: customer.name || `#${customerId}`,
+          customerPhone: customer.phone || null,
+          reservationDate,
+          reservationTime,
+          bikeModel,
+          issueDescription,
+          storeId,
+          sourceLabel: fromLine ? "LINE 維修預約" : "後台維修預約",
+          adminUrl: `${config.frontendBaseUrl}/repairs/${result.insertId}`
+        });
+      } catch (staffLineError) {
+        console.warn("[staff-line] repair reservation notification failed after creation", {
+          repairId: result.insertId,
+          message: staffLineError.message
+        });
+      }
     }
 
     return res.status(201).json({
