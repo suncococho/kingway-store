@@ -236,3 +236,53 @@ preflight 판정:
 - production backup 존재 재확인
 - 같은 MySQL session에서 preview 확인 후 `COMMIT` 여부를 명시적으로 결정
 - 실행 후 login `/api/login` 및 dashboard `/api/dashboard/summary` read-only 재검증
+
+## 12. Execution Completed
+
+실행일시: 2026-06-05 04:36 Asia/Taipei
+
+실행 범위:
+
+- production `127.0.0.1:3306` / `kingway_store`
+- `sql/production_saas_schema_gap_patch.sql`
+- 같은 MySQL session에서 `SOURCE ...; COMMIT;` 실행
+
+사전 확인:
+
+- backup directory 확인:
+  `/volume1/docker/kingway-store/backups/production-pre-saas/20260605_004301`
+- DB dump 파일 존재 확인:
+  `mysql_kingway_store.sql.gz`
+- 실행 전 `staff_users.store_id` 없음
+- 실행 전 `supplier_requests.store_id` 없음
+- 실행 전 row count:
+  - `staff_users = 2`
+  - `supplier_requests = 59`
+
+실행 후 검증:
+
+- `staff_users.store_id` column 존재 확인
+- `supplier_requests.store_id` column 존재 확인
+- row count 유지:
+  - `staff_users = 2`
+  - `supplier_requests = 59`
+- `store_id IS NULL` count:
+  - `staff_users = 0`
+  - `supplier_requests = 0`
+- `store_id = 1` backfill count:
+  - `staff_users = 2`
+  - `supplier_requests = 59`
+- index 존재 확인:
+  - `idx_staff_users_store_id`
+  - `idx_supplier_requests_store_id`
+
+운영 조치:
+
+- backend restart 하지 않음
+- docker compose up 하지 않음
+- deploy 하지 않음
+
+판정:
+
+- schema gap patch 실행 완료
+- cutover 전 다음 단계로 login / dashboard read-only 재검증 필요
