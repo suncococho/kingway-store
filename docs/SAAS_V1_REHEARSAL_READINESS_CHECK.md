@@ -5,6 +5,15 @@
 
 본 문서는 실제 DB 쓰기/생성 없이, staging 기준으로 리허설 실행 전에 가능한 항목과 필요한 계정·토큰·fixture를 정리한다.
 
+## Rehearsal Step 1
+
+- Status: completed on 2026-06-04
+- Store created: `id=5`, `code=KW_REHEARSAL_202606`, `name=KINGWAY Rehearsal Test Store`
+- Owner created: `username=kw_rehearsal_owner`, `storeId=5`
+- Owner login: success via `/api/login`
+- `GET /api/store/settings`: 200
+- `GET /api/store/settings/line`: 200
+
 ## 1) 실행 가능 항목(Non-destructive readiness)
 
 ### API/라우트 가시성 확인
@@ -133,4 +142,3 @@
 | 상품/주문/수리예약 | BLOCKED | 401 상태로 path만 확인, 실제 생성 미확인 |
 | purchase-confirm token 테스트 | PARTIAL | public token 조회는 동작, store param 동작 추가 확인 필요 |
 | Free/Premium 토글 | BLOCKED | 인증 필요 |
-
