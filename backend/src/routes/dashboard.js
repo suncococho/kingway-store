@@ -10,6 +10,10 @@ router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CA
 router.get("/summary", async (req, res, next) => {
   try {
     const storeId = req.storeId;
+    if (!storeId) {
+      return res.status(403).json({ message: "Store scope required" });
+    }
+
     const [[totals]] = await pool.query(
       `
         SELECT
@@ -24,7 +28,7 @@ router.get("/summary", async (req, res, next) => {
       [storeId, storeId, storeId, storeId, storeId, storeId, storeId]
     );
 
-    const pendingTasks = await getPendingTaskCounts();
+    const pendingTasks = await getPendingTaskCounts(storeId);
 
     return res.json({
       totals: {
