@@ -209,8 +209,17 @@
 
 ## 11) 실제 매장 데모 가능 여부
 
-- staging/demo readiness: **가능(조건부)**  
-  - store 5 리허설 완료, repair scope, public flow policy, 상품 이미지 차단 경로가 실운영 전 단계 데모에서 사용 가능
-  - 다만 온보딩 SOP 및 production blocker 미해결 항목은 데모 운영 절차별 보완 조건으로 반영
-- production readiness: **NOT READY**  
-  - legacy migration, 자동 회귀/감사 체계, `/files` 전면 보안화 및 LINE 실운영 발송 정책 확정 전까지 보류
+- staging/demo readiness: **YES**  
+  - store 5 리허설 완료 항목 + 최종 smoke regression full pass `PASS=16 FAIL=0 SKIP=0`
+  - store 5 리허설 완료, repair scope, public flow 정책, 상품 이미지 차단 경로가 데모 조건으로 충족
+  - 온보딩 SOP 미비 항목은 데모 운영 절차로 보완 반영
+- production readiness: **NOT READY (별도 승인 필요)**  
+  - legacy migration, full 자동 회귀/감사 체계, `/files` 전면 보안화 및 LINE 실운영 발송 정책 미확정으로 보류
+
+## 12) 남은 production blockers
+
+- `full 자동 회귀 테스트 패키지 미구현`
+  - 교차침투 + public flow + 파일 접근 항목을 릴리스 전 자동화로 확장 필요
+- `legacy KINGWAY_TAINAN migration 실행 계획 미확정`
+- `'/files' 정적 자원 전면 보안화 미완료`
+- `실사용 LINE OA 메시지 발송 및 발송 예외 정책 승인 미완료`

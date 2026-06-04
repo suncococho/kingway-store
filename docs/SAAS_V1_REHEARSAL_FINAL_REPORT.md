@@ -93,12 +93,14 @@
 - store scope 기반 공개 flow 파라미터 정책(특히 `store` 파라미터 동작) 최종 확정
 
 ## 11) v1 launch ready 여부
-- 상태: `NOT READY`
-- 근거: 다수 항목이 보완/운영 SOP 단계에서 추가 확정 필요
-  - owner onboarding 및 운영 절차
-  - 파일 접근 제어
-  - 공개 flow store 파라미터 정책
-  - 멀티테넌시 회귀 자동점검
+- staging/demo readiness: `YES`  
+  - 최종 smoke regression 결과: `PASS=16 FAIL=0 SKIP=0`
+- production ready: `NOT READY (별도 승인 필요)`
+- 근거 (production):  
+  - owner onboarding 및 운영 SOP 미보완 항목
+  - `/files` 접근 제어 강화 미완료
+  - 공개 flow store 파라미터 정책 최종 확정/예외 재정리 보완
+  - 멀티테넌시 회귀 자동회귀 테스트 미구현
 
 ## 12) 실제 매장 데모 순서
 1. platform admin 로그인 → 테스트 매장/owner 확인
