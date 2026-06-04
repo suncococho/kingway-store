@@ -71,6 +71,15 @@
 - [ ] 다음 데모/파일럿 적용시 우선 개선 항목(POC 우선순위 1~3)
 - [ ] 데모 담당자 서명/승인 시간 기록 후 운영팀 공유
 
+## 11. 플랫폼 관리자 계정 준비 확인(레코드)
+- [ ] 대상 DB: staging MySQL (3306 컨테이너 포트 3310)
+- [ ] 대상 계정: `admin@kingway.tw`
+- [ ] SELECT 결과: `id=1`, `role=PLATFORM_OWNER`, `is_active=1`, `password_hash` 존재
+- [ ] 작업: is_active=1 조건 충족 시 platform admin 비밀번호 해시 갱신 완료
+- [ ] `POST /api/platform-auth/login`(staging API 3010) 응답 200 확인
+- [ ] `GET /api/saas-admin/stores` 응답 200 확인
+- [ ] raw password/token 출력·기록 없이 처리
+
 ## 운영자 최종 확인
 - [ ] 위 10개 항목 모두 완료 체크
 - [ ] 데모 중단 기준 미발생 상태로 최종 승인
