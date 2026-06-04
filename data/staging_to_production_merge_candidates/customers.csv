@@ -1,0 +1,14 @@
+customer_id,customer_name_masked,phone_masked,crm_stage,customer_type,created_at,recommendation,risk_reason
+160,黃*婷,09*****993,,OFFLINE_WITH_PHONE,2026-06-04 19:49:42,merge_candidate,staging_only_phone_not_in_production
+159,羅*桀,09*****778,,OFFLINE_WITH_PHONE,2026-06-04 19:43:16,merge_candidate,staging_only_phone_not_in_production
+158,羅*凱,09*****179,,OFFLINE_WITH_PHONE,2026-06-04 19:36:19,merge_candidate,staging_only_phone_not_in_production
+149,林*賢,09*****261,,LINE,2026-05-31 18:40:29,merge_candidate,staging_only_phone_not_in_production
+148,陳*生,09*****856,,LINE,2026-05-31 18:38:37,merge_candidate,staging_only_phone_not_in_production
+147,陳*燕,09*****153,,LINE,2026-05-31 18:36:33,merge_candidate,staging_only_phone_not_in_production
+146,康*玲,09*****852,,LINE,2026-05-31 18:34:37,merge_candidate,staging_only_phone_not_in_production
+145,蘇*雯,09*****073,,OFFLINE_WITH_PHONE,2026-05-31 18:31:33,merge_candidate,staging_only_phone_not_in_production
+144,侯*章,09*****946,,OFFLINE_WITH_PHONE,2026-05-31 18:26:25,merge_candidate,staging_only_phone_not_in_production
+143,陳*堂,09*****993,,OFFLINE_WITH_PHONE,2026-05-31 18:25:03,merge_candidate,staging_only_phone_not_in_production
+142,劉*駿,09*****452,,LINE,2026-05-27 13:08:53,merge_candidate,staging_only_phone_not_in_production
+141,羅*廷,09*****736,,LINE,2026-05-27 13:05:40,merge_candidate,staging_only_phone_not_in_production
+140,蘇*喬,09*****812,,LINE,2026-05-27 13:01:09,merge_candidate,staging_only_phone_not_in_production

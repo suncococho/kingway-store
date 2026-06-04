@@ -1,0 +1,13 @@
+repair_id,customer_name_masked,customer_phone_masked,reservation_date,bike_model,issue_preview,status,created_at,recommendation,risk_reason
+82,J******명,09*****300,2026-06-03,ㅗ오옹,ㅕ어노융,checking,2026-06-03 14:17:46,manual_review,repair_requires_customer_and_issue_validation
+81,J******명,09*****300,2026-06-03,ㅎㅎㅎ,ㅎㅎㅎㅎ,checking,2026-06-02 18:48:35,manual_review,repair_requires_customer_and_issue_validation
+80,J******명,09*****300,2026-06-03,ㅎㅎㅎ,ㅎㅎㅎㅎ,checking,2026-06-02 18:48:34,manual_review,repair_requires_customer_and_issue_validation
+79,J******명,09*****300,2026-06-02,Fat bike,Fat bike flat tire,canceled,2026-06-02 16:56:45,manual_review,repair_requires_customer_and_issue_validation
+77,王**翔,09*****835,2026-05-31,S1,手把,estimate_pending_approval,2026-05-31 18:30:12,manual_review,repair_requires_customer_and_issue_validation
+75,陳*堂,09*****993,2026-05-31,小摺,前輪無法打氣,reserved,2026-05-31 18:25:36,manual_review,repair_requires_customer_and_issue_validation
+56,L*****戶,09*****302,2026-05-13,黑武士,前輪擋泥板螺絲鬆脫 擋泥板疑似有尬到不明物體,picked_up,2026-05-12 19:46:57,manual_review,repair_requires_customer_and_issue_validation
+54,[***********戶,,2026-05-12,T1,電機不修 收檢修費,completed_waiting_pickup,2026-05-12 18:53:50,manual_review,repair_requires_customer_and_issue_validation
+53,[***********戶,,2026-05-12,T1,保養400,completed_waiting_pickup,2026-05-12 15:35:55,manual_review,repair_requires_customer_and_issue_validation
+51,[***********戶,,2026-05-12,COWCOW,油門+儀表+煞車+檢修費=4500,completed_waiting_pickup,2026-05-12 15:34:28,manual_review,repair_requires_customer_and_issue_validation
+45,[***********戶,,2026-05-12,TRX,油門,completed_waiting_pickup,2026-05-12 15:26:59,manual_review,repair_requires_customer_and_issue_validation
+12,[***********戶,,2026-04-28,折疊車,hjhjhj,canceled,2026-04-26 02:40:03,manual_review,repair_requires_customer_and_issue_validation

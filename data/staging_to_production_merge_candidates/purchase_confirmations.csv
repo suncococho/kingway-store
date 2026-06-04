@@ -1,0 +1,24 @@
+purchase_confirmation_id,token_masked,order_no,customer_name_masked,customer_phone_masked,status,has_pdf,created_at,recommendation,risk_reason
+56,a1b6e7...711b,POS-20260519-165953-464,L*****戶,09*****737,PENDING,no,2026-06-04 20:05:39,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+55,74f687...0d8d,POS-20260604-195644-098,劉*駿,09*****452,PENDING,no,2026-06-04 19:57:12,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+54,60cdae...4fc4,POS-20260604-195640-286,劉*駿,09*****452,PENDING,no,2026-06-04 19:56:55,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+53,f33d09...9541,POS-20260604-195007-858,黃*婷,09*****993,PENDING,no,2026-06-04 19:54:24,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+52,9318b3...906d,POS-20260604-194420-599,羅*桀,09*****778,PENDING,no,2026-06-04 19:44:45,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+51,01a254...7183,POS-20260604-194415-380,羅*桀,09*****778,PENDING,no,2026-06-04 19:44:34,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+50,fc26a8...c140,POS-20260604-194357-153,羅*桀,09*****778,PENDING,no,2026-06-04 19:44:33,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+49,00eaa2...b84d,POS-20260604-194352-247,羅*桀,09*****778,PENDING,no,2026-06-04 19:44:11,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+48,acd9d3...fe9c,POS-20260604-193656-864,羅*凱,09*****179,PENDING,no,2026-06-04 19:37:19,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+47,31e742...d8db,POS-20260604-193648-194,羅*凱,09*****179,PENDING,no,2026-06-04 19:37:01,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+46,610d7a...7e3f,POS-20260604-192816-375,陳*堂,09*****993,PENDING,no,2026-06-04 19:28:44,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+45,67260a...8f1f,POS-20260604-192800-405,陳*堂,09*****993,PENDING,no,2026-06-04 19:28:32,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+44,a249d7...e065,POS-20260604-192749-896,陳*堂,09*****993,PENDING,no,2026-06-04 19:28:21,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+43,20c344...fd64,POS-20260519-165716-962,L*****戶,09*****365,PENDING,no,2026-06-04 19:03:10,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+41,,POS-20260531-184150-171,林*賢,09*****261,COMPLETED,yes,2026-06-02 20:18:14,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+38,fab609...dd9d,POS-20260531-184150-171,林*賢,09*****261,PENDING,no,2026-05-31 18:41:52,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+37,628e16...9ec2,POS-20260531-183655-771,陳*燕,09*****153,PENDING,no,2026-05-31 18:36:57,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+36,980f19...a6d5,POS-20260531-183502-792,康*玲,09*****852,PENDING,no,2026-05-31 18:35:04,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+35,dcd100...eb8d,POS-20260512-182446-072,顏*安,09*****550,PENDING,no,2026-05-30 21:00:34,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+34,755d25...8bd5,POS-20260527-130622-346,羅*廷,09*****736,PENDING,no,2026-05-30 20:14:25,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+26,dc7ac8...7818,POS-20260513-161826-035,劉*谷,09*****467,PENDING,no,2026-05-13 16:18:28,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+23,c6f3e0...9001,POS-20260512-182605-574,鄭*鴻,03*****793,PENDING,no,2026-05-12 20:52:26,manual_review,purchase_confirmation_requires_order_token_pdf_validation
+22,6d7410...05cf,POS-20260512-182246-363,韓******),09*****333,PENDING,no,2026-05-12 18:22:47,manual_review,purchase_confirmation_requires_order_token_pdf_validation

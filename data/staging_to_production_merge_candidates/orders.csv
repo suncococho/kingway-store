@@ -1,0 +1,25 @@
+order_id,order_no,customer_name_masked,customer_phone_masked,total_amount,status,business_date,created_at,item_count,total_qty,item_total,recommendation,risk_reason
+213,POS-20260604-195644-098,劉*駿,09*****452,47000.00,COMPLETED,2026-06-04,2026-06-04 19:56:44,1,1,47000.00,merge_candidate,staging_only_order_no_not_in_production
+212,POS-20260604-195640-286,劉*駿,09*****452,47080.00,COMPLETED,2026-06-04,2026-06-04 19:56:40,3,3,49180.00,merge_candidate,staging_only_order_no_not_in_production
+211,POS-20260604-195011-413,黃*婷,09*****993,47000.00,COMPLETED,2026-06-04,2026-06-04 19:50:11,1,1,47000.00,merge_candidate,staging_only_order_no_not_in_production
+210,POS-20260604-195007-858,黃*婷,09*****993,50000.00,COMPLETED,2026-06-04,2026-06-04 19:50:07,4,4,51200.00,merge_candidate,staging_only_order_no_not_in_production
+209,POS-20260604-194420-599,羅*桀,09*****778,24900.00,COMPLETED,2026-06-04,2026-06-04 19:44:20,1,1,24900.00,merge_candidate,staging_only_order_no_not_in_production
+208,POS-20260604-194415-380,羅*桀,09*****778,24900.00,COMPLETED,2026-06-04,2026-06-04 19:44:15,1,1,24900.00,merge_candidate,staging_only_order_no_not_in_production
+207,POS-20260604-194357-153,羅*桀,09*****778,24900.00,COMPLETED,2026-06-04,2026-06-04 19:43:57,1,1,24900.00,merge_candidate,staging_only_order_no_not_in_production
+206,POS-20260604-194352-247,羅*桀,09*****778,22000.00,COMPLETED,2026-06-04,2026-06-04 19:43:52,1,1,24900.00,merge_candidate,staging_only_order_no_not_in_production
+205,POS-20260604-193656-864,羅*凱,09*****179,78000.00,COMPLETED,2026-06-04,2026-06-04 19:36:56,1,1,78000.00,merge_candidate,staging_only_order_no_not_in_production
+204,POS-20260604-193648-194,羅*凱,09*****179,73000.00,COMPLETED,2026-06-04,2026-06-04 19:36:48,3,3,79280.00,merge_candidate,staging_only_order_no_not_in_production
+203,POS-20260604-192816-375,陳*堂,09*****993,24900.00,COMPLETED,2026-06-04,2026-06-04 19:28:16,1,1,24900.00,merge_candidate,staging_only_order_no_not_in_production
+202,POS-20260604-192800-405,陳*堂,09*****993,24900.00,COMPLETED,2026-06-04,2026-06-04 19:28:00,1,1,24900.00,merge_candidate,staging_only_order_no_not_in_production
+201,POS-20260604-192749-896,陳*堂,09*****993,21600.00,COMPLETED,2026-06-04,2026-06-04 19:27:49,1,1,24900.00,merge_candidate,staging_only_order_no_not_in_production
+197,LINE-20260603-141722-658,J******명,09*****300,47000.00,PENDING_CONFIRM,2026-06-03,2026-06-03 14:17:22,1,1,47000.00,merge_candidate,staging_only_order_no_not_in_production
+194,POS-20260531-184150-171,林*賢,09*****261,73000.00,COMPLETED,2026-05-31,2026-05-31 18:41:50,6,6,82130.00,merge_candidate,staging_only_order_no_not_in_production
+193,POS-20260531-183849-611,陳*鈞,09*****856,75000.00,COMPLETED,2026-05-31,2026-05-31 18:38:49,1,1,75000.00,merge_candidate,staging_only_order_no_not_in_production
+192,POS-20260531-183655-771,陳*燕,09*****153,22000.00,COMPLETED,2026-05-31,2026-05-31 18:36:55,1,1,24900.00,merge_candidate,staging_only_order_no_not_in_production
+191,POS-20260531-183502-792,康*玲,09*****852,80180.00,COMPLETED,2026-05-31,2026-05-31 18:35:02,3,3,80180.00,merge_candidate,staging_only_order_no_not_in_production
+190,POS-20260530-154855-542,G***********0,,1800.00,COMPLETED,2026-05-30,2026-05-30 15:48:55,2,2,1800.00,merge_candidate,staging_only_order_no_not_in_production
+189,LINE-20260528-194556-887,C**o,09*****244,77500.00,PENDING_CONFIRM,2026-05-28,2026-05-28 19:45:56,1,1,78000.00,merge_candidate,staging_only_order_no_not_in_production
+188,POS-20260527-130622-346,羅*廷,09*****736,75500.00,COMPLETED,2026-05-27,2026-05-27 13:06:22,10,10,99780.00,merge_candidate,staging_only_order_no_not_in_production
+187,POS-20260527-130156-363,蘇*喬,09*****812,57000.00,COMPLETED,2026-05-27,2026-05-27 13:01:56,5,5,65050.00,merge_candidate,staging_only_order_no_not_in_production
+186,POS-20260526-151430-018,L*****戶,09*****711,1000.00,COMPLETED,2026-05-26,2026-05-26 15:14:30,2,2,1000.00,merge_candidate,staging_only_order_no_not_in_production
+185,REP-20260526-144545-326,L*****戶,09*****711,900.00,REPAIRING,2026-05-26,2026-05-26 14:45:45,0,0,0,merge_candidate,staging_only_order_no_not_in_production

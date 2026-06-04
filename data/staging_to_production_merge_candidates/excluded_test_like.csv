@@ -1,0 +1,21 @@
+entity_type,source_id,reference_key,created_at,exclude_reason
+order,200,order_no:REP-20260604-142029-474,2026-06-04 14:20:29,test_like_order_or_customer
+order,199,order_no:POS-20260604-120002-560,2026-06-04 12:00:02,test_like_order_or_customer
+order,198,order_no:POS-20260604-113516-561,2026-06-04 11:35:16,test_like_order_or_customer
+order,196,order_no:KH_TEST_COUPON_001-ORD-001,2026-06-02 22:50:26,test_like_order_or_customer
+order,195,order_no:POS-20260602-194408-476,2026-06-02 19:44:08,test_like_order_or_customer
+order,184,order_no:POS-20260523-025908-308,2026-05-23 02:59:08,test_like_order_or_customer
+order,183,order_no:POS-20260523-012936-535,2026-05-23 01:29:36,test_like_order_or_customer
+order,182,order_no:POS-20260523-005256-348,2026-05-23 00:52:56,test_like_order_or_customer
+repair_order,84,customer_phone+created_at+issue,2026-06-04 14:19:24,test_like_customer_bike_or_issue
+repair_order,83,customer_phone+created_at+issue,2026-06-04 11:43:14,test_like_customer_bike_or_issue
+repair_order,74,customer_phone+created_at+issue,2026-05-28 15:38:05,test_like_customer_bike_or_issue
+purchase_confirmation,42,order_no:POS-20260604-120002-560,2026-06-04 12:00:03,test_like_customer_or_order
+purchase_confirmation,40,order_no:POS-20260602-194408-476,2026-06-02 20:18:02,test_like_customer_or_order
+purchase_confirmation,33,order_no:POS-20260523-025908-308,2026-05-23 02:59:09,test_like_customer_or_order
+purchase_confirmation,32,order_no:POS-20260523-012936-535,2026-05-23 01:29:37,test_like_customer_or_order
+purchase_confirmation,31,order_no:POS-20260523-005256-348,2026-05-23 00:52:57,test_like_customer_or_order
+product,766,sku:C-EB-901-RH5,2026-06-04 12:00:02,test_like_sku_or_name
+product,765,sku:KW_REHEARSAL_BIKE_001,2026-06-04 11:31:11,test_like_sku_or_name
+product,764,sku:KH-TEST-001,2026-06-02 02:39:37,test_like_sku_or_name
+coupon,41,code:KH_TEST_COUPON_001-GR-001,2026-06-02 22:50:27,test_like_coupon_code
