@@ -72,6 +72,36 @@
   - store 1 pending links did not include order `199`
 - No LINE push was triggered during the rehearsal flow; no `api.line.me` outbound log was observed
 
+## Rehearsal Step 7
+
+- Status: completed on 2026-06-04
+- Target store: `id=5`, `code=KW_REHEARSAL_202606`, owner `kw_rehearsal_owner`
+- Platform preset switch:
+  - `POST /api/saas-admin/stores/5/features/preset {"preset":"FREE"}` -> `200`
+  - `POST /api/saas-admin/stores/5/features/preset {"preset":"PREMIUM"}` -> `200`
+  - final restore `POST /api/saas-admin/stores/5/features/preset {"preset":"PREMIUM"}` -> `200`
+- `stores.plan` transition confirmed:
+  - before: `trial`
+  - FREE: `free`
+  - PREMIUM: `premium`
+  - restored: `premium`
+- `store_features` preset alignment confirmed:
+  - FREE -> `pos/orders/repairs/inventory/line=ON`, `suppliers/coupons/purchase_confirmations/telegram/sales_dashboard/staff_management=OFF`
+  - PREMIUM -> `pos/orders/repairs/inventory/suppliers/coupons/purchase_confirmations/line/sales_dashboard/staff_management=ON`, `telegram=OFF`
+- Owner feature/menu policy confirmed from store scope `5`:
+  - FREE visible menu paths: `/pos`, `/orders`, `/repairs`, `/inventory`, `/settings/line`
+  - PREMIUM visible menu paths additionally included `/sales`, `/suppliers`, `/coupons`, `/purchase-confirmations`, `/staff`, `/staff-attendance`, `/kpi`, `/payroll`
+- Owner protected API access matched preset for core features:
+  - FREE: `/api/orders` `200`, `/api/repairs` `200`, `/api/inventory/movements` `200`, invalid POS create `/api/orders` `400`, `/api/store/settings/line` `200`
+  - FREE blocked: `/api/suppliers/requests`, `/api/coupons`, `/api/purchase-confirmations`, `/api/sales/summary`, `/api/staff`, `/api/attendance`, `/api/kpi`, `/api/payroll/summary` -> `403`
+  - PREMIUM enabled: `/api/suppliers/requests`, `/api/purchase-confirmations`, `/api/sales/summary`, `/api/staff`, `/api/attendance`, `/api/kpi`, `/api/payroll/summary` -> `200`
+- Rehearsal caveats recorded:
+  - frontend direct paths such as `/sales`, `/suppliers`, `/coupons`, `/purchase-confirmations`, `/staff` still returned SPA shell `200`; enforcement is currently on menu filtering plus backend API policy, not route-level blocking
+  - PREMIUM `GET /api/coupons` returned `500` SQL syntax error instead of healthy `200`, so coupon feature enablement is not fully operational even though preset/policy switched on
+- Other store isolation confirmed:
+  - only `store_id=5` plan/features changed during Step 7
+  - stores `1-4` plan and `store_features` snapshot stayed unchanged
+
 ## 1) 실행 가능 항목(Non-destructive readiness)
 
 ### API/라우트 가시성 확인
