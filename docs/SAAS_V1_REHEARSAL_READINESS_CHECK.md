@@ -14,6 +14,15 @@
 - `GET /api/store/settings`: 200
 - `GET /api/store/settings/line`: 200
 
+## Rehearsal Step 2
+
+- Status: completed on 2026-06-04
+- Owner login: success, `storeId=5`
+- Store settings saved and reloaded successfully
+- LINE settings saved and reloaded successfully
+- Raw `channelSecret` / `channelAccessToken` values were not populated and not exposed
+- Rehearsal LINE settings row created under `store_id=5`; existing store 1 LINE settings remained unchanged
+
 ## 1) 실행 가능 항목(Non-destructive readiness)
 
 ### API/라우트 가시성 확인
