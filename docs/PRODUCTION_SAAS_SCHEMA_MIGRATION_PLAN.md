@@ -258,6 +258,55 @@ preflight 판정:
    - `ALTER TABLE`은 컬럼/index만 추가
    - `UPDATE`는 기존 row 수정만 수행
    - 증가하는 row는 `stores`, `store_features`, `store_line_settings`, `store_memberships` 같은 신규 SaaS 테이블뿐이다.
+
+## 13. Execution Completed
+
+실행일시: 2026-06-05 01:46 Asia/Taipei
+
+실행 범위:
+
+- production `127.0.0.1:3306` / `kingway_store`
+- `sql/production_saas_schema_migration.sql`
+- 같은 MySQL 세션에서 `SOURCE ...; COMMIT;` 실행
+
+사전 확인:
+
+- backup directory 확인:
+  `/volume1/docker/kingway-store/backups/production-pre-saas/20260605_004301`
+- dump 파일 확인:
+  `mysql_kingway_store.sql.gz`
+- `gzip -t` 통과
+
+주요 테이블 row count:
+
+- 실행 전
+  - `customers`: 145
+  - `products`: 384
+  - `orders`: 72
+  - `order_items`: 170
+  - `repair_orders`: 20
+  - `purchase_confirmations`: 20
+  - `coupons`: 30
+- 실행 후
+  - `customers`: 145
+  - `products`: 384
+  - `orders`: 72
+  - `order_items`: 170
+  - `repair_orders`: 20
+  - `purchase_confirmations`: 20
+  - `coupons`: 30
+
+검증 결과:
+
+- 기존 주요 테이블 row count 변화 없음
+- `customers/products/orders/order_items/repair_orders/purchase_confirmations/coupons`의 `store_id IS NULL = 0`
+- `stores.id = 1 / KINGWAY_TAINAN` seed 확인
+- `store_features` store 1 seed 1건 확인
+- `store_line_settings` store 1 seed 1건 확인
+- `store_memberships` store 1 seed 2건 확인
+- SaaS 신규 테이블 생성 확인:
+  `stores`, `store_features`, `store_line_settings`, `platform_admin_users`, `store_memberships`
+- 실행 SQL 기준 `DROP / DELETE / TRUNCATE` 없음
 5. `ALTER TABLE ADD COLUMN`과 `ADD INDEX`는 직접 실행하지 않고, `information_schema` 확인 후 dynamic SQL로 분기하므로 이미 존재할 때 즉시 실패하지 않도록 작성되어 있다.
 
 ### 12-1. 확인된 위험
