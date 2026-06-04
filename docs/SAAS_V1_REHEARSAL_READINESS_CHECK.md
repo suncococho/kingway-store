@@ -32,6 +32,16 @@
 - Store 1 direct `PATCH /api/products/765` attempt returned `404`
 - Existing store 1 products remained unchanged
 
+## Rehearsal Step 4
+
+- Status: completed on 2026-06-04
+- Order created: `id=198`, `orderNo=POS-20260604-113516-561`, `store_id=5`
+- Customer created/linked: `id=155`, `name=KW_REHEARSAL_CUSTOMER`, `store_id=5`
+- Order item created: `id=386`, `product_id=765`, `quantity=1`, `line_total=36000`
+- Inventory movement recorded for store `5`; rehearsal product stock changed from `3` to `2`
+- Rehearsal owner could list and read the order
+- Store 1 order detail access for order `198` returned `404`; existing store 1 orders remained unchanged
+
 ## 1) 실행 가능 항목(Non-destructive readiness)
 
 ### API/라우트 가시성 확인
