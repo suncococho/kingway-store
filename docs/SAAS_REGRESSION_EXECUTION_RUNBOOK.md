@@ -305,7 +305,40 @@ bash scripts/regression/multitenant-smoke.sh
 - exit code
   - `FAIL` 1건 이상이면 `1`
   - `PASS`와 `SKIP`만 있으면 `0`
-  - 계정 env 미입력 항목은 `SKIP`
+- 계정 env 미입력 항목은 `SKIP`
+
+### 11-2) credential-in-env 실행 기록
+
+- 실행 명령:
+
+```bash
+BASE_URL=http://127.0.0.1:3010 \
+STORE1_USERNAME=... \
+STORE1_PASSWORD=... \
+STORE5_USERNAME=... \
+STORE5_PASSWORD=... \
+PRODUCT_IMAGE_DIRECT_PATH=/files/products/1778740178011-c5dc4ef31b51c-DSC_2179.png \
+STORE5_PRODUCT_ID=766 \
+RUN_COUPON_CHECKS=true \
+STORE5_EXPECT_COUPONS_STATUS=200 \
+bash scripts/regression/multitenant-smoke.sh
+```
+
+- 실행 전제: 본 문서 작성 기준 환경에서 `STORE1_*`, `STORE5_*` env가 모두 미설정(UNSET)이라 로그인 단계와 계정 기반 점검은 SKIP됨.
+- 결과:
+  - PASS: `8`
+  - FAIL: `0`
+  - SKIP: `8`
+- 주요 실패 항목: 없음
+- 비밀번호/token 노출: 없음 (실행 로그에 `password`, `token` 값 직접 출력 없음)
+
+### 실계정 env 재실행 후 교체 예정 항목
+
+- 로그인 기반 체크: `store1 login`, `store5 login`
+- store 1/5 `store settings`/`line settings` 확인
+- `gated product image cross-store blocked`
+- `store5 coupons status`
+- 위 항목은 계정 env가 반영되면 동일 명령으로 즉시 재실행해 PASS/FAIL/SKIP를 대체 갱신해야 함.
 
 ## 12) release sign-off 항목
 
