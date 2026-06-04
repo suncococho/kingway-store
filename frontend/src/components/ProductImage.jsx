@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { clearAuth, getStoredToken } from "../lib/auth";
 
 function normalizeImageUrl(imageUrl) {
   const value = String(imageUrl || "").trim();
@@ -68,7 +69,68 @@ function ProductImage({ src, alt, className = "product-thumb", fallbackLabel = "
   const normalizedSrc = useMemo(() => normalizeImageUrl(src), [src]);
   const [broken, setBroken] = useState(false);
   const [open, setOpen] = useState(false);
-  const showImage = Boolean(normalizedSrc) && !broken;
+  const [resolvedSrc, setResolvedSrc] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl = null;
+
+    setBroken(false);
+
+    if (!normalizedSrc) {
+      setResolvedSrc("");
+      return () => {};
+    }
+
+    if (!normalizedSrc.startsWith("/api/")) {
+      setResolvedSrc(normalizedSrc);
+      return () => {};
+    }
+
+    const token = getStoredToken();
+    if (!token) {
+      setResolvedSrc("");
+      setBroken(true);
+      return () => {};
+    }
+
+    async function loadProtectedImage() {
+      try {
+        const response = await fetch(normalizedSrc, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+        if (!response.ok) {
+          if (response.status === 401) {
+            clearAuth();
+          }
+          throw new Error("failed_to_load_product_image");
+        }
+
+        objectUrl = URL.createObjectURL(await response.blob());
+        if (active) {
+          setResolvedSrc(objectUrl);
+        }
+      } catch {
+        if (active) {
+          setResolvedSrc("");
+          setBroken(true);
+        }
+      }
+    }
+
+    loadProtectedImage();
+
+    return () => {
+      active = false;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [normalizedSrc]);
+
+  const showImage = Boolean(resolvedSrc) && !broken;
 
   if (!showImage) {
     return <div className={`${className} product-thumb-fallback`}>{fallbackLabel}</div>;
@@ -77,9 +139,9 @@ function ProductImage({ src, alt, className = "product-thumb", fallbackLabel = "
   return (
     <>
       <button type="button" className="product-image-button" onClick={() => setOpen(true)} aria-label={`查看${alt || "商品"}大圖`}>
-        <img className={className} src={normalizedSrc} alt={alt} loading="lazy" onError={() => setBroken(true)} />
+        <img className={className} src={resolvedSrc} alt={alt} loading="lazy" onError={() => setBroken(true)} />
       </button>
-      {open ? <ProductImageModal src={normalizedSrc} alt={alt} onClose={() => setOpen(false)} /> : null}
+      {open ? <ProductImageModal src={resolvedSrc} alt={alt} onClose={() => setOpen(false)} /> : null}
     </>
   );
 }

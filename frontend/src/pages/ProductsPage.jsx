@@ -39,6 +39,26 @@ function formatCurrency(value) {
   return `NT$${Number(value || 0).toFixed(0)}`;
 }
 
+function revokePreviewUrl(url) {
+  if (typeof url === "string" && url.startsWith("blob:")) {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function buildProductPreviewUrl(imagePath, productId) {
+  const value = String(imagePath || "").trim();
+  if (!value) {
+    return "";
+  }
+  if (/^https?:\/\//i.test(value) || value.startsWith("data:image/") || value.startsWith("/api/")) {
+    return value;
+  }
+  if (value.startsWith("/files/products/") || value.startsWith("files/products/") || value.startsWith("storage/products/") || value.startsWith("products/")) {
+    return productId ? `/api/products/${productId}/image` : "";
+  }
+  return value;
+}
+
 function ProductsPage() {
   const location = useLocation();
   const { items, loading, error, refetch } = useFetchList("/products");
@@ -57,6 +77,8 @@ function ProductsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [imageUploading, setImageUploading] = useState(false);
   const [detailImageUploading, setDetailImageUploading] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState("");
+  const [detailImagePreviewUrl, setDetailImagePreviewUrl] = useState("");
   const [stockDrafts, setStockDrafts] = useState({});
   const [stockSavingId, setStockSavingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -152,19 +174,31 @@ function ProductsPage() {
       return;
     }
     const normalizedCategory = normalizeProductCategory(detailProduct.category || deriveProductCategoryFromSku(detailProduct.sku));
+    setDetailImagePreviewUrl((current) => {
+      revokePreviewUrl(current);
+      return "";
+    });
     setDetailForm({
       sku: detailProduct.sku || "",
       name: detailProduct.name || "",
       category: normalizedCategory,
       price: String(detailProduct.price ?? ""),
       reorderLevel: String(detailProduct.reorderLevel ?? ""),
-      imageUrl: detailProduct.imageUrl || "",
+      imageUrl: detailProduct.imagePath || "",
       costPrice: String(detailProduct.costPrice ?? ""),
       location: detailProduct.location || "",
       description: detailProduct.description || "",
       isActive: Boolean(detailProduct.isActive)
     });
   }, [detailProduct]);
+
+  useEffect(
+    () => () => {
+      revokePreviewUrl(imagePreviewUrl);
+      revokePreviewUrl(detailImagePreviewUrl);
+    },
+    [imagePreviewUrl, detailImagePreviewUrl]
+  );
 
   useEffect(() => {
     if (section !== "CREATE" || !form.category) {
@@ -224,6 +258,12 @@ function ProductsPage() {
 
   function handleChange(event) {
     const { name, value } = event.target;
+    if (name === "imageUrl") {
+      setImagePreviewUrl((current) => {
+        revokePreviewUrl(current);
+        return "";
+      });
+    }
     setForm((current) => ({
       ...current,
       [name]: value
@@ -242,8 +282,13 @@ function ProductsPage() {
     }
     setImageUploading(true);
     try {
+      const localPreviewUrl = URL.createObjectURL(file);
       const imageUrl = await uploadProductImage(file);
       setForm((current) => ({ ...current, imageUrl }));
+      setImagePreviewUrl((current) => {
+        revokePreviewUrl(current);
+        return localPreviewUrl;
+      });
     } catch (error) {
       alert(error.message || "圖片上傳失敗");
     } finally {
@@ -259,8 +304,13 @@ function ProductsPage() {
     }
     setDetailImageUploading(true);
     try {
+      const localPreviewUrl = URL.createObjectURL(file);
       const imageUrl = await uploadProductImage(file);
       setDetailForm((current) => ({ ...current, imageUrl }));
+      setDetailImagePreviewUrl((current) => {
+        revokePreviewUrl(current);
+        return localPreviewUrl;
+      });
     } catch (error) {
       alert(error.message || "圖片上傳失敗");
     } finally {
@@ -301,6 +351,10 @@ function ProductsPage() {
         costPrice: "",
         location: "",
         description: ""
+      });
+      setImagePreviewUrl((current) => {
+        revokePreviewUrl(current);
+        return "";
       });
       await refetch();
       setDetailProductId(data.id);
@@ -853,7 +907,7 @@ function ProductsPage() {
                 <div className="grid-form">
                   <label className="form-field">
                     <span>圖片網址</span>
-                    <input name="imageUrl" type="text" value={form.imageUrl} onChange={handleChange} placeholder="可貼上完整網址或 /files/products 圖片路徑" />
+                    <input name="imageUrl" type="text" value={form.imageUrl} onChange={handleChange} placeholder="可貼上完整網址或既有商品圖片路徑" />
                   </label>
                   <label className="form-field">
                     <span>上傳圖片</span>
@@ -861,7 +915,7 @@ function ProductsPage() {
                   </label>
                 </div>
                 <div className="product-image-preview">
-                  <ProductImage src={form.imageUrl} alt="商品預覽" className="product-image-preview-thumb" />
+                  <ProductImage src={imagePreviewUrl || form.imageUrl} alt="商品預覽" className="product-image-preview-thumb" />
                   <div className="muted-text">{imageUploading ? "圖片上傳中..." : form.imageUrl ? "目前使用此圖片顯示預覽。" : "尚未設定圖片。可輸入網址或直接上傳。"}</div>
                 </div>
               </div>
@@ -961,7 +1015,7 @@ function ProductsPage() {
                 </label>
               </div>
               <div className="product-image-preview">
-                <ProductImage src={form.imageUrl} alt="商品預覽" className="product-image-preview-thumb" />
+                <ProductImage src={imagePreviewUrl || form.imageUrl} alt="商品預覽" className="product-image-preview-thumb" />
                 <div className="muted-text">
                   {imageUploading ? "圖片上傳中..." : form.imageUrl ? "目前預覽使用現有圖片來源。" : "目前沒有圖片預覽，請輸入圖片網址或上傳圖片。"}
                 </div>
@@ -1020,7 +1074,7 @@ function ProductsPage() {
               <div className="admin-detail-media">
                 <div className="admin-detail-image-fixed" style={{ width: 160, height: 160, overflow: "hidden" }}>
                   {detailProduct.imageUrl ? (
-                    <img src={detailProduct.imageUrl} alt={detailProduct.name} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+                    <ProductImage src={detailProduct.imageUrl} alt={detailProduct.name} className="admin-detail-image" />
                   ) : (
                     <div className="admin-detail-image-empty">無圖</div>
                   )}
@@ -1097,7 +1151,17 @@ function ProductsPage() {
                 </label>
                 <label className="form-field">
                   <span>圖片網址</span>
-                  <input type="text" value={detailForm.imageUrl} onChange={(event) => setDetailForm((current) => ({ ...current, imageUrl: event.target.value }))} />
+                  <input
+                    type="text"
+                    value={detailForm.imageUrl}
+                    onChange={(event) => {
+                      setDetailImagePreviewUrl((current) => {
+                        revokePreviewUrl(current);
+                        return "";
+                      });
+                      setDetailForm((current) => ({ ...current, imageUrl: event.target.value }));
+                    }}
+                  />
                 </label>
                 <label className="form-field">
                   <span>上傳圖片</span>
@@ -1118,6 +1182,16 @@ function ProductsPage() {
                   {detailImageUploading ? "圖片上傳中..." : "儲存商品"}
                 </button>
               </form>
+              <div className="product-image-preview">
+                <ProductImage
+                  src={detailImagePreviewUrl || buildProductPreviewUrl(detailForm.imageUrl, detailProduct.id) || detailProduct.imageUrl}
+                  alt="商品圖片預覽"
+                  className="product-image-preview-thumb"
+                />
+                <div className="muted-text">
+                  {detailImageUploading ? "圖片上傳中..." : detailForm.imageUrl ? "儲存後會套用此圖片。" : "目前沒有圖片。"}
+                </div>
+              </div>
             </section>
 
             <div className="admin-split-grid">

@@ -16,6 +16,13 @@ const {
 } = require("../utils/productCategories");
 
 const router = express.Router();
+const productsStorageDir = path.join(__dirname, "..", "..", "storage", "products");
+const localProductImagePrefixes = [
+  "/files/products/",
+  "files/products/",
+  "storage/products/",
+  "products/"
+];
 
 function getRequestStoreId(req) {
   const rawStoreId = req.storeId || req.user?.store_id || req.user?.storeId || 1;
@@ -27,7 +34,7 @@ async function hasProductsStoreIdColumn(connection = pool) {
   const [rows] = await connection.query("SHOW COLUMNS FROM `products` LIKE 'store_id'");
   return rows.length > 0;
 }
-const productsStorageDir = path.join(__dirname, "..", "..", "storage", "products");
+
 const allowedImageTypes = new Map([
   ["image/jpeg", ".jpg"],
   ["image/png", ".png"],
@@ -37,10 +44,51 @@ const allowedImageTypes = new Map([
 
 router.use(authenticate, requireStoreScope(), authorize());
 
-function normalizeImageUrl(imageUrl) {
+function extractProductImageFileName(imageUrl) {
   const value = String(imageUrl || "").trim();
   if (!value) {
     return null;
+  }
+  for (const prefix of localProductImagePrefixes) {
+    if (value.startsWith(prefix)) {
+      const fileName = decodeURIComponent(value.slice(prefix.length));
+      if (!fileName || fileName.includes("/") || fileName.includes("\\") || fileName.includes("\0") || fileName.includes("..")) {
+        return null;
+      }
+      return fileName;
+    }
+  }
+  return null;
+}
+
+function buildProductImageApiUrl(productId) {
+  const normalizedProductId = Number(productId);
+  if (!Number.isSafeInteger(normalizedProductId) || normalizedProductId <= 0) {
+    return null;
+  }
+  return `/api/products/${normalizedProductId}/image`;
+}
+
+function normalizeEditableImagePath(imageUrl) {
+  const value = String(imageUrl || "").trim();
+  if (!value) {
+    return null;
+  }
+  const localFileName = extractProductImageFileName(value);
+  if (localFileName) {
+    return `/files/products/${localFileName}`;
+  }
+  return value;
+}
+
+function normalizeImageUrl(imageUrl, productId = null) {
+  const value = String(imageUrl || "").trim();
+  if (!value) {
+    return null;
+  }
+  const localFileName = extractProductImageFileName(value);
+  if (localFileName) {
+    return buildProductImageApiUrl(productId) || `/files/products/${localFileName}`;
   }
   if (/^https?:\/\//i.test(value) || value.startsWith("data:image/") || value.startsWith("/files/")) {
     return value;
@@ -69,7 +117,8 @@ function mapProductRow(row) {
   const category = PRODUCT_CATEGORY_LABELS[storedCategory] ? storedCategory : derivedCategory;
   return {
     ...row,
-    imageUrl: normalizeImageUrl(row.imageUrl),
+    imagePath: normalizeEditableImagePath(row.imageUrl),
+    imageUrl: normalizeImageUrl(row.imageUrl, row.id),
     category,
     categoryLabel: mapCategoryLabel(category)
   };
@@ -170,6 +219,51 @@ router.get("/", async (req, res, next) => {
     const [rows] = await pool.query(sql, params);
     return res.json(rows.map(mapProductRow));
   } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/:id/image", async (req, res, next) => {
+  try {
+    const productId = Number(req.params.id);
+    const storeId = getRequestStoreId(req);
+    if (!Number.isSafeInteger(productId) || productId <= 0) {
+      return res.status(404).json({ message: "找不到商品圖片" });
+    }
+
+    const [rows] = await pool.query(
+      `
+        SELECT id, image_url AS imageUrl
+        FROM products
+        WHERE id = ?
+          AND store_id = ?
+        LIMIT 1
+      `,
+      [productId, storeId]
+    );
+
+    const product = rows[0];
+    if (!product) {
+      return res.status(404).json({ message: "找不到商品" });
+    }
+
+    const fileName = extractProductImageFileName(product.imageUrl);
+    if (!fileName) {
+      return res.status(404).json({ message: "找不到商品圖片" });
+    }
+
+    const absolutePath = path.join(productsStorageDir, fileName);
+    if (path.basename(absolutePath) !== fileName) {
+      return res.status(404).json({ message: "找不到商品圖片" });
+    }
+
+    await fs.promises.access(absolutePath, fs.constants.R_OK);
+    res.setHeader("Cache-Control", "private, max-age=300");
+    return res.sendFile(absolutePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return res.status(404).json({ message: "找不到商品圖片" });
+    }
     return next(error);
   }
 });
@@ -283,7 +377,8 @@ router.post("/", async (req, res, next) => {
       reorderLevel: reorderLevel || 0,
       isActive: isActive === undefined ? true : Boolean(isActive),
       description: description || null,
-      imageUrl: normalizeImageUrl(imageUrl),
+      imagePath: normalizeEditableImagePath(imageUrl),
+      imageUrl: normalizeImageUrl(imageUrl, result.insertId),
       costPrice: costPrice === undefined ? 0 : Number(costPrice || 0),
       location: location || null,
       inputterName: inputterName || null,

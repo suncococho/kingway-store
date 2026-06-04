@@ -53,13 +53,14 @@ Scope: `SaaS v1 launch pre-check` (code 수정 없음, DB 변경 없음, 배포 
 
 ## 4) Product images public 접근 상태
 
-- 현재 상태: `OPEN WITH GUESSABILITY REDUCTION`
+- 현재 상태: `GATED ROUTE IMPLEMENTED (1차)`
 - 근거
   - 업로드 API는 auth + store scope 존재 (`backend/src/routes/products.js`).
   - 저장 위치: `storage/products` (write)
-  - 반환 URL: `/files/products/<filename>`
-  - 정적 제공 경로: `/files` 공개 마운트 (app.js)
-- 즉, 업로드는 보안되지만 URL이 노출되면 store 분리 없이 읽기 가능.
+  - 직접 정적 경로 `/files/products/*` 는 `404` 차단
+  - 인증된 대체 경로 `GET /api/products/:id/image` 추가
+  - route는 `authenticate + requireStoreScope` 후 `products.store_id = req.storeId` 검사
+- 즉, product image는 public static read에서 store-gated read로 이동했다.
 
 ## 5) repair/customer attachment route 존재 여부
 
@@ -71,18 +72,18 @@ Scope: `SaaS v1 launch pre-check` (code 수정 없음, DB 변경 없음, 배포 
 ## 6) 직접 URL로 접근 가능한 파일 경로
 
 - 현재 확인된 직접 접근 가능 경로:
-  - `/files/products/<file>` (public, store_id 미검증)
   - `/files/<anything>` (app.js static mount로 일반 접근 허용)
   - `storage/products` 하위 경로는 업로드 파일 반환 구조상 외부에서 직접 조회 가능.
 - 확인된 직접 차단 경로:
   - `/files/pdfs/*` (`404` 처리)
+  - `/files/products/*` (`404` 처리)
 
 ## 7) store_id 검증 없이 열려 있는 경로
 
 - `store_id` 미검증 공개 경로
   - `/files/*`
-  - `/files/products/*` (상기 포함)
 - `store_id` 조건이 있는 경로
+  - `/api/products/:id/image` (auth + store scope)
   - `/api/purchase-confirmations/public/:token/pdf` (토큰 기반 + 옵션 store 일치 검사)
   - `/api/purchase-confirmations/manual/:id/pdf` (staff/JWT + 접근 토큰)
   - `/api/purchase-confirmations/download/:accessToken` (signed token)
@@ -91,23 +92,24 @@ Scope: `SaaS v1 launch pre-check` (code 수정 없음, DB 변경 없음, 배포 
 
 - `HIGH`
   - 글로벌 `/files/*` 무조건 공개 노출
-  - 업로드된 상품/기타 파일의 tenant 경계 없는 추출 위험
 - `MEDIUM`
+  - 글로벌 `/files/*` 자체는 여전히 남아 있어 product 외 다른 파일 자산 재노출 위험 존재
+ - `MEDIUM`
   - 구매확인서 public flow가 토큰 의존이므로 URL 유출/공유 시 유효성 의존 위험
 - `LOW`
-  - `/files/pdfs/*` 차단 상태는 현재 유효하지만, 우회 경로 노출 재점검 필요
+  - `/files/pdfs/*` 및 `/files/products/*` 직접 차단 상태 유지 여부 재점검 필요
 
 ## v1 launch blocker 여부
 
 - `v1 launch blocker: YES`  
-  - 이유: `/files/*` 공개 마운트 자체가 남아있어 tenant 경계가 무너질 수 있는 루트가 존재.
+  - 이유: product image 1차 완화는 반영됐지만 `/files/*` 공개 마운트 자체는 남아 있어 다른 파일 자산 위험이 남아있다.
 
 ## 출시 전 반드시 막아야 할 항목
 
 - 1순위: `backend/src/app.js`의 `/files` 정적 마운트 보안화
   - `/files`를 모두 허용하는 형태 폐기 또는 인증·store 검증된 signed URL/라우트 기반으로 전환
-- 2순위: 정적 파일 접근 경로의 store 스코프 강제
-  - `/files/products/*`는 owner 조회만으로는 부족하므로 파일 조회 API에서 `store_id` 검증 필요
+- 2순위: product 외 정적 파일 접근 경로의 store 스코프 강제
+  - `/files/products/*`는 1차 차단 완료. 다음은 PDF 및 기타 파일 자산 분리가 필요
 - 3순위: purchase-confirmation 공개 URL/토큰 검증과 감사 로그 일관성 강화
   - 토큰만으로 공개 가능한 부분에 대한 모니터링 강화
 
@@ -127,3 +129,10 @@ Scope: `SaaS v1 launch pre-check` (code 수정 없음, DB 변경 없음, 배포 
 ## 다음 구현 1순위
 
 - `/files` 공개 마운트 제거 또는 보호 레이어를 둔 전용 파일 라우트(예: `/api/files/:storeId/...` + signed token) 도입.
+
+## 구현 반영 상태
+
+- `product image gated route implemented`
+  - `/files/products/*` 직접 접근 차단
+  - `/api/products/:id/image` 도입
+  - `/api/products` 응답의 product image URL은 gated URL로 반환
