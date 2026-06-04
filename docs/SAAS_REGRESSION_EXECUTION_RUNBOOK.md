@@ -271,6 +271,42 @@ rollback 조치:
 
 운영 회귀 일일/릴리즈 전에는 기본 실행을 우선하고, 이슈 의심 시 보강 실행만 수행한다.
 
+## 11-1) Smoke Script 실행법
+
+- 스크립트 경로: `scripts/regression/multitenant-smoke.sh`
+- 기본 실행:
+
+```bash
+BASE_URL=http://127.0.0.1:3010 bash scripts/regression/multitenant-smoke.sh
+```
+
+- owner 계정 포함 실행:
+
+```bash
+BASE_URL=http://127.0.0.1:3010 \
+STORE1_USERNAME=... \
+STORE1_PASSWORD=... \
+STORE5_USERNAME=... \
+STORE5_PASSWORD=... \
+bash scripts/regression/multitenant-smoke.sh
+```
+
+- 옵션 env
+  - `PRODUCT_IMAGE_DIRECT_PATH=/files/products/<known-file>`: direct file 차단 확인용 샘플 경로
+  - `STORE5_PRODUCT_ID=<id>`: gated product image cross-store 차단 확인용
+  - `RUN_COUPON_CHECKS=true`: 쿠폰 상태 점검 활성화
+  - `STORE5_EXPECT_COUPONS_STATUS=403|200`: 쿠폰 기대 상태코드 지정
+
+- 출력 규칙
+  - 각 항목은 `PASS` / `FAIL` / `SKIP`
+  - 마지막 줄에 `Summary: PASS=n FAIL=n SKIP=n`
+  - raw token/secret, 비밀번호는 출력하지 않음
+
+- exit code
+  - `FAIL` 1건 이상이면 `1`
+  - `PASS`와 `SKIP`만 있으면 `0`
+  - 계정 env 미입력 항목은 `SKIP`
+
 ## 12) release sign-off 항목
 
 - [ ] 마지막 실행 24시간 내 PASS 비율 95% 이상(500은 긴급 조치 대상)
