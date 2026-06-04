@@ -7,9 +7,9 @@
 ## 위험 route
 
 1. `POST /api/repairs/:id/estimate`  
-   - `sendRepairEstimateQuotation`는 `id`만으로 대상 `repair_orders`을 업데이트(`WHERE id = ?`)합니다.
+   - fixed (2026-06-04): route에서 `storeId`를 명시 전달하고, `sendRepairEstimateQuotation`/`getRepairOrderForQuotation`가 `repair_orders.id + repair_orders.store_id`를 함께 사용하도록 수정됨.
 2. `POST /api/repairs/:id/customer-response`  
-   - `applyRepairEstimateCustomerResponse` 호출 시 `storeId` 미전달 (`options.storeId`가 null), 내부 조회/갱신이 `id` 기반 + `(? IS NULL OR store_id = ?)` 형식이라 비어 있으면 store scope 해제가 됩니다.
+   - fixed (2026-06-04): route에서 `storeId`를 명시 전달하고, `applyRepairEstimateCustomerResponse` 내부 조회/갱신/linked order update가 `repair_orders.id + repair_orders.store_id` 및 `orders.id + orders.store_id`를 함께 사용하도록 수정됨.
 3. `POST /api/repairs/:id/reject`  
    - fixed (2026-06-04): route 내부 `SELECT/UPDATE repair_orders`가 `id = ? AND store_id = ?`를 함께 사용하도록 수정됨.
 4. `POST /api/repairs/:id/complete`  
@@ -19,9 +19,9 @@
 6. LINE postback `repair_reservation_approve` / `repair_reservation_reject`  
    - `lineWorkflowService.js`에서 `resolveLineWorkflowStoreContext` 결과 기반으로 서비스 호출하지만, resolver는 staff/line-context로 추론할 때 다가맡음/중첩 매장인 경우 기본값 `1` 폴백이 가능.
 7. LINE postback `repair_estimate_approve` / `repair_estimate_reject`  
-   - `applyRepairEstimateCustomerResponse`는 `storeId`를 받지만, 호출부에서 항상 전달하지 않으면 global scan 가능 경로가 열립니다(현 코드에서는 line postback에서 전달).
+   - fixed (2026-06-04): line postback/text/web 모두 `applyRepairEstimateCustomerResponse(..., { storeId })`를 명시 전달하도록 정리됨.
 8. linked order 생성/수정 경로  
-   - `lineWorkflowService`의 `ensureRepairJobOrder` / `applyRepairEstimateCustomerResponse`는 `repair_orders`/`orders` 연동 갱신에 `repairId` 중심 로직이 많고, 일부 경로에서 `storeId` 미전달 시 조건이 느슨해짐.
+   - fixed (2026-06-04): `ensureRepairJobOrder` / `findLinkedRepairJobOrder` / `applyRepairEstimateCustomerResponse`가 explicit `storeId`를 요구하고, linked `orders` 생성 시 source repair의 `store_id`를 저장하며 update는 `orders.id + orders.store_id`를 함께 사용하도록 수정됨.
 9. `WHERE id = ?`만 남아있는 update/delete/select  
    - `backend/src/routes/repairs.js`: `:id/reject`(update), `:id/complete`(select/update/survey link), `:id/pickup`(update), 일부 상태 조회 및 삭제 전처리(로그/서베이)는 id 단독.
    - `backend/src/services/lineWorkflowService.js`: `sendRepairEstimateQuotation`(update), `getRepairOrderForQuotation`(select), `notifyRepairCustomer`(select) 등.
@@ -140,3 +140,15 @@
   - `POST /api/repairs/:id/pickup`: 대상 조회, 픽업 업데이트, 연계 `orders` 완료 처리에 `store_id = req.storeId` 강제.
 - `assertRepairBelongsToStore`도 `repair_orders.store_id`를 직접 확인하도록 보강.
 - `lineWorkflowService` estimate/customer-response 체인은 이번 단계에서 미수정.
+  
+## 2차 수정 완료
+
+- `backend/src/routes/repairs.js`
+  - `POST /api/repairs/:id/estimate`: `sendRepairEstimateQuotation(..., { storeId: req.storeId })` 전달.
+  - `POST /api/repairs/:id/customer-response`: 상태 조회에 `store_id = req.storeId`를 추가하고 `applyRepairEstimateCustomerResponse(..., { storeId: req.storeId })` 전달.
+- `backend/src/services/lineWorkflowService.js`
+  - `getRepairOrderForQuotation`, `sendRepairEstimateQuotation`, `applyRepairEstimateCustomerResponse`, `findLinkedRepairJobOrder`, `ensureRepairJobOrder`에 explicit store scope 강제.
+  - web/LINE text/LINE postback/staff LINE estimate wizard 모두 estimate/customer-response 호출 시 `storeId`를 명시 전달.
+  - linked `orders` update는 `orders.id + orders.store_id`를 함께 사용.
+- `backend/src/services/repairReservationService.js`
+  - `notifyRepairCustomer`가 `repair_orders.store_id`를 기준으로 고객 LINE 대상을 조회하도록 보강.

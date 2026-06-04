@@ -729,7 +729,8 @@ router.post("/:id/estimate",  async (req, res, next) => {
       },
       req.user.id,
       "web_admin",
-      pool
+      pool,
+      { storeId }
     );
     return res.json({
       message: "已送出報價審核",
@@ -751,15 +752,18 @@ router.post("/:id/customer-response",  async (req, res, next) => {
         SELECT status, completed_at AS completedAt, picked_up_at AS pickedUpAt
         FROM repair_orders
         WHERE id = ?
+          AND store_id = ?
         LIMIT 1
       `,
-      [req.params.id]
+      [req.params.id, storeId]
     );
     if (!stateRows[0]) {
       throw createError("找不到維修工單", 404);
     }
     assertRepairEditable(stateRows[0]);
-    const result = await applyRepairEstimateCustomerResponse(req.params.id, approved, req.user.id, pool, "web_admin");
+    const result = await applyRepairEstimateCustomerResponse(req.params.id, approved, req.user.id, pool, "web_admin", {
+      storeId
+    });
     return res.json({
       message: approved ? "已標記客戶同意報價" : "已標記客戶拒絕報價",
       orderId: result?.linkedOrder?.orderId || null,

@@ -41,6 +41,14 @@ function buildGroupConfirmedBy(source, staffId, actorLabel) {
   return source || "系統";
 }
 
+function requireScopedStoreId(value, label = "store scope") {
+  const scopedStoreId = normalizeStoreId(value);
+  if (!scopedStoreId) {
+    throw new Error(`Missing ${label}`);
+  }
+  return scopedStoreId;
+}
+
 async function applyRepairReservationDecision(
   repairId,
   approved,
@@ -161,16 +169,30 @@ async function applyRepairReservationDecision(
   };
 }
 
-async function notifyRepairCustomer(repairId, text) {
+async function notifyRepairCustomer(repairId, text, storeId) {
+  let scopedStoreId = normalizeStoreId(storeId);
+  if (!scopedStoreId) {
+    const [repairRows] = await pool.query(
+      `
+        SELECT store_id AS storeId
+        FROM repair_orders
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [repairId]
+    );
+    scopedStoreId = requireScopedStoreId(repairRows[0]?.storeId, "repair customer notification store scope");
+  }
   const [rows] = await pool.query(
     `
       SELECT c.line_user_id AS lineUserId
       FROM repair_orders ro
-      INNER JOIN customers c ON c.id = ro.customer_id
+      INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
       WHERE ro.id = ?
+        AND ro.store_id = ?
       LIMIT 1
     `,
-    [repairId]
+    [repairId, scopedStoreId]
   );
 
   if (rows[0]?.lineUserId && config.line.channelAccessToken) {

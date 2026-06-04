@@ -949,7 +949,8 @@ async function getStaffUserByLineUserId(lineUserId, connection = pool) {
   return rows[0] || null;
 }
 
-async function getRepairOrderForQuotation(repairId, connection = pool) {
+async function getRepairOrderForQuotation(repairId, connection = pool, storeId = null) {
+  const scopedStoreId = requireScopedStoreId(storeId, "維修報價門市範圍");
   const repairColumns = await getRepairOrdersTableColumns(connection);
   const [rows] = await connection.query(
     `
@@ -971,15 +972,17 @@ async function getRepairOrderForQuotation(repairId, connection = pool) {
         ${hasColumn(repairColumns, "customer_confirmed_at") ? "ro.customer_confirmed_at" : "NULL"} AS customerConfirmedAt,
         ro.customer_estimate_response AS customerEstimateResponse,
         ro.customer_estimate_responded_at AS customerEstimateRespondedAt,
+        ro.store_id AS storeId,
         c.name AS customerName,
         c.phone AS customerPhone,
         c.line_user_id AS lineUserId
       FROM repair_orders ro
-      INNER JOIN customers c ON c.id = ro.customer_id
+      INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
       WHERE ro.id = ?
+        AND ro.store_id = ?
       LIMIT 1
     `,
-    [repairId]
+    [repairId, scopedStoreId]
   );
 
   return rows[0] || null;
@@ -1451,6 +1454,14 @@ function parseStaffCommand(messageText) {
 function normalizeStoreId(value) {
   const normalized = Number(value || 0);
   return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : null;
+}
+
+function requireScopedStoreId(value, label = "line workflow store scope") {
+  const scopedStoreId = normalizeStoreId(value);
+  if (!scopedStoreId) {
+    throw createError(`缺少${label}`, 403);
+  }
+  return scopedStoreId;
 }
 
 async function logLegacyLineWorkflowStoreFallback(reason, payload = {}, connection = pool) {
@@ -3246,6 +3257,7 @@ async function handleStaffRepairEstimateWizard(event) {
   if (!staffUser) {
     return false;
   }
+  const scopedStoreId = requireScopedStoreId(staffUser.storeId, "LINE staff 維修估價門市範圍");
 
   const session = await getLineChatSession(lineUserId, STAFF_REPAIR_ESTIMATE_FLOW);
   const isStartCommand =
@@ -3269,7 +3281,7 @@ async function handleStaffRepairEstimateWizard(event) {
   if (!session) {
     const repairIdMatch = messageText.match(/(?:\/(?:quote|estimate)|建立維修估價|維修估價)\s+(\d+)/i);
     if (repairIdMatch) {
-      const repairInfo = await getRepairOrderForQuotation(Number(repairIdMatch[1]));
+      const repairInfo = await getRepairOrderForQuotation(Number(repairIdMatch[1]), pool, scopedStoreId);
       if (!repairInfo) {
         if (event.replyToken) {
           await replyToLine(
@@ -3313,7 +3325,7 @@ async function handleStaffRepairEstimateWizard(event) {
   }
 
   const repairId = Number(session.payload?.repairId || 0);
-  const repairInfo = await getRepairOrderForQuotation(repairId);
+  const repairInfo = await getRepairOrderForQuotation(repairId, pool, scopedStoreId);
   if (!repairInfo) {
     await clearLineChatSession(lineUserId, STAFF_REPAIR_ESTIMATE_FLOW);
     if (event.replyToken) {
@@ -3443,7 +3455,7 @@ async function handleStaffRepairEstimateWizard(event) {
         laborFee: payload.laborFee,
         notes: payload.notes,
         totalAmount
-      }, staffUser.id, "line_staff");
+      }, staffUser.id, "line_staff", pool, { storeId: scopedStoreId });
 
       await clearLineChatSession(lineUserId, STAFF_REPAIR_ESTIMATE_FLOW);
 
@@ -3553,7 +3565,7 @@ async function findPendingRepairEstimateByLineUserId(lineUserId, storeId = null)
 
   const [rows] = await pool.query(
     `
-      SELECT ro.id
+      SELECT ro.id, ro.store_id AS storeId
       FROM repair_orders ro
       INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
       WHERE c.line_user_id = ?
@@ -3571,7 +3583,7 @@ async function findPendingRepairEstimateByLineUserId(lineUserId, storeId = null)
 }
 
 async function findLinkedRepairJobOrder(repairId, connection = pool, storeId = null) {
-  const scopedStoreId = normalizeStoreId(storeId);
+  const scopedStoreId = requireScopedStoreId(storeId, "維修訂單連結門市範圍");
   const [rows] = await connection.query(
     `
       SELECT
@@ -3583,11 +3595,11 @@ async function findLinkedRepairJobOrder(repairId, connection = pool, storeId = n
         ON (o.id = ro.order_id OR o.repair_order_id = ro.id)
        AND o.store_id = ro.store_id
       WHERE ro.id = ?
-        AND (? IS NULL OR ro.store_id = ?)
+        AND ro.store_id = ?
       ORDER BY o.id DESC
       LIMIT 1
     `,
-     [repairId, scopedStoreId, scopedStoreId]
+     [repairId, scopedStoreId]
   );
 
   return rows[0] || null;
@@ -3612,21 +3624,24 @@ async function resolveRepairOrderCreatorStaffId(preferredStaffId, connection = p
 }
 
 async function ensureRepairJobOrder(repairId, staffId = null, connection = pool, options = {}) {
-  const scopedStoreId = normalizeStoreId(options.storeId);
+  const scopedStoreId = requireScopedStoreId(options.storeId, "維修訂單建立門市範圍");
   const linkedOrder = await findLinkedRepairJobOrder(repairId, connection, scopedStoreId);
   if (linkedOrder?.orderId) {
     if (Number(linkedOrder.repairOrderLinkedOrderId || 0) !== Number(linkedOrder.orderId)) {
-      await connection.query("UPDATE repair_orders SET order_id = ? WHERE id = ? AND (? IS NULL OR store_id = ?)", [linkedOrder.orderId, repairId, scopedStoreId, scopedStoreId]);
+      await connection.query(
+        "UPDATE repair_orders SET order_id = ? WHERE id = ? AND store_id = ?",
+        [linkedOrder.orderId, repairId, scopedStoreId]
+      );
     }
     const [repairAmountRows] = await connection.query(
       `
         SELECT estimate_amount AS estimateAmount
         FROM repair_orders
         WHERE id = ?
-          AND (? IS NULL OR store_id = ?)
+          AND store_id = ?
         LIMIT 1
       `,
-      [repairId, scopedStoreId, scopedStoreId]
+      [repairId, scopedStoreId]
     );
     console.log("[repair:quote-confirm]", {
       repair_id: Number(repairId),
@@ -3658,11 +3673,11 @@ async function ensureRepairJobOrder(repairId, staffId = null, connection = pool,
       FROM repair_orders ro
       INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
       WHERE ro.id = ?
-        AND (? IS NULL OR ro.store_id = ?)
+        AND ro.store_id = ?
       LIMIT 1
       FOR UPDATE
     `,
-     [repairId, scopedStoreId, scopedStoreId]
+     [repairId, scopedStoreId]
   );
 
   const repair = repairRows[0];
@@ -3736,7 +3751,10 @@ async function ensureRepairJobOrder(repairId, staffId = null, connection = pool,
     insertValues
   );
 
-  await connection.query("UPDATE repair_orders SET order_id = ? WHERE id = ? AND (? IS NULL OR store_id = ?)", [orderResult.insertId, repairId, scopedStoreId || repair.storeId, scopedStoreId || repair.storeId]);
+  await connection.query(
+    "UPDATE repair_orders SET order_id = ? WHERE id = ? AND store_id = ?",
+    [orderResult.insertId, repairId, scopedStoreId]
+  );
   console.log("[repair:quote-confirm]", {
     repair_id: Number(repairId),
     existing_order_id: null,
@@ -3755,8 +3773,8 @@ async function backfillApprovedRepairOrders(limit = 50, connection = pool) {
   const run = async (tx) => {
     const [rows] = await tx.query(
       `
-        SELECT ro.id
-        FROM repair_orders ro
+      SELECT ro.id, ro.store_id
+      FROM repair_orders ro
         LEFT JOIN orders o
           ON o.id = ro.order_id
           OR o.repair_order_id = ro.id
@@ -3772,7 +3790,7 @@ async function backfillApprovedRepairOrders(limit = 50, connection = pool) {
 
     const results = [];
     for (const row of rows) {
-      const linkedOrder = await ensureRepairJobOrder(row.id, null, tx);
+      const linkedOrder = await ensureRepairJobOrder(row.id, null, tx, { storeId: row.store_id });
       results.push({
         repairId: Number(row.id),
         orderId: linkedOrder?.orderId || null,
@@ -3789,7 +3807,7 @@ async function backfillApprovedRepairOrders(limit = 50, connection = pool) {
 }
 
 async function applyRepairEstimateCustomerResponse(repairId, approved, staffId = null, connection = pool, source = "line_postback", options = {}) {
-  const scopedStoreId = normalizeStoreId(options.storeId);
+  const scopedStoreId = requireScopedStoreId(options.storeId, "維修報價回覆門市範圍");
   const run = async (tx) => {
     const repairColumns = await getRepairOrdersTableColumns(tx);
     const [repairRows] = await tx.query(
@@ -3798,20 +3816,20 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
           id,
           store_id AS storeId,
           status,
-          ${hasColumn(repairColumns, "quote_status") ? "quote_status" : "'pending'"} AS quoteStatus,
-          customer_estimate_response AS customerEstimateResponse
+        ${hasColumn(repairColumns, "quote_status") ? "quote_status" : "'pending'"} AS quoteStatus,
+        customer_estimate_response AS customerEstimateResponse
         FROM repair_orders
         WHERE id = ?
-          AND (? IS NULL OR store_id = ?)
+          AND store_id = ?
         LIMIT 1
         FOR UPDATE
       `,
-      [repairId, scopedStoreId, scopedStoreId]
+      [repairId, scopedStoreId]
     );
 
     const repair = repairRows[0];
     if (!repair) {
-      throw new Error("找不到維修工單");
+      throw createError("找不到維修工單", 404);
     }
 
     const alreadyAccepted =
@@ -3842,15 +3860,15 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
       if (approved && hasColumn(repairColumns, "customer_confirmed_at")) {
         updateSql.push("customer_confirmed_at = COALESCE(customer_confirmed_at, NOW())");
       }
-      updateParams.push(repairId, scopedStoreId, scopedStoreId);
+      updateParams.push(repairId, scopedStoreId);
       await tx.query(
-        "UPDATE repair_orders SET " + updateSql.join(", ") + " WHERE id = ? AND (? IS NULL OR store_id = ?)",
+        "UPDATE repair_orders SET " + updateSql.join(", ") + " WHERE id = ? AND store_id = ?",
         updateParams
       );
     }
 
     const linkedOrder = approved ? await ensureRepairJobOrder(repairId, staffId, tx, {
-      storeId: scopedStoreId || repair.storeId
+      storeId: scopedStoreId
     }) : null;
     if (approved && linkedOrder?.orderId) {
       const orderColumns = await getOrdersTableColumns(tx);
@@ -3863,8 +3881,8 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
       if (hasColumn(orderColumns, "source")) {
         updates.push("source = 'repair_quote'");
       }
-      params.push(linkedOrder.orderId, scopedStoreId || repair.storeId, scopedStoreId || repair.storeId);
-      await tx.query("UPDATE orders SET " + updates.join(", ") + " WHERE id = ? AND (? IS NULL OR store_id = ?)", params);
+      params.push(linkedOrder.orderId, scopedStoreId);
+      await tx.query("UPDATE orders SET " + updates.join(", ") + " WHERE id = ? AND store_id = ?", params);
     }
 
     await tx.query(
@@ -3929,8 +3947,15 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
   return result;
 }
 
-async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = null, source = "web_admin", connection = pool) {
-  const repairInfo = await getRepairOrderForQuotation(repairId, connection);
+async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = null, source = "web_admin", connection = pool, options = {}) {
+  const storeContext = await resolveLineWorkflowStoreContext({
+    storeId: options.storeId,
+    staffId,
+    connection,
+    reason: "repair_estimate_send"
+  });
+  const scopedStoreId = requireScopedStoreId(storeContext.storeId, "維修報價送出門市範圍");
+  const repairInfo = await getRepairOrderForQuotation(repairId, connection, scopedStoreId);
   if (!repairInfo) {
     return null;
   }
@@ -4023,8 +4048,8 @@ async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = 
   if (hasColumn(repairColumns, "customer_confirmed_at")) {
     updates.push("customer_confirmed_at = NULL");
   }
-  params.push(repairId);
-  await connection.query(`UPDATE repair_orders SET ${updates.join(", ")} WHERE id = ?`, params);
+  params.push(repairId, scopedStoreId);
+  await connection.query(`UPDATE repair_orders SET ${updates.join(", ")} WHERE id = ? AND store_id = ?`, params);
 
   await connection.query(
     `
@@ -4147,7 +4172,9 @@ async function handleCustomerMessageEvent(event) {
     const pendingRepair = await findPendingRepairEstimateByLineUserId(lineUserId);
     if (pendingRepair) {
       const approved = ["同意", "同意報價"].includes(messageText);
-      await applyRepairEstimateCustomerResponse(pendingRepair.id, approved, null, pool, "line_text");
+      await applyRepairEstimateCustomerResponse(pendingRepair.id, approved, null, pool, "line_text", {
+        storeId: pendingRepair.storeId
+      });
       if (event.replyToken) {
         await replyToLine(
           event.replyToken,
@@ -4492,7 +4519,7 @@ async function handleLinePostback(event) {
       return true;
     }
     if (!result.alreadyProcessed) {
-      await notifyRepairCustomer(id, result.customerMessage);
+      await notifyRepairCustomer(id, result.customerMessage, reservationPostbackStoreContext.storeId);
     }
     if (event.replyToken) {
       await replyToLine(
