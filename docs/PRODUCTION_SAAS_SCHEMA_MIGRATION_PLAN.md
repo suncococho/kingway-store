@@ -240,3 +240,72 @@ SQL 초안은 아래 preview를 포함한다.
 - 기존 row count 유지 확인 preview 포함
 - `C-EB-001-S1` 문제는 별도 TODO로 분리
 - 실제 실행은 하지 않음
+
+## 12. Preflight Review Result
+
+검토일: 2026-06-05
+
+preflight 판정:
+
+- `조건부 통과`
+
+검토 결과:
+
+1. `DROP / TRUNCATE / DELETE` 실행문은 없다.
+2. `C-EB-001-S1` 관련 product mapping은 이 SQL에 포함되지 않았다.
+3. core table backfill `UPDATE`는 모두 `WHERE store_id IS NULL`로 제한되어 있다.
+4. core business table row count는 구조상 유지된다.
+   - `ALTER TABLE`은 컬럼/index만 추가
+   - `UPDATE`는 기존 row 수정만 수행
+   - 증가하는 row는 `stores`, `store_features`, `store_line_settings`, `store_memberships` 같은 신규 SaaS 테이블뿐이다.
+5. `ALTER TABLE ADD COLUMN`과 `ADD INDEX`는 직접 실행하지 않고, `information_schema` 확인 후 dynamic SQL로 분기하므로 이미 존재할 때 즉시 실패하지 않도록 작성되어 있다.
+
+### 12-1. 확인된 위험
+
+가장 중요한 위험:
+
+1. MySQL DDL auto-commit
+   - `CREATE TABLE` / `ALTER TABLE`은 transaction으로 되돌릴 수 없다.
+   - 따라서 `ROLLBACK`은 seed insert / backfill DML만 되돌릴 수 있다.
+   - DDL rollback은 사전 백업 restore만 가능하다.
+
+2. `stores.id=1` seed 충돌 가능성
+   - 현재 `INSERT INTO stores ... WHERE NOT EXISTS (id = 1 OR code = 'KINGWAY_TAINAN')` 방식이다.
+   - 만약 production에 이미 `id=1`이지만 다른 `code`인 row가 있으면 insert는 skip 된다.
+   - 그 상태에서 `store_features` / `store_line_settings` / `store_memberships`가 `store_id=1`에 연결되면 잘못된 store에 귀속될 수 있다.
+   - 따라서 실행 전 preview에서 반드시 `stores.id=1`이 비어 있거나, 이미 `code='KINGWAY_TAINAN'`인지 확인해야 한다.
+
+3. `store_line_settings.webhook_path` unique 충돌 가능성
+   - seed는 `webhook_path='/api/line/webhook'`를 사용한다.
+   - 테이블이 이미 있고 다른 row가 같은 webhook path를 쓰고 있으면 insert가 unique key로 실패할 수 있다.
+   - 현재 SQL은 `store_id=1` 존재 여부만 보고 insert 여부를 결정하므로, cross-store webhook path 충돌까지는 사전 차단하지 않는다.
+
+4. `CREATE TABLE IF NOT EXISTS`의 한계
+   - 테이블이 이미 존재하지만 staging 기준과 구조가 다르면, 이 SQL은 차이를 자동 보정하지 않는다.
+   - 즉, “존재 여부”에는 안전하지만 “정확히 같은 구조”를 보장하지는 않는다.
+
+### 12-2. 실행 전 추가 확인 권장
+
+실행 전 아래 preview를 별도로 확인하는 것이 안전하다.
+
+```sql
+SELECT id, code, name, status, plan
+FROM stores
+WHERE id = 1 OR code = 'KINGWAY_TAINAN';
+
+SELECT id, store_id, webhook_path
+FROM store_line_settings
+WHERE webhook_path = '/api/line/webhook';
+```
+
+### 12-3. 수정 필요 여부
+
+- `있음`
+
+권장 수정:
+
+1. `stores` seed 전에 `id=1` / `code=KINGWAY_TAINAN` 정합성 preview를 더 명시적으로 강제
+2. `store_line_settings.webhook_path` 충돌 preview를 SQL 본문에 추가
+3. 실행 전 reviewer가 `stores.id=1`과 webhook path uniqueness를 수동 승인하도록 체크리스트 강화
+
+현재 초안은 문서화와 리뷰 기준으로는 유효하지만, production에서 바로 실행하기에는 위 2개 seed collision risk를 먼저 확인하는 편이 안전하다.
