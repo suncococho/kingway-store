@@ -165,3 +165,74 @@ cutover 전 추가 검토/patch 필요 후보:
 - FK는 이번 patch에서 보류
 - 후속 TODO는 별도 단계로 유지
 - 실제 실행은 하지 않음
+
+## 11. Preflight Result
+
+확인일: 2026-06-05
+
+이번 preflight에서 하지 않은 것:
+
+- `ALTER`
+- `UPDATE`
+- `INSERT`
+- `DELETE`
+- `DROP`
+- `TRUNCATE`
+- docker restart
+- deploy
+
+### 11-1. Production schema 상태
+
+production `3306` read-only 확인 결과:
+
+- `staff_users.store_id` 없음
+- `supplier_requests.store_id` 없음
+
+### 11-2. Row count
+
+실행 전 row count:
+
+- `staff_users = 2`
+- `supplier_requests = 59`
+
+예상:
+
+- patch 실행 후에도 `staff_users` row count는 `2`로 유지
+- patch 실행 후에도 `supplier_requests` row count는 `59`로 유지
+- patch 실행 후 두 table의 `store_id IS NULL = 0`
+
+### 11-3. SQL safety 확인
+
+`sql/production_saas_schema_gap_patch.sql` 텍스트 검토 결과:
+
+- 실행형 `DROP / TRUNCATE / DELETE` statement 없음
+- `UPDATE staff_users`는 `WHERE store_id IS NULL`로 제한됨
+- `UPDATE supplier_requests`는 `WHERE store_id IS NULL`로 제한됨
+- `staff_users` index 추가 전 `information_schema.statistics`로 `idx_staff_users_store_id` 존재 확인
+- `supplier_requests` index 추가 전 `information_schema.statistics`로 `idx_supplier_requests_store_id` 존재 확인
+- `COMMIT`은 주석 처리됨
+
+### 11-4. 위험 항목
+
+남은 위험:
+
+- MySQL `ALTER TABLE`은 auto-commit이므로 DDL rollback은 transaction으로 불가
+- 실제 rollback 필요 시 사전 backup restore 기준
+- patch 적용 후 runtime이 현재 repo code와 같은 상태로 refresh되면 auth/dashboard path가 즉시 이 column을 사용함
+- FK는 이번 patch에서 보류하므로 store reference integrity는 application/backfill 기준으로만 보장됨
+
+### 11-5. 판정
+
+preflight 판정:
+
+- `통과`
+
+실행 가능 여부:
+
+- `가능`
+
+조건:
+
+- production backup 존재 재확인
+- 같은 MySQL session에서 preview 확인 후 `COMMIT` 여부를 명시적으로 결정
+- 실행 후 login `/api/login` 및 dashboard `/api/dashboard/summary` read-only 재검증
