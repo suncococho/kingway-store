@@ -243,3 +243,121 @@ UNION ALL SELECT 'purchase_confirmations', COUNT(*) FROM purchase_confirmations;
 - exclude 4건 제외
 - `PENDING + has_pdf=no` 구매확인 22건 제외
 - 실제 실행은 하지 않았음
+
+## 14. C-EB-001-S1 판단 결과
+
+확인일: 2026-06-05
+
+read-only 확인 결과:
+
+- staging `3310` `products`에서 `SKU='C-EB-001-S1'` row 확인
+  - `name = T1`
+  - `category = EB`
+  - `price = 47000.00`
+  - `stock = -3`
+  - `store_id = 1`
+  - `is_active = 1`
+  - `created_at = 2026-05-27 13:07:41`
+  - `updated_at = 2026-06-04 19:56:54`
+- staging에는 별도 rehearsal/test SKU도 존재
+  - `C-EB-901-RH5 / KW_REHEARSAL_CONFIRM_BIKE`
+  - 즉, 테스트성 SKU는 별도로 명시되어 있다.
+- `C-EB-001-S1`는 staging 주문에 실제 판매 품목으로 연결되어 있다.
+  - merge 대상 4건:
+    - `POS-20260604-195007-858`
+    - `POS-20260604-195011-413`
+    - `POS-20260604-195640-286`
+    - `POS-20260604-195644-098`
+  - 추가로 staging 내부에 `LINE-20260603-141722-658` 1건도 존재
+- 위 주문들은 실제 고객 전화번호 / 정상 판매가 / `COMPLETED` 또는 실제 운영 상태를 가진다.
+
+판단:
+
+- `C-EB-001-S1`는 테스트 상품이 아니라 실제 운영 상품으로 보는 것이 타당하다.
+- production `3306`에는 현재 동일 SKU가 없다.
+- production `3306`에는 `name='T1'` exact match도 없다.
+- 따라서 merge 실행 전, production에 이 SKU의 product row를 먼저 추가하거나 승인된 product mapping을 먼저 확정해야 한다.
+
+다음 조치:
+
+1. production `products`에 `C-EB-001-S1 / T1`를 신규 row로 추가하는 별도 read/write 계획 수립
+2. 또는 운영 승인 하에 기존 production 상품으로 mapping할 수 있는지 별도 검토
+3. 위 조치 전에는 `staging_to_production_merge_recommended_36.sql` 실행 금지
+4. 만약 product create 없이 진행하려면 `C-EB-001-S1`가 포함된 `order_items` 4건과 연관 주문 처리 방식을 별도 승인 받아 SQL을 수정해야 한다
+
+## 15. Merge Completed
+
+실행일시: 2026-06-05 03:08 Asia/Taipei
+
+실행 범위:
+
+- production `127.0.0.1:3306` / `kingway_store`
+- `sql/staging_to_production_merge_recommended_36.sql`
+- 같은 MySQL 세션에서 `SOURCE ...; COMMIT;` 실행
+
+사전 확인:
+
+- backup directory 확인:
+  `/volume1/docker/kingway-store/backups/production-pre-saas/20260605_004301`
+- `products.sku='C-EB-001-S1'` 존재 확인 완료
+- preview 재확인 완료:
+  - `customers=13`
+  - `orders=20`
+  - `order_items=48`
+  - `repair_orders=2`
+  - `purchase_confirmations=1`
+  - `business key 충돌=0`
+  - `product mapping 누락=0`
+
+실행 중 관찰:
+
+- 원본 merge SQL은 MySQL temporary table 재참조 제한으로 인해 아래 preview/insert 구간에서 runtime error가 발생했다.
+  - missing customer mapping preview
+  - `order_items` insert block
+- 그 시점까지 `customers`, `orders`, `repair_orders`, `purchase_confirmations`는 이미 transaction 안에서 insert 되었고, `COMMIT` 후 반영되었다.
+- 따라서 같은 승인 범위를 유지한 채, 별도 corrective SQL로 누락된 `order_items` 48건만 `NOT EXISTS` 조건으로 추가 반영했다.
+
+최종 row count:
+
+- 실행 전
+  - `customers`: 145
+  - `orders`: 72
+  - `order_items`: 170
+  - `repair_orders`: 20
+  - `purchase_confirmations`: 20
+- 실행 후
+  - `customers`: 158
+  - `orders`: 92
+  - `order_items`: 218
+  - `repair_orders`: 22
+  - `purchase_confirmations`: 21
+
+실제 증가량:
+
+- `customers`: `+13`
+- `orders`: `+20`
+- `order_items`: `+48`
+- `repair_orders`: `+2`
+- `purchase_confirmations`: `+1`
+
+검증 결과:
+
+- 기존 production 주요 table count 감소 없음
+- merged row의 `store_id=1` 확인
+  - `customers=13`
+  - `orders=20`
+  - `order_items=48`
+  - `repair_orders=2`
+  - `purchase_confirmations=1`
+- business key duplicate 없음
+  - customer phone duplicate `0`
+  - order_no duplicate `0`
+  - purchase confirmation duplicate `0`
+- merged `orders` 20건 모두 `order_items` 연결 확인
+- merged `order_items` 총 `48`건 연결 확인
+- merged `purchase_confirmation` 1건의 `order` 연결 확인
+
+결론:
+
+- 승인된 merge recommended 범위는 production에 최종 반영 완료
+- 다만 원본 merge SQL은 MySQL temp table 재참조 오류가 있으므로, 재사용 전 수정이 필요하다
