@@ -79,6 +79,7 @@
 - [ ] `POST /api/platform-auth/login`(staging API 3010) 응답 200 확인
 - [ ] `GET /api/saas-admin/stores` 응답 200 확인
 - [ ] raw password/token 출력·기록 없이 처리
+- [ ] platform admin password reset performed
 
 ## 운영자 최종 확인
 - [ ] 위 10개 항목 모두 완료 체크
