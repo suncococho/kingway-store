@@ -10,7 +10,10 @@ const config = require("../config");
 const { mapRepairStatusLabel, mapOrderStatusLabel, mapCategoryLabel } = require("../utils/displayLabels");
 const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
 const { applyRepairReservationDecision, isLineCustomerType, normalizeCustomerType } = require("../services/repairReservationService");
-const { notifyRepairReservationCreated } = require("../services/staffLineNotify");
+const {
+  isStaffLineNotifySuppressed,
+  notifyRepairReservationCreated
+} = require("../services/staffLineNotify");
 const {
   applyRepairEstimateCustomerResponse,
   createButtonMessage,
@@ -64,14 +67,6 @@ function getRepairSourceLabel(source, customerType) {
     return "LINE預約";
   }
   return "現場客戶";
-}
-
-function isStagingRepairNotifySuppressed() {
-  const nodeEnv = String(process.env.NODE_ENV || config.nodeEnv || "").trim().toLowerCase();
-  const appEnv = String(process.env.APP_ENV || config.appEnv || "").trim().toLowerCase();
-  const stagingMode = String(process.env.STAGING_MODE || "").trim().toLowerCase();
-
-  return nodeEnv === "staging" || appEnv === "staging_restore" || stagingMode === "true";
 }
 
 function normalizeRepairProductImageUrl(imageUrl) {
@@ -618,8 +613,8 @@ router.post("/",  async (req, res, next) => {
       );
     }
 
-    if (isStagingRepairNotifySuppressed()) {
-      console.info("[staff-line] repair_notify_skipped_staging", {
+    if (isStaffLineNotifySuppressed()) {
+      console.info("[staff-line] repair_notify_skipped", {
         repairId: result.insertId,
         storeId
       });

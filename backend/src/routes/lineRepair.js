@@ -222,6 +222,7 @@ router.post("/create", async (req, res, next) => {
     try {
       await notifyRepairReservationCreated({
         repairId: result.repairId,
+        storeId: resolvedStoreId,
         customerName: result.customer.name || "LINE 客戶",
         customerPhone: result.customer.phone || null,
         reservationDate: result.payload.reservationDate,

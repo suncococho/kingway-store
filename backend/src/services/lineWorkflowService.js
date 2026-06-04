@@ -3070,6 +3070,7 @@ async function handleRepairReservationWizard(event) {
     try {
       await notifyRepairReservationCreated({
         repairId: result.repairId,
+        storeId: result.payload.storeId || result.customer.storeId || null,
         customerName: result.customer.name || "LINE 客戶",
         customerPhone: result.customer.phone || null,
         reservationDate: result.payload.reservationDate,
