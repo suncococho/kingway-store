@@ -28,11 +28,11 @@ require_file() {
   fi
 }
 
-load_env() {
-  set -a
-  # shellcheck disable=SC1091
-  . "$REPO_DIR/.env"
-  set +a
+read_env_value() {
+  local key="$1"
+  local value
+  value="$(grep -m1 "^${key}=" "$REPO_DIR/.env" | cut -d= -f2- || true)"
+  printf '%s' "$value"
 }
 
 main() {
@@ -42,13 +42,18 @@ main() {
   require_file "$REPO_DIR/backend/storage/pdfs"
 
   mkdir -p "$BACKUP_DIR"
-  load_env
-
   local mysql_host="127.0.0.1"
   local mysql_port="3306"
-  local mysql_database="${MYSQL_DATABASE:-kingway_store}"
-  local mysql_user="${MYSQL_USER:-kingway}"
-  local mysql_password="${MYSQL_PASSWORD:-}"
+  local mysql_database
+  local mysql_user
+  local mysql_password
+
+  mysql_database="$(read_env_value MYSQL_DATABASE)"
+  mysql_user="$(read_env_value MYSQL_USER)"
+  mysql_password="$(read_env_value MYSQL_PASSWORD)"
+
+  mysql_database="${mysql_database:-kingway_store}"
+  mysql_user="${mysql_user:-kingway}"
 
   if [ -z "$mysql_password" ]; then
     printf 'MYSQL_PASSWORD is empty in .env\n' >&2
