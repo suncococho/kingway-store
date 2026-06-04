@@ -91,6 +91,42 @@ SQL 실행 전 반드시 충족해야 할 조건:
 
 - [PRODUCTION_MIGRATION_BACKUP_RUNBOOK.md](/volume1/docker/kingway-store/docs/PRODUCTION_MIGRATION_BACKUP_RUNBOOK.md)
 
+### 4-1. backup completed record
+
+2026-06-05에 production 사전 백업을 실제 수행했다.
+
+- backup directory: `/volume1/docker/kingway-store/backups/production-pre-saas/20260605_004301`
+- DB dump: `mysql_kingway_store.sql.gz`
+- uploads backup: `backend_uploads.tar.gz`
+- pdf backup: `backend_storage_pdfs.tar.gz`
+- env backup: `.env.backup`
+- compose backup: `docker-compose.production.yml`
+- git metadata: `git_branch.txt`, `git_commit.txt`, `git_commit_oneline.txt`
+- nginx reference: `nginx_reverse_proxy_location.txt`, `server.ReverseProxy.conf`
+- integrity files: `manifest.txt`, `sha256sums.txt`
+- row count record: `row_counts.tsv`
+
+백업 검증 결과:
+
+- backup directory 생성 확인 완료
+- DB dump 파일 존재 확인 완료
+- uploads tar 존재 확인 완료
+- pdf/storage tar 존재 확인 완료
+- `.env` 백업 존재 확인 완료
+- `docker-compose.production.yml` 백업 존재 확인 완료
+- `row_counts.tsv` 생성 확인 완료
+- `row_counts.tsv` 값이 기존 감사값과 일치함
+
+일치한 row count:
+
+- `customers=145`
+- `products=384`
+- `orders=72`
+- `order_items=170`
+- `repair_orders=20`
+- `purchase_confirmations=20`
+- `coupons=30`
+
 ## 5. 실행 전 row count
 
 초안 실행 전 production 기준 row count를 기록해야 한다.
