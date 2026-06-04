@@ -101,6 +101,13 @@
 - Other store isolation confirmed:
   - only `store_id=5` plan/features changed during Step 7
   - stores `1-4` plan and `store_features` snapshot stayed unchanged
+- Step 7 revalidation after coupon SQL fix:
+  - `backend/src/routes/coupons.js` list query binding corrected so `?` placeholder count matches params count while preserving `c.store_id = ?` and `cp.store_id = ?` isolation
+  - staging redeploy completed and staging-restore backend recreated
+  - rehearsal store `5` in PREMIUM: `GET /api/coupons` -> `200`
+  - store isolation rechecked: store `5` coupon list did not expose store `1` coupon rows
+  - FREE preset recheck: `GET /api/coupons` -> `403` when `coupons_enabled` disabled
+  - Google review approve/reject/cancel routes were not changed in this fix scope
 
 ## 1) 실행 가능 항목(Non-destructive readiness)
 

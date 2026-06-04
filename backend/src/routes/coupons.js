@@ -58,7 +58,7 @@ router.get("/", async (req, res, next) => {
         WHERE cp.store_id = ?
         ORDER BY cp.id DESC
       `,
-      [storeId]
+      [storeId, storeId]
     );
 
     return res.json(rows.map((row) => ({
