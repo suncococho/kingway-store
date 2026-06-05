@@ -39,6 +39,14 @@ function LineRepairRequestPage() {
   const [done, setDone] = useState(false);
   const [lineContextFailureReason, setLineContextFailureReason] = useState("");
   const [lineInClient, setLineInClient] = useState(false);
+  const [lineContextDebug, setLineContextDebug] = useState({
+    inClient: false,
+    isLoggedIn: false,
+    liffId: "",
+    contextUserId: "",
+    profileUserId: "",
+    recoveredLineUserId: ""
+  });
 
   useEffect(() => {
     async function loadStoreContext() {
@@ -85,6 +93,15 @@ function LineRepairRequestPage() {
 
       try {
         const context = await resolveLineContext();
+        setLineContextDebug({
+          inClient: Boolean(context.inClient),
+          isLoggedIn: Boolean(context.isLoggedIn),
+          liffId: context.liffId || "",
+          contextUserId: context.contextUserId || "",
+          profileUserId: context.profileUserId || "",
+          recoveredLineUserId: context.lineUserId || "",
+          failureReason: context.failureReason || ""
+        });
         setLineContextFailureReason(context.failureReason || "");
         setLineInClient(Boolean(context.inClient));
 
@@ -218,6 +235,7 @@ function LineRepairRequestPage() {
           lineUserId={lineUserId}
           inClient={lineInClient}
           failureReason={lineContextFailureReason}
+          lineContextDebug={lineContextDebug}
           onBound={(phone) => setCustomer((current) => ({ ...(current || {}), phone }))}
         />
       ) : (

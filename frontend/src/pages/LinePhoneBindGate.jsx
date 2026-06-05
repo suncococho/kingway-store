@@ -1,12 +1,30 @@
 import { useState } from "react";
 import { apiRequest } from "../lib/api";
 
+const isStagingDebugVisible = (() => {
+  if (typeof import.meta === "undefined" || !import.meta.env) {
+    return false;
+  }
+
+  const values = [
+    String(import.meta.env.MODE || ""),
+    String(import.meta.env.VITE_NODE_ENV || ""),
+    String(import.meta.env.NODE_ENV || ""),
+    String(import.meta.env.VITE_APP_ENV || ""),
+    String(typeof process !== "undefined" && process?.env?.NODE_ENV ? process.env.NODE_ENV : ""),
+    String(typeof process !== "undefined" && process?.env?.APP_ENV ? process.env.APP_ENV : "")
+  ].map((value) => value.trim().toLowerCase());
+
+  return values.some((value) => value === "staging" || value === "staging_restore");
+})();
+
 function LinePhoneBindGate({
   lineUserId,
   onBound,
   title = "請先完成電話綁定",
   inClient = false,
-  failureReason = ""
+  failureReason = "",
+  lineContextDebug = null
 }) {
   const [phone, setPhone] = useState("");
   const [binding, setBinding] = useState(false);
@@ -85,7 +103,41 @@ function LinePhoneBindGate({
         {binding ? "綁定中..." : "確認綁定"}
       </button>
 
-      {error ? <div className="error-banner" style={{ marginTop: 14 }}>{error}</div> : null}
+      {error ? (
+        <>
+          <div className="error-banner" style={{ marginTop: 14 }}>{error}</div>
+
+          {(isStagingDebugVisible && lineContextDebug) ? (
+            <div style={{
+              marginTop: 12,
+              border: "1px solid #cbd5e1",
+              borderRadius: 14,
+              background: "#f8fafc",
+              padding: 12,
+              fontSize: 12,
+              lineHeight: 1.5,
+              overflow: "auto"
+            }}>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>LIFF Debug</div>
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+{JSON.stringify(
+  {
+    liffId: lineContextDebug.liffId || "",
+    isInClient: Boolean(lineContextDebug.isInClient),
+    isLoggedIn: Boolean(lineContextDebug.isLoggedIn),
+    context: { userId: lineContextDebug.contextUserId || "" },
+    profile: { userId: lineContextDebug.profileUserId || "" },
+    lineUserId: lineContextDebug.recoveredLineUserId || "",
+    failureReason: lineContextDebug.failureReason || ""
+  },
+  null,
+  2
+)}
+              </pre>
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </section>
   );
 }

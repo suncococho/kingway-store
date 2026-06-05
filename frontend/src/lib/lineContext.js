@@ -197,6 +197,7 @@ function persistResolvedContext({ lineUserId, displayName }) {
 
 export async function resolveLineContext({ liffId = LIFF_ID } = {}) {
   const result = {
+    liffId,
     inClient: false,
     isLoggedIn: false,
     lineUserId: "",
@@ -204,6 +205,8 @@ export async function resolveLineContext({ liffId = LIFF_ID } = {}) {
     source: "none",
     sourceDetail: "",
     profileSource: "none",
+    contextUserId: "",
+    profileUserId: "",
     failureReason: "",
     shouldLogin: false,
     profileAttempts: 0
@@ -274,6 +277,7 @@ export async function resolveLineContext({ liffId = LIFF_ID } = {}) {
 
   if (context?.userId) {
     const contextUserId = normalizeValue(context.userId);
+    result.contextUserId = contextUserId;
     if (!result.lineUserId) {
       result.lineUserId = contextUserId;
       result.source = "context";
@@ -311,6 +315,8 @@ export async function resolveLineContext({ liffId = LIFF_ID } = {}) {
 
   try {
     const profile = await getProfileWithRetry();
+    const profileUserId = normalizeValue(profile?.userId || "");
+    result.profileUserId = profileUserId;
     result.profileAttempts = PROFILE_RETRY_DELAY_MS.length + 1;
     debugLineContext({
       stage: "profile-success",

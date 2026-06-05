@@ -13,7 +13,12 @@ export default function LineCustomerPage() {
   const [lineUserId, setLineUserId] = useState("");
   const [lineContextInfo, setLineContextInfo] = useState({
     inClient: false,
-    failureReason: ""
+    failureReason: "",
+    liffId: "",
+    isLoggedIn: false,
+    contextUserId: "",
+    profileUserId: "",
+    recoveredLineUserId: ""
   });
 
   const closeLine = () => {
@@ -32,7 +37,12 @@ export default function LineCustomerPage() {
         const context = await resolveLineContext();
         setLineContextInfo({
           inClient: Boolean(context.inClient),
-          failureReason: context.failureReason || ""
+          failureReason: context.failureReason || "",
+          liffId: context.liffId || "",
+          isLoggedIn: Boolean(context.isLoggedIn),
+          contextUserId: context.contextUserId || "",
+          profileUserId: context.profileUserId || "",
+          recoveredLineUserId: context.lineUserId || ""
         });
 
         if (!context.isLoggedIn || context.shouldLogin) {
@@ -91,6 +101,7 @@ export default function LineCustomerPage() {
           lineUserId={lineUserId}
           inClient={lineContextInfo.inClient}
           failureReason={lineContextInfo.failureReason}
+          lineContextDebug={lineContextInfo}
           onBound={(phone) => setData((current) => ({
             ...(current || {}),
             customer: { ...((current || {}).customer || {}), phone }
