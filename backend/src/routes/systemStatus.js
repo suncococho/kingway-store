@@ -13,9 +13,55 @@ function toText(value, fallback = "") {
   return String(value);
 }
 
+function toPort(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    return null;
+  }
+  return parsed;
+}
+
+function toTextLower(value, fallback = "") {
+  return toText(value, fallback).trim().toLowerCase();
+}
+
+function resolveRuntimePortProfile(req) {
+  const appEnv = toTextLower(process.env.APP_ENV);
+  const nodeEnv = toTextLower(process.env.NODE_ENV);
+
+  const configuredBackendPort = toPort(process.env.BACKEND_PORT);
+  const configuredFrontendPort = toPort(process.env.FRONTEND_PORT);
+  const headerHostPort = toPort(toText(req?.headers?.host, "").split(":")[1]);
+  const forwardedHostPort = toPort(toText(req?.headers?.["x-forwarded-host"], "").split(":")[1]);
+  const forwardedPort = toPort(req?.headers?.["x-forwarded-port"]);
+
+  const runtimePorts = [
+    configuredBackendPort,
+    configuredFrontendPort,
+    headerHostPort,
+    forwardedHostPort,
+    forwardedPort,
+    toPort(req?.socket?.localPort)
+  ].filter((port) => port !== null);
+
+  const isStaging = appEnv.includes("staging") ||
+    appEnv.includes("restore") ||
+    nodeEnv.includes("staging") ||
+    nodeEnv.includes("restore") ||
+    runtimePorts.includes(3010) ||
+    runtimePorts.includes(5180);
+
+  if (isStaging) {
+    return { environment: "staging", frontend: 5180, backend: 3010 };
+  }
+
+  return { environment: "production", frontend: 5173, backend: 3000 };
+}
+
 router.get("/saas-status", async (req, res, next) => {
   try {
     const storeId = toNumber(req.storeId || req.user?.store_id || req.user?.storeId || 1, 1);
+    const runtimeProfile = resolveRuntimePortProfile(req);
 
     const [[storeRow]] = await pool.query(
       `
@@ -63,7 +109,7 @@ router.get("/saas-status", async (req, res, next) => {
 
     return res.json({
       ok: true,
-      environment: toText(process.env.APP_ENV || process.env.NODE_ENV, "unknown"),
+      environment: runtimeProfile.environment,
       schemaGuard: {
         requireStoreIdSchema: String(process.env.REQUIRE_STORE_ID_SCHEMA || "").toLowerCase() === "true",
         status: "STRICT_ON"
@@ -71,8 +117,8 @@ router.get("/saas-status", async (req, res, next) => {
       store,
       counts,
       ports: {
-        frontend: 5180,
-        backend: 3010
+        frontend: runtimeProfile.frontend,
+        backend: runtimeProfile.backend
       }
     });
   } catch (error) {
