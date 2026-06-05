@@ -136,7 +136,7 @@ function LineOrderPage() {
     const cleanPhone = String(bindPhone || "").replace(/\D/g, "");
     const cleanName = String(bindName || name || "LINE 客戶").trim();
 
-    if (!lineUserId) return setError("缺少 LINE 使用者資料，請重新從 LINE 開啟。");
+    if (!lineUserId) return setError("無法取得 LINE 使用者資料。\n請回到 KINGWAY LINE 官方帳號，從選單重新開啟此頁面。");
     if (!cleanName) return setError("請輸入姓名。");
     if (!/^09\d{8}$/.test(cleanPhone)) return setError("請輸入正確手機號碼，例如 0912345678");
 

@@ -14,7 +14,7 @@ function LinePhoneBindGate({ lineUserId, onBound, title = "請先完成電話綁
     const cleanPhone = String(phone || "").replace(/\D/g, "");
 
     if (!lineUserId) {
-      setError("缺少 LINE 使用者資料，請重新從 LINE 開啟。");
+      setError("無法取得 LINE 使用者資料。\n請回到 KINGWAY LINE 官方帳號，從選單重新開啟此頁面。");
       return;
     }
 
