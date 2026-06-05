@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { apiRequest } from "../lib/api";
 
-const isStagingDebugVisible = (() => {
+const isLiffDebugVisible = (() => {
   if (typeof import.meta === "undefined" || !import.meta.env) {
     return false;
   }
@@ -15,7 +15,7 @@ const isStagingDebugVisible = (() => {
     String(typeof process !== "undefined" && process?.env?.APP_ENV ? process.env.APP_ENV : "")
   ].map((value) => value.trim().toLowerCase());
 
-  return values.some((value) => value === "staging" || value === "staging_restore");
+  return values.some((value) => value === "staging" || value === "staging_restore" || value === "production");
 })();
 
 function LinePhoneBindGate({
@@ -107,7 +107,7 @@ function LinePhoneBindGate({
         <>
           <div className="error-banner" style={{ marginTop: 14 }}>{error}</div>
 
-          {(isStagingDebugVisible && lineContextDebug) ? (
+          {(isLiffDebugVisible && lineContextDebug) ? (
             <div style={{
               marginTop: 12,
               border: "1px solid #cbd5e1",
