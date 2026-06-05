@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import liff from "@line/liff";
+import { apiRequest } from "../lib/api";
 import LinePhoneBindGate from "./LinePhoneBindGate";
+import { resolveLineContext } from "../lib/lineContext";
 
 const money = (v) => `NT$ ${Number(v || 0).toLocaleString()}`;
 
@@ -9,6 +11,10 @@ export default function LineCustomerPage() {
   const [loading, setLoading] = useState(true);
   const [profileName, setProfileName] = useState("");
   const [lineUserId, setLineUserId] = useState("");
+  const [lineContextInfo, setLineContextInfo] = useState({
+    inClient: false,
+    failureReason: ""
+  });
 
   const closeLine = () => {
     try {
@@ -23,32 +29,41 @@ export default function LineCustomerPage() {
   useEffect(() => {
     async function init() {
       try {
-        await liff.init({
-          liffId: import.meta.env.VITE_LIFF_ID || "2010080463-s7I6a2BG"
+        const context = await resolveLineContext();
+        setLineContextInfo({
+          inClient: Boolean(context.inClient),
+          failureReason: context.failureReason || ""
         });
 
-        if (!liff.isLoggedIn()) {
-          liff.login();
+        if (!context.isLoggedIn || context.shouldLogin) {
           return;
         }
 
-        const profile = await liff.getProfile();
-        setProfileName(profile.displayName || "");
-        if (profile.userId && profile.displayName) {
+        setLineUserId(context.lineUserId || "");
+        setProfileName(context.displayName || "");
+
+        if (context.lineUserId && context.displayName) {
           apiRequest("/line/profile-name", {
             method: "POST",
             body: JSON.stringify({
-              lineUserId: profile.userId,
-              displayName: profile.displayName
+              lineUserId: context.lineUserId,
+              displayName: context.displayName
             })
           }).catch(() => {});
         }
-        setLineUserId(profile.userId);
-        const res = await fetch(`/api/customer-status?q=${encodeURIComponent(profile.userId)}&displayName=${encodeURIComponent(profile.displayName || "")}`);
-        const json = await res.json();
+
+        if (!context.lineUserId) {
+          return;
+        }
+
+        const json = await apiRequest(`/customer-status?q=${encodeURIComponent(context.lineUserId)}&displayName=${encodeURIComponent(context.displayName || "")}`);
         setData(json);
       } catch (e) {
         console.error(e);
+        setLineContextInfo((current) => ({
+          ...current,
+          failureReason: current.failureReason || e.message || "無法讀取客戶資料"
+        }));
         setData(null);
       } finally {
         setLoading(false);
@@ -74,14 +89,8 @@ export default function LineCustomerPage() {
       ) : !data?.customer?.phone ? (
         <LinePhoneBindGate
           lineUserId={lineUserId}
-          onBound={(phone) => setData((current) => ({
-            ...(current || {}),
-            customer: { ...((current || {}).customer || {}), phone }
-          }))}
-        />
-      ) : !data?.customer?.phone ? (
-        <LinePhoneBindGate
-          lineUserId={lineUserId}
+          inClient={lineContextInfo.inClient}
+          failureReason={lineContextInfo.failureReason}
           onBound={(phone) => setData((current) => ({
             ...(current || {}),
             customer: { ...((current || {}).customer || {}), phone }

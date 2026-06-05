@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import liff from "@line/liff";
 import { apiRequest } from "../lib/api";
+import { resolveLineContext } from "../lib/lineContext";
 import LinePhoneBindGate from "./LinePhoneBindGate";
 
-const LIFF_ID = import.meta.env.VITE_LIFF_ID || "2010080463-s7I6a2BG";
 const GOOGLE_REVIEW_URL = "https://www.google.com/search?q=KINGWAY+台南門市+Google+評論";
 
 function LineGoogleReviewPage() {
@@ -13,30 +13,37 @@ function LineGoogleReviewPage() {
   const [profileName, setProfileName] = useState("");
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  const [lineContextFailureReason, setLineContextFailureReason] = useState("");
+  const [lineInClient, setLineInClient] = useState(false);
 
   useEffect(() => {
     async function init() {
       try {
-        await liff.init({ liffId: LIFF_ID });
-        if (!liff.isLoggedIn()) {
-          liff.login();
+        const context = await resolveLineContext();
+        setLineContextFailureReason(context.failureReason || "");
+        setLineInClient(Boolean(context.inClient));
+
+        if (!context.isLoggedIn || context.shouldLogin) {
           return;
         }
 
-        const profile = await liff.getProfile();
-        setLineUserId(profile.userId);
-        setProfileName(profile.displayName || "");
-        if (profile.userId && profile.displayName) {
+        setLineUserId(context.lineUserId || "");
+        setProfileName(context.displayName || "");
+        if (context.lineUserId && context.displayName) {
           apiRequest("/line/profile-name", {
             method: "POST",
             body: JSON.stringify({
-              lineUserId: profile.userId,
-              displayName: profile.displayName
+              lineUserId: context.lineUserId,
+              displayName: context.displayName
             })
           }).catch(() => {});
         }
 
-        const data = await apiRequest(`/line-google-review/customer?lineUserId=${encodeURIComponent(profile.userId)}`);
+        if (!context.lineUserId) {
+          return;
+        }
+
+        const data = await apiRequest(`/line-google-review/customer?lineUserId=${encodeURIComponent(context.lineUserId)}`);
         setCustomer(data.customer || null);
       } catch (err) {
         if (String(err.message || "").includes("access token expired")) {
@@ -87,6 +94,8 @@ function LineGoogleReviewPage() {
       {(!customer || !customer.phone) ? (
         <LinePhoneBindGate
           lineUserId={lineUserId}
+          inClient={lineInClient}
+          failureReason={lineContextFailureReason}
           onBound={(phone) => setCustomer((current) => ({ ...(current || {}), phone }))}
         />
       ) : (

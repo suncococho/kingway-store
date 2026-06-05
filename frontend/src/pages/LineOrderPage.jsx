@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import liff from "@line/liff";
 import { apiRequest } from "../lib/api";
-
-const LIFF_ID = import.meta.env.VITE_LIFF_ID || "2010080463-s7I6a2BG";
+import { resolveLineContext } from "../lib/lineContext";
 const LEGACY_STORE_CONTEXT = {
   storeId: 1,
   storeCode: "KINGWAY_TAINAN",
@@ -39,6 +38,8 @@ function LineOrderPage() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+  const [lineContextFailureReason, setLineContextFailureReason] = useState("");
+  const [lineInClient, setLineInClient] = useState(false);
 
   const isBound = /^09\d{8}$/.test(String(phone || ""));
 
@@ -86,35 +87,39 @@ function LineOrderPage() {
         : "";
 
       try {
-        await liff.init({ liffId: LIFF_ID });
+        const context = await resolveLineContext();
+        setLineContextFailureReason(context.failureReason || "");
+        setLineInClient(Boolean(context.inClient));
 
-        if (!liff.isLoggedIn()) {
-          liff.login();
+        if (!context.isLoggedIn || context.shouldLogin) {
           return;
         }
 
-        const profile = await liff.getProfile();
-        setLineUserId(profile.userId);
-        if (profile.userId && profile.displayName) {
+        setLineUserId(context.lineUserId || "");
+        if (context.lineUserId && context.displayName) {
           apiRequest("/line/profile-name", {
             method: "POST",
             body: JSON.stringify({
-              lineUserId: profile.userId,
-              displayName: profile.displayName
+              lineUserId: context.lineUserId,
+              displayName: context.displayName
             })
           }).catch(() => {});
         }
-        setName(profile.displayName || "LINE 客戶");
-        setBindName(profile.displayName || "LINE 客戶");
+        setName(context.displayName || "LINE 客戶");
+        setBindName(context.displayName || "LINE 客戶");
+
+        if (!context.lineUserId) {
+          return;
+        }
 
         const customerData = await apiRequest(
-          `/line-order/customer?lineUserId=${encodeURIComponent(profile.userId)}&displayName=${encodeURIComponent(profile.displayName || "")}${storeQuery}`
+          `/line-order/customer?lineUserId=${encodeURIComponent(context.lineUserId)}&displayName=${encodeURIComponent(context.displayName || "")}${storeQuery}`
         );
 
         if (customerData?.customer) {
-          setName(customerData.customer.name || profile.displayName || "LINE 客戶");
+          setName(customerData.customer.name || context.displayName || "LINE 客戶");
           setPhone(customerData.customer.phone || "");
-          setBindName(customerData.customer.name || profile.displayName || "LINE 客戶");
+          setBindName(customerData.customer.name || context.displayName || "LINE 客戶");
         }
 
         const productData = await apiRequest(`/line-order/ebikes${resolvedStoreContext.isExplicitStore ? `?store=${encodeURIComponent(resolvedStoreContext.storeCode)}` : ""}`);
@@ -130,13 +135,20 @@ function LineOrderPage() {
     init();
   }, []);
 
+  function getLineUserUnavailableMessage() {
+    const base = "無法取得 LINE 使用者資料。\n請回到 KINGWAY LINE 官方帳號，從選單重新開啟此頁面。";
+    return lineInClient && lineContextFailureReason
+      ? `${base}\n原因：${lineContextFailureReason}`
+      : base;
+  }
+
   async function submitBind() {
     setError("");
 
     const cleanPhone = String(bindPhone || "").replace(/\D/g, "");
     const cleanName = String(bindName || name || "LINE 客戶").trim();
 
-    if (!lineUserId) return setError("無法取得 LINE 使用者資料。\n請回到 KINGWAY LINE 官方帳號，從選單重新開啟此頁面。");
+    if (!lineUserId) return setError(getLineUserUnavailableMessage());
     if (!cleanName) return setError("請輸入姓名。");
     if (!/^09\d{8}$/.test(cleanPhone)) return setError("請輸入正確手機號碼，例如 0912345678");
 

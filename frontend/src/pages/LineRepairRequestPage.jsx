@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import liff from "@line/liff";
 import { apiRequest } from "../lib/api";
+import { resolveLineContext } from "../lib/lineContext";
 import LinePhoneBindGate from "./LinePhoneBindGate";
 
-const LIFF_ID = import.meta.env.VITE_LIFF_ID || "2010080463-s7I6a2BG";
 const LEGACY_STORE_CONTEXT = {
   storeId: 1,
   storeCode: "KINGWAY_TAINAN",
@@ -37,6 +37,8 @@ function LineRepairRequestPage() {
   });
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  const [lineContextFailureReason, setLineContextFailureReason] = useState("");
+  const [lineInClient, setLineInClient] = useState(false);
 
   useEffect(() => {
     async function loadStoreContext() {
@@ -82,26 +84,31 @@ function LineRepairRequestPage() {
         : "";
 
       try {
-        await liff.init({ liffId: LIFF_ID });
-        if (!liff.isLoggedIn()) {
-          liff.login();
+        const context = await resolveLineContext();
+        setLineContextFailureReason(context.failureReason || "");
+        setLineInClient(Boolean(context.inClient));
+
+        if (!context.isLoggedIn || context.shouldLogin) {
           return;
         }
 
-        const profile = await liff.getProfile();
-        setLineUserId(profile.userId);
-        setProfileName(profile.displayName || "");
-        if (profile.userId && profile.displayName) {
+        setLineUserId(context.lineUserId || "");
+        setProfileName(context.displayName || "");
+        if (context.lineUserId && context.displayName) {
           apiRequest("/line/profile-name", {
             method: "POST",
             body: JSON.stringify({
-              lineUserId: profile.userId,
-              displayName: profile.displayName
+              lineUserId: context.lineUserId,
+              displayName: context.displayName
             })
           }).catch(() => {});
         }
 
-        const data = await apiRequest(`/line-repair/customer?lineUserId=${encodeURIComponent(profile.userId)}${storeQuery}`);
+        if (!context.lineUserId) {
+          return;
+        }
+
+        const data = await apiRequest(`/line-repair/customer?lineUserId=${encodeURIComponent(context.lineUserId)}${storeQuery}`);
         setCustomer(data.customer || null);
       } catch (err) {
         if (String(err.message || "").includes("access token expired")) {
@@ -209,6 +216,8 @@ function LineRepairRequestPage() {
       {storeError ? null : (!customer || !customer.phone) ? (
         <LinePhoneBindGate
           lineUserId={lineUserId}
+          inClient={lineInClient}
+          failureReason={lineContextFailureReason}
           onBound={(phone) => setCustomer((current) => ({ ...(current || {}), phone }))}
         />
       ) : (
