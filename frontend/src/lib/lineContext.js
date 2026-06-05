@@ -26,6 +26,14 @@ const STORAGE_DISPLAY_NAME_KEYS = [
   "lineUserName"
 ];
 
+function debugLineContext(context) {
+  if (typeof console === "undefined" || typeof console.debug !== "function") {
+    return;
+  }
+
+  console.debug("[LINE_CONTEXT_DEBUG]", context);
+}
+
 function normalizeValue(value) {
   const candidate = String(value || "").trim();
   return candidate || "";
@@ -105,9 +113,21 @@ async function getProfileWithRetry(retryDelays = PROFILE_RETRY_DELAY_MS) {
 
   for (let attempt = 0; attempt <= retryDelays.length; attempt += 1) {
     try {
-      return await liff.getProfile();
+      const profile = await liff.getProfile();
+      debugLineContext({
+        stage: "getProfile",
+        attempt: attempt + 1,
+        result: profile
+      });
+      return profile;
     } catch (error) {
       lastError = error;
+      debugLineContext({
+        stage: "getProfile",
+        attempt: attempt + 1,
+        result: "error",
+        error: normalizeProfileErrorMessage(error)
+      });
 
       if (attempt >= retryDelays.length) {
         break;
@@ -189,18 +209,45 @@ export async function resolveLineContext({ liffId = LIFF_ID } = {}) {
     profileAttempts: 0
   };
 
+  debugLineContext({
+    stage: "resolve-start",
+    liffId,
+    result
+  });
+
   try {
     await liff.init({ liffId });
+    debugLineContext({
+      stage: "init-ok",
+      liffId
+    });
   } catch (error) {
     result.failureReason = `LIFF 初始化失敗：${normalizeProfileErrorMessage(error)}`;
+    debugLineContext({
+      stage: "init-error",
+      liffId,
+      error: normalizeProfileErrorMessage(error)
+    });
     return result;
   }
 
   const query = firstMatchFromQuery(QUERY_LINE_USER_ID_KEYS);
   const stored = restoreFromSources();
   const context = safeCall(() => liff.getContext(), null);
+  const isInClient = safeCall(() => liff.isInClient(), false);
+  const isLoggedIn = safeCall(() => liff.isLoggedIn(), false);
+  debugLineContext({
+    stage: "base-context",
+    query,
+    stored,
+    context,
+    isInClient,
+    isLoggedIn,
+    liffId
+  });
+
   result.inClient = Boolean(
-    safeCall(() => liff.isInClient(), false) ||
+    isInClient ||
     safeCall(() => Boolean(context?.type), false) ||
     safeCall(() => Boolean(context?.userId), false)
   );
@@ -238,18 +285,38 @@ export async function resolveLineContext({ liffId = LIFF_ID } = {}) {
   if (!result.isLoggedIn) {
     result.shouldLogin = true;
     result.failureReason = "LINE 尚未登入";
+    debugLineContext({
+      stage: "not-logged-in",
+      result,
+      liffId
+    });
     try {
       liff.login();
     } catch (error) {
       result.failureReason = `LINE 登入失敗：${normalizeProfileErrorMessage(error)}`;
+      debugLineContext({
+        stage: "login-error",
+        liffId,
+        error: normalizeProfileErrorMessage(error)
+      });
     }
 
+    debugLineContext({
+      stage: "resolve-final",
+      liffId,
+      result
+    });
     return result;
   }
 
   try {
     const profile = await getProfileWithRetry();
     result.profileAttempts = PROFILE_RETRY_DELAY_MS.length + 1;
+    debugLineContext({
+      stage: "profile-success",
+      profile,
+      failureReason: result.failureReason
+    });
     if (profile?.userId) {
       result.lineUserId = normalizeValue(profile.userId);
       result.displayName = normalizeValue(profile.displayName || result.displayName);
@@ -270,9 +337,22 @@ export async function resolveLineContext({ liffId = LIFF_ID } = {}) {
         displayName: result.displayName
       });
     }
+    debugLineContext({
+      stage: "resolve-final",
+      liffId,
+      result
+    });
     return result;
   } catch (error) {
     const profileError = normalizeProfileErrorMessage(error);
+    debugLineContext({
+      stage: "profile-error",
+      liffId,
+      error: profileError,
+      lineUserId: result.lineUserId,
+      source: result.source,
+      sourceDetail: result.sourceDetail
+    });
     result.profileAttempts = PROFILE_RETRY_DELAY_MS.length + 1;
 
     if (result.lineUserId) {
@@ -281,10 +361,29 @@ export async function resolveLineContext({ liffId = LIFF_ID } = {}) {
         lineUserId: result.lineUserId,
         displayName: result.displayName
       });
+      debugLineContext({
+        stage: "resolve-final-fallback",
+        liffId,
+        lineUserId: result.lineUserId,
+        source: result.source,
+        sourceDetail: result.sourceDetail,
+        failureReason: result.failureReason
+      });
       return result;
     }
 
     result.failureReason = `無法取得 LINE 使用者資料（${profileError}）。`;
+    debugLineContext({
+      stage: "resolve-final",
+      liffId,
+      isInClient: result.inClient,
+      isLoggedIn: result.isLoggedIn,
+      lineUserId: result.lineUserId,
+      source: result.source,
+      sourceDetail: result.sourceDetail,
+      profileAttempts: result.profileAttempts,
+      failureReason: result.failureReason
+    });
     return result;
   }
 }
