@@ -3,6 +3,13 @@ import liff from "@line/liff";
 import { apiRequest } from "../lib/api";
 import { resolveLineContext } from "../lib/lineContext";
 import LinePhoneBindGate from "./LinePhoneBindGate";
+import {
+  DEFAULT_LINE_BINDING_STORE_CODE,
+  cacheLineCustomerToObject,
+  fetchLineBindingSnapshot,
+  getLineBindingCache,
+  saveLineBindingCache
+} from "../lib/lineBindingRecovery";
 
 const GOOGLE_REVIEW_URL = "https://www.google.com/search?q=KINGWAY+台南門市+Google+評論";
 
@@ -57,11 +64,41 @@ function LineGoogleReviewPage() {
         }
 
         if (!context.lineUserId) {
+          const cachedBinding = context.inClient ? getLineBindingCache() : null;
+          const cachedLineUserId = cachedBinding?.lineUserId || "";
+          if (!cachedLineUserId) {
+            return;
+          }
+
+          setLineUserId(cachedLineUserId);
+          const cachedCustomer = cacheLineCustomerToObject(cachedBinding);
+          if (cachedCustomer) {
+            setCustomer(cachedCustomer);
+          }
           return;
         }
 
-        const data = await apiRequest(`/line-google-review/customer?lineUserId=${encodeURIComponent(context.lineUserId)}`);
-        setCustomer(data.customer || null);
+        const data = await fetchLineBindingSnapshot({
+          lineUserId: context.lineUserId,
+          displayName: context.displayName || "",
+          endpoint: "/line-google-review/customer",
+          storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+        });
+        if (data?.customer) {
+          setCustomer(data.customer || null);
+          saveLineBindingCache({
+            lineUserId: context.lineUserId,
+            customer: data.customer,
+            storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+          });
+        } else {
+          const cachedCustomer = cacheLineCustomerToObject(
+            getLineBindingCache(context.lineUserId)
+          );
+          if (cachedCustomer) {
+            setCustomer(cachedCustomer);
+          }
+        }
       } catch (err) {
         if (String(err.message || "").includes("access token expired")) {
           try { liff.logout(); } catch (e) {}
@@ -114,7 +151,34 @@ function LineGoogleReviewPage() {
           inClient={lineInClient}
           failureReason={lineContextFailureReason}
           lineContextDebug={lineContextDebug}
-          onBound={(phone) => setCustomer((current) => ({ ...(current || {}), phone }))}
+          onBound={async (phone) => {
+            const restored = await fetchLineBindingSnapshot({
+              lineUserId,
+              displayName: profileName,
+              endpoint: "/line-google-review/customer",
+              storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+            });
+
+            if (restored?.customer) {
+              setCustomer(restored.customer);
+              saveLineBindingCache({
+                lineUserId,
+                customer: restored.customer,
+                storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+              });
+              return;
+            }
+
+            setCustomer((current) => {
+              const next = { ...(current || {}), phone };
+              saveLineBindingCache({
+                lineUserId,
+                customer: next,
+                storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+              });
+              return next;
+            });
+          }}
         />
       ) : (
         <>

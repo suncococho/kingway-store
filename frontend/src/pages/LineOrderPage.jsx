@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import liff from "@line/liff";
 import { apiRequest } from "../lib/api";
 import { resolveLineContext } from "../lib/lineContext";
+import {
+  DEFAULT_LINE_BINDING_STORE_CODE,
+  fetchLineBindingSnapshot,
+  saveLineBindingCache
+} from "../lib/lineBindingRecovery";
 const LEGACY_STORE_CONTEXT = {
   storeId: 1,
   storeCode: "KINGWAY_TAINAN",
@@ -82,9 +87,10 @@ function LineOrderPage() {
         return;
       }
 
-      const storeQuery = resolvedStoreContext.isExplicitStore
-        ? `&store=${encodeURIComponent(resolvedStoreContext.storeCode)}`
-        : "";
+      const resolvedStoreCode = resolvedStoreContext.isExplicitStore
+        ? resolvedStoreContext.storeCode
+        : DEFAULT_LINE_BINDING_STORE_CODE;
+      const storeQuery = `&store=${encodeURIComponent(resolvedStoreCode)}`;
 
       try {
         const context = await resolveLineContext();
@@ -120,9 +126,14 @@ function LineOrderPage() {
           setName(customerData.customer.name || context.displayName || "LINE 客戶");
           setPhone(customerData.customer.phone || "");
           setBindName(customerData.customer.name || context.displayName || "LINE 客戶");
+          saveLineBindingCache({
+            lineUserId: context.lineUserId,
+            customer: customerData.customer,
+            storeCode: resolvedStoreCode
+          });
         }
 
-        const productData = await apiRequest(`/line-order/ebikes${resolvedStoreContext.isExplicitStore ? `?store=${encodeURIComponent(resolvedStoreContext.storeCode)}` : ""}`);
+        const productData = await apiRequest(`/line-order/ebikes?store=${encodeURIComponent(resolvedStoreCode)}`);
         setProducts(Array.isArray(productData) ? productData : []);
       } catch (e) {
         console.error(e);
@@ -162,9 +173,29 @@ function LineOrderPage() {
           phone: cleanPhone
         })
       });
+      const resolvedStoreCode = storeContext.isExplicitStore
+        ? storeContext.storeCode
+        : DEFAULT_LINE_BINDING_STORE_CODE;
+      const restored = await fetchLineBindingSnapshot({
+        lineUserId,
+        displayName: cleanName,
+        endpoint: "/line-order/customer",
+        storeCode: resolvedStoreCode
+      });
 
-      setName(cleanName);
-      setPhone(cleanPhone);
+      if (restored?.customer) {
+        setName(restored.customer.name || cleanName);
+        setPhone(restored.customer.phone || cleanPhone);
+        saveLineBindingCache({
+          lineUserId,
+          customer: restored.customer,
+          storeCode: resolvedStoreCode
+        });
+      } else {
+        setName(cleanName);
+        setPhone(cleanPhone);
+      }
+
       setBindPhone("");
       setError("");
     } catch (e) {
@@ -186,7 +217,7 @@ function LineOrderPage() {
 
       const storeQuery = storeContext.isExplicitStore
         ? `?store=${encodeURIComponent(storeContext.storeCode)}`
-        : "";
+        : `?store=${encodeURIComponent(DEFAULT_LINE_BINDING_STORE_CODE)}`;
       const res = await fetch(`/api/line-order/create${storeQuery}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

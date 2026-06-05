@@ -3,6 +3,13 @@ import liff from "@line/liff";
 import { apiRequest } from "../lib/api";
 import LinePhoneBindGate from "./LinePhoneBindGate";
 import { resolveLineContext } from "../lib/lineContext";
+import {
+  DEFAULT_LINE_BINDING_STORE_CODE,
+  cacheLineCustomerToObject,
+  fetchLineBindingSnapshot,
+  getLineBindingCache,
+  saveLineBindingCache
+} from "../lib/lineBindingRecovery";
 
 const money = (v) => `NT$ ${Number(v || 0).toLocaleString()}`;
 
@@ -63,11 +70,44 @@ export default function LineCustomerPage() {
         }
 
         if (!context.lineUserId) {
+          const cachedBinding = context.inClient ? getLineBindingCache() : null;
+          const cachedLineUserId = cachedBinding?.lineUserId || "";
+          if (!cachedLineUserId) {
+            return;
+          }
+
+          setLineUserId(cachedLineUserId);
+          const cachedCustomer = cacheLineCustomerToObject(cachedBinding);
+          if (cachedCustomer) {
+            setData({ customer: cachedCustomer, orders: [], repairs: [] });
+          }
           return;
         }
 
-        const json = await apiRequest(`/customer-status?q=${encodeURIComponent(context.lineUserId)}&displayName=${encodeURIComponent(context.displayName || "")}`);
-        setData(json);
+        setLineUserId(context.lineUserId);
+        const lineCustomer = await fetchLineBindingSnapshot({
+          lineUserId: context.lineUserId,
+          displayName: context.displayName || "",
+          endpoint: "/line-order/customer",
+          storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+        });
+
+        if (lineCustomer?.customer) {
+          setData(lineCustomer);
+          saveLineBindingCache({
+            lineUserId: context.lineUserId,
+            customer: lineCustomer.customer,
+            storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+          });
+          return;
+        }
+
+        const cachedCustomer = cacheLineCustomerToObject(
+          getLineBindingCache(context.lineUserId)
+        );
+        if (cachedCustomer) {
+          setData({ customer: cachedCustomer, orders: [], repairs: [] });
+        }
       } catch (e) {
         console.error(e);
         setLineContextInfo((current) => ({
@@ -102,10 +142,41 @@ export default function LineCustomerPage() {
           inClient={lineContextInfo.inClient}
           failureReason={lineContextInfo.failureReason}
           lineContextDebug={lineContextInfo}
-          onBound={(phone) => setData((current) => ({
-            ...(current || {}),
-            customer: { ...((current || {}).customer || {}), phone }
-          }))}
+          onBound={async (phone) => {
+            const restored = await fetchLineBindingSnapshot({
+              lineUserId,
+              displayName: profileName,
+              endpoint: "/line-order/customer",
+              storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+            });
+
+            if (restored?.customer) {
+              setData(restored);
+              saveLineBindingCache({
+                lineUserId: lineUserId || restored.customer.lineUserId,
+                customer: restored.customer,
+                storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+              });
+              return;
+            }
+
+            setData((current) => {
+              const next = {
+                ...(current || {}),
+                customer: {
+                  ...((current || {}).customer || {}),
+                  phone,
+                  lineUserId
+                }
+              };
+              saveLineBindingCache({
+                lineUserId,
+                customer: next.customer,
+                storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+              });
+              return next;
+            });
+          }}
         />
       ) : data?.customer ? (
         <section className="line-customer-summary">

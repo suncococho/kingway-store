@@ -3,6 +3,13 @@ import liff from "@line/liff";
 import { apiRequest } from "../lib/api";
 import { resolveLineContext } from "../lib/lineContext";
 import LinePhoneBindGate from "./LinePhoneBindGate";
+import {
+  DEFAULT_LINE_BINDING_STORE_CODE,
+  cacheLineCustomerToObject,
+  fetchLineBindingSnapshot,
+  getLineBindingCache,
+  saveLineBindingCache
+} from "../lib/lineBindingRecovery";
 
 const LEGACY_STORE_CONTEXT = {
   storeId: 1,
@@ -87,10 +94,6 @@ function LineRepairRequestPage() {
         return;
       }
 
-      const storeQuery = resolvedStoreContext.isExplicitStore
-        ? `&store=${encodeURIComponent(resolvedStoreContext.storeCode)}`
-        : "";
-
       try {
         const context = await resolveLineContext();
         setLineContextDebug({
@@ -122,11 +125,45 @@ function LineRepairRequestPage() {
         }
 
         if (!context.lineUserId) {
+          const cachedBinding = context.inClient ? getLineBindingCache() : null;
+          const cachedLineUserId = cachedBinding?.lineUserId || "";
+          if (!cachedLineUserId) {
+            return;
+          }
+
+          setLineUserId(cachedLineUserId);
+          const cachedCustomer = cacheLineCustomerToObject(cachedBinding);
+          if (cachedCustomer) {
+            setCustomer(cachedCustomer);
+          }
           return;
         }
 
-        const data = await apiRequest(`/line-repair/customer?lineUserId=${encodeURIComponent(context.lineUserId)}${storeQuery}`);
-        setCustomer(data.customer || null);
+        const storeCode = resolvedStoreContext.isExplicitStore
+          ? resolvedStoreContext.storeCode
+          : DEFAULT_LINE_BINDING_STORE_CODE;
+        const data = await fetchLineBindingSnapshot({
+          lineUserId: context.lineUserId,
+          displayName: context.displayName || "",
+          endpoint: "/line-repair/customer",
+          storeCode
+        });
+
+        if (data?.customer) {
+          setCustomer(data.customer || null);
+          saveLineBindingCache({
+            lineUserId: context.lineUserId,
+            customer: data.customer,
+            storeCode
+          });
+        } else {
+          const cachedCustomer = cacheLineCustomerToObject(
+            getLineBindingCache(context.lineUserId)
+          );
+          if (cachedCustomer) {
+            setCustomer(cachedCustomer);
+          }
+        }
       } catch (err) {
         if (String(err.message || "").includes("access token expired")) {
           try { liff.logout(); } catch (e) {}
@@ -236,7 +273,35 @@ function LineRepairRequestPage() {
           inClient={lineInClient}
           failureReason={lineContextFailureReason}
           lineContextDebug={lineContextDebug}
-          onBound={(phone) => setCustomer((current) => ({ ...(current || {}), phone }))}
+          onBound={async (phone) => {
+            const storeCode = storeContext.isExplicitStore ? storeContext.storeCode : DEFAULT_LINE_BINDING_STORE_CODE;
+            const restored = await fetchLineBindingSnapshot({
+              lineUserId,
+              displayName: profileName,
+              endpoint: "/line-repair/customer",
+              storeCode
+            });
+
+            if (restored?.customer) {
+              setCustomer(restored.customer);
+              saveLineBindingCache({
+                lineUserId,
+                customer: restored.customer,
+                storeCode
+              });
+              return;
+            }
+
+            setCustomer((current) => {
+              const next = { ...(current || {}), phone };
+              saveLineBindingCache({
+                lineUserId,
+                customer: next,
+                storeCode
+              });
+              return next;
+            });
+          }}
         />
       ) : (
         <>
