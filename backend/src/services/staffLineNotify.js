@@ -20,9 +20,32 @@ function formatValue(value, fallback = "-") {
   return normalized || fallback;
 }
 
+function normalizeRecordId(value) {
+  const normalized = Number(value || 0);
+  return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : null;
+}
+
 function normalizeStoreId(value) {
   const normalized = Number(value || 0);
   return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : null;
+}
+
+function resolveFrontendBaseUrl() {
+  const configured = String(config.frontendBaseUrl || process.env.FRONTEND_BASE_URL || "https://pos.kingway.tw").trim();
+  if (!configured) {
+    return "https://pos.kingway.tw";
+  }
+  return configured.replace(/\/$/, "");
+}
+
+function buildOrderDetailLink(orderId, options = {}) {
+  const normalizedOrderId = normalizeRecordId(orderId);
+  if (!normalizedOrderId) {
+    return null;
+  }
+
+  const baseUrl = String(options.baseUrl || resolveFrontendBaseUrl()).trim().replace(/\/$/, "");
+  return `${baseUrl}/orders/${normalizedOrderId}/edit`;
 }
 
 function parseBoolean(value, fallback) {
@@ -80,6 +103,7 @@ function buildPaymentInquiryMessage(payload = {}) {
     `客戶：${formatValue(payload.customerName)}`,
     `電話：${formatValue(payload.phone, "-")}`,
     `訂單：${formatValue(payload.orderNo, "-")}`,
+    payload.orderLink ? `訂單連結：${payload.orderLink}` : null,
     "內容：",
     formatValue(payload.message),
     "來源：LINE 客戶中心"
@@ -92,6 +116,7 @@ function buildOrderReservationMessage(payload = {}) {
     `客戶：${formatValue(payload.customerName)}`,
     `電話：${formatValue(payload.phone, "-")}`,
     `訂單：${formatValue(payload.orderNo, "-")}`,
+    payload.orderLink ? `訂單連結：${payload.orderLink}` : null,
     `車款：${formatValue(payload.productName, "-")}`,
     "來源：LINE 客戶中心"
   ].filter(Boolean).join("\\n");
@@ -156,6 +181,25 @@ async function resolvePaymentInquiryStoreId(payload = {}, connection = pool) {
   );
 
   return normalizeStoreId(rows[0]?.storeId);
+}
+
+async function resolveOrderIdByOrderNo(payload = {}, connection = pool) {
+  const orderNo = String(payload.orderNo || "").trim();
+  if (!orderNo) {
+    return null;
+  }
+
+  const [rows] = await connection.query(
+    `
+      SELECT id
+      FROM orders
+      WHERE order_no = ?
+      LIMIT 1
+    `,
+    [orderNo]
+  );
+
+  return normalizeRecordId(rows[0]?.id);
 }
 
 async function resolveRepairStoreId(payload = {}, connection = pool) {
@@ -340,13 +384,21 @@ async function notifyPaymentInquiryCreated(payload = {}, options = {}) {
     : ["staff", "admin"];
 
   try {
+    const resolvedOrderId = normalizeRecordId(payload.orderId) || await resolveOrderIdByOrderNo(payload);
+    const orderUrl = buildOrderDetailLink(resolvedOrderId, { baseUrl: config.frontendBaseUrl });
     const storeId = await resolvePaymentInquiryStoreId(payload);
     if (!storeId) {
       console.info("[staff-line] payment_inquiry_notify_skipped", {
         orderNo: payload.orderNo || null,
         storeId: null
       });
-      return { delivered: 0, skipped: true, reason: "missing_store_scope" };
+      return {
+        delivered: 0,
+        skipped: true,
+        reason: "missing_store_scope",
+        orderId: resolvedOrderId || null,
+        orderLink: orderUrl
+      };
     }
 
     if (isStaffLineNotifySuppressed()) {
@@ -362,6 +414,8 @@ async function notifyPaymentInquiryCreated(payload = {}, options = {}) {
         delivered: 0,
         skipped: true,
         reason: "environment_suppressed",
+        orderId: resolvedOrderId || null,
+        orderLink: orderUrl,
         targetGroupIds: target?.lineGroupId ? [target.lineGroupId] : [],
         registrationType: target?.registrationType || null,
         lineGroupId: target?.lineGroupId ? maskLineGroupId(target.lineGroupId) : null
@@ -382,6 +436,8 @@ async function notifyPaymentInquiryCreated(payload = {}, options = {}) {
         delivered: 0,
         skipped: true,
         reason: "store_line_settings_incomplete",
+        orderId: resolvedOrderId || null,
+        orderLink: orderUrl,
         targetGroupIds: [],
         registrationType: null,
         lineGroupId: null
@@ -401,6 +457,8 @@ async function notifyPaymentInquiryCreated(payload = {}, options = {}) {
         delivered: 0,
         skipped: true,
         reason: "no_active_line_group_registration",
+        orderId: resolvedOrderId || null,
+        orderLink: orderUrl,
         targetGroupIds: [],
         registrationType: null,
         lineGroupId: null
@@ -411,7 +469,9 @@ async function notifyPaymentInquiryCreated(payload = {}, options = {}) {
       target.lineGroupId,
       buildPaymentInquiryMessage({
         ...payload,
-        customerName: payload.customerName || payload.name
+        customerName: payload.customerName || payload.name,
+        orderId: resolvedOrderId,
+        orderLink: orderUrl
       }),
       credentials.channelAccessToken
     );
@@ -433,14 +493,22 @@ async function notifyPaymentInquiryCreated(payload = {}, options = {}) {
       targetGroupIds: [target.lineGroupId],
       registrationType: target.registrationType,
       lineGroupId: maskLineGroupId(target.lineGroupId),
+      orderId: resolvedOrderId || null,
+      orderLink: orderUrl,
       storeId
     };
   } catch (error) {
     console.info("[staff-line] payment_inquiry_notify_skipped", {
-      orderNo: payload.orderNo || null,
-      storeId: normalizeStoreId(payload.storeId)
-    });
-    return { delivered: 0, skipped: false, error: error.message };
+        orderNo: payload.orderNo || null,
+        storeId: normalizeStoreId(payload.storeId)
+      });
+    return {
+      delivered: 0,
+      skipped: false,
+      orderId: resolvedOrderId || null,
+      orderLink: orderUrl,
+      error: error.message
+    };
   }
 }
 
@@ -450,13 +518,21 @@ async function notifyOrderReservationCreated(payload = {}, options = {}) {
     : ["staff", "admin"];
 
   try {
+    const resolvedOrderId = normalizeRecordId(payload.orderId) || await resolveOrderIdByOrderNo(payload);
+    const orderUrl = buildOrderDetailLink(resolvedOrderId, { baseUrl: config.frontendBaseUrl });
     const storeId = await resolveOrderReservationStoreId(payload);
     if (!storeId) {
       console.info("[staff-line] order_reservation_notify_skipped", {
         orderNo: payload.orderNo || null,
         storeId: null
       });
-      return { delivered: 0, skipped: true, reason: "missing_store_scope" };
+      return {
+        delivered: 0,
+        skipped: true,
+        reason: "missing_store_scope",
+        orderId: resolvedOrderId || null,
+        orderLink: orderUrl
+      };
     }
 
     if (isStaffLineNotifySuppressed()) {
@@ -472,6 +548,8 @@ async function notifyOrderReservationCreated(payload = {}, options = {}) {
         delivered: 0,
         skipped: true,
         reason: "environment_suppressed",
+        orderId: resolvedOrderId || null,
+        orderLink: orderUrl,
         targetGroupIds: target?.lineGroupId ? [target.lineGroupId] : [],
         registrationType: target?.registrationType || null,
         lineGroupId: target?.lineGroupId ? maskLineGroupId(target.lineGroupId) : null
@@ -492,6 +570,8 @@ async function notifyOrderReservationCreated(payload = {}, options = {}) {
         delivered: 0,
         skipped: true,
         reason: "store_line_settings_incomplete",
+        orderId: resolvedOrderId || null,
+        orderLink: orderUrl,
         targetGroupIds: [],
         registrationType: null,
         lineGroupId: null
@@ -511,6 +591,8 @@ async function notifyOrderReservationCreated(payload = {}, options = {}) {
         delivered: 0,
         skipped: true,
         reason: "no_active_line_group_registration",
+        orderId: resolvedOrderId || null,
+        orderLink: orderUrl,
         targetGroupIds: [],
         registrationType: null,
         lineGroupId: null
@@ -521,7 +603,9 @@ async function notifyOrderReservationCreated(payload = {}, options = {}) {
       target.lineGroupId,
       buildOrderReservationMessage({
         ...payload,
-        customerName: payload.customerName || payload.name
+        customerName: payload.customerName || payload.name,
+        orderId: resolvedOrderId,
+        orderLink: orderUrl
       }),
       credentials.channelAccessToken
     );
@@ -543,14 +627,22 @@ async function notifyOrderReservationCreated(payload = {}, options = {}) {
       targetGroupIds: [target.lineGroupId],
       registrationType: target.registrationType,
       lineGroupId: maskLineGroupId(target.lineGroupId),
+      orderId: resolvedOrderId || null,
+      orderLink: orderUrl,
       storeId
     };
   } catch (error) {
     console.info("[staff-line] order_reservation_notify_skipped", {
-      orderNo: payload.orderNo || null,
-      storeId: normalizeStoreId(payload.storeId)
-    });
-    return { delivered: 0, skipped: false, error: error.message };
+        orderNo: payload.orderNo || null,
+        storeId: normalizeStoreId(payload.storeId)
+      });
+    return {
+      delivered: 0,
+      skipped: false,
+      orderId: resolvedOrderId || null,
+      orderLink: orderUrl,
+      error: error.message
+    };
   }
 }
 

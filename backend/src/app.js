@@ -179,6 +179,8 @@ app.post("/api/line-support/create", async (req, res, next) => {
               {
                 type: String(type || "").trim() || "support",
                 orderNo: resolvedOrderNo || null,
+                orderId: resolvedOrderId,
+                orderLink: lineSupportNotificationResult.orderLink || null,
                 customerName: name || "LINE 客戶",
                 phone: phone || null,
                 message: normalizedMessage,

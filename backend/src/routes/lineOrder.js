@@ -458,6 +458,7 @@ router.post("/create", async (req, res, next) => {
               {
                 orderId: responsePayload.orderId || null,
                 orderNo: responsePayload.orderNo || null,
+                orderLink: lineOrderNotificationResult.orderLink || null,
                 customerName: responsePayload.customer?.name || "LINE 客戶",
                 phone: responsePayload.customer?.phone || null,
                 productName: responsePayload.product?.name || null,
