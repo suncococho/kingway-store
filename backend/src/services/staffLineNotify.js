@@ -382,10 +382,12 @@ async function notifyPaymentInquiryCreated(payload = {}, options = {}) {
   const targetRegistrationTypes = Array.isArray(options.registrationTypes) && options.registrationTypes.length > 0
     ? options.registrationTypes
     : ["staff", "admin"];
+  let resolvedOrderId = null;
+  let orderUrl = null;
 
   try {
-    const resolvedOrderId = normalizeRecordId(payload.orderId) || await resolveOrderIdByOrderNo(payload);
-    const orderUrl = buildOrderDetailLink(resolvedOrderId, { baseUrl: config.frontendBaseUrl });
+    resolvedOrderId = normalizeRecordId(payload.orderId) || await resolveOrderIdByOrderNo(payload);
+    orderUrl = buildOrderDetailLink(resolvedOrderId, { baseUrl: config.frontendBaseUrl });
     const storeId = await resolvePaymentInquiryStoreId(payload);
     if (!storeId) {
       console.info("[staff-line] payment_inquiry_notify_skipped", {
@@ -506,7 +508,7 @@ async function notifyPaymentInquiryCreated(payload = {}, options = {}) {
       delivered: 0,
       skipped: false,
       orderId: resolvedOrderId || null,
-      orderLink: orderUrl,
+      orderLink: buildOrderDetailLink(resolvedOrderId, { baseUrl: config.frontendBaseUrl }),
       error: error.message
     };
   }
@@ -516,10 +518,12 @@ async function notifyOrderReservationCreated(payload = {}, options = {}) {
   const targetRegistrationTypes = Array.isArray(options.registrationTypes) && options.registrationTypes.length > 0
     ? options.registrationTypes
     : ["staff", "admin"];
+  let resolvedOrderId = null;
+  let orderUrl = null;
 
   try {
-    const resolvedOrderId = normalizeRecordId(payload.orderId) || await resolveOrderIdByOrderNo(payload);
-    const orderUrl = buildOrderDetailLink(resolvedOrderId, { baseUrl: config.frontendBaseUrl });
+    resolvedOrderId = normalizeRecordId(payload.orderId) || await resolveOrderIdByOrderNo(payload);
+    orderUrl = buildOrderDetailLink(resolvedOrderId, { baseUrl: config.frontendBaseUrl });
     const storeId = await resolveOrderReservationStoreId(payload);
     if (!storeId) {
       console.info("[staff-line] order_reservation_notify_skipped", {
@@ -640,13 +644,14 @@ async function notifyOrderReservationCreated(payload = {}, options = {}) {
       delivered: 0,
       skipped: false,
       orderId: resolvedOrderId || null,
-      orderLink: orderUrl,
+      orderLink: buildOrderDetailLink(resolvedOrderId, { baseUrl: config.frontendBaseUrl }),
       error: error.message
     };
   }
 }
 
 module.exports = {
+  buildOrderDetailLink,
   buildRepairReservationMessage,
   isStaffLineNotifySuppressed,
   notifyOrderReservationCreated,

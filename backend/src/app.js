@@ -40,7 +40,7 @@ const { errorHandler } = require("./middleware/errorHandler");
 const { sendDailyReport, TAIPEI_TZ } = require("./services/reportService");
 const { authenticate, authorize, requireStoreScope } = require("./middleware/auth");
 const { logWorkflowEvent } = require("./services/lineWorkflowService");
-const { notifyPaymentInquiryCreated } = require("./services/staffLineNotify");
+const { buildOrderDetailLink, notifyPaymentInquiryCreated } = require("./services/staffLineNotify");
 
 const app = express();
 const customerStatusStaffAuth = [
@@ -170,6 +170,8 @@ app.post("/api/line-support/create", async (req, res, next) => {
           }, {
             registrationTypes: ["staff", "admin"]
           });
+          const orderLinkForEvent = lineSupportNotificationResult.orderLink
+            || buildOrderDetailLink(resolvedOrderId, { baseUrl: config.frontendBaseUrl });
 
           try {
             await logWorkflowEvent(
@@ -180,7 +182,7 @@ app.post("/api/line-support/create", async (req, res, next) => {
                 type: String(type || "").trim() || "support",
                 orderNo: resolvedOrderNo || null,
                 orderId: resolvedOrderId,
-                orderLink: lineSupportNotificationResult.orderLink || null,
+                orderLink: orderLinkForEvent || null,
                 customerName: name || "LINE 客戶",
                 phone: phone || null,
                 message: normalizedMessage,

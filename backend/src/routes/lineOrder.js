@@ -3,7 +3,8 @@ const dayjs = require("dayjs");
 const { pool, withTransaction } = require("../db");
 const { BOT_NOTIFY, sendTelegramMessage } = require("../services/telegramService");
 const { logWorkflowEvent } = require("../services/lineWorkflowService");
-const { notifyOrderReservationCreated } = require("../services/staffLineNotify");
+const config = require("../config");
+const { notifyOrderReservationCreated, buildOrderDetailLink } = require("../services/staffLineNotify");
 const {
   SOURCE,
   createPublicStoreContextMiddleware,
@@ -449,6 +450,8 @@ router.post("/create", async (req, res, next) => {
           }, {
             registrationTypes: ["staff", "admin"]
           });
+          const orderLinkForEvent = lineOrderNotificationResult.orderLink
+            || buildOrderDetailLink(responsePayload.orderId || lineOrderNotificationResult.orderId, { baseUrl: config.frontendBaseUrl });
 
           try {
             await logWorkflowEvent(
@@ -458,7 +461,7 @@ router.post("/create", async (req, res, next) => {
               {
                 orderId: responsePayload.orderId || null,
                 orderNo: responsePayload.orderNo || null,
-                orderLink: lineOrderNotificationResult.orderLink || null,
+                orderLink: orderLinkForEvent || null,
                 customerName: responsePayload.customer?.name || "LINE 客戶",
                 phone: responsePayload.customer?.phone || null,
                 productName: responsePayload.product?.name || null,
