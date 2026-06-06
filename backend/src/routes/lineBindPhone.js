@@ -9,6 +9,7 @@ router.post("/", async (req, res, next) => {
   try {
     const lineUserId = String(req.body.lineUserId || "").trim();
     const phone = String(req.body.phone || "").replace(/\D/g, "");
+    const displayName = String(req.body.displayName || "").trim();
 
     if (!lineUserId) {
       return res.status(400).json({ message: "缺少 LINE 使用者資料" });
@@ -18,7 +19,7 @@ router.post("/", async (req, res, next) => {
       return res.status(400).json({ message: "請輸入正確手機號碼，例如 0912345678" });
     }
 
-    const result = await bindPhoneAndIssueNewFriendCoupon(lineUserId, phone);
+    const result = await bindPhoneAndIssueNewFriendCoupon(lineUserId, phone, displayName);
 
     return res.json({
       ok: true,

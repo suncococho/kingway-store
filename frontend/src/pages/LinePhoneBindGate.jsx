@@ -20,6 +20,7 @@ const isLiffDebugVisible = (() => {
 
 function LinePhoneBindGate({
   lineUserId,
+  displayName = "",
   onBound,
   title = "請先完成電話綁定",
   inClient = false,
@@ -58,7 +59,8 @@ function LinePhoneBindGate({
         method: "POST",
         body: JSON.stringify({
           lineUserId,
-          phone: cleanPhone
+          phone: cleanPhone,
+          displayName: String(displayName || "").trim()
         })
       });
 

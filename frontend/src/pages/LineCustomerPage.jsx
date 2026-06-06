@@ -13,6 +13,56 @@ import {
 
 const money = (v) => `NT$ ${Number(v || 0).toLocaleString()}`;
 
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function isPlaceholderCustomerName(value) {
+  const normalized = normalizeText(value);
+  return !normalized || normalized === "LINE 客戶" || normalized === "LINE Customer";
+}
+
+function resolveDisplayName(profileName, customerName) {
+  const normalizedProfile = normalizeText(profileName);
+  if (normalizedProfile) {
+    return normalizedProfile;
+  }
+
+  const normalizedCustomer = normalizeText(customerName);
+  if (normalizedCustomer && !isPlaceholderCustomerName(normalizedCustomer)) {
+    return normalizedCustomer;
+  }
+
+  return "LINE 客戶";
+}
+
+const CUSTOMER_MENU_ITEMS = [
+  {
+    id: "repair-estimate",
+    label: "수리견적",
+    description: "快速送出維修預約",
+    href: "/line-repair-request"
+  },
+  {
+    id: "repair-history",
+    label: "수리내역",
+    description: "追蹤維修估價與進度",
+    href: "/line-progress?tab=repair"
+  },
+  {
+    id: "order-create",
+    label: "주문예약",
+    description: "立即預約試乘與試車",
+    href: "/line-order"
+  },
+  {
+    id: "order-history",
+    label: "주문내역",
+    description: "查詢付款與訂單狀態",
+    href: "/line-progress?tab=order"
+  }
+];
+
 export default function LineCustomerPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -139,6 +189,7 @@ export default function LineCustomerPage() {
       ) : !data?.customer?.phone ? (
         <LinePhoneBindGate
           lineUserId={lineUserId}
+          displayName={profileName}
           inClient={lineContextInfo.inClient}
           failureReason={lineContextInfo.failureReason}
           lineContextDebug={lineContextInfo}
@@ -180,7 +231,7 @@ export default function LineCustomerPage() {
         />
       ) : data?.customer ? (
         <section className="line-customer-summary">
-          <div className="line-customer-summary-title">{profileName || data.customer.name || "LINE 客戶"}</div>
+          <div className="line-customer-summary-title">{resolveDisplayName(profileName, data.customer.name)}</div>
           <div className="line-customer-info-row">電話 <strong>{data.customer.phone || "-"}</strong></div>
           <div className="line-customer-info-row">最近訂單 <strong>{latestOrder?.orderNo || "目前沒有訂單"}</strong></div>
           <div className="line-customer-info-row">最近維修 <strong>{latestRepair ? `#${latestRepair.id} ${latestRepair.status}` : "目前沒有維修"}</strong></div>
@@ -194,16 +245,41 @@ export default function LineCustomerPage() {
         </section>
       )}
 
-      <section className="line-customer-menu">
-        <a href="/line-progress" className="line-customer-item">查詢進度</a>
-        <a href="/line-order" className="line-customer-item">電動自行車預約</a>
-        <a href="/repair-reservation" className="line-customer-item">維修預約</a>
-        <a href="/purchase-confirm/manual" className="line-customer-item">購買確認書</a>
-        <a href="/google-review" className="line-customer-item">Google 評論優惠</a>
-        <a href="/coupon-center" className="line-customer-item">優惠券中心</a>
-        <a href="/store-info" className="line-customer-item">門市資訊</a>
-        <a href="/support" className="line-customer-item">客服協助</a>
-      </section>
+      {data?.customer?.phone ? (
+        <section
+          className="line-customer-menu"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: 14
+          }}
+        >
+          {CUSTOMER_MENU_ITEMS.map((item) => (
+            <a
+              key={item.id}
+              href={item.href}
+              className="line-customer-item"
+              style={{
+                borderRadius: 20,
+                padding: "16px",
+                minHeight: 118,
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                gap: 6,
+                textDecoration: "none",
+                background: "#f8fafc",
+                border: "1px solid #e2e8f0",
+                color: "#0f172a",
+                fontWeight: 900
+              }}
+            >
+              <span style={{ fontSize: 18 }}>{item.label}</span>
+              <span style={{ color: "#64748b", fontWeight: 500, lineHeight: 1.5 }}>{item.description}</span>
+            </a>
+          ))}
+        </section>
+      ) : null}
 
       <button type="button" className="line-customer-close" onClick={closeLine}>
         返回 LINE

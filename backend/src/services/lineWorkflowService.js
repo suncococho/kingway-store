@@ -294,6 +294,15 @@ async function claimLineWebhookEvent(event, routePath, connection = pool) {
   }
 }
 
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function isPlaceholderCustomerName(value) {
+  const normalized = normalizeText(value);
+  return !normalized || normalized === "LINE 客戶" || normalized === "LINE Customer";
+}
+
 async function findOrCreateLineCustomer(lineUserId, fallbackName = "LINE 客戶", storeId = null) {
   const storeContext = await resolveLineWorkflowStoreContext({
     storeId,
@@ -315,7 +324,26 @@ async function findOrCreateLineCustomer(lineUserId, fallbackName = "LINE 客戶"
   );
 
   if (existing[0]) {
-    return existing[0];
+    const customer = existing[0];
+    const normalizedFallback = normalizeText(fallbackName);
+    if (
+      normalizedFallback &&
+      isPlaceholderCustomerName(customer.name) &&
+      normalizedFallback !== customer.name
+    ) {
+      await pool.query(
+        `
+          UPDATE customers
+          SET name = ?, line_display_name = ?
+          WHERE id = ? AND store_id = ?
+        `,
+        [normalizedFallback, normalizedFallback, customer.id, resolvedStoreId]
+      );
+      customer.name = normalizedFallback;
+      customer.line_display_name = normalizedFallback;
+    }
+
+    return customer;
   }
 
   const [result] = await pool.query(
@@ -344,7 +372,8 @@ async function findOrCreateLineCustomer(lineUserId, fallbackName = "LINE 客戶"
   };
 }
 
-async function bindPhoneAndIssueNewFriendCoupon(lineUserId, phone) {
+async function bindPhoneAndIssueNewFriendCoupon(lineUserId, phone, displayName = "") {
+  const normalizedDisplayName = normalizeText(displayName);
   return withTransaction(async (connection) => {
     const storeContext = await resolveLineWorkflowStoreContext({
       lineUserId,
@@ -355,7 +384,13 @@ async function bindPhoneAndIssueNewFriendCoupon(lineUserId, phone) {
 
     const [matches] = await connection.query(
       `
-        SELECT id, name, phone, line_user_id AS lineUserId, store_id AS storeId
+        SELECT
+          id,
+          name,
+          phone,
+          line_user_id AS lineUserId,
+          line_display_name AS lineDisplayName,
+          store_id AS storeId
         FROM customers
         WHERE (line_user_id = ? OR phone = ?)
           AND store_id = ?
@@ -368,17 +403,33 @@ async function bindPhoneAndIssueNewFriendCoupon(lineUserId, phone) {
 
     let customer = matches[0];
     if (!customer) {
+      const fallbackName = normalizedDisplayName || "LINE 客戶";
       const [inserted] = await connection.query(
         `
           INSERT INTO customers (name, phone, line_user_id, line_display_name, crm_stage, last_contact_at, store_id)
-          VALUES ('LINE 客戶', ?, ?, 'LINE 客戶', 'phone_bound', NOW(), ?)
+          VALUES (?, ?, ?, ?, 'phone_bound', NOW(), ?)
         `,
-        [phone, lineUserId, storeId]
+        [fallbackName, phone, lineUserId, fallbackName, storeId]
       );
-      customer = { id: inserted.insertId, name: "LINE 客戶", phone, lineUserId, storeId, store_id: storeId };
+      customer = {
+        id: inserted.insertId,
+        name: fallbackName,
+        phone,
+        lineUserId,
+        storeId,
+        store_id: storeId
+      };
     } else {
       const updates = [];
       const params = [];
+      if (normalizedDisplayName && isPlaceholderCustomerName(customer.name)) {
+        updates.push("name = ?");
+        updates.push("line_display_name = ?");
+        params.push(normalizedDisplayName, normalizedDisplayName);
+      } else if (normalizedDisplayName && !customer.lineDisplayName) {
+        updates.push("line_display_name = ?");
+        params.push(normalizedDisplayName);
+      }
       if (!customer.phone) {
         updates.push("phone = ?");
         params.push(phone);
@@ -389,7 +440,9 @@ async function bindPhoneAndIssueNewFriendCoupon(lineUserId, phone) {
       }
       updates.push("crm_stage = 'phone_bound'", "last_contact_at = NOW()");
       params.push(customer.id);
-      await connection.query(`UPDATE customers SET ${updates.join(", ")} WHERE id = ?`, params);
+      if (updates.length > 2) {
+        await connection.query(`UPDATE customers SET ${updates.join(", ")} WHERE id = ?`, params);
+      }
     }
 
     const [duplicate] = await connection.query(
@@ -2821,7 +2874,11 @@ async function createRepairReservationFromSession(lineUserId, options = {}) {
       reason: "repair_reservation_create"
     });
     const resolvedStoreId = storeContext.storeId;
-    const customer = await findOrCreateLineCustomer(lineUserId, "LINE 客戶", resolvedStoreId);
+    const customer = await findOrCreateLineCustomer(
+      lineUserId,
+      normalizeText(options.displayName) || "LINE 客戶",
+      resolvedStoreId
+    );
     if (!customer.phone) {
       return { phoneRequired: true };
     }

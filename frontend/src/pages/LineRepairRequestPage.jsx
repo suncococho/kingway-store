@@ -29,6 +29,29 @@ function buildCustomerOaName(response, fallbackStoreName) {
   return baseName ? `${baseName} LINE` : LEGACY_STORE_CONTEXT.customerOaName;
 }
 
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function isPlaceholderCustomerName(value) {
+  const normalized = normalizeText(value);
+  return !normalized || normalized === "LINE 客戶" || normalized === "LINE Customer";
+}
+
+function resolveDisplayName(profileName, customerName) {
+  const normalizedProfile = normalizeText(profileName);
+  if (normalizedProfile) {
+    return normalizedProfile;
+  }
+
+  const normalizedCustomer = normalizeText(customerName);
+  if (normalizedCustomer && !isPlaceholderCustomerName(normalizedCustomer)) {
+    return normalizedCustomer;
+  }
+
+  return "LINE 客戶";
+}
+
 function LineRepairRequestPage() {
   const [loading, setLoading] = useState(true);
   const [storeLoading, setStoreLoading] = useState(true);
@@ -210,6 +233,7 @@ function LineRepairRequestPage() {
         method: "POST",
         body: JSON.stringify({
           lineUserId,
+          displayName: profileName,
           bikeModel: form.bikeModel,
           reservationDate: form.reservationDate || null,
           issueDescription: form.issueDescription,
@@ -270,6 +294,7 @@ function LineRepairRequestPage() {
       {storeError ? null : (!customer || !customer.phone) ? (
         <LinePhoneBindGate
           lineUserId={lineUserId}
+          displayName={profileName}
           inClient={lineInClient}
           failureReason={lineContextFailureReason}
           lineContextDebug={lineContextDebug}
@@ -304,9 +329,9 @@ function LineRepairRequestPage() {
           }}
         />
       ) : (
-        <>
+          <>
           <section className="line-customer-summary">
-            <div className="line-customer-summary-title">{profileName || customer?.name || "LINE 客戶"}</div>
+            <div className="line-customer-summary-title">{resolveDisplayName(profileName, customer?.name)}</div>
             <div>電話：<strong>{customer?.phone}</strong></div>
           </section>
 

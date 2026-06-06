@@ -60,6 +60,20 @@ function resolveLineOrderStoreContext(req) {
   };
 }
 
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function isPlaceholderCustomerName(value) {
+  const normalized = normalizeText(value);
+  return !normalized || normalized === "LINE 客戶" || normalized === "LINE Customer";
+}
+
+function getDisplayNameOrFallback(profileName, fallbackName = "LINE 客戶") {
+  const normalizedProfile = normalizeText(profileName);
+  return normalizedProfile || normalizeText(fallbackName) || "LINE 客戶";
+}
+
 router.use(resolvePublicStoreContext);
 
 router.get("/customer", async (req, res, next) => {
@@ -110,6 +124,27 @@ router.get("/customer", async (req, res, next) => {
       };
 
       return res.json({ customer: newCustomer, orders: [], repairs: [] });
+    }
+
+    if (displayName) {
+      const resolvedDisplayName = getDisplayNameOrFallback(displayName);
+      const updates = ["line_display_name = ?"];
+      const params = [resolvedDisplayName];
+      if (isPlaceholderCustomerName(customer.name) && resolvedDisplayName !== customer.name) {
+        updates.unshift("name = ?");
+        params.unshift(resolvedDisplayName);
+      }
+      await pool.query(
+        `
+          UPDATE customers
+          SET ${updates.join(", ")}
+          WHERE id = ? AND store_id = ?
+        `,
+        [...params, customer.id, storeId]
+      );
+      if (isPlaceholderCustomerName(customer.name) && customer.name !== resolvedDisplayName) {
+        customer.name = resolvedDisplayName;
+      }
     }
 
     const [orders] = await pool.query(
@@ -192,7 +227,7 @@ router.post("/create", async (req, res, next) => {
     }
 
     const storeId = storeContext.storeId;
-    const { lineUserId, productId, name, phone } = req.body;
+    const { lineUserId, productId, name, phone, displayName } = req.body;
 
     if (!productId) {
       return res.status(400).json({ message: "請選擇商品" });
@@ -218,15 +253,16 @@ router.post("/create", async (req, res, next) => {
           return { needPhoneBinding: true, message: "請先填寫電話，才能建立訂單" };
         }
 
+        const fallbackName = getDisplayNameOrFallback(displayName || name, "LINE 客戶");
         const [created] = await tx.query(
-          `INSERT INTO customers (name, phone, line_user_id, customer_type, store_id)
-           VALUES (?, ?, ?, 'LINE', ?)`,
-          [name || "LINE 客戶", phone, effectiveLineUserId, storeId]
+          `INSERT INTO customers (name, phone, line_user_id, line_display_name, customer_type, store_id)
+           VALUES (?, ?, ?, ?, 'LINE', ?)`,
+          [fallbackName, phone, effectiveLineUserId, fallbackName, storeId]
         );
 
         customer = {
           id: created.insertId,
-          name: name || "LINE 客戶",
+          name: fallbackName,
           phone,
           lineUserId: effectiveLineUserId
         };
@@ -237,11 +273,23 @@ router.post("/create", async (req, res, next) => {
       }
 
       if (phone && customer.phone !== phone) {
+        const resolvedDisplayName = getDisplayNameOrFallback(displayName || name, customer.name);
+        const shouldUpdateName = displayName && isPlaceholderCustomerName(customer.name) && resolvedDisplayName !== customer.name;
+
         await tx.query(
-          `UPDATE customers SET name = COALESCE(?, name), phone = ? WHERE id = ? AND store_id = ?`,
-          [name || customer.name, phone, customer.id, storeId]
+          `UPDATE customers SET name = ?, phone = ?, line_display_name = ? WHERE id = ? AND store_id = ?`,
+          [
+            shouldUpdateName ? resolvedDisplayName : (name || customer.name),
+            phone,
+            resolvedDisplayName,
+            customer.id,
+            storeId
+          ]
         );
         customer.phone = phone;
+        if (shouldUpdateName) {
+          customer.name = resolvedDisplayName;
+        }
       }
 
       const [productRows] = await tx.query(

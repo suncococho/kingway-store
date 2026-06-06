@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import liff from "@line/liff";
 import { apiRequest } from "../lib/api";
 import LinePhoneBindGate from "./LinePhoneBindGate";
@@ -12,6 +13,29 @@ import {
 } from "../lib/lineBindingRecovery";
 
 const money = (v) => `NT$ ${Number(v || 0).toLocaleString()}`;
+
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function isPlaceholderCustomerName(value) {
+  const normalized = normalizeText(value);
+  return !normalized || normalized === "LINE 客戶" || normalized === "LINE Customer";
+}
+
+function resolveDisplayName(profileName, customerName) {
+  const normalizedProfile = normalizeText(profileName);
+  if (normalizedProfile) {
+    return normalizedProfile;
+  }
+
+  const normalizedCustomer = normalizeText(customerName);
+  if (normalizedCustomer && !isPlaceholderCustomerName(normalizedCustomer)) {
+    return normalizedCustomer;
+  }
+
+  return "LINE 客戶";
+}
 
 
 function RepairSteps({ status }) {
@@ -65,6 +89,7 @@ function RepairSteps({ status }) {
 
 
 export default function LineProgressPage() {
+  const location = useLocation();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [profileName, setProfileName] = useState("");
@@ -182,6 +207,7 @@ export default function LineProgressPage() {
       ) : !data?.customer?.phone ? (
         <LinePhoneBindGate
           lineUserId={lineUserId}
+          displayName={profileName}
           inClient={lineInClient}
           failureReason={lineContextFailureReason}
           lineContextDebug={lineContextDebug}
@@ -224,52 +250,73 @@ export default function LineProgressPage() {
       ) : (
         <>
           <Card>
-            <Title>{profileName || data.customer.name || "LINE 客戶"}</Title>
+            <Title>{resolveDisplayName(profileName, data.customer?.name)}</Title>
             <Row label="電話" value={data.customer.phone || "-"} />
           </Card>
 
-          <Section>我的訂單</Section>
-          {orders.length ? orders.slice(0, 10).map((o) => (
-            <Card key={o.id}>
-              <Title>{o.orderNo}</Title>
-              <Row label="狀態" value={o.status || "-"} />
-              <Row label="付款" value={o.finalPaymentStatus || "-"} />
-              <Row label="總金額" value={money(o.totalAmount)} />
-              <Row label="未付" value={money(o.unpaidBalance)} danger={Number(o.unpaidBalance || 0) > 0} />
+          {(() => {
+            const query = new URLSearchParams(location.search);
+            const tab = query.get("tab");
+            const showOrders = tab !== "repair";
+            const showRepairs = tab !== "order";
+            const visibleOrders = showOrders ? orders.slice(0, 10) : [];
+            const visibleRepairs = showRepairs ? repairs.slice(0, 10) : [];
 
-              {Number(o.unpaidBalance || 0) > 0 ? (
-                <a
-                  href={`/support?orderNo=${encodeURIComponent(o.orderNo || "")}&type=payment`}
-                  style={{
-                    display: "block",
-                    marginTop: 14,
-                    padding: 14,
-                    borderRadius: 16,
-                    background: "#16a34a",
-                    color: "#fff",
-                    textDecoration: "none",
-                    textAlign: "center",
-                    fontSize: 17,
-                    fontWeight: 900
-                  }}
-                >
-                  聯繫門市付款
-                </a>
-              ) : null}
-            </Card>
-          )) : <Card>目前沒有訂單。</Card>}
+            return (
+              <>
+                {showOrders ? (
+                  <>
+                    <Section>我的訂單</Section>
+                    {visibleOrders.length ? visibleOrders.map((o) => (
+                      <Card key={o.id}>
+                        <Title>{o.orderNo}</Title>
+                        <Row label="狀態" value={o.status || "-"} />
+                        <Row label="付款" value={o.finalPaymentStatus || "-"} />
+                        <Row label="總金額" value={money(o.totalAmount)} />
+                        <Row label="未付" value={money(o.unpaidBalance)} danger={Number(o.unpaidBalance || 0) > 0} />
 
-          <Section>我的維修</Section>
-          {repairs.length ? repairs.slice(0, 10).map((r) => (
-            <Card key={r.id}>
-              <Title>維修單 #{r.id}</Title>
-              <Row label="車款" value={r.bikeModel || "-"} />
-              <Row label="問題" value={r.issueDescription || "-"} />
-              <RepairSteps status={r.status} />
-              <Row label="狀態" value={r.status || "-"} />
-              <Row label="報價" value={money(r.estimateAmount)} />
-            </Card>
-          )) : <Card>目前沒有維修紀錄。</Card>}
+                        {Number(o.unpaidBalance || 0) > 0 ? (
+                          <a
+                            href={`/support?orderNo=${encodeURIComponent(o.orderNo || "")}&type=payment`}
+                            style={{
+                              display: "block",
+                              marginTop: 14,
+                              padding: 14,
+                              borderRadius: 16,
+                              background: "#16a34a",
+                              color: "#fff",
+                              textDecoration: "none",
+                              textAlign: "center",
+                              fontSize: 17,
+                              fontWeight: 900
+                            }}
+                          >
+                            聯繫門市付款
+                          </a>
+                        ) : null}
+                      </Card>
+                    )) : <Card>目前沒有訂單。</Card>}
+                  </>
+                ) : null}
+
+                {showRepairs ? (
+                  <>
+                    <Section>我的維修</Section>
+                    {visibleRepairs.length ? visibleRepairs.map((r) => (
+                      <Card key={r.id}>
+                        <Title>維修單 #{r.id}</Title>
+                        <Row label="車款" value={r.bikeModel || "-"} />
+                        <Row label="問題" value={r.issueDescription || "-"} />
+                        <RepairSteps status={r.status} />
+                        <Row label="狀態" value={r.status || "-"} />
+                        <Row label="報價" value={money(r.estimateAmount)} />
+                      </Card>
+                    )) : <Card>目前沒有維修紀錄。</Card>}
+                  </>
+                ) : null}
+              </>
+            );
+          })()}
         </>
       )}
 

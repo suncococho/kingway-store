@@ -54,7 +54,8 @@ function App() {
       <Route path="/line-order" element={<LineOrderPage />} />
       <Route path="/line-customer" element={<LineCustomerPage />} />
       <Route path="/repair-reservation" element={<LineRepairRequestPage />} />
-<Route path="/repair-request" element={<LineRepairRequestPage />} />
+      <Route path="/repair-request" element={<LineRepairRequestPage />} />
+      <Route path="/line-repair-request" element={<LineRepairRequestPage />} />
       <Route path="/coupon-center" element={<LineCouponPage />} />
       <Route path="/google-review" element={<LineGoogleReviewPage />} />
       <Route path="/progress" element={<LineProgressPage />} />

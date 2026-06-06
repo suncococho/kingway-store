@@ -89,11 +89,21 @@ async function resolveLineRepairStoreContext(req, lineUserId, reason) {
   };
 }
 
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function isPlaceholderCustomerName(value) {
+  const normalized = normalizeText(value);
+  return !normalized || normalized === "LINE 客戶" || normalized === "LINE Customer";
+}
+
 router.use(resolvePublicStoreContext);
 
 router.get("/customer", async (req, res, next) => {
   try {
     const lineUserId = String(req.query.lineUserId || "").trim();
+    const displayName = String(req.query.displayName || "").trim();
 
     if (!lineUserId) {
       return res.json({ customer: null });
@@ -108,20 +118,42 @@ router.get("/customer", async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT
-         id,
-         name,
-         phone,
-         line_user_id AS lineUserId,
-         store_id AS storeId
-       FROM customers
-       WHERE line_user_id = ?
-         AND store_id = ?
-         AND COALESCE(crm_stage, '') <> 'deleted'
-       LIMIT 1`,
+        id,
+        name,
+        phone,
+        line_user_id AS lineUserId,
+        store_id AS storeId
+      FROM customers
+      WHERE line_user_id = ?
+        AND store_id = ?
+        AND COALESCE(crm_stage, '') <> 'deleted'
+      LIMIT 1`,
       [lineUserId, resolvedStoreId]
     );
 
-    return res.json({ customer: rows[0] || null });
+    const customer = rows[0] || null;
+    if (customer && displayName) {
+      const trimmedDisplayName = normalizeText(displayName);
+      const updates = ["line_display_name = ?"];
+      const params = [trimmedDisplayName];
+      if (isPlaceholderCustomerName(customer.name)) {
+        updates.unshift("name = ?");
+        params.unshift(trimmedDisplayName);
+      }
+      await pool.query(
+        `
+          UPDATE customers
+          SET ${updates.join(", ")}
+          WHERE id = ? AND store_id = ?
+        `,
+        [...params, customer.id, resolvedStoreId]
+      );
+      if (isPlaceholderCustomerName(customer.name)) {
+        customer.name = trimmedDisplayName;
+      }
+    }
+
+    return res.json({ customer });
   } catch (error) {
     return next(error);
   }
@@ -130,6 +162,7 @@ router.get("/customer", async (req, res, next) => {
 router.post("/create", async (req, res, next) => {
   try {
     const lineUserId = String(req.body.lineUserId || "").trim();
+    const displayName = String(req.body.displayName || "").trim();
     const bikeModel = String(req.body.bikeModel || "").trim();
     const issueDescription = String(req.body.issueDescription || "").trim();
     const reservationDate = req.body.reservationDate || dayjs().format("YYYY-MM-DD");
@@ -174,7 +207,8 @@ router.post("/create", async (req, res, next) => {
     );
 
     const result = await createRepairReservationFromSession(lineUserId, {
-      storeId: resolvedStoreId
+      storeId: resolvedStoreId,
+      displayName
     });
 
     if (result?.phoneRequired) {

@@ -3979,27 +3979,27 @@ button:hover {
   box-shadow: 0 16px 30px rgba(22,163,74,.26) !important;
 }
 
-@media (max-width
-
-    padding: 14px 14px 24px !important
-
-
-  .line-customer-hero {
-    border-radius: 30px !i
-    padding: 28px 22p
+@media (max-width: 640px) {
+  .line-customer-page {
+    padding: 14px 14px 24px !important;
   }
 
-  .line-custome
+  .line-customer-hero {
+    border-radius: 30px !important;
+    padding: 28px 22px !important;
+  }
+
+  .line-customer-hero h1 {
     font-size: 40px !important;
   }
 
-
-    font-size
+  .line-customer-summary-title {
+    font-size: 28px !important;
   }
 
   .line-customer-item {
     min-height: 124px !important;
-    font-size
+    font-size: 18px !important;
     border-radius: 28px !important;
   }
 }
@@ -4239,52 +4239,37 @@ button:hover {
 
   font-size: 20px !important;
 
-  font
+  font-weight: 950 !important;
 
-  box-shadow: 0 16px 30px rgba(22,163,
+  box-shadow: 0 16px 30px rgba(22,163,74,.26);
 
 }
 
 @media (max-width: 640px) {
 
-  .line-customer-pa
-
-    padding: 14px 14p
-
+  .line-customer-page {
+    padding: 14px 14px 24px !important;
   }
 
-  .line-custome
-
+  .line-customer-hero {
     border-radius: 30px !important;
-
-
-
+    padding: 28px 22px !important;
   }
 
-  .line-
-
+  .line-customer-hero h1 {
     font-size: 40px !important;
-
   }
 
   .line-customer-summary-title {
-
-    
-
+    font-size: 28px !important;
   }
 
   .line-customer-item {
-
     min-height: 124px !important;
-
-
-
-    border-radius: 28px !imp
-
- 
-
+    font-size: 18px !important;
+    border-radius: 28px !important;
+  }
 }
-
 
 /* LINE Customer Center premium UI override only */
 .line-customer-page {

@@ -355,7 +355,6 @@ app.post("/api/line/push-test-welcome", async (req, res, next) => {
   }
 });
 
-
 app.post("/api/line/profile-name", async (req, res, next) => {
   try {
     const lineUserId = String(req.body.lineUserId || "").trim();
@@ -365,15 +364,26 @@ app.post("/api/line/profile-name", async (req, res, next) => {
       return res.json({ ok: false });
     }
 
-    await pool.query(
+    const [result] = await pool.query(
       `
         UPDATE customers
-        SET name = ?
+        SET
+          name = CASE
+            WHEN name IS NULL OR TRIM(name) = '' OR name IN ('LINE 客戶', 'LINE Customer')
+            THEN ?
+            ELSE name
+          END,
+          line_display_name = ?
         WHERE line_user_id = ?
-          AND (name IS NULL OR name <> ?)
       `,
-      [displayName, lineUserId, displayName]
+      [displayName, displayName, lineUserId]
     );
+
+    console.log("[line-profile-name]", {
+      lineUserId,
+      updatedRows: Number(result?.affectedRows || 0),
+      changedRows: Number(result?.changedRows || 0)
+    });
 
     return res.json({ ok: true });
   } catch (error) {
