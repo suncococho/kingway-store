@@ -94,7 +94,7 @@ function buildRepairReservationMessage(payload = {}) {
     `內容：${formatValue(repairContent)}`,
     payload.storeName ? `門市：${formatValue(payload.storeName)}` : `store_id：${formatValue(payload.storeId)}`,
     payload.adminUrl ? `管理連結：${payload.adminUrl}` : null
-  ].filter(Boolean).join("\\n");
+  ].filter(Boolean).join("\n");
 }
 
 function buildPaymentInquiryMessage(payload = {}) {
@@ -107,7 +107,7 @@ function buildPaymentInquiryMessage(payload = {}) {
     "內容：",
     formatValue(payload.message),
     "來源：LINE 客戶中心"
-  ].filter(Boolean).join("\\n");
+  ].filter(Boolean).join("\n");
 }
 
 function buildOrderReservationMessage(payload = {}) {
@@ -119,7 +119,7 @@ function buildOrderReservationMessage(payload = {}) {
     payload.orderLink ? `訂單連結：${payload.orderLink}` : null,
     `車款：${formatValue(payload.productName, "-")}`,
     "來源：LINE 客戶中心"
-  ].filter(Boolean).join("\\n");
+  ].filter(Boolean).join("\n");
 }
 
 async function resolveOrderReservationStoreId(payload = {}, connection = pool) {
