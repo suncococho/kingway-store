@@ -2,6 +2,8 @@ const express = require("express");
 const dayjs = require("dayjs");
 const { pool, withTransaction } = require("../db");
 const { BOT_NOTIFY, sendTelegramMessage } = require("../services/telegramService");
+const { logWorkflowEvent } = require("../services/lineWorkflowService");
+const { notifyOrderReservationCreated } = require("../services/staffLineNotify");
 const {
   SOURCE,
   createPublicStoreContextMiddleware,
@@ -430,6 +432,55 @@ router.post("/create", async (req, res, next) => {
           );
         } catch (error) {
           console.error("[line-order telegram notify failed]", error.message);
+        }
+      });
+    }
+
+    if (responsePayload?.ok) {
+      setImmediate(async () => {
+        try {
+          const lineOrderNotificationResult = await notifyOrderReservationCreated({
+            customerName: responsePayload.customer?.name || "LINE 客戶",
+            phone: responsePayload.customer?.phone || "-",
+            orderNo: responsePayload.orderNo || null,
+            orderId: responsePayload.orderId || null,
+            productName: responsePayload.product?.name || "LINE訂單車款",
+            storeId
+          }, {
+            registrationTypes: ["staff", "admin"]
+          });
+
+          try {
+            await logWorkflowEvent(
+              "order_reservation_line_group_notified",
+              "ORDER",
+              responsePayload.orderId,
+              {
+                orderId: responsePayload.orderId || null,
+                orderNo: responsePayload.orderNo || null,
+                customerName: responsePayload.customer?.name || "LINE 客戶",
+                phone: responsePayload.customer?.phone || null,
+                productName: responsePayload.product?.name || null,
+                source: "line_order_page",
+                delivered: lineOrderNotificationResult.delivered,
+                targetGroupIds: lineOrderNotificationResult.targetGroupIds || [],
+                lineGroupId: lineOrderNotificationResult.lineGroupId || null,
+                reason: lineOrderNotificationResult.reason || null,
+                error: lineOrderNotificationResult.error || null
+              },
+              null
+            );
+          } catch (eventError) {
+            console.warn("[line-order] workflow event logging failed", {
+              orderNo: responsePayload.orderNo,
+              message: eventError.message
+            });
+          }
+        } catch (lineNotifyError) {
+          console.error("[line-order] order reservation notify failed", {
+            orderNo: responsePayload.orderNo,
+            error: lineNotifyError.message
+          });
         }
       });
     }
