@@ -74,6 +74,41 @@ function buildRepairReservationMessage(payload = {}) {
   ].filter(Boolean).join("\\n");
 }
 
+function buildPaymentInquiryMessage(payload = {}) {
+  return [
+    "【KINGWAY 付款詢問】",
+    `客戶：${formatValue(payload.customerName)}`,
+    `電話：${formatValue(payload.phone, "-")}`,
+    `訂單：${formatValue(payload.orderNo, "-")}`,
+    "內容：",
+    formatValue(payload.message),
+    "來源：LINE 客戶中心"
+  ].filter(Boolean).join("\\n");
+}
+
+async function resolvePaymentInquiryStoreId(payload = {}, connection = pool) {
+  const scopedStoreId = normalizeStoreId(payload.storeId);
+  if (scopedStoreId) {
+    return scopedStoreId;
+  }
+
+  if (!payload.orderNo) {
+    return null;
+  }
+
+  const [rows] = await connection.query(
+    `
+      SELECT store_id AS storeId
+      FROM orders
+      WHERE order_no = ?
+      LIMIT 1
+    `,
+    [payload.orderNo]
+  );
+
+  return normalizeStoreId(rows[0]?.storeId);
+}
+
 async function resolveRepairStoreId(payload = {}, connection = pool) {
   const scopedStoreId = normalizeStoreId(payload.storeId);
   if (scopedStoreId) {
@@ -250,9 +285,120 @@ async function notifyRepairReservationCreated(payload = {}, options = {}) {
   }
 }
 
+async function notifyPaymentInquiryCreated(payload = {}, options = {}) {
+  const targetRegistrationTypes = Array.isArray(options.registrationTypes) && options.registrationTypes.length > 0
+    ? options.registrationTypes
+    : ["staff", "admin"];
+
+  try {
+    const storeId = await resolvePaymentInquiryStoreId(payload);
+    if (!storeId) {
+      console.info("[staff-line] payment_inquiry_notify_skipped", {
+        orderNo: payload.orderNo || null,
+        storeId: null
+      });
+      return { delivered: 0, skipped: true, reason: "missing_store_scope" };
+    }
+
+    if (isStaffLineNotifySuppressed()) {
+      const target = await resolveStaffLineGroupTarget(
+        pool,
+        targetRegistrationTypes
+      );
+      console.info("[staff-line] payment_inquiry_notify_skipped", {
+        orderNo: payload.orderNo || null,
+        storeId
+      });
+      return {
+        delivered: 0,
+        skipped: true,
+        reason: "environment_suppressed",
+        targetGroupIds: target?.lineGroupId ? [target.lineGroupId] : [],
+        registrationType: target?.registrationType || null,
+        lineGroupId: target?.lineGroupId ? maskLineGroupId(target.lineGroupId) : null
+      };
+    }
+
+    const [storeSettings, credentials] = await Promise.all([
+      getStoreLineSettings(storeId),
+      resolveStoreLineCredentials({ storeId, purpose: "payment_inquiry_staff_group_notify" })
+    ]);
+
+    if (!storeSettings.lineEnabled || !storeSettings.staffGroupEnabled || !credentials.credentialsResolved) {
+      console.info("[staff-line] payment_inquiry_notify_skipped", {
+        orderNo: payload.orderNo || null,
+        storeId
+      });
+      return {
+        delivered: 0,
+        skipped: true,
+        reason: "store_line_settings_incomplete",
+        targetGroupIds: [],
+        registrationType: null,
+        lineGroupId: null
+      };
+    }
+
+    const target = await resolveStaffLineGroupTarget(
+      pool,
+      targetRegistrationTypes
+    );
+    if (!target?.lineGroupId) {
+      console.info("[staff-line] payment_inquiry_notify_skipped", {
+        orderNo: payload.orderNo || null,
+        storeId
+      });
+      return {
+        delivered: 0,
+        skipped: true,
+        reason: "no_active_line_group_registration",
+        targetGroupIds: [],
+        registrationType: null,
+        lineGroupId: null
+      };
+    }
+
+    const result = await pushTextToLineGroup(
+      target.lineGroupId,
+      buildPaymentInquiryMessage({
+        ...payload,
+        customerName: payload.customerName || payload.name
+      }),
+      credentials.channelAccessToken
+    );
+
+    if (result.delivered > 0) {
+      console.info("[staff-line] payment_inquiry_notify_sent", {
+        orderNo: payload.orderNo || null,
+        storeId
+      });
+    } else {
+      console.info("[staff-line] payment_inquiry_notify_skipped", {
+        orderNo: payload.orderNo || null,
+        storeId
+      });
+    }
+
+    return {
+      ...result,
+      targetGroupIds: [target.lineGroupId],
+      registrationType: target.registrationType,
+      lineGroupId: maskLineGroupId(target.lineGroupId),
+      storeId
+    };
+  } catch (error) {
+    console.info("[staff-line] payment_inquiry_notify_skipped", {
+      orderNo: payload.orderNo || null,
+      storeId: normalizeStoreId(payload.storeId)
+    });
+    return { delivered: 0, skipped: false, error: error.message };
+  }
+}
+
 module.exports = {
   buildRepairReservationMessage,
   isStaffLineNotifySuppressed,
+  notifyPaymentInquiryCreated,
   notifyRepairReservationCreated,
   resolveStaffLineGroupTarget
 };

@@ -39,6 +39,8 @@ const debugRoutes = require("./routes/debug");
 const { errorHandler } = require("./middleware/errorHandler");
 const { sendDailyReport, TAIPEI_TZ } = require("./services/reportService");
 const { authenticate, authorize, requireStoreScope } = require("./middleware/auth");
+const { logWorkflowEvent } = require("./services/lineWorkflowService");
+const { notifyPaymentInquiryCreated } = require("./services/staffLineNotify");
 
 const app = express();
 const customerStatusStaffAuth = [
@@ -104,8 +106,10 @@ app.get("/api/coupons/by-phone/:phone", async (req, res, next) => {
 app.post("/api/line-support/create", async (req, res, next) => {
   try {
     const { lineUserId, name, phone, orderNo, type, message } = req.body || {};
+    const normalizedMessage = String(message || "").trim();
+    const shouldNotifyLineSupport = String(type || "").trim() === "payment" || Boolean(orderNo);
 
-    if (!message || !String(message).trim()) {
+    if (!normalizedMessage) {
       return res.status(400).json({ message: "請輸入需求內容" });
     }
 
@@ -118,7 +122,7 @@ app.post("/api/line-support/create", async (req, res, next) => {
       lineUserId ? `LINE userId：${lineUserId}` : null,
       "",
       "內容：",
-      String(message).trim()
+      normalizedMessage
     ].filter(Boolean).join("\n");
 
     const { BOT_NOTIFY, sendTelegramMessage } = require("./services/telegramService");
@@ -128,6 +132,79 @@ app.post("/api/line-support/create", async (req, res, next) => {
       "-5280460882",
       text
     );
+
+    if (shouldNotifyLineSupport) {
+      setImmediate(async () => {
+        try {
+          const resolvedOrderNo = String(orderNo || "").trim();
+          let resolvedOrderId = null;
+          let resolvedStoreId = null;
+
+          if (resolvedOrderNo) {
+            const [orders] = await pool.query(
+              `
+                SELECT id, store_id AS storeId
+                FROM orders
+                WHERE order_no = ?
+                LIMIT 1
+              `,
+              [resolvedOrderNo]
+            );
+
+            if (orders[0]) {
+              resolvedOrderId = orders[0].id;
+              const normalizedStoreId = Number(orders[0].storeId || 0);
+              resolvedStoreId = Number.isSafeInteger(normalizedStoreId) && normalizedStoreId > 0
+                ? normalizedStoreId
+                : null;
+            }
+          }
+
+          const lineSupportNotificationResult = await notifyPaymentInquiryCreated({
+            customerName: name || "LINE 客戶",
+            phone: phone || "-",
+            orderNo: resolvedOrderNo || null,
+            message: normalizedMessage,
+            orderId: resolvedOrderId,
+            storeId: resolvedStoreId
+          }, {
+            registrationTypes: ["staff", "admin"]
+          });
+
+          try {
+            await logWorkflowEvent(
+              "payment_inquiry_line_group_notified",
+              "ORDER",
+              resolvedOrderId,
+              {
+                type: String(type || "").trim() || "support",
+                orderNo: resolvedOrderNo || null,
+                customerName: name || "LINE 客戶",
+                phone: phone || null,
+                message: normalizedMessage,
+                source: "line_support_page",
+                delivered: lineSupportNotificationResult.delivered,
+                targetGroupIds: lineSupportNotificationResult.targetGroupIds || [],
+                lineGroupId: lineSupportNotificationResult.lineGroupId || null,
+                reason: lineSupportNotificationResult.reason || null,
+                error: lineSupportNotificationResult.error || null
+              },
+              null
+            );
+          } catch (eventError) {
+            console.warn("[line-support] workflow event logging failed", {
+              orderNo: resolvedOrderNo,
+              message: eventError.message
+            });
+          }
+        } catch (lineNotifyError) {
+          console.error("[line-support] payment inquiry notify failed", {
+            orderNo: String(orderNo || ""),
+            error: lineNotifyError.message
+          });
+        }
+      });
+    }
 
     return res.json({ ok: true });
   } catch (error) {
