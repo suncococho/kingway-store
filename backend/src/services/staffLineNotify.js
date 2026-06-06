@@ -6,7 +6,7 @@ const {
 } = require("./storeLineSettingsService");
 
 const LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push";
-const STAFF_GROUP_TYPES = ["repair", "daily", "admin", "staff"];
+const STAFF_GROUP_TYPES = ["repair", "staff", "admin"];
 
 function maskLineGroupId(value) {
   const text = String(value || "").trim();
@@ -98,17 +98,22 @@ async function resolveRepairStoreId(payload = {}, connection = pool) {
   return normalizeStoreId(rows[0]?.storeId);
 }
 
-async function resolveStaffLineGroupTarget(connection = pool) {
+async function resolveStaffLineGroupTarget(connection = pool, registrationTypes = STAFF_GROUP_TYPES) {
+  const resolvedRegistrationTypes = Array.isArray(registrationTypes) && registrationTypes.length > 0
+    ? [...registrationTypes]
+    : [...STAFF_GROUP_TYPES];
+
+  const orderCases = resolvedRegistrationTypes.map((type, index) => `WHEN '${type}' THEN ${index + 1}`).join(" ");
   const [rows] = await connection.query(
     `
       SELECT line_group_id AS lineGroupId, registration_type AS registrationType, group_name AS groupName
       FROM line_group_registrations
       WHERE is_active = 1
         AND registration_type IN (?)
-      ORDER BY FIELD(registration_type, 'repair', 'daily', 'admin', 'staff'), updated_at DESC, id DESC
+      ORDER BY CASE registration_type ${orderCases} ELSE 99 END, updated_at DESC, id DESC
       LIMIT 1
     `,
-    [STAFF_GROUP_TYPES]
+    [resolvedRegistrationTypes]
   );
 
   return rows[0] || null;
@@ -142,7 +147,11 @@ async function pushTextToLineGroup(lineGroupId, text, accessToken) {
   return { delivered: 1, skipped: false };
 }
 
-async function notifyRepairReservationCreated(payload = {}) {
+async function notifyRepairReservationCreated(payload = {}, options = {}) {
+  const targetRegistrationTypes = Array.isArray(options.registrationTypes) && options.registrationTypes.length > 0
+    ? options.registrationTypes
+    : STAFF_GROUP_TYPES;
+
   try {
     const storeId = await resolveRepairStoreId(payload);
     if (!storeId) {
@@ -154,11 +163,22 @@ async function notifyRepairReservationCreated(payload = {}) {
     }
 
     if (isStaffLineNotifySuppressed()) {
+      const target = await resolveStaffLineGroupTarget(
+        pool,
+        targetRegistrationTypes
+      );
       console.info("[staff-line] repair_notify_skipped", {
         repairId: payload.repairId || null,
         storeId
       });
-      return { delivered: 0, skipped: true, reason: "environment_suppressed" };
+      return {
+        delivered: 0,
+        skipped: true,
+        reason: "environment_suppressed",
+        targetGroupIds: target?.lineGroupId ? [target.lineGroupId] : [],
+        registrationType: target?.registrationType || null,
+        lineGroupId: target?.lineGroupId ? maskLineGroupId(target.lineGroupId) : null
+      };
     }
 
     const [storeSettings, credentials] = await Promise.all([
@@ -174,13 +194,23 @@ async function notifyRepairReservationCreated(payload = {}) {
       return { delivered: 0, skipped: true, reason: "store_line_settings_incomplete" };
     }
 
-    const target = await resolveStaffLineGroupTarget();
+    const target = await resolveStaffLineGroupTarget(
+      pool,
+      targetRegistrationTypes
+    );
     if (!target?.lineGroupId) {
       console.info("[staff-line] repair_notify_skipped", {
         repairId: payload.repairId || null,
         storeId
       });
-      return { delivered: 0, skipped: true, reason: "no_active_line_group_registration" };
+      return {
+        delivered: 0,
+        skipped: true,
+        reason: "no_active_line_group_registration",
+        targetGroupIds: [],
+        registrationType: null,
+        lineGroupId: null
+      };
     }
 
     const result = await pushTextToLineGroup(
@@ -206,6 +236,7 @@ async function notifyRepairReservationCreated(payload = {}) {
 
     return {
       ...result,
+      targetGroupIds: [target.lineGroupId],
       registrationType: target.registrationType,
       lineGroupId: maskLineGroupId(target.lineGroupId),
       storeId

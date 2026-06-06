@@ -205,6 +205,8 @@ router.post("/create", async (req, res, next) => {
         sourceLabel: "LINE 維修預約",
         storeName: storeContext?.storeName,
         adminUrl: `${config.frontendBaseUrl}/repairs/${result.repairId}`
+      }, {
+        registrationTypes: ["repair", "staff", "admin"]
       });
       try {
         await logWorkflowEvent(
