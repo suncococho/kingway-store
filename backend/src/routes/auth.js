@@ -32,7 +32,8 @@ async function loadActiveStoreMemberships(staffUserId) {
         SELECT
           sm.store_id,
           sm.role AS store_role,
-          sm.is_default
+          sm.is_default,
+          s.name AS store_name
         FROM store_memberships sm
         JOIN stores s ON s.id = sm.store_id
         WHERE sm.staff_user_id = ?
@@ -52,11 +53,26 @@ async function loadActiveStoreMemberships(staffUserId) {
   }
 }
 
+async function loadStoreName(storeId) {
+  if (!storeId) {
+    return null;
+  }
+
+  const normalizedStoreId = Number(storeId);
+  if (!Number.isInteger(normalizedStoreId) || normalizedStoreId <= 0) {
+    return null;
+  }
+
+  const [rows] = await pool.query("SELECT name FROM stores WHERE id = ? LIMIT 1", [normalizedStoreId]);
+  return rows?.[0]?.name || null;
+}
+
 function selectStoreContext(user, memberships) {
   if (memberships.length === 1) {
     return {
       storeId: memberships[0].store_id,
-      storeRole: memberships[0].store_role
+      storeRole: memberships[0].store_role,
+      storeName: memberships[0].store_name || null
     };
   }
 
@@ -64,7 +80,8 @@ function selectStoreContext(user, memberships) {
   if (defaultMemberships.length === 1) {
     return {
       storeId: defaultMemberships[0].store_id,
-      storeRole: defaultMemberships[0].store_role
+      storeRole: defaultMemberships[0].store_role,
+      storeName: defaultMemberships[0].store_name || null
     };
   }
 
@@ -74,14 +91,16 @@ function selectStoreContext(user, memberships) {
     if (matchingMembership) {
       return {
         storeId: matchingMembership.store_id,
-        storeRole: matchingMembership.store_role
+        storeRole: matchingMembership.store_role,
+        storeName: matchingMembership.store_name || null
       };
     }
   }
 
   return {
     storeId: legacyStoreId,
-    storeRole: null
+    storeRole: null,
+    storeName: null
   };
 }
 
@@ -120,6 +139,7 @@ router.post("/login", async (req, res, next) => {
 
     const memberships = await loadActiveStoreMemberships(user.id);
     const storeContext = selectStoreContext(user, memberships);
+    const storeName = storeContext.storeName || (await loadStoreName(storeContext.storeId));
     const permissions = getUserPermissions(user);
     const token = jwt.sign(
       {
@@ -129,6 +149,7 @@ router.post("/login", async (req, res, next) => {
         displayName: user.display_name,
         storeId: storeContext.storeId,
         storeRole: storeContext.storeRole,
+        storeName,
         permissions
       },
       config.jwtSecret,
@@ -144,6 +165,7 @@ router.post("/login", async (req, res, next) => {
         displayName: user.display_name,
         storeId: storeContext.storeId,
         storeRole: storeContext.storeRole,
+        storeName,
         permissions
       }
     });

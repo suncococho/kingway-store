@@ -18,6 +18,7 @@ const PRIORITY_ITEMS = [
 
 function DashboardPage() {
   const user = getStoredUser();
+  const currentStoreName = user?.storeName || "KINGWAY 門市";
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(searchParams.get("tab") || "OVERVIEW");
   const [summary, setSummary] = useState(null);
@@ -217,6 +218,7 @@ function DashboardPage() {
           <div className="hero-meta">
             <span className="hero-meta-item">登入帳號：{user?.displayName || user?.username || "-"}</span>
             <span className="hero-meta-item">角色：{user?.role || "-"}</span>
+            <span className="hero-meta-item">目前門市：{currentStoreName}</span>
             <span className="hero-meta-item">今日銷售：NT${summary?.totals?.salesToday ?? 0}</span>
           </div>
         </div>

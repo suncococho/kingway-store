@@ -8,6 +8,7 @@ function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const user = getStoredUser();
+  const currentStoreName = user?.storeName || "KINGWAY 門市";
   const { features } = useStoreFeatures();
   const mobileMenuSections = getMobileMenuSectionsForUser(user, features)
     .map((group) => ({
@@ -26,7 +27,7 @@ function Sidebar() {
     <aside className="sidebar">
       <div className="sidebar-main">
         <div className="sidebar-brand-card">
-          <div className="brand">KINGWAY 台南門市</div>
+          <div className="brand">目前門市：{currentStoreName}</div>
           <div className="sidebar-user">
             <div className="sidebar-user-name">{user?.displayName || user?.username || "管理員"}</div>
             <div className="sidebar-role">{user?.role || "門市後台"}</div>
@@ -90,7 +91,7 @@ function Sidebar() {
           <span />
         </button>
         <div className="mobile-top-copy">
-          <div className="mobile-top-brand">KINGWAY 台南門市</div>
+          <div className="mobile-top-brand">目前門市：{currentStoreName}</div>
           <div className="mobile-top-user">{user?.displayName || user?.username || "門市後台"}</div>
         </div>
       </div>
@@ -100,7 +101,7 @@ function Sidebar() {
           <aside className="mobile-drawer" aria-label="主要導覽" onClick={(event) => event.stopPropagation()}>
             <div className="mobile-drawer-header">
               <div>
-                <div className="mobile-drawer-title">KINGWAY 台南門市</div>
+                <div className="mobile-drawer-title">目前門市：{currentStoreName}</div>
                 <div className="mobile-drawer-subtitle">{user?.displayName || user?.username || "管理員"} / {user?.role || "門市後台"}</div>
               </div>
               <button type="button" className="secondary-button mobile-drawer-close" onClick={() => setMobileDrawerOpen(false)}>
