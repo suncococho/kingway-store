@@ -9,8 +9,6 @@ const {
 } = require("../utils/publicStoreResolver");
 const {
   createRepairReservationFromSession,
-  sendToGroupsWithResult,
-  buildGroupApprovalMessage,
   logWorkflowEvent,
   resolveLineWorkflowStoreContext
 } = require("../services/lineWorkflowService");
@@ -194,33 +192,8 @@ router.post("/create", async (req, res, next) => {
       });
     }
 
-    const deliveryResult = await sendToGroupsWithResult(["repair", "admin"], [
-      buildGroupApprovalMessage("repair_reservation", {
-        id: result.repairId,
-        customerName: result.customer.name || "LINE 客戶",
-        customerPhone: result.customer.phone || null,
-        reservationDate: result.payload.reservationDate,
-        reservationTime: result.payload.reservationTime,
-        bikeModel: result.payload.bikeModel,
-        issueDescription: result.payload.issueDescription
-      })
-    ]);
-
-    await logWorkflowEvent(
-      "repair_reservation_group_notified",
-      "REPAIR_ORDER",
-      result.repairId,
-      {
-        delivered: deliveryResult.delivered,
-        targetGroupIds: deliveryResult.targetGroupIds,
-        fromLine: true,
-        source: "line_repair_page"
-      },
-      null
-    );
-
     try {
-      await notifyRepairReservationCreated({
+      const lineNotificationResult = await notifyRepairReservationCreated({
         repairId: result.repairId,
         storeId: resolvedStoreId,
         customerName: result.customer.name || "LINE 客戶",
@@ -230,13 +203,58 @@ router.post("/create", async (req, res, next) => {
         bikeModel: result.payload.bikeModel,
         issueDescription: result.payload.issueDescription,
         sourceLabel: "LINE 維修預約",
+        storeName: storeContext?.storeName,
         adminUrl: `${config.frontendBaseUrl}/repairs/${result.repairId}`
       });
+      try {
+        await logWorkflowEvent(
+          "repair_reservation_line_group_notified",
+          "REPAIR_ORDER",
+          result.repairId,
+          {
+            fromLine: true,
+            source: "line_repair_page",
+            delivered: lineNotificationResult.delivered,
+            skipped: Boolean(lineNotificationResult.skipped),
+            reason: lineNotificationResult.reason || null,
+            targetGroupIds: lineNotificationResult.targetGroupIds || [],
+            lineGroupId: lineNotificationResult.lineGroupId || null
+          },
+          null
+        );
+      } catch (lineLogError) {
+        console.warn("[staff-line] log line reservation notify event failed", {
+          repairId: result.repairId,
+          message: lineLogError.message
+        });
+      }
     } catch (staffLineError) {
       console.warn("[staff-line] line repair page notification failed after creation", {
         repairId: result.repairId,
         message: staffLineError.message
       });
+      try {
+        await logWorkflowEvent(
+          "repair_reservation_line_group_notified",
+          "REPAIR_ORDER",
+          result.repairId,
+          {
+            fromLine: true,
+            source: "line_repair_page",
+            delivered: 0,
+            skipped: false,
+            reason: staffLineError.message || "notification_exception",
+            targetGroupIds: [],
+            exception: true
+          },
+          null
+        );
+      } catch (lineLogError) {
+        console.warn("[staff-line] log line reservation notify failure event failed", {
+          repairId: result.repairId,
+          message: lineLogError.message
+        });
+      }
     }
 
     return res.json({
