@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiRequest } from "../lib/api";
+import { API_BASE_URL, apiRequest } from "../lib/api";
+import { getStoredToken } from "../lib/auth";
 
 const money = (v) =>
   `NT$ ${Number(v || 0).toLocaleString("zh-TW", {
@@ -80,6 +81,7 @@ export default function SalesManagementPage() {
     products: [],
   });
   const [loading, setLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState("");
 
   const rangeLabel = useMemo(() => `${startDate} ～ ${endDate}`, [startDate, endDate]);
@@ -97,6 +99,52 @@ export default function SalesManagementPage() {
       setError(err?.message || "銷售資料讀取失敗");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function downloadSalesExport() {
+    setDownloading(true);
+    setError("");
+
+    try {
+      const token = getStoredToken();
+      const response = await fetch(
+        `${API_BASE_URL}/sales/export-sales?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`,
+        {
+          method: "GET",
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        }
+      );
+
+      if (!response.ok) {
+        const text = await response.text();
+        const message = text || "匯出失敗";
+        let parsed = message;
+        try {
+          parsed = JSON.parse(text).message || message;
+        } catch (error) {
+          // ignored
+        }
+        throw new Error(parsed);
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get("Content-Disposition");
+      const filenameMatch = contentDisposition?.match(/filename=\"?([^\";]+)\"?/);
+      const filename = filenameMatch?.[1] || `KINGWAY_sales_${startDate}_${endDate}.xlsx`;
+
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setError(err?.message || "匯出 Excel 失敗");
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -546,6 +594,9 @@ export default function SalesManagementPage() {
 
           <button type="button" onClick={loadSales} disabled={loading}>
             {loading ? "查詢中..." : "查詢"}
+          </button>
+          <button type="button" onClick={downloadSalesExport} disabled={loading || downloading}>
+            {downloading ? "匯出中..." : "匯出Excel"}
           </button>
         </div>
 
