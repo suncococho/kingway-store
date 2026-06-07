@@ -209,6 +209,9 @@ function DashboardPage() {
     () => [
       ...PRIORITY_ITEMS.map((item) => ({
         ...item,
+        id: item.key,
+        title: item.title || item.label,
+        detail: item.detail || "",
         count: summary?.pendingTasks?.[item.key] ?? 0
       })),
       {
