@@ -1,5 +1,13 @@
 const { pool } = require("../db");
 
+const INVALID_STATUS_LIST = "'cancelled', 'canceled', 'deleted', 'CANCELED', 'CANCELLED', 'DELETED'";
+const PICKUP_PENDING_REPAIR_STATES = "'picked_up', 'completed', 'canceled', 'CANCELED', 'CANCELLED', 'DELETED'";
+
+function getValidOrderWhereClause(alias = "") {
+  const prefix = alias ? `${alias}.` : "";
+  return `${prefix}deleted_at IS NULL AND ${prefix}status NOT IN (${INVALID_STATUS_LIST})`;
+}
+
 async function getPendingTaskCounts(storeId) {
   const normalizedStoreId = Number(storeId);
   if (!Number.isInteger(normalizedStoreId) || normalizedStoreId <= 0) {
@@ -11,9 +19,17 @@ async function getPendingTaskCounts(storeId) {
   const [[purchaseConfirmations]] = await pool.query(
     `
       SELECT COUNT(*) AS count
-      FROM purchase_confirmations
-      WHERE store_id = ?
-        AND status = 'PENDING'
+      FROM purchase_confirmations pc
+      LEFT JOIN orders o
+        ON o.id = pc.order_id
+       AND o.store_id = pc.store_id
+      WHERE pc.store_id = ?
+        AND pc.status = 'PENDING'
+        AND (
+          pc.order_id IS NULL
+          OR o.id IS NULL
+          OR ${getValidOrderWhereClause("o")}
+        )
     `,
     [normalizedStoreId]
   );
@@ -23,7 +39,9 @@ async function getPendingTaskCounts(storeId) {
       SELECT COUNT(*) AS count
       FROM repair_orders
       WHERE store_id = ?
-        AND status IN ('checking', 'reserved', 'estimate_pending_approval', 'estimate_approved', 'completed_waiting_pickup')
+        AND deleted_at IS NULL
+        AND status NOT IN (${PICKUP_PENDING_REPAIR_STATES})
+        AND picked_up_at IS NULL
     `,
     [normalizedStoreId]
   );

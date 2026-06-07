@@ -5,6 +5,52 @@ const { getPendingTaskCounts } = require("../services/taskService");
 
 const router = express.Router();
 
+const VALID_STATUS_LIST = "'cancelled', 'canceled', 'deleted', 'CANCELED', 'CANCELLED', 'DELETED'";
+const REPAIR_PICKUP_EXCLUDED_STATUSES = "'picked_up', 'completed', 'canceled', 'CANCELED', 'CANCELLED', 'DELETED'";
+const VALID_ORDER_WHERE = "deleted_at IS NULL AND status NOT IN (" + VALID_STATUS_LIST + ")";
+
+const VALID_REPAIR_WHERE = VALID_ORDER_WHERE;
+
+let cachedProductFilter = null;
+
+function getOrderWhereClause(alias = "") {
+  const prefix = alias ? `${alias}.` : "";
+  return `${prefix}deleted_at IS NULL AND ${prefix}status NOT IN (${VALID_STATUS_LIST})`;
+}
+
+function getRepairWhereClause(alias = "") {
+  const prefix = alias ? `${alias}.` : "";
+  return `${prefix}deleted_at IS NULL AND ${prefix}status NOT IN (${VALID_STATUS_LIST})`;
+}
+
+async function getProductFilterClause() {
+  if (cachedProductFilter !== null) {
+    return cachedProductFilter;
+  }
+
+  try {
+    const [rows] = await pool.query(
+      "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME IN ('deleted_at', 'is_active', 'status')"
+    );
+    const columns = new Set(rows.map((row) => row.COLUMN_NAME));
+    const parts = [];
+    if (columns.has("deleted_at")) {
+      parts.push("deleted_at IS NULL");
+    }
+    if (columns.has("is_active")) {
+      parts.push("is_active = 1");
+    }
+    if (columns.has("status")) {
+      parts.push("status NOT IN ('deleted', 'DELETED')");
+    }
+    cachedProductFilter = parts.length ? ` AND ${parts.join(" AND ")}` : "";
+  } catch (error) {
+    cachedProductFilter = "";
+  }
+
+  return cachedProductFilter;
+}
+
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"]));
 
 router.get("/summary", async (req, res, next) => {
@@ -14,15 +60,17 @@ router.get("/summary", async (req, res, next) => {
       return res.status(403).json({ message: "Store scope required" });
     }
 
+    const productFilterClause = await getProductFilterClause();
+
     const [[totals]] = await pool.query(
       `
         SELECT
           (SELECT COUNT(*) FROM customers WHERE store_id = ?) AS customers,
-          (SELECT COUNT(*) FROM products WHERE store_id = ?) AS products,
-          (SELECT COUNT(*) FROM orders WHERE store_id = ?) AS orders,
-          (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE store_id = ? AND business_date = CURRENT_DATE()) AS salesToday,
-          (SELECT COUNT(*) FROM orders WHERE store_id = ? AND is_reservation_order = 1 AND final_payment_status <> 'PAID') AS depositOrdersPending,
-          (SELECT COUNT(*) FROM products WHERE store_id = ? AND stock <= reorder_level) AS lowStockCount,
+          (SELECT COUNT(*) FROM products WHERE store_id = ?${productFilterClause}) AS products,
+          (SELECT COUNT(*) FROM orders WHERE store_id = ? AND ${VALID_ORDER_WHERE}) AS orders,
+          (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE store_id = ? AND business_date = CURRENT_DATE() AND ${VALID_ORDER_WHERE}) AS salesToday,
+          (SELECT COUNT(*) FROM orders WHERE store_id = ? AND is_reservation_order = 1 AND final_payment_status <> 'PAID' AND ${VALID_ORDER_WHERE}) AS depositOrdersPending,
+          (SELECT COUNT(*) FROM products WHERE store_id = ?${productFilterClause} AND stock <= reorder_level) AS lowStockCount,
           (SELECT COUNT(*) FROM supplier_requests WHERE store_id = ? AND status IN ('PENDING_SUPPLIER','APPROVED','PARTIALLY_RECEIVED')) AS supplierRequestsPending
       `,
       [storeId, storeId, storeId, storeId, storeId, storeId, storeId]
@@ -55,8 +103,7 @@ router.get("/summary", async (req, res, next) => {
           ON c.id = o.customer_id
           AND c.store_id = o.store_id
         WHERE o.store_id = ?
-          AND o.deleted_at IS NULL
-          AND o.status NOT IN ('CANCELED', 'CANCELLED')
+          AND ${getOrderWhereClause("o")}
           AND o.handover_confirmed_at IS NULL
         GROUP BY
           o.id,
@@ -87,8 +134,7 @@ router.get("/summary", async (req, res, next) => {
           AND oi.store_id = o.store_id
           AND oi.product_category_snapshot IN ('EB', 'EBIKE')
         WHERE o.store_id = ?
-          AND o.deleted_at IS NULL
-          AND o.status NOT IN ('CANCELED', 'CANCELLED')
+          AND ${getOrderWhereClause("o")}
           AND o.handover_confirmed_at IS NULL
       `,
       [storeId]
@@ -110,9 +156,9 @@ router.get("/summary", async (req, res, next) => {
           ON c.id = ro.customer_id
           AND c.store_id = ro.store_id
         WHERE ro.store_id = ?
-          AND ro.deleted_at IS NULL
+          AND ${getRepairWhereClause("ro")}
+          AND ro.status NOT IN (${REPAIR_PICKUP_EXCLUDED_STATUSES})
           AND ro.picked_up_at IS NULL
-          AND ro.status NOT IN ('picked_up', 'completed', 'canceled', 'CANCELED')
         ORDER BY ro.id DESC
         LIMIT 10
       `,
@@ -124,9 +170,9 @@ router.get("/summary", async (req, res, next) => {
         SELECT COUNT(*) AS pendingRepairPickupCount
         FROM repair_orders ro
         WHERE ro.store_id = ?
-          AND ro.deleted_at IS NULL
+          AND ${getRepairWhereClause("ro")}
+          AND ro.status NOT IN (${REPAIR_PICKUP_EXCLUDED_STATUSES})
           AND ro.picked_up_at IS NULL
-          AND ro.status NOT IN ('picked_up', 'completed', 'canceled', 'CANCELED')
       `,
       [storeId]
     );
@@ -156,8 +202,7 @@ router.get("/summary", async (req, res, next) => {
           ON c.id = o.customer_id
           AND c.store_id = o.store_id
         WHERE o.store_id = ?
-          AND o.deleted_at IS NULL
-          AND o.status NOT IN ('CANCELED', 'CANCELLED')
+          AND ${getOrderWhereClause("o")}
           AND (COALESCE(o.unpaid_balance, 0) > 0 OR COALESCE(o.final_payment_status, 'UNPAID') <> 'PAID')
         GROUP BY
           o.id,
@@ -185,8 +230,7 @@ router.get("/summary", async (req, res, next) => {
           COALESCE(SUM(unpaid_balance), 0) AS pendingPaymentAmount
         FROM orders
         WHERE store_id = ?
-          AND deleted_at IS NULL
-          AND status NOT IN ('CANCELED', 'CANCELLED')
+          AND ${VALID_ORDER_WHERE}
           AND (COALESCE(unpaid_balance, 0) > 0 OR COALESCE(final_payment_status, 'UNPAID') <> 'PAID')
       `,
       [storeId]
