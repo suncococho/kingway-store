@@ -4,7 +4,7 @@ import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
 import SectionTabs from "../components/SectionTabs";
-import { getStoredUser } from "../lib/auth";
+import { getStoredUser, getStoredStoreName } from "../lib/auth";
 import { apiRequest } from "../lib/api";
 import StatusBadge from "../components/StatusBadge";
 import { useFetchList } from "../hooks/useFetchList";
@@ -18,7 +18,7 @@ const PRIORITY_ITEMS = [
 
 function DashboardPage() {
   const user = getStoredUser();
-  const currentStoreName = user?.storeName || "KINGWAY 門市";
+  const currentStoreName = getStoredStoreName();
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(searchParams.get("tab") || "OVERVIEW");
   const [summary, setSummary] = useState(null);

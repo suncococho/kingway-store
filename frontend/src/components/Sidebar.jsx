@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { clearAuth, getStoredUser } from "../lib/auth";
+import { clearAuth, getStoredStoreName, getStoredUser } from "../lib/auth";
 import { useStoreFeatures } from "../hooks/useStoreFeatures";
 import { getMobileMenuSectionsForUser, isMenuItemActive } from "../lib/mobileNavigation";
 
@@ -8,7 +8,7 @@ function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const user = getStoredUser();
-  const currentStoreName = user?.storeName || "KINGWAY 門市";
+  const currentStoreName = getStoredStoreName();
   const { features } = useStoreFeatures();
   const mobileMenuSections = getMobileMenuSectionsForUser(user, features)
     .map((group) => ({
