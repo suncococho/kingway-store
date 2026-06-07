@@ -413,6 +413,10 @@ function DashboardPage() {
     [pendingPaymentOrders]
   );
 
+  function ResponsiveDataSection({ children }) {
+    return <div className="dashboard-responsive-data">{children}</div>;
+  }
+
   return (
     <div>
       <PageHeader title="儀表板" description="營運首頁優先顯示今日待辦、關鍵數字與各工作區摘要。" />
@@ -489,78 +493,84 @@ function DashboardPage() {
         <>
           <section className="admin-panel" id="pending-bike-deliveries">
             <AdminSectionHeader eyebrow="待交車" title="待交車訂單" description="電動自行車/EBIKE 訂單未完成交車確認。可直接前往訂單編輯。" />
-            <DataTable
-              columns={pendingBikeColumns}
-              rows={pendingBikeRows}
-              emptyText="目前沒有待交車訂單。"
-              cardTitle={(row) => row.orderNo}
-              cardDescription={(row) => `${row.customerName} / ${row.businessDateLabel}`}
-              cardBadges={(row) => <StatusBadge tone={Number(row.unpaidBalance || 0) > 0 ? "warning" : "success"}>{row.finalPaymentStatusLabel}</StatusBadge>}
-              cardFooter={(row) => (
-                <div className="action-row">
-                  <button type="button" className="secondary-button" onClick={() => navigate(`/orders/${row.id}/edit`)}>
-                    查看訂單
-                  </button>
-                  {Number(row.unpaidBalance || 0) > 0 && canConfirmPayment ? (
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => confirmPendingBalance(row)}
-                      disabled={collectingOrderId === row.id}
-                    >
-                      {collectingOrderId === row.id ? "處理中..." : "確認收款"}
+            <ResponsiveDataSection>
+              <DataTable
+                columns={pendingBikeColumns}
+                rows={pendingBikeRows}
+                emptyText="目前沒有待交車訂單。"
+                cardTitle={(row) => row.orderNo}
+                cardDescription={(row) => `${row.customerName} / ${row.businessDateLabel}`}
+                cardBadges={(row) => <StatusBadge tone={Number(row.unpaidBalance || 0) > 0 ? "warning" : "success"}>{row.finalPaymentStatusLabel}</StatusBadge>}
+                cardFooter={(row) => (
+                  <div className="action-row">
+                    <button type="button" className="secondary-button" onClick={() => navigate(`/orders/${row.id}/edit`)}>
+                      查看訂單
                     </button>
-                  ) : null}
-                </div>
-              )}
-            />
+                    {Number(row.unpaidBalance || 0) > 0 && canConfirmPayment ? (
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => confirmPendingBalance(row)}
+                        disabled={collectingOrderId === row.id}
+                      >
+                        {collectingOrderId === row.id ? "處理中..." : "確認收款"}
+                      </button>
+                    ) : null}
+                  </div>
+                )}
+              />
+            </ResponsiveDataSection>
           </section>
 
           <section className="admin-panel" id="pending-repair-pickups">
             <AdminSectionHeader eyebrow="待取車" title="待取車維修" description="完成維修尚未交車，請先聯繫客戶完成收款與取車。" />
-            <DataTable
-              columns={pendingRepairColumns}
-              rows={pendingRepairRows}
-              emptyText="目前沒有待取車維修。"
-              cardTitle={(row) => `維修單 #${row.id}`}
-              cardDescription={(row) => `${row.customerName} / ${row.receiveDateLabel}`}
-              cardBadges={(row) => <StatusBadge tone={row.status === "completed_waiting_pickup" ? "info" : "warning"}>{row.statusLabel}</StatusBadge>}
-              cardFooter={(row) => (
-                <div className="action-row">
-                  <button type="button" className="secondary-button" onClick={() => navigate(`/repairs/${row.id}`)}>
-                    查看維修
-                  </button>
-                </div>
-              )}
-            />
+            <ResponsiveDataSection>
+              <DataTable
+                columns={pendingRepairColumns}
+                rows={pendingRepairRows}
+                emptyText="目前沒有待取車維修。"
+                cardTitle={(row) => `維修單 #${row.id}`}
+                cardDescription={(row) => `${row.customerName} / ${row.receiveDateLabel}`}
+                cardBadges={(row) => <StatusBadge tone={row.status === "completed_waiting_pickup" ? "info" : "warning"}>{row.statusLabel}</StatusBadge>}
+                cardFooter={(row) => (
+                  <div className="action-row">
+                    <button type="button" className="secondary-button" onClick={() => navigate(`/repairs/${row.id}`)}>
+                      查看維修
+                    </button>
+                  </div>
+                )}
+              />
+            </ResponsiveDataSection>
           </section>
 
           <section className="admin-panel" id="pending-payments">
             <AdminSectionHeader eyebrow="待收尾款" title="待收尾款" description="有未收尾款的訂單尚未完成收款，請盡快確認。"/>
-            <DataTable
-              columns={pendingPaymentColumns}
-              rows={pendingPaymentRows}
-              emptyText="目前沒有待收尾款訂單。"
-              cardTitle={(row) => row.orderNo}
-              cardDescription={(row) => `${row.customerName} / ${row.businessDateLabel}`}
-              cardFooter={(row) => (
-                <div className="action-row">
-                  <button type="button" className="secondary-button" onClick={() => navigate(`/orders/${row.id}/edit`)}>
-                    查看訂單
-                  </button>
-                  {Number(row.unpaidBalance || 0) > 0 && canConfirmPayment ? (
-                    <button
-                      type="button"
-                      className="primary-button inline-submit"
-                      onClick={() => confirmPendingBalance(row)}
-                      disabled={collectingOrderId === row.id}
-                    >
-                      {collectingOrderId === row.id ? "處理中..." : "確認收款"}
+            <ResponsiveDataSection>
+              <DataTable
+                columns={pendingPaymentColumns}
+                rows={pendingPaymentRows}
+                emptyText="目前沒有待收尾款訂單。"
+                cardTitle={(row) => row.orderNo}
+                cardDescription={(row) => `${row.customerName} / ${row.businessDateLabel}`}
+                cardFooter={(row) => (
+                  <div className="action-row">
+                    <button type="button" className="secondary-button" onClick={() => navigate(`/orders/${row.id}/edit`)}>
+                      查看訂單
                     </button>
-                  ) : null}
-                </div>
-              )}
-            />
+                    {Number(row.unpaidBalance || 0) > 0 && canConfirmPayment ? (
+                      <button
+                        type="button"
+                        className="primary-button inline-submit"
+                        onClick={() => confirmPendingBalance(row)}
+                        disabled={collectingOrderId === row.id}
+                      >
+                        {collectingOrderId === row.id ? "處理中..." : "確認收款"}
+                      </button>
+                    ) : null}
+                  </div>
+                )}
+              />
+            </ResponsiveDataSection>
           </section>
 
           <section className="admin-split-grid">
@@ -609,44 +619,50 @@ function DashboardPage() {
       {tab === "ORDERS" ? (
         <section className="admin-panel">
           <AdminSectionHeader eyebrow="訂單摘要" title="近期訂單" description="快速查看今日門市訂單與完款狀態。" />
-          <DataTable
-            columns={orderColumns}
-            rows={orderSummaryRows}
-            emptyText="目前沒有訂單資料。"
-            cardTitle={(row) => row.orderNo}
-            cardDescription={(row) => `${row.customerDisplay} / ${row.businessDateLabel}`}
-            cardBadges={(row) => (
-              <StatusBadge tone={row.finalPaymentStatus === "PAID" ? "success" : "warning"}>{row.paymentLabel}</StatusBadge>
-            )}
-          />
+          <ResponsiveDataSection>
+            <DataTable
+              columns={orderColumns}
+              rows={orderSummaryRows}
+              emptyText="目前沒有訂單資料。"
+              cardTitle={(row) => row.orderNo}
+              cardDescription={(row) => `${row.customerDisplay} / ${row.businessDateLabel}`}
+              cardBadges={(row) => (
+                <StatusBadge tone={row.finalPaymentStatus === "PAID" ? "success" : "warning"}>{row.paymentLabel}</StatusBadge>
+              )}
+            />
+          </ResponsiveDataSection>
         </section>
       ) : null}
 
       {tab === "REPAIRS" ? (
         <section className="admin-panel">
           <AdminSectionHeader eyebrow="維修摘要" title="近期維修案件" description="維修待處理與報價回覆狀態集中檢視。" />
-          <DataTable
-            columns={repairColumns}
-            rows={repairSummaryRows}
-            emptyText="目前沒有維修資料。"
-            cardTitle={(row) => row.customerDisplay}
-            cardDescription={(row) => `${row.bikeModel || "-"} / ${row.reservationDateLabel}`}
-            cardBadges={(row) => <StatusBadge tone={row.status === "checking" ? "warning" : "info"}>{row.statusLabel}</StatusBadge>}
-          />
+          <ResponsiveDataSection>
+            <DataTable
+              columns={repairColumns}
+              rows={repairSummaryRows}
+              emptyText="目前沒有維修資料。"
+              cardTitle={(row) => row.customerDisplay}
+              cardDescription={(row) => `${row.bikeModel || "-"} / ${row.reservationDateLabel}`}
+              cardBadges={(row) => <StatusBadge tone={row.status === "checking" ? "warning" : "info"}>{row.statusLabel}</StatusBadge>}
+            />
+          </ResponsiveDataSection>
         </section>
       ) : null}
 
       {tab === "INVENTORY" ? (
         <section className="admin-panel">
           <AdminSectionHeader eyebrow="庫存提醒" title="低庫存商品" description="優先補貨與發注的商品集中顯示。" />
-          <DataTable
-            columns={inventoryColumns}
-            rows={lowStockRows}
-            emptyText="目前沒有低庫存商品。"
-            cardTitle={(row) => row.name}
-            cardDescription={(row) => `${row.categoryLabel || "-"} / SKU：${row.sku}`}
-            cardBadges={(row) => <StatusBadge tone={Number(row.stock) <= 0 ? "danger" : "warning"}>{Number(row.stock) <= 0 ? "無庫存" : "低庫存"}</StatusBadge>}
-          />
+          <ResponsiveDataSection>
+            <DataTable
+              columns={inventoryColumns}
+              rows={lowStockRows}
+              emptyText="目前沒有低庫存商品。"
+              cardTitle={(row) => row.name}
+              cardDescription={(row) => `${row.categoryLabel || "-"} / SKU：${row.sku}`}
+              cardBadges={(row) => <StatusBadge tone={Number(row.stock) <= 0 ? "danger" : "warning"}>{Number(row.stock) <= 0 ? "無庫存" : "低庫存"}</StatusBadge>}
+            />
+          </ResponsiveDataSection>
         </section>
       ) : null}
 
@@ -654,26 +670,30 @@ function DashboardPage() {
         <div className="admin-split-grid">
           <section className="admin-panel">
             <AdminSectionHeader eyebrow="員工出勤摘要" title="今日出勤" description="先看誰已打卡、誰仍未完成今日工作。" />
-            <DataTable
-              columns={attendanceColumns}
-              rows={attendanceRows}
-              emptyText="目前沒有出勤紀錄。"
-              cardTitle={(row) => row.staffName}
-              cardDescription={(row) => `上班：${row.checkInAtLabel} / 下班：${row.checkOutAtLabel}`}
-              cardBadges={(row) => <StatusBadge tone={row.checkOutAt ? "success" : "warning"}>{row.checkOutAt ? "已完成" : "上班中"}</StatusBadge>}
-            />
+            <ResponsiveDataSection>
+              <DataTable
+                columns={attendanceColumns}
+                rows={attendanceRows}
+                emptyText="目前沒有出勤紀錄。"
+                cardTitle={(row) => row.staffName}
+                cardDescription={(row) => `上班：${row.checkInAtLabel} / 下班：${row.checkOutAtLabel}`}
+                cardBadges={(row) => <StatusBadge tone={row.checkOutAt ? "success" : "warning"}>{row.checkOutAt ? "已完成" : "上班中"}</StatusBadge>}
+              />
+            </ResponsiveDataSection>
           </section>
 
           <section className="admin-panel">
             <AdminSectionHeader eyebrow="KPI 摘要" title="本月表現前段班" description="快速查看目前 KPI 排名與紀錄數。" />
-            <DataTable
-              columns={kpiColumns}
-              rows={kpiRows}
-              emptyText="目前沒有績效資料。"
-              cardTitle={(row) => row.staffName}
-              cardDescription={(row) => `${row.role} / 總分 ${row.totalScore}`}
-              cardBadges={(row) => <StatusBadge tone="info">紀錄 {row.logCount}</StatusBadge>}
-            />
+            <ResponsiveDataSection>
+              <DataTable
+                columns={kpiColumns}
+                rows={kpiRows}
+                emptyText="目前沒有績效資料。"
+                cardTitle={(row) => row.staffName}
+                cardDescription={(row) => `${row.role} / 總分 ${row.totalScore}`}
+                cardBadges={(row) => <StatusBadge tone="info">紀錄 {row.logCount}</StatusBadge>}
+              />
+            </ResponsiveDataSection>
           </section>
         </div>
       ) : null}

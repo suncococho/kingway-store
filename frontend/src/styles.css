@@ -1316,6 +1316,14 @@ textarea:focus-visible,
   box-shadow: var(--shadow-md);
 }
 
+.dashboard-responsive-data .table-wrapper {
+  display: block;
+}
+
+.dashboard-responsive-data .data-card-list {
+  display: none;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -2923,6 +2931,16 @@ button:hover {
 
 .data-card-grid:empty {
   display: none;
+}
+
+@media (max-width: 768px) {
+  .dashboard-responsive-data .table-wrapper {
+    display: none !important;
+  }
+
+  .dashboard-responsive-data .data-card-list {
+    display: flex !important;
+  }
 }
 
 .data-card-field,
