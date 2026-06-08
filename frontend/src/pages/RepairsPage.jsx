@@ -4,9 +4,11 @@ import ActionModal from "../components/ActionModal";
 import DataTable from "../components/DataTable";
 import FilterBar from "../components/FilterBar";
 import PageHeader from "../components/PageHeader";
+import ProcessingOverlay from "../components/ProcessingOverlay";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
 import { useFetchList } from "../hooks/useFetchList";
+import { useProcessingGuard } from "../hooks/useProcessingGuard";
 import { getStoredUser } from "../lib/auth";
 import { API_BASE_URL, apiRequest } from "../lib/api";
 import { formatTaipeiDate, getRepairStatusLabel } from "../lib/display";
@@ -149,6 +151,7 @@ function RepairsPage() {
   const [warningModal, setWarningModal] = useState(null);
   const [repairCreateStep, setRepairCreateStep] = useState(1);
   const [repairSubmitting, setRepairSubmitting] = useState(false);
+  const { isProcessing, pendingAction, runWithProcessing } = useProcessingGuard();
   const hasAutoSelectedInitialTab = useRef(false);
 
   useEffect(() => {
@@ -196,15 +199,19 @@ function RepairsPage() {
       `確定要刪除維修單 #${row.id}？刪除後可在「已刪除資料」復原。`
     )) return;
 
-    await apiRequest(`/repairs/${row.id}`, {
-      method: "DELETE",
-      headers: {
-        "X-Admin-Pin": pin
-      }
-    });
+    await runWithProcessing(async () => {
+      await apiRequest(`/repairs/${row.id}`, {
+        method: "DELETE",
+        headers: {
+          "X-Admin-Pin": pin
+        }
+      });
 
-    repairs.refetch();
-    window.alert("維修單已移至已刪除資料");
+      repairs.refetch();
+      window.alert("維修單已移至已刪除資料");
+    }, { id: `repair-delete-${row.id}`, label: "維修單刪除中..." }).catch((error) => {
+      window.alert(error.message || "刪除維修單失敗");
+    });
   }
 
   const rows = useMemo(
@@ -320,7 +327,7 @@ function RepairsPage() {
       return;
     }
 
-    try {
+    await runWithProcessing(async () => {
       const customer = await apiRequest("/customers", {
         method: "POST",
         body: JSON.stringify({
@@ -340,18 +347,18 @@ function RepairsPage() {
       }
 
       alert(customer.reused ? "此電話已存在，已選擇既有客戶" : "已新增一般客戶並選取");
-    } catch (error) {
+    }, { id: "repair-customer-create", label: "客戶建立中..." }).catch((error) => {
       alert(error.message || "新增客戶失敗");
-    }
+    });
   }
 
   async function createRepair(event) {
     event.preventDefault();
 
-    if (repairSubmitting) return;
+    if (repairSubmitting || isProcessing) return;
     setRepairSubmitting(true);
 
-    try {
+    await runWithProcessing(async () => {
       await apiRequest("/repairs", {
         method: "POST",
         body: JSON.stringify({
@@ -373,15 +380,15 @@ function RepairsPage() {
       setRepairCreateStep(1);
       repairs.refetch();
       alert("維修預約已建立");
-    } catch (error) {
+    }, { id: "repair-create", label: "維修預約建立中..." }).catch((error) => {
       alert(error.message);
-    } finally {
+    }).finally(() => {
       setRepairSubmitting(false);
-    }
+    });
   }
 
   async function respondReservation(row, approved) {
-    try {
+    await runWithProcessing(async () => {
       await apiRequest(`/repairs/${row.id}/reservation/respond`, {
         method: "POST",
         body: JSON.stringify({
@@ -391,9 +398,9 @@ function RepairsPage() {
       });
       repairs.refetch();
       alert(approved ? "已確認維修預約" : "已拒絕維修預約");
-    } catch (error) {
+    }, { id: `repair-reservation-${approved ? "approve" : "reject"}-${row.id}`, label: approved ? "維修確認中..." : "維修拒絕中..." }).catch((error) => {
       alert(error.message);
-    }
+    });
   }
 
   function showStepWarning(stepName) {
@@ -440,8 +447,9 @@ function RepairsPage() {
             data-delete-button="repair-visible"
             className="danger-button"
             onClick={() => deleteRepair(row)}
+            disabled={isProcessing}
           >
-            刪除
+            {pendingAction?.id === `repair-delete-${row.id}` ? "處理中..." : "刪除"}
           </button>
         </div>
       ),
@@ -479,11 +487,11 @@ function RepairsPage() {
         <div className="action-row compact-actions">
           {row.reservationStatus === "pending_approval" ? (
             <>
-              <button type="button" className="primary-button inline-submit" onClick={() => respondReservation(row, true)}>
-                確認
+              <button type="button" className="primary-button inline-submit" onClick={() => respondReservation(row, true)} disabled={isProcessing}>
+                {pendingAction?.id === `repair-reservation-approve-${row.id}` ? "處理中..." : "確認"}
               </button>
-              <button type="button" className="secondary-button" onClick={() => respondReservation(row, false)}>
-                拒絕
+              <button type="button" className="secondary-button" onClick={() => respondReservation(row, false)} disabled={isProcessing}>
+                {pendingAction?.id === `repair-reservation-reject-${row.id}` ? "處理中..." : "拒絕"}
               </button>
             </>
           ) : null}
@@ -590,8 +598,9 @@ function RepairsPage() {
               type="button"
               className="secondary-button"
               onClick={quickCreateRepairCustomer}
+              disabled={isProcessing}
             >
-              新增一般客戶
+              {pendingAction?.id === "repair-customer-create" ? "處理中..." : "新增一般客戶"}
             </button>
             <label className="form-field">
               <span>車款</span>
@@ -654,8 +663,8 @@ function RepairsPage() {
                   下一步
                 </button>
               ) : (
-                <button type="submit" className="primary-button" disabled={repairSubmitting}>
-                  {repairSubmitting ? "儲存中..." : "儲存"}
+                <button type="submit" className="primary-button" disabled={repairSubmitting || isProcessing}>
+                  {repairSubmitting || pendingAction?.id === "repair-create" ? "處理中..." : "儲存"}
                 </button>
               )}
             </div>
@@ -718,6 +727,7 @@ function RepairsPage() {
         message={warningModal?.message}
         onConfirm={() => setWarningModal(null)}
       />
+      <ProcessingOverlay active={isProcessing} message={pendingAction?.label || "處理中，請稍候..."} />
     </div>
   );
 }

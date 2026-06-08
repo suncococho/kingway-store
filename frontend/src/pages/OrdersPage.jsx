@@ -7,9 +7,11 @@ import DetailModal from "../components/DetailModal";
 import FilterBar from "../components/FilterBar";
 import FilterChips from "../components/FilterChips";
 import PageHeader from "../components/PageHeader";
+import ProcessingOverlay from "../components/ProcessingOverlay";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
 import { useFetchList } from "../hooks/useFetchList";
+import { useProcessingGuard } from "../hooks/useProcessingGuard";
 import { apiRequest } from "../lib/api";
 import { formatTaipeiDate, formatTaipeiDateTime, getFinalPaymentStatusLabel, getOrderStatusLabel, getPaymentMethodLabel, getRepairStatusLabel } from "../lib/display";
 
@@ -73,6 +75,7 @@ function OrdersPage() {
   const [warningModal, setWarningModal] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
   const [toastMessage, setToastMessage] = useState("");
+  const { isProcessing, pendingAction, runWithProcessing } = useProcessingGuard();
 
   const sectionItems = [
     { key: "ALL", label: "全部訂單" },
@@ -199,29 +202,29 @@ function OrdersPage() {
       return;
     }
 
-    try {
+    await runWithProcessing(async () => {
       await apiRequest(`/orders/${row.id}/collect-balance`, {
         method: "POST",
         body: JSON.stringify({ amount })
       });
       await refetch();
       alert("已完成付款");
-    } catch (error) {
+    }, { id: `order-payment-${row.id}`, label: "付款處理中..." }).catch((error) => {
       alert(error.message);
-    }
+    });
   }
 
   async function confirmHandover(row) {
-    try {
+    await runWithProcessing(async () => {
       await apiRequest(`/orders/${row.id}/confirm-handover`, {
         method: "POST",
         body: JSON.stringify({})
       });
       refetch();
       alert("已確認交車");
-    } catch (error) {
+    }, { id: `order-handover-${row.id}`, label: "交車確認中..." }).catch((error) => {
       alert(error.message);
-    }
+    });
   }
 
   function requestCollectBalance(row) {
@@ -257,7 +260,7 @@ function OrdersPage() {
       return;
     }
 
-    try {
+    await runWithProcessing(async () => {
       await apiRequest(`/orders/${detail.id}`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -274,9 +277,9 @@ function OrdersPage() {
       refetch();
       setDetail((current) => (current ? { ...current, ...detailForm } : current));
       alert("訂單已更新");
-    } catch (error) {
+    }, { id: `order-save-${detail.id}`, label: "訂單更新中..." }).catch((error) => {
       alert(error.message);
-    }
+    });
   }
 
   async function triggerPurchaseConfirmation() {
@@ -284,16 +287,16 @@ function OrdersPage() {
       return;
     }
 
-    try {
+    await runWithProcessing(async () => {
       const data = await apiRequest(`/orders/${detail.id}/purchase-confirmation`, {
         method: "POST",
         body: JSON.stringify({})
       });
       refetch();
       alert(`購買確認書連結已送出：\n${data.link}`);
-    } catch (error) {
+    }, { id: `order-confirmation-${detail.id}`, label: "確認書發送中..." }).catch((error) => {
       alert(error.message);
-    }
+    });
   }
 
   function requestPurchaseConfirmation() {
@@ -323,16 +326,16 @@ function OrdersPage() {
       return;
     }
 
-    try {
+    await runWithProcessing(async () => {
       const data = await apiRequest(`/coupons/approve-google-review-for-order/${detail.id}`, {
         method: "POST"
       });
 
       alert(data.message || "Google 評論優惠已核准並套用");
       window.location.reload();
-    } catch (error) {
+    }, { id: `google-review-${detail.id}`, label: "優惠核准中..." }).catch((error) => {
       alert(error.message || "Google 評論優惠處理失敗");
-    }
+    });
   }
 
   function requestDownloadPurchasePdf() {
@@ -380,9 +383,13 @@ if (pin !== "1144") {
 
 if (!window.confirm(
 `確定要刪除訂單 ${row.orderNo || "#" + row.id}？刪除後可在「已刪除資料」復原。`)) return;
-    await apiRequest(`/orders/${row.id}`, { method: "DELETE" });
-    await refetch();
-    setToastMessage("訂單已移至已刪除資料");
+    await runWithProcessing(async () => {
+      await apiRequest(`/orders/${row.id}`, { method: "DELETE" });
+      await refetch();
+      setToastMessage("訂單已移至已刪除資料");
+    }, { id: `order-delete-${row.id}`, label: "訂單刪除中..." }).catch((error) => {
+      alert(error.message || "刪除訂單失敗");
+    });
   }
 
   function closeSearch() {
@@ -666,8 +673,9 @@ if (!window.confirm(
             data-delete-button="order-visible"
             className="danger-button"
             onClick={() => deleteOrder(row)}
+            disabled={isProcessing}
           >
-            刪除
+            {pendingAction?.id === `order-delete-${row.id}` ? "處理中..." : "刪除"}
           </button>
         </div>
       ),
@@ -701,13 +709,13 @@ if (!window.confirm(
       render: (row) => (
         <div className="action-row compact-actions">
           {Number(row.unpaidBalance || 0) > 0 ? (
-            <button type="button" className="secondary-button" onClick={() => requestCollectBalance(row)}>
-              完成付款
+            <button type="button" className="secondary-button" onClick={() => requestCollectBalance(row)} disabled={isProcessing}>
+              {pendingAction?.id === `order-payment-${row.id}` ? "處理中..." : "完成付款"}
             </button>
           ) : null}
           {!row.handoverConfirmedAt ? (
-            <button type="button" className="secondary-button" onClick={() => requestHandover(row)}>
-              確認交車
+            <button type="button" className="secondary-button" onClick={() => requestHandover(row)} disabled={isProcessing}>
+              {pendingAction?.id === `order-handover-${row.id}` ? "處理中..." : "確認交車"}
             </button>
           ) : (
             "已完成交車"
@@ -718,8 +726,8 @@ if (!window.confirm(
             <button type="button" className="secondary-button" onClick={() => printOrderInvoice(row)}>
               列印訂單
             </button>
-          <button type="button" className="danger-button" onClick={() => deleteOrder(row)}>
-            刪除
+          <button type="button" className="danger-button" onClick={() => deleteOrder(row)} disabled={isProcessing}>
+            {pendingAction?.id === `order-delete-${row.id}` ? "處理中..." : "刪除"}
           </button>
                   <button
                     type="button"
@@ -999,19 +1007,19 @@ if (!window.confirm(
               <div className="section-title">操作</div>
               <div className="action-row">
               {Number(detail.unpaidBalance || 0) > 0 ? (
-                <button type="button" className="primary-button inline-submit" onClick={() => requestCollectBalance(detail)}>
-                  完成付款
+                <button type="button" className="primary-button inline-submit" onClick={() => requestCollectBalance(detail)} disabled={isProcessing}>
+                  {pendingAction?.id === `order-payment-${detail.id}` ? "處理中..." : "完成付款"}
                 </button>
               ) : null}
-              <button type="button" className="secondary-button" onClick={requestPurchaseConfirmation}>
-                發送確認書
+              <button type="button" className="secondary-button" onClick={requestPurchaseConfirmation} disabled={isProcessing}>
+                {pendingAction?.id === `order-confirmation-${detail.id}` ? "處理中..." : "發送確認書"}
               </button>
               <button type="button" className="secondary-button" onClick={requestDownloadPurchasePdf}>
                 查看/下載 PDF
               </button>
               {!detail.handoverConfirmedAt ? (
-                <button type="button" className="secondary-button" onClick={() => requestHandover(detail)}>
-                  確認交車
+                <button type="button" className="secondary-button" onClick={() => requestHandover(detail)} disabled={isProcessing}>
+                  {pendingAction?.id === `order-handover-${detail.id}` ? "處理中..." : "確認交車"}
                 </button>
               ) : null}
               <button type="button" className="secondary-button" onClick={() => setSystemInfoOpen((current) => !current)}>
@@ -1034,7 +1042,7 @@ if (!window.confirm(
                   <label className="form-field"><span>未付款金額</span><input type="number" min="0" value={detailForm.unpaidBalance} onChange={(event) => setDetailForm((current) => ({ ...current, unpaidBalance: event.target.value }))} /></label>
                   <label className="form-field"><span>完款狀態</span><select value={detailForm.finalPaymentStatus} onChange={(event) => setDetailForm((current) => ({ ...current, finalPaymentStatus: event.target.value }))}><option value="UNPAID">未付款</option><option value="PARTIAL">部分付款</option><option value="PAID">已完款</option></select></label>
                   <label className="form-field form-field-wide"><span>備註</span><input value={detailForm.notes} onChange={(event) => setDetailForm((current) => ({ ...current, notes: event.target.value }))} /></label>
-                  <button type="submit" className="primary-button inline-submit">儲存</button>
+                  <button type="submit" className="primary-button inline-submit" disabled={isProcessing}>{pendingAction?.id === `order-save-${detail.id}` ? "處理中..." : "儲存"}</button>
                 </form>
               </section>
             ) : null}
@@ -1056,11 +1064,15 @@ if (!window.confirm(
         cancelText="取消"
         onCancel={() => setConfirmModal(null)}
         onConfirm={() => {
+          if (isProcessing) {
+            return;
+          }
           const action = confirmModal?.action;
           setConfirmModal(null);
           action?.();
         }}
       />
+      <ProcessingOverlay active={isProcessing} message={pendingAction?.label || "處理中，請稍候..."} />
     </div>
   );
 }

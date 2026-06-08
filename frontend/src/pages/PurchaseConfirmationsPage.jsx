@@ -4,9 +4,11 @@ import DataTable from "../components/DataTable";
 import DetailModal from "../components/DetailModal";
 import FilterBar from "../components/FilterBar";
 import PageHeader from "../components/PageHeader";
+import ProcessingOverlay from "../components/ProcessingOverlay";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
 import { useFetchList } from "../hooks/useFetchList";
+import { useProcessingGuard } from "../hooks/useProcessingGuard";
 import { apiRequest } from "../lib/api";
 import { formatTaipeiDateTime } from "../lib/display";
 
@@ -39,6 +41,7 @@ function PurchaseConfirmationsPage() {
   const [detail, setDetail] = useState(null);
   const [systemInfoOpen, setSystemInfoOpen] = useState(false);
   const [confirmModal, setConfirmModal] = useState(null);
+  const { isProcessing, pendingAction, runWithProcessing } = useProcessingGuard();
 
   const sectionItems = [
     { key: "ALL", label: "全部" },
@@ -92,7 +95,7 @@ function PurchaseConfirmationsPage() {
   async function generateLink(event) {
     event.preventDefault();
 
-    try {
+    await runWithProcessing(async () => {
       const data = await apiRequest("/purchase-confirmations/generate-link", {
         method: "POST",
         body: JSON.stringify({
@@ -102,22 +105,22 @@ function PurchaseConfirmationsPage() {
       setCustomerId("");
       confirmations.refetch();
       alert(`已產生連結：\n${data.link}`);
-    } catch (error) {
+    }, { id: "purchase-confirmation-generate", label: "確認連結產生中..." }).catch((error) => {
       alert(error.message);
-    }
+    });
   }
 
   async function resendLink(row) {
-    try {
+    await runWithProcessing(async () => {
       const data = await apiRequest(`/orders/${row.orderId}/purchase-confirmation`, {
         method: "POST",
         body: JSON.stringify({})
       });
       confirmations.refetch();
       alert(`購買確認書連結已送出：\n${data.link}`);
-    } catch (error) {
+    }, { id: `purchase-confirmation-resend-${row.orderId}`, label: "確認書發送中..." }).catch((error) => {
       alert(error.message);
-    }
+    });
   }
 
   function requestResendLink(row) {
@@ -166,8 +169,8 @@ function PurchaseConfirmationsPage() {
         render: (row) => (
           <div className="action-row compact-actions">
             {row.orderId ? (
-              <button type="button" className="secondary-button" onClick={() => requestResendLink(row)}>
-                發送確認書
+              <button type="button" className="secondary-button" onClick={() => requestResendLink(row)} disabled={isProcessing}>
+                {pendingAction?.id === `purchase-confirmation-resend-${row.orderId}` ? "處理中..." : "發送確認書"}
               </button>
             ) : null}
             {row.pdfUrl ? (
@@ -201,8 +204,8 @@ function PurchaseConfirmationsPage() {
             <span>客戶 ID</span>
             <input value={customerId} onChange={(event) => setCustomerId(event.target.value)} required />
           </label>
-          <button type="submit" className="primary-button inline-submit">
-            產生連結
+          <button type="submit" className="primary-button inline-submit" disabled={isProcessing}>
+            {pendingAction?.id === "purchase-confirmation-generate" ? "處理中..." : "產生連結"}
           </button>
         </form>
       </section>
@@ -258,8 +261,8 @@ function PurchaseConfirmationsPage() {
                     詳情
                   </button>
                   {row.orderId ? (
-                    <button type="button" className="secondary-button" onClick={() => requestResendLink(row)}>
-                      發送確認書
+                    <button type="button" className="secondary-button" onClick={() => requestResendLink(row)} disabled={isProcessing}>
+                      {pendingAction?.id === `purchase-confirmation-resend-${row.orderId}` ? "處理中..." : "發送確認書"}
                     </button>
                   ) : null}
                 </div>
@@ -299,8 +302,8 @@ function PurchaseConfirmationsPage() {
 
             <div className="action-row">
               {detail.orderId ? (
-                <button type="button" className="secondary-button" onClick={() => requestResendLink(detail)}>
-                  發送確認書
+                <button type="button" className="secondary-button" onClick={() => requestResendLink(detail)} disabled={isProcessing}>
+                  {pendingAction?.id === `purchase-confirmation-resend-${detail.orderId}` ? "處理中..." : "發送確認書"}
                 </button>
               ) : null}
               {detail.pdfUrl ? (
@@ -339,11 +342,15 @@ function PurchaseConfirmationsPage() {
         cancelText="取消"
         onCancel={() => setConfirmModal(null)}
         onConfirm={() => {
+          if (isProcessing) {
+            return;
+          }
           const action = confirmModal?.action;
           setConfirmModal(null);
           action?.();
         }}
       />
+      <ProcessingOverlay active={isProcessing} message={pendingAction?.label || "處理中，請稍候..."} />
     </div>
   );
 }
