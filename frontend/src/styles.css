@@ -3003,12 +3003,28 @@ button:hover {
   display: none;
 }
 
+.suppliers-page .table-wrapper {
+  display: block;
+}
+
+.suppliers-page .data-card-list {
+  display: none;
+}
+
 @media (max-width: 900px) {
   .orders-page .table-wrapper {
     display: none !important;
   }
 
   .orders-page .data-card-list {
+    display: flex !important;
+  }
+
+  .suppliers-page .table-wrapper {
+    display: none !important;
+  }
+
+  .suppliers-page .data-card-list {
     display: flex !important;
   }
 }

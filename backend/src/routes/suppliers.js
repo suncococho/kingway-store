@@ -1,8 +1,11 @@
 const express = require("express");
 const { sendInternalTelegram } = require("../services/telegramService");
 const { pool } = require("../db");
+const config = require("../config");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { requireStoreFeature } = require("../middleware/storeFeature");
+const { resolveStoreLineCredentials } = require("../services/storeLineSettingsService");
+const { sendLineMessage } = require("../utils/line");
 
 const router = express.Router();
 
@@ -139,6 +142,88 @@ async function sendSupplierDecisionRequest(requestId, requestType, supplierName,
   });
 }
 
+function buildSupplierLineNotificationText({ requestType, supplierName, sku, productName, quantity }) {
+  const isReturn = requestType === "RETURN";
+  return [
+    isReturn ? "【KINGWAY 退貨通知】" : "【KINGWAY 發注通知】",
+    `供應商：${supplierName || "-"}`,
+    `商品：${sku || "-"} / ${productName || "-"}`,
+    `數量：${Number(quantity || 0)}`,
+    `狀態：${isReturn ? "待退貨/已建立" : "待入庫"}`,
+    "來源：供應商管理"
+  ].join("\n");
+}
+
+async function resolveSupplierLineGroupTarget(connection = pool) {
+  const fallbackTypes = ["inventory", "daily", "staff", "admin"];
+  const orderCases = fallbackTypes.map((type, index) => `WHEN '${type}' THEN ${index + 1}`).join(" ");
+  const [rows] = await connection.query(
+    `
+      SELECT line_group_id AS lineGroupId, registration_type AS registrationType, group_name AS groupName
+      FROM line_group_registrations
+      WHERE is_active = 1
+        AND (group_name = ? OR registration_type IN (?))
+      ORDER BY
+        CASE WHEN group_name = ? THEN 0 ELSE 1 END,
+        CASE registration_type ${orderCases} ELSE 99 END,
+        updated_at DESC,
+        id DESC
+      LIMIT 1
+    `,
+    ["kw-mini test", fallbackTypes, "kw-mini test"]
+  );
+
+  return rows[0] || null;
+}
+
+async function notifySupplierRequestLine({ requestId, requestType, supplierName, sku, productName, quantity, storeId }) {
+  try {
+    const target = await resolveSupplierLineGroupTarget();
+    if (!target?.lineGroupId) {
+      console.info("[supplier:line] skipped missing target", { requestId });
+      return { delivered: 0, skipped: true, reason: "missing_line_group" };
+    }
+
+    const credentials = await resolveStoreLineCredentials({
+      storeId,
+      purpose: "supplier_request_group_notify"
+    });
+
+    const channelAccessToken = credentials.channelAccessToken || config.line.channelAccessToken;
+    if (!channelAccessToken) {
+      console.info("[supplier:line] skipped missing token", { requestId });
+      return { delivered: 0, skipped: true, reason: "missing_line_token", target };
+    }
+
+    await sendLineMessage(
+      config,
+      target.lineGroupId,
+      [{ type: "text", text: buildSupplierLineNotificationText({ requestType, supplierName, sku, productName, quantity }) }],
+      {
+        channelAccessToken,
+        context: {
+          storeId,
+          purpose: "supplier_request_group_notify",
+          source: "suppliers"
+        }
+      }
+    );
+
+    console.info("[supplier:line] sent", {
+      requestId,
+      registrationType: target.registrationType,
+      groupName: target.groupName || null
+    });
+    return { delivered: 1, skipped: false, target };
+  } catch (error) {
+    console.warn("[supplier:line] send failed", {
+      requestId,
+      message: error.message
+    });
+    return { delivered: 0, skipped: false, error: error.message };
+  }
+}
+
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]), requireStoreFeature("suppliers_enabled"));
 
 router.get("/requests", async (req, res, next) => {
@@ -220,9 +305,19 @@ router.post("/requests", async (req, res, next) => {
       ]
     );
 
+    const requestId = requestResult.insertId;
+    const supplierItems = [
+      {
+        productId: product.id,
+        sku: product.sku,
+        productName: product.name,
+        quantity: qty
+      }
+    ];
+
     try {
       await sendSupplierDecisionRequest(
-        requestResult.insertId,
+        requestId,
         requestType,
         supplierName,
         sku,
@@ -241,11 +336,21 @@ router.post("/requests", async (req, res, next) => {
       requestType,
       supplierName,
       note,
-      items
+      items: supplierItems
+    });
+
+    await notifySupplierRequestLine({
+      requestId,
+      requestType,
+      supplierName,
+      sku: product.sku,
+      productName: product.name,
+      quantity: qty,
+      storeId
     });
 
     return res.status(201).json({
-      id: requestResult.insertId,
+      id: requestId,
       requestType,
       supplierName,
       sku: product.sku,
