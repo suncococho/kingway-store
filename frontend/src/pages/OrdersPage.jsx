@@ -736,7 +736,7 @@ if (!window.confirm(
   ];
 
   return (
-    <div>
+    <div className="orders-page">
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
         <Link to="/trash" className="secondary-button">已刪除資料</Link>
       </div>
