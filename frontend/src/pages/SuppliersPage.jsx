@@ -363,25 +363,33 @@ export default function SuppliersPage() {
     const quantity = prompt("請輸入入庫數量", "1");
     if (!quantity) return;
 
-    await apiRequest(`/suppliers/${id}/receive`, {
-      method: "POST",
-      body: JSON.stringify({ quantity: Number(quantity) })
-    });
+    await runWithProcessing(async () => {
+      await apiRequest(`/suppliers/${id}/receive`, {
+        method: "POST",
+        body: JSON.stringify({ quantity: Number(quantity) })
+      });
 
-    await load();
-    alert("入庫");
+      await load();
+      alert("入庫完成");
+    }, { id: `supplier-receive-${id}`, label: "入庫確認處理中..." }).catch((requestError) => {
+      alert(requestError.message || "入庫失敗");
+    });
   }
 
   async function completeReturn(id) {
     if (!confirm("確認退貨完成？")) return;
 
-    await apiRequest(`/suppliers/${id}/return-done`, {
-      method: "POST",
-      body: JSON.stringify({})
-    });
+    await runWithProcessing(async () => {
+      await apiRequest(`/suppliers/${id}/return-done`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
 
-    await load();
-    alert("退貨完成");
+      await load();
+      alert("退貨完成");
+    }, { id: `supplier-return-${id}`, label: "退貨確認處理中..." }).catch((requestError) => {
+      alert(requestError.message || "退貨失敗");
+    });
   }
 
   const supplierSummaryColumns = [
@@ -425,13 +433,13 @@ export default function SuppliersPage() {
         return (
           <div className="action-row compact-actions">
             {canReceive ? (
-              <button className="primary-button" onClick={() => receiveRequest(row.id)}>
-                確認入庫
+              <button className="primary-button" onClick={() => receiveRequest(row.id)} disabled={isProcessing}>
+                {pendingAction?.id === `supplier-receive-${row.id}` ? "處理中..." : "確認入庫"}
               </button>
             ) : null}
             {canReturn ? (
-              <button className="primary-button" onClick={() => completeReturn(row.id)}>
-                完成退貨
+              <button className="primary-button" onClick={() => completeReturn(row.id)} disabled={isProcessing}>
+                {pendingAction?.id === `supplier-return-${row.id}` ? "處理中..." : "完成退貨"}
               </button>
             ) : null}
           </div>
