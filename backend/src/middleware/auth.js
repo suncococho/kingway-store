@@ -52,9 +52,96 @@ function authenticatePlatformAdmin(req, res, next) {
   }
 }
 
-function authorize() {
-  return (req, res, next) => {
+function normalizeRole(role) {
+  return String(role || "").toUpperCase().trim();
+}
+
+function normalizeStoreRole(role) {
+  return String(role || "").toLowerCase().trim();
+}
+
+function isMissingStoreMembershipsTableError(error) {
+  return (
+    error?.code === "ER_NO_SUCH_TABLE" &&
+    (String(error?.sqlMessage || "").includes("store_memberships") ||
+      String(error?.message || "").includes("store_memberships"))
+  );
+}
+
+async function loadActiveStaffRole(staffUserId) {
+  if (!staffUserId) {
+    return "";
+  }
+
+  const { pool } = require("../db");
+  const [rows] = await pool.query(
+    "SELECT role FROM staff_users WHERE id = ? AND is_active = 1 LIMIT 1",
+    [staffUserId]
+  );
+
+  return normalizeRole(rows[0]?.role);
+}
+
+async function loadActiveStoreRole(staffUserId, storeId) {
+  if (!staffUserId || !storeId) {
+    return "";
+  }
+
+  try {
+    const { pool } = require("../db");
+    const [rows] = await pool.query(
+      `
+        SELECT role
+        FROM store_memberships
+        WHERE staff_user_id = ?
+          AND store_id = ?
+          AND status = 'active'
+        LIMIT 1
+      `,
+      [staffUserId, storeId]
+    );
+
+    return normalizeStoreRole(rows[0]?.role);
+  } catch (error) {
+    if (isMissingStoreMembershipsTableError(error)) {
+      return "";
+    }
+    throw error;
+  }
+}
+
+function authorize(roles = []) {
+  const normalizedAllowedRoles = (Array.isArray(roles) ? roles : [roles])
+    .filter(Boolean)
+    .map(normalizeRole);
+
+  return async (req, res, next) => {
     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+
+    if (!normalizedAllowedRoles.length) {
+      return next();
+    }
+
+    let userRole = normalizeRole(req.user.role);
+    if (normalizedAllowedRoles.includes(userRole)) {
+      return next();
+    }
+
+    if (req.user.id) {
+      try {
+        userRole = await loadActiveStaffRole(req.user.id);
+        if (userRole) {
+          req.user.role = userRole;
+        }
+      } catch (error) {
+        return next(error);
+      }
+    }
+
+    if (!normalizedAllowedRoles.includes(userRole)) {
+      return res.status(403).json({ message: "Insufficient role" });
+    }
+
     return next();
   };
 }
@@ -95,23 +182,48 @@ function requireStoreScope() {
 function requireStoreRole(allowedRoles) {
   const normalizedAllowedRoles = (Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles])
     .filter(Boolean)
-    .map((role) => String(role).toLowerCase().trim());
+    .map(normalizeStoreRole);
 
-  return (req, res, next) => {
+  return async (req, res, next) => {
     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
 
-    const storeRole = String(req.storeRole ?? req.user.storeRole ?? "").toLowerCase().trim();
+    let storeRole = normalizeStoreRole(req.storeRole ?? req.user.storeRole);
     if (!storeRole) {
-      return res.status(403).json({ message: "Store role required" });
+      try {
+        storeRole = await loadActiveStoreRole(req.user.id, req.storeId ?? req.user.storeId);
+      } catch (error) {
+        return next(error);
+      }
     }
 
-    if (!normalizedAllowedRoles.includes(storeRole)) {
-      return res.status(403).json({ message: "Insufficient store role" });
+    if (storeRole) {
+      if (!normalizedAllowedRoles.includes(storeRole)) {
+        return res.status(403).json({ message: "Insufficient store role" });
+      }
+
+      req.storeRole = storeRole;
+      req.store_role = storeRole;
+      if (req.user) {
+        req.user.storeRole = storeRole;
+      }
+      return next();
     }
 
-    req.storeRole = storeRole;
-    req.store_role = storeRole;
-    return next();
+    const allowsStoreAdmin = normalizedAllowedRoles.includes("owner") || normalizedAllowedRoles.includes("admin");
+    let legacyRole = normalizeRole(req.user.role);
+    if (!legacyRole && req.user.id) {
+      try {
+        legacyRole = await loadActiveStaffRole(req.user.id);
+      } catch (error) {
+        return next(error);
+      }
+    }
+
+    if (allowsStoreAdmin && ["ADMIN", "MANAGER"].includes(legacyRole)) {
+      return next();
+    }
+
+    return res.status(403).json({ message: "Store role required" });
   };
 }
 

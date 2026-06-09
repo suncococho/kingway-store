@@ -1,6 +1,6 @@
 const express = require("express");
 const { pool, withTransaction } = require("../db");
-const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { requireStoreFeature } = require("../middleware/storeFeature");
 const { createError } = require("../utils/errors");
 const {
@@ -109,6 +109,15 @@ async function notifySupplierRequestTelegram({ requestId, requestType, supplierN
 
 
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "INVENTORY"]), requireStoreFeature("inventory_enabled"));
+const requireStoreAdminRole = requireStoreRole(["owner", "admin"]);
+
+function requireStoreAdminForAdjustment(req, res, next) {
+  const movementType = String(req.body?.type || "").toUpperCase();
+  if (movementType === "ADJUST") {
+    return requireStoreAdminRole(req, res, next);
+  }
+  return next();
+}
 
 router.get("/movements", async (req, res, next) => {
   try {
@@ -198,7 +207,7 @@ router.get("/supplier-requests", async (req, res, next) => {
   }
 });
 
-router.post("/movements", async (req, res, next) => {
+router.post("/movements", requireStoreAdminForAdjustment, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const { productId, type, qty, note } = req.body;
@@ -286,7 +295,7 @@ router.post("/movements", async (req, res, next) => {
   }
 });
 
-router.post("/supplier-requests", async (req, res, next) => {
+router.post("/supplier-requests", requireStoreAdminRole, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const { requestType, supplierName, note, items } = req.body;
@@ -354,7 +363,7 @@ router.post("/supplier-requests", async (req, res, next) => {
   }
 });
 
-router.post("/supplier-requests/:id/respond", async (req, res, next) => {
+router.post("/supplier-requests/:id/respond", requireStoreAdminRole, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const id = Number(req.params.id);
@@ -395,7 +404,7 @@ router.post("/supplier-requests/:id/respond", async (req, res, next) => {
   }
 });
 
-router.post("/supplier-requests/:id/receive", async (req, res, next) => {
+router.post("/supplier-requests/:id/receive", requireStoreAdminRole, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const id = Number(req.params.id);

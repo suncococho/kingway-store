@@ -2,7 +2,7 @@ const express = require("express");
 const { sendInternalTelegram } = require("../services/telegramService");
 const { pool } = require("../db");
 const config = require("../config");
-const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { requireStoreFeature } = require("../middleware/storeFeature");
 const { resolveStoreLineCredentials } = require("../services/storeLineSettingsService");
 const { sendLineMessage } = require("../utils/line");
@@ -225,6 +225,7 @@ async function notifySupplierRequestLine({ requestId, requestType, supplierName,
 }
 
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]), requireStoreFeature("suppliers_enabled"));
+const requireStoreAdminRole = requireStoreRole(["owner", "admin"]);
 
 router.get("/requests", async (req, res, next) => {
   try {
@@ -262,7 +263,7 @@ router.get("/requests", async (req, res, next) => {
 });
 
 
-router.post("/requests", async (req, res, next) => {
+router.post("/requests", requireStoreAdminRole, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const { type, supplierName = "kingway", sku, quantity, note } = req.body || {};
@@ -365,7 +366,7 @@ router.post("/requests", async (req, res, next) => {
 
 
 
-router.post("/:id/receive", async (req, res, next) => {
+router.post("/:id/receive", requireStoreAdminRole, async (req, res, next) => {
   const conn = await pool.getConnection();
 
   try {
@@ -503,7 +504,7 @@ router.post("/:id/receive", async (req, res, next) => {
 
 
 
-router.post("/:id/return-done", async (req, res, next) => {
+router.post("/:id/return-done", requireStoreAdminRole, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const requestId = Number(req.params.id);

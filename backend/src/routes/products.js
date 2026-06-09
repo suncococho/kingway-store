@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { pool } = require("../db");
-const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { mapCategoryLabel } = require("../utils/displayLabels");
 const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
 const {
@@ -50,6 +50,7 @@ const allowedImageTypes = new Map([
 ]);
 
 router.use(authenticate, requireStoreScope(), authorize());
+const requireStoreAdminRole = requireStoreRole(["owner", "admin"]);
 
 function extractProductImageFileName(imageUrl) {
   const value = String(imageUrl || "").trim();
@@ -501,6 +502,17 @@ router.post("/", async (req, res, next) => {
 
 router.patch("/:id", async (req, res, next) => {
   try {
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "isActive") && !req.body.isActive) {
+      return requireStoreAdminRole(req, res, () => updateProduct(req, res, next));
+    }
+    return updateProduct(req, res, next);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+async function updateProduct(req, res, next) {
+  try {
     const id = Number(req.params.id);
     const { sku, name, category, categoryId, price, stock, reorderLevel, isActive, description, imageUrl, costPrice, location, inputterName, source } = req.body;
     const normalizedSku = sku !== undefined && sku !== null && sku !== "" ? normalizeProductSku(sku) : null;
@@ -616,6 +628,6 @@ router.patch("/:id", async (req, res, next) => {
     }
     return next(error);
   }
-});
+}
 
 module.exports = router;

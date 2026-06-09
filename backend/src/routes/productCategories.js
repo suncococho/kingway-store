@@ -1,6 +1,6 @@
 const express = require("express");
 const { pool } = require("../db");
-const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -70,6 +70,7 @@ async function getCategory(storeId, id) {
 }
 
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "INVENTORY"]));
+const requireStoreAdminRole = requireStoreRole(["owner", "admin"]);
 
 router.get("/", async (req, res, next) => {
   try {
@@ -130,6 +131,13 @@ router.post("/", async (req, res, next) => {
 });
 
 router.patch("/:id", async (req, res, next) => {
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "isActive") && !req.body.isActive) {
+    return requireStoreAdminRole(req, res, () => patchCategory(req, res, next));
+  }
+  return patchCategory(req, res, next);
+});
+
+async function patchCategory(req, res, next) {
   try {
     const storeId = getRequestStoreId(req);
     const id = Number(req.params.id);
@@ -184,9 +192,9 @@ router.patch("/:id", async (req, res, next) => {
     }
     return next(error);
   }
-});
+}
 
-router.delete("/:id", async (req, res, next) => {
+router.delete("/:id", requireStoreAdminRole, async (req, res, next) => {
   try {
     const storeId = getRequestStoreId(req);
     const id = Number(req.params.id);

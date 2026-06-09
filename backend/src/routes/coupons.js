@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const express = require("express");
 const { pool } = require("../db");
 const { BOT_NOTIFY, sendTelegramMessage, sendInternalTelegram } = require("../services/telegramService");
-const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { requireStoreFeature } = require("../middleware/storeFeature");
 const { createError } = require("../utils/errors");
 const { sendLineMessage } = require("../utils/line");
@@ -30,6 +30,7 @@ function isCouponCampaignEnabled(type) {
 
 
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]), requireStoreFeature("coupons_enabled"));
+const requireStoreAdminRole = requireStoreRole(["owner", "admin"]);
 
 router.get("/", async (req, res, next) => {
   try {
@@ -120,7 +121,7 @@ async function ensureCouponEligibility(customerId, orderId, couponType, requireO
   return orders[0];
 }
 
-router.post("/issue", async (req, res, next) => {
+router.post("/issue", requireStoreAdminRole, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const { customerId, orderId, couponType } = req.body;
@@ -210,7 +211,7 @@ router.post("/request-google-review", async (req, res, next) => {
 });
 
 
-router.post("/approve-google-review-for-order/:orderId", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
+router.post("/approve-google-review-for-order/:orderId", authorize(["ADMIN", "MANAGER"]), requireStoreAdminRole, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const orderId = Number(req.params.orderId);
@@ -289,7 +290,7 @@ router.post("/approve-google-review-for-order/:orderId", authorize(["ADMIN", "MA
 });
 
 
-router.post("/approve-google-review/:id", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
+router.post("/approve-google-review/:id", authorize(["ADMIN", "MANAGER"]), requireStoreAdminRole, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const [rows] = await pool.query(
@@ -346,7 +347,7 @@ router.post("/approve-google-review/:id", authorize(["ADMIN", "MANAGER"]), async
   }
 });
 
-router.post("/reject-google-review/:id", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
+router.post("/reject-google-review/:id", authorize(["ADMIN", "MANAGER"]), requireStoreAdminRole, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const [rows] = await pool.query(
@@ -394,7 +395,7 @@ router.post("/reject-google-review/:id", authorize(["ADMIN", "MANAGER"]), async 
   }
 });
 
-router.post("/:id/cancel", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
+router.post("/:id/cancel", authorize(["ADMIN", "MANAGER"]), requireStoreAdminRole, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const [rows] = await pool.query(
