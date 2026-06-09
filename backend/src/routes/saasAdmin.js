@@ -15,6 +15,8 @@ const {
 } = require("../services/storeProfileSettingsService");
 
 const router = express.Router();
+const ALLOWED_STORE_PLANS = new Set(["free", "premium"]);
+const ALLOWED_STORE_STATUSES = new Set(["active", "inactive", "suspended"]);
 
 function n(value, fallback = 0) {
   const parsed = Number(value);
@@ -31,6 +33,41 @@ function getSchemaGuardStatus() {
   return {
     requireStoreIdSchema,
     status: requireStoreIdSchema ? "STRICT_ON" : "WARN_ONLY"
+  };
+}
+
+function buildOwnerResponse(row) {
+  if (!row?.ownerUserId) {
+    return null;
+  }
+
+  const username = t(row.ownerUsername);
+  return {
+    id: n(row.ownerUserId),
+    username,
+    displayName: t(row.ownerDisplayName, username || "-"),
+    role: t(row.ownerStaffRole),
+    membershipRole: t(row.ownerMembershipRole),
+    email: username.includes("@") ? username : null,
+    phone: null
+  };
+}
+
+function buildStoreResponse(row) {
+  const owner = buildOwnerResponse(row);
+  return {
+    id: n(row.id),
+    code: t(row.code, "UNKNOWN"),
+    name: t(row.name, t(row.code, "UNKNOWN")),
+    slug: deriveSlugFromCode(row.code),
+    status: t(row.status, "unknown"),
+    plan: t(row.plan, "unknown"),
+    owner,
+    hasOwner: Boolean(owner),
+    productCount: n(row.productCount),
+    customerCount: n(row.customerCount),
+    orderCount: n(row.orderCount),
+    repairCount: n(row.repairCount)
   };
 }
 
@@ -58,9 +95,26 @@ function rowToFeatures(row) {
 async function getStore(storeId) {
   const [rows] = await pool.query(
     `
-      SELECT id, code, name, status, plan
-      FROM stores
-      WHERE id = ?
+      SELECT
+        s.id,
+        s.code,
+        s.name,
+        s.status,
+        s.plan,
+        su.id AS ownerUserId,
+        su.username AS ownerUsername,
+        su.display_name AS ownerDisplayName,
+        su.role AS ownerStaffRole,
+        sm.role AS ownerMembershipRole
+      FROM stores s
+      LEFT JOIN store_memberships sm
+        ON sm.store_id = s.id
+       AND sm.role = 'owner'
+       AND sm.status = 'active'
+      LEFT JOIN staff_users su
+        ON su.id = sm.staff_user_id
+      WHERE s.id = ?
+      ORDER BY sm.is_default DESC, sm.id ASC
       LIMIT 1
     `,
     [storeId]
@@ -69,14 +123,7 @@ async function getStore(storeId) {
   const store = rows[0];
   if (!store) return null;
 
-  return {
-    id: n(store.id),
-    code: t(store.code, "UNKNOWN"),
-    name: t(store.name, t(store.code, "UNKNOWN")),
-    slug: deriveSlugFromCode(store.code),
-    status: t(store.status, "unknown"),
-    plan: t(store.plan, "unknown")
-  };
+  return buildStoreResponse(store);
 }
 
 async function ensureStoreFeatureRow(storeId) {
@@ -304,6 +351,62 @@ router.patch("/stores/:id/settings", requirePlatformRole(["PLATFORM_OWNER", "PLA
   }
 });
 
+router.patch("/stores/:id", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
+  try {
+    const storeId = n(req.params.id, 0);
+    if (!storeId) {
+      return res.status(404).json({ message: "找不到店家" });
+    }
+
+    const store = await getStore(storeId);
+    if (!store) {
+      return res.status(404).json({ message: "找不到店家" });
+    }
+
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const updates = [];
+    const values = [];
+
+    if (Object.prototype.hasOwnProperty.call(body, "plan")) {
+      const plan = t(body.plan).trim().toLowerCase();
+      if (!ALLOWED_STORE_PLANS.has(plan)) {
+        return res.status(400).json({ message: "方案只能設定為免費版或進階版" });
+      }
+      updates.push("plan = ?");
+      values.push(plan);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "status")) {
+      const status = t(body.status).trim().toLowerCase();
+      if (!ALLOWED_STORE_STATUSES.has(status)) {
+        return res.status(400).json({ message: "狀態只能設定為啟用、停用或暫停" });
+      }
+      updates.push("status = ?");
+      values.push(status);
+    }
+
+    if (!updates.length) {
+      return res.json({ ok: true, store });
+    }
+
+    values.push(storeId);
+    await pool.query(
+      `
+        UPDATE stores
+        SET ${updates.join(", ")}
+        WHERE id = ?
+      `,
+      values
+    );
+
+    const nextStore = await getStore(storeId);
+    return res.json({ ok: true, store: nextStore });
+  } catch (error) {
+    console.error("[saasAdmin/stores:patch] failed", error);
+    return next(error);
+  }
+});
+
 router.get("/stores", async (req, res, next) => {
   try {
     const [rows] = await pool.query(`
@@ -313,26 +416,26 @@ router.get("/stores", async (req, res, next) => {
         s.name,
         s.status,
         s.plan,
+        su.id AS ownerUserId,
+        su.username AS ownerUsername,
+        su.display_name AS ownerDisplayName,
+        su.role AS ownerStaffRole,
+        sm.role AS ownerMembershipRole,
         CAST((SELECT COUNT(*) FROM products p WHERE p.store_id = s.id) AS UNSIGNED) AS productCount,
         CAST((SELECT COUNT(*) FROM customers c WHERE c.store_id = s.id) AS UNSIGNED) AS customerCount,
         CAST((SELECT COUNT(*) FROM orders o WHERE o.store_id = s.id) AS UNSIGNED) AS orderCount,
         CAST((SELECT COUNT(*) FROM repair_orders r WHERE r.store_id = s.id) AS UNSIGNED) AS repairCount
       FROM stores s
+      LEFT JOIN store_memberships sm
+        ON sm.store_id = s.id
+       AND sm.role = 'owner'
+       AND sm.status = 'active'
+      LEFT JOIN staff_users su
+        ON su.id = sm.staff_user_id
       ORDER BY s.id ASC
     `);
 
-    const stores = rows.map((row) => ({
-      id: n(row.id),
-      code: t(row.code, "UNKNOWN"),
-      name: t(row.name, t(row.code, "UNKNOWN")),
-      slug: deriveSlugFromCode(row.code),
-      status: t(row.status, "unknown"),
-      plan: t(row.plan, "unknown"),
-      productCount: n(row.productCount),
-      customerCount: n(row.customerCount),
-      orderCount: n(row.orderCount),
-      repairCount: n(row.repairCount)
-    }));
+    const stores = rows.map(buildStoreResponse);
 
     return res.json({
       ok: true,

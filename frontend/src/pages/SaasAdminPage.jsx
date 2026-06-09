@@ -6,7 +6,21 @@ import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { getStoredPlatformUser, platformRequest } from "../lib/platformAuth";
 
-const ACTION_LABELS = ["店鋪設定", "功能設定", "LINE 設定", "Telegram 設定", "POS 設定", "權限設定"];
+const PLAN_OPTIONS = [
+  { value: "ALL", label: "全部方案" },
+  { value: "free", label: "免費版" },
+  { value: "premium", label: "進階版" },
+  { value: "trial", label: "試用版" },
+  { value: "single_store", label: "單店版" }
+];
+const EDITABLE_PLAN_OPTIONS = PLAN_OPTIONS.filter((option) => ["free", "premium"].includes(option.value));
+const STATUS_OPTIONS = [
+  { value: "ALL", label: "全部狀態" },
+  { value: "active", label: "啟用" },
+  { value: "inactive", label: "停用" },
+  { value: "suspended", label: "暫停" }
+];
+const EDITABLE_STATUS_OPTIONS = STATUS_OPTIONS.filter((option) => option.value !== "ALL");
 const DEFAULT_CREATE_FORM = {
   code: "",
   name: "",
@@ -42,7 +56,20 @@ function toNumber(value) {
 }
 
 function getStatusTone(status) {
-  return String(status || "").toLowerCase() === "active" ? "success" : "neutral";
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "active") return "success";
+  if (normalized === "suspended") return "warning";
+  return "neutral";
+}
+
+function getPlanLabel(plan) {
+  const option = PLAN_OPTIONS.find((item) => item.value === String(plan || "").toLowerCase());
+  return option?.label || plan || "-";
+}
+
+function getStatusLabel(status) {
+  const option = STATUS_OPTIONS.find((item) => item.value === String(status || "").toLowerCase());
+  return option?.label || status || "-";
 }
 
 function getSchemaGuardLabel(schemaGuard) {
@@ -73,32 +100,18 @@ function normalizeSettingsForm(settings) {
   };
 }
 
-function renderActionButtons(store, onOpenSettings) {
+function renderActionButtons(store, onOpenSettings, onSelectStore) {
   return (
     <div className="compact-actions">
-      {ACTION_LABELS.map((label) => {
-        if (label === "店鋪設定" && store?.id) {
-          return (
-          <button key={label} type="button" className="secondary-button" onClick={() => onOpenSettings(store)}>
-            設定
-          </button>
-          );
-        }
-
-        if (label === "功能設定" && store?.id) {
-          return (
-          <Link key={label} to={"/platform-admin/stores/" + store.id + "/features"} className="secondary-button">
-            {label}
-          </Link>
-          );
-        }
-
-        return (
-          <button key={label} type="button" className="secondary-button" disabled>
-            {label}
-          </button>
-        );
-      })}
+      <button type="button" className="secondary-button" onClick={() => onSelectStore(store)}>
+        詳細
+      </button>
+      <button type="button" className="secondary-button" onClick={() => onOpenSettings(store)}>
+        店家設定
+      </button>
+      <Link to={"/platform-admin/stores/" + store.id + "/features"} className="secondary-button">
+        功能設定
+      </Link>
     </div>
   );
 }
@@ -123,6 +136,13 @@ function SaasAdminPage() {
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState("");
   const [settingsSuccess, setSettingsSuccess] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [planFilter, setPlanFilter] = useState("ALL");
+  const [selectedDetailId, setSelectedDetailId] = useState(null);
+  const [storeSaving, setStoreSaving] = useState({ id: null, field: "" });
+  const [storeUpdateError, setStoreUpdateError] = useState("");
+  const [storeUpdateSuccess, setStoreUpdateSuccess] = useState("");
 
   async function loadStores() {
     setLoading(true);
@@ -187,7 +207,7 @@ function SaasAdminPage() {
       setCreateForm(DEFAULT_CREATE_FORM);
       await loadStores();
     } catch (submitError) {
-      setCreateError(submitError.message || "建立店鋪失敗");
+      setCreateError(submitError.message || "建立店家失敗");
     } finally {
       setCreateLoading(false);
     }
@@ -209,7 +229,7 @@ function SaasAdminPage() {
       setSelectedStoreMeta(response?.store || store);
       setSettingsForm(normalizeSettingsForm(response?.settings));
     } catch (loadError) {
-      setSettingsError(loadError.message || "載入店鋪設定失敗");
+      setSettingsError(loadError.message || "載入店家設定失敗");
       setSettingsForm(DEFAULT_SETTINGS_FORM);
     } finally {
       setSettingsLoading(false);
@@ -246,9 +266,41 @@ function SaasAdminPage() {
       setSettingsSuccess("門市設定已儲存。");
       await loadStores();
     } catch (saveError) {
-      setSettingsError(saveError.message || "儲存店鋪設定失敗");
+      setSettingsError(saveError.message || "儲存店家設定失敗");
     } finally {
       setSettingsSaving(false);
+    }
+  }
+
+  function handleSelectDetail(store) {
+    setSelectedDetailId(store?.id || null);
+    setStoreUpdateError("");
+    setStoreUpdateSuccess("");
+  }
+
+  async function handleUpdateStore(store, field, value) {
+    if (!store?.id || !canEditSettings || value === store[field]) {
+      return;
+    }
+
+    setStoreSaving({ id: store.id, field });
+    setStoreUpdateError("");
+    setStoreUpdateSuccess("");
+
+    try {
+      const response = await platformRequest("/saas-admin/stores/" + store.id, {
+        method: "PATCH",
+        body: JSON.stringify({ [field]: value })
+      });
+      setStoreUpdateSuccess(
+        `${response?.store?.name || store.name || "店家"} 已更新 ${field === "plan" ? "方案" : "狀態"}。`
+      );
+      await loadStores();
+      setSelectedDetailId(store.id);
+    } catch (updateError) {
+      setStoreUpdateError(updateError.message || "更新店家資料失敗");
+    } finally {
+      setStoreSaving({ id: null, field: "" });
     }
   }
 
@@ -256,6 +308,27 @@ function SaasAdminPage() {
   const selectedStore =
     stores.find((store) => store.id === selectedStoreId) ||
     selectedStoreMeta;
+  const selectedDetailStore = stores.find((store) => store.id === selectedDetailId) || null;
+
+  const filteredStores = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+    return stores.filter((store) => {
+      if (statusFilter !== "ALL" && String(store.status || "").toLowerCase() !== statusFilter) {
+        return false;
+      }
+      if (planFilter !== "ALL" && String(store.plan || "").toLowerCase() !== planFilter) {
+        return false;
+      }
+      if (!keyword) {
+        return true;
+      }
+      const ownerText = store.owner
+        ? `${store.owner.username || ""} ${store.owner.displayName || ""} ${store.owner.email || ""}`
+        : "";
+      const haystack = `${store.code || ""} ${store.name || ""} ${store.slug || ""} ${ownerText}`.toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [stores, searchTerm, statusFilter, planFilter]);
 
   const totals = useMemo(
     () =>
@@ -272,26 +345,75 @@ function SaasAdminPage() {
   );
 
   const summaryCards = [
-    { label: "租戶店鋪總數", value: data?.totalStores ?? stores.length },
-    { label: "環境 Environment", value: data?.environment || "unknown", small: true },
+    { label: "租戶店家總數", value: data?.totalStores ?? stores.length },
+    { label: "目前環境", value: data?.environment || "unknown", small: true },
     { label: "SchemaGuard 狀態", value: getSchemaGuardLabel(data?.schemaGuard), small: true },
     { label: "商品總數", value: totals.productCount },
     { label: "客戶總數", value: totals.customerCount },
     { label: "訂單總數", value: totals.orderCount },
-    { label: "維修總數", value: totals.repairCount }
+    { label: "維修總數", value: totals.repairCount },
+    { label: "缺少 owner", value: stores.filter((store) => !store.hasOwner).length }
   ];
 
   const columns = [
     { key: "id", label: "ID" },
-    { key: "code", label: "店鋪代碼" },
-    { key: "name", label: "店鋪名稱" },
+    { key: "code", label: "店家代碼" },
+    { key: "name", label: "店家名稱" },
     { key: "slug", label: "Slug" },
     {
       key: "status",
       label: "狀態",
-      render: (row) => <StatusBadge tone={getStatusTone(row.status)}>{row.status || "-"}</StatusBadge>
+      render: (row) => (
+        <div className="stack-meta">
+          <StatusBadge tone={getStatusTone(row.status)}>{getStatusLabel(row.status)}</StatusBadge>
+          {canEditSettings ? (
+            <select
+              value={row.status || "active"}
+              disabled={storeSaving.id === row.id}
+              onChange={(event) => handleUpdateStore(row, "status", event.target.value)}
+            >
+              {EDITABLE_STATUS_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          ) : null}
+        </div>
+      )
     },
-    { key: "plan", label: "方案" },
+    {
+      key: "plan",
+      label: "方案",
+      render: (row) => (
+        <div className="stack-meta">
+          <StatusBadge tone="info">{getPlanLabel(row.plan)}</StatusBadge>
+          {canEditSettings ? (
+            <select
+              value={["free", "premium"].includes(String(row.plan || "").toLowerCase()) ? row.plan : ""}
+              disabled={storeSaving.id === row.id}
+              onChange={(event) => handleUpdateStore(row, "plan", event.target.value)}
+            >
+              <option value="" disabled>選擇方案</option>
+              {EDITABLE_PLAN_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          ) : null}
+        </div>
+      )
+    },
+    {
+      key: "owner",
+      label: "Owner",
+      render: (row) => row.owner ? (
+        <div className="stack-meta">
+          <strong>{row.owner.displayName || "-"}</strong>
+          <span>{row.owner.username || "-"}</span>
+          {row.owner.email ? <span>{row.owner.email}</span> : null}
+        </div>
+      ) : (
+        <StatusBadge tone="warning">缺少 owner</StatusBadge>
+      )
+    },
     { key: "productCount", label: "商品" },
     { key: "customerCount", label: "客戶" },
     { key: "orderCount", label: "訂單" },
@@ -299,14 +421,14 @@ function SaasAdminPage() {
     {
       key: "actions",
       label: "管理入口",
-      render: (row) => renderActionButtons(row, handleOpenSettings)
+      render: (row) => renderActionButtons(row, handleOpenSettings, handleSelectDetail)
     }
   ];
 
   if (!isAdmin) {
     return (
       <div>
-        <PageHeader title="SaaS 平台管理中心" description="僅限平台管理員檢視；此區不是 KINGWAY_TAINAN 門市設定。" />
+        <PageHeader title="SaaS 平台管理中心" description="僅限平台管理員檢視；此區不是 KINGWAY 台南門市設定。" />
         <div className="empty-state">沒有 SaaS 管理權限。</div>
       </div>
     );
@@ -315,7 +437,7 @@ function SaasAdminPage() {
   if (loading) {
     return (
       <div>
-        <PageHeader title="SaaS 平台管理中心" description="載入平台租戶店鋪資料中..." />
+        <PageHeader title="SaaS 平台管理中心" description="載入平台租戶店家資料中..." />
       </div>
     );
   }
@@ -323,7 +445,7 @@ function SaasAdminPage() {
   if (error) {
     return (
       <div>
-        <PageHeader title="SaaS 平台管理中心" description="平台管理所有租戶店鋪；此區不是 KINGWAY_TAINAN 門市設定。" />
+        <PageHeader title="SaaS 平台管理中心" description="平台管理所有租戶店家；此區不是 KINGWAY 台南門市設定。" />
         <div className="empty-state">{error}</div>
       </div>
     );
@@ -331,7 +453,7 @@ function SaasAdminPage() {
 
   return (
     <div>
-      <PageHeader title="SaaS 平台管理中心" description="平台層級檢視所有租戶店鋪、SchemaGuard 狀態與各店鋪模組入口；KINGWAY_TAINAN 只是 store_id=1 租戶。" />
+      <PageHeader title="SaaS 平台管理中心" description="平台層級檢視所有租戶店家、SchemaGuard 狀態與各店家模組入口；KINGWAY 台南是 store_id=1 租戶。" />
 
       <div className="admin-summary-grid dashboard-summary-grid">
         {summaryCards.map((card) => (
@@ -345,18 +467,18 @@ function SaasAdminPage() {
       {canCreateStore ? (
         <section className="admin-panel">
           <AdminSectionHeader
-            eyebrow="Platform Admin"
-            title="新增租戶店鋪"
-            description="建立新店鋪、預設功能開關與 owner 帳號。若不輸入密碼，系統會自動產生一次性臨時密碼。"
+            eyebrow="平台管理"
+            title="新增租戶店家"
+            description="建立新店家、預設功能開關與 owner 帳號。若不輸入密碼，系統會自動產生一次性臨時密碼。"
           />
 
           <form className="form-grid" onSubmit={handleCreateStore}>
             <label className="form-field">
-              <span>店鋪代碼 code</span>
+              <span>店家代碼</span>
               <input name="code" value={createForm.code} onChange={handleCreateFormChange} placeholder="KINGWAY_TAICHUNG" required />
             </label>
             <label className="form-field">
-              <span>店鋪名稱 name</span>
+              <span>店家名稱</span>
               <input name="name" value={createForm.name} onChange={handleCreateFormChange} placeholder="KINGWAY 台中" required />
             </label>
             <label className="form-field">
@@ -376,12 +498,12 @@ function SaasAdminPage() {
               <input name="ownerName" value={createForm.ownerName} onChange={handleCreateFormChange} placeholder="KINGWAY 台中 店長" />
             </label>
             <label className="form-field">
-              <span>方案 plan</span>
+              <span>方案</span>
               <input name="plan" value={createForm.plan} onChange={handleCreateFormChange} placeholder="trial" required />
             </label>
             <div className="compact-actions">
               <button type="submit" className="primary-button" disabled={createLoading}>
-                {createLoading ? "建立中..." : "建立新店鋪"}
+                {createLoading ? "建立中..." : "建立新店家"}
               </button>
             </div>
           </form>
@@ -391,13 +513,13 @@ function SaasAdminPage() {
           {createResult?.store ? (
             <div className="admin-panel" style={{ marginTop: 16 }}>
               <AdminSectionHeader
-                eyebrow="Provisioning Result"
+                eyebrow="建立結果"
                 title="建立成功"
                 description="下方資訊僅顯示本次建立結果；若有臨時密碼，請立即保存。"
               />
               <div className="admin-summary-grid">
                 <article className="admin-summary-card">
-                  <div className="admin-summary-label">Store</div>
+                  <div className="admin-summary-label">店家</div>
                   <div className="admin-summary-value admin-summary-value-small">
                     {createResult.store.code} / {createResult.store.name}
                   </div>
@@ -407,13 +529,13 @@ function SaasAdminPage() {
                   <div className="admin-summary-value admin-summary-value-small">{createResult.store.slug || "-"}</div>
                 </article>
                 <article className="admin-summary-card">
-                  <div className="admin-summary-label">Owner</div>
+                  <div className="admin-summary-label">Owner 帳號</div>
                   <div className="admin-summary-value admin-summary-value-small">{createResult.owner?.username || "-"}</div>
                 </article>
                 <article className="admin-summary-card">
-                  <div className="admin-summary-label">Plan / Status</div>
+                  <div className="admin-summary-label">方案 / 狀態</div>
                   <div className="admin-summary-value admin-summary-value-small">
-                    {createResult.store.plan || "-"} / {createResult.store.status || "-"}
+                    {getPlanLabel(createResult.store.plan)} / {getStatusLabel(createResult.store.status)}
                   </div>
                 </article>
               </div>
@@ -430,11 +552,12 @@ function SaasAdminPage() {
       <section className="admin-panel">
         <AdminSectionHeader
           eyebrow="SaaS 平台"
-          title="租戶店鋪列表"
-          description="平台層級檢視租戶店鋪，可直接開啟店鋪設定並儲存 STORE_PROFILE 欄位。"
+          title="租戶店家列表"
+          description="平台層級檢視租戶店家，可直接開啟店家設定並儲存門市基本資料。"
           badges={
             <>
-              <StatusBadge tone="info">租戶店鋪總數 {data?.totalStores ?? stores.length}</StatusBadge>
+              <StatusBadge tone="info">租戶店家總數 {data?.totalStores ?? stores.length}</StatusBadge>
+              <StatusBadge tone="neutral">目前顯示 {filteredStores.length}</StatusBadge>
               <StatusBadge tone={data?.schemaGuard?.requireStoreIdSchema ? "success" : "warning"}>
                 SchemaGuard {data?.schemaGuard?.status || "UNKNOWN"}
               </StatusBadge>
@@ -442,31 +565,112 @@ function SaasAdminPage() {
           }
         />
 
+        <div className="filter-bar">
+          <label className="form-field">
+            <span>搜尋店家</span>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="輸入店家名稱、代碼或 owner"
+            />
+          </label>
+          <label className="form-field">
+            <span>狀態</span>
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              {STATUS_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="form-field">
+            <span>方案</span>
+            <select value={planFilter} onChange={(event) => setPlanFilter(event.target.value)}>
+              {PLAN_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {storeUpdateError ? <div className="error-banner">{storeUpdateError}</div> : null}
+        {storeUpdateSuccess ? <div className="platform-store-settings-success">{storeUpdateSuccess}</div> : null}
+
         <DataTable
           columns={columns}
-          rows={stores}
-          emptyText="目前沒有店鋪資料。"
-          cardTitle={(row) => row.code || `Store ${row.id}`}
-          cardDescription={(row) => `${row.name || "未設定店鋪名稱"}${row.slug ? ` / ${row.slug}` : ""}`}
-          cardBadges={(row) => <StatusBadge tone={getStatusTone(row.status)}>{row.status || "-"}</StatusBadge>}
-          cardFooter={(row) => renderActionButtons(row, handleOpenSettings)}
+          rows={filteredStores}
+          emptyText="目前沒有符合條件的店家資料。"
+          cardTitle={(row) => row.code || `店家 ${row.id}`}
+          cardDescription={(row) => `${row.name || "未設定店家名稱"}${row.slug ? ` / ${row.slug}` : ""}`}
+          cardBadges={(row) => (
+            <>
+              <StatusBadge tone={getStatusTone(row.status)}>{getStatusLabel(row.status)}</StatusBadge>
+              <StatusBadge tone="info">{getPlanLabel(row.plan)}</StatusBadge>
+              {!row.hasOwner ? <StatusBadge tone="warning">缺少 owner</StatusBadge> : null}
+            </>
+          )}
+          cardFooter={(row) => renderActionButtons(row, handleOpenSettings, handleSelectDetail)}
         />
       </section>
+
+      {selectedDetailStore ? (
+        <section className="admin-panel">
+          <AdminSectionHeader
+            eyebrow="店家詳細"
+            title={selectedDetailStore.name || selectedDetailStore.code || `店家 ${selectedDetailStore.id}`}
+            description="顯示店家基本資料、owner、統計數量與常用管理入口。"
+            badges={
+              <>
+                <StatusBadge tone={getStatusTone(selectedDetailStore.status)}>{getStatusLabel(selectedDetailStore.status)}</StatusBadge>
+                <StatusBadge tone="info">{getPlanLabel(selectedDetailStore.plan)}</StatusBadge>
+                {!selectedDetailStore.hasOwner ? <StatusBadge tone="warning">缺少 owner</StatusBadge> : null}
+              </>
+            }
+            actions={renderActionButtons(selectedDetailStore, handleOpenSettings, handleSelectDetail)}
+          />
+          <div className="admin-summary-grid">
+            <article className="admin-summary-card">
+              <div className="admin-summary-label">店家代碼</div>
+              <div className="admin-summary-value admin-summary-value-small">{selectedDetailStore.code || "-"}</div>
+            </article>
+            <article className="admin-summary-card">
+              <div className="admin-summary-label">Owner</div>
+              <div className="admin-summary-value admin-summary-value-small">
+                {selectedDetailStore.owner?.displayName || "未設定 owner"}
+              </div>
+              <div className="muted-text">{selectedDetailStore.owner?.username || "-"}</div>
+              {selectedDetailStore.owner?.email ? <div className="muted-text">{selectedDetailStore.owner.email}</div> : null}
+            </article>
+            <article className="admin-summary-card">
+              <div className="admin-summary-label">商品 / 客戶</div>
+              <div className="admin-summary-value admin-summary-value-small">
+                {selectedDetailStore.productCount} / {selectedDetailStore.customerCount}
+              </div>
+            </article>
+            <article className="admin-summary-card">
+              <div className="admin-summary-label">訂單 / 維修</div>
+              <div className="admin-summary-value admin-summary-value-small">
+                {selectedDetailStore.orderCount} / {selectedDetailStore.repairCount}
+              </div>
+            </article>
+          </div>
+        </section>
+      ) : null}
 
       <div className="platform-store-settings-grid">
         <section className="admin-panel platform-store-settings-main-panel">
           <AdminSectionHeader
-            eyebrow="Platform Admin"
-            title="STORE_PROFILE 設定"
+            eyebrow="平台管理"
+            title="門市基本資料設定"
             description={
               selectedStore
-                ? "平台管理員可直接查看或覆寫指定門市的 STORE_PROFILE 設定。"
-                : "請先從上方租戶店鋪列表點選「設定」載入門市資料。"
+                ? "平台管理員可直接查看或覆寫指定門市的基本資料。"
+                : "請先從上方租戶店家列表點選「店家設定」載入門市資料。"
             }
             badges={
               selectedStore ? (
                 <>
-                  <StatusBadge tone="info">Store {selectedStore.id}</StatusBadge>
+                  <StatusBadge tone="info">店家 {selectedStore.id}</StatusBadge>
                   <StatusBadge tone="neutral">{selectedStore.code || "UNKNOWN"}</StatusBadge>
                 </>
               ) : null
@@ -474,7 +678,7 @@ function SaasAdminPage() {
           />
 
           {!selectedStore ? (
-            <div className="empty-state">請先在租戶店鋪列表點選「設定」。</div>
+            <div className="empty-state">請先在租戶店家列表點選「店家設定」。</div>
           ) : null}
 
           {selectedStore ? (
@@ -482,13 +686,13 @@ function SaasAdminPage() {
               <div className="platform-store-settings-selected">
                 <div className="platform-store-settings-selected-label">目前選擇</div>
                 <div className="platform-store-settings-selected-value">
-                  {selectedStore.name || "未設定店鋪名稱"} / {selectedStore.code || "-"}
+                  {selectedStore.name || "未設定店家名稱"} / {selectedStore.code || "-"}
                 </div>
               </div>
 
               {settingsError ? <div className="error-banner">{settingsError}</div> : null}
               {settingsSuccess ? <div className="platform-store-settings-success">{settingsSuccess}</div> : null}
-              {settingsLoading ? <div className="loading-state">載入店鋪設定中...</div> : null}
+              {settingsLoading ? <div className="loading-state">載入店家設定中...</div> : null}
 
               {!settingsLoading ? (
                 <form className="form-grid platform-store-settings-form" onSubmit={handleSaveSettings}>
@@ -588,8 +792,8 @@ function SaasAdminPage() {
               description="此階段不實作 logo upload，只保留平台管理入口位置。"
             />
             <div className="platform-store-settings-placeholder-card">
-              <strong>Coming Soon</strong>
-              <p>Logo upload 將在後續階段實作。</p>
+              <strong>後續階段</strong>
+              <p>門市 Logo 上傳將在後續階段實作。</p>
             </div>
           </article>
 
@@ -600,8 +804,8 @@ function SaasAdminPage() {
               description="此階段不實作 LINE token / secret 編輯，只保留位置。"
             />
             <div className="platform-store-settings-placeholder-card">
-              <strong>Coming Soon</strong>
-              <p>LINE settings 之後會走獨立的安全流程。</p>
+              <strong>後續階段</strong>
+              <p>LINE 設定之後會走獨立的安全流程。</p>
             </div>
           </article>
         </section>

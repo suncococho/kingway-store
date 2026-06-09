@@ -36,12 +36,21 @@ function featuresToDraft(features) {
 
 function getPresetSummary(presetKey) {
   if (presetKey === "FREE") {
-    return "Free：保留 POS、訂單、維修、庫存與 LINE 基本能力。";
+    return "免費版：保留 POS、訂單、維修、庫存與 LINE 基本能力。";
   }
   if (presetKey === "PREMIUM") {
-    return "Premium：開啟進階報表、優惠券、供應商、購買確認書與員工管理。";
+    return "進階版：開啟進階報表、優惠券、供應商、購買確認書與員工管理。";
   }
   return "";
+}
+
+function getPlanLabel(plan) {
+  const normalized = String(plan || "").toLowerCase();
+  if (normalized === "free") return "免費版";
+  if (normalized === "premium") return "進階版";
+  if (normalized === "trial") return "試用版";
+  if (normalized === "single_store") return "單店版";
+  return plan || "-";
 }
 
 function SaasStoreFeaturesPage() {
@@ -76,7 +85,7 @@ function SaasStoreFeaturesPage() {
         setData(response);
         setDraftFeatures(featuresToDraft(response.features));
       } catch (err) {
-        setError(err.message || "載入店鋪功能設定失敗");
+        setError(err.message || "載入店家功能設定失敗");
       } finally {
         setLoading(false);
       }
@@ -138,7 +147,7 @@ function SaasStoreFeaturesPage() {
       setDraftFeatures(featuresToDraft(response.features));
       setSuccess("功能設定已儲存。");
     } catch (err) {
-      setSaveError(err.message || "儲存店鋪功能設定失敗");
+      setSaveError(err.message || "儲存店家功能設定失敗");
     } finally {
       setSaving(false);
     }
@@ -198,7 +207,7 @@ function SaasStoreFeaturesPage() {
   if (!isAdmin) {
     return (
       <div>
-        <PageHeader title="店鋪功能設定" description="僅限平台管理員檢視。" />
+        <PageHeader title="店家功能設定" description="僅限平台管理員檢視。" />
         <div className="empty-state">沒有 SaaS 管理權限。</div>
       </div>
     );
@@ -207,7 +216,7 @@ function SaasStoreFeaturesPage() {
   if (loading) {
     return (
       <div>
-        <PageHeader title="店鋪功能設定" description="載入店鋪功能設定中..." />
+        <PageHeader title="店家功能設定" description="載入店家功能設定中..." />
       </div>
     );
   }
@@ -215,7 +224,7 @@ function SaasStoreFeaturesPage() {
   if (error) {
     return (
       <div>
-        <PageHeader title="店鋪功能設定" description="SaaS 平台的店鋪功能設定入口。" />
+        <PageHeader title="店家功能設定" description="SaaS 平台的店家功能設定入口。" />
         <div className="empty-state">{error}</div>
       </div>
     );
@@ -223,15 +232,15 @@ function SaasStoreFeaturesPage() {
 
   return (
     <div>
-      <PageHeader title="店鋪功能設定" description="管理單一店鋪目前啟用的 SaaS 功能模組。" />
+      <PageHeader title="店家功能設定" description="管理單一店家目前啟用的 SaaS 功能模組。" />
 
       <div className="admin-summary-grid dashboard-summary-grid">
         <article className="admin-summary-card">
-          <div className="admin-summary-label">店鋪代碼</div>
+          <div className="admin-summary-label">店家代碼</div>
           <div className="admin-summary-value admin-summary-value-small">{store?.code || "-"}</div>
         </article>
         <article className="admin-summary-card">
-          <div className="admin-summary-label">Store ID</div>
+          <div className="admin-summary-label">店家 ID</div>
           <div className="admin-summary-value">{store?.id ?? "-"}</div>
         </article>
         <article className="admin-summary-card">
@@ -239,8 +248,8 @@ function SaasStoreFeaturesPage() {
           <div className="admin-summary-value admin-summary-value-small">{store?.status || "-"}</div>
         </article>
         <article className="admin-summary-card">
-          <div className="admin-summary-label">Plan</div>
-          <div className="admin-summary-value admin-summary-value-small">{store?.plan || "-"}</div>
+          <div className="admin-summary-label">方案</div>
+          <div className="admin-summary-value admin-summary-value-small">{getPlanLabel(store?.plan)}</div>
         </article>
         <article className="admin-summary-card">
           <div className="admin-summary-label">已啟用功能</div>
@@ -250,25 +259,25 @@ function SaasStoreFeaturesPage() {
 
       <section className="admin-panel">
         <AdminSectionHeader
-          eyebrow="Feature flags"
-          title={store?.code || `Store ${id}`}
-          description="可編輯，儲存後會套用至此店鋪。"
+          eyebrow="功能設定"
+          title={store?.code || `店家 ${id}`}
+          description="可編輯，儲存後會套用至此店家。"
           badges={
             <>
               <StatusBadge tone={getStatusTone(store?.status)}>{store?.status || "-"}</StatusBadge>
-              <StatusBadge tone="info">{store?.plan || "-"}</StatusBadge>
+              <StatusBadge tone="info">{getPlanLabel(store?.plan)}</StatusBadge>
             </>
           }
           actions={
             <>
-              <Link to="/platform-admin" className="secondary-button">返回 SaaS 管理</Link>
+              <Link to="/platform-admin" className="secondary-button">返回平台管理</Link>
               <button
                 type="button"
                 className="secondary-button"
                 onClick={() => applyPreset("FREE")}
                 disabled={saving || presetLoading === "PREMIUM" || presetLoading === "FREE"}
               >
-                {presetLoading === "FREE" ? "套用中..." : "Free 適用"}
+                {presetLoading === "FREE" ? "套用中..." : "套用免費版"}
               </button>
               <button
                 type="button"
@@ -276,7 +285,7 @@ function SaasStoreFeaturesPage() {
                 onClick={() => applyPreset("PREMIUM")}
                 disabled={saving || presetLoading === "FREE" || presetLoading === "PREMIUM"}
               >
-                {presetLoading === "PREMIUM" ? "套用中..." : "Premium 適用"}
+                {presetLoading === "PREMIUM" ? "套用中..." : "套用進階版"}
               </button>
               <button
                 type="button"
@@ -291,7 +300,7 @@ function SaasStoreFeaturesPage() {
         />
 
         <div className="empty-state">
-          功能關閉後，該店鋪人員將無法使用對應後台功能。
+          功能關閉後，該店家人員將無法使用對應後台功能。
           第一階段已套用至：銷售報表、優惠券、發注/供應商。
           第二階段已套用至：庫存管理、購買確認書。
           第三階段已套用至：維修系統、員工管理。
