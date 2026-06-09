@@ -181,10 +181,11 @@ router.get("/supplier-requests", async (req, res, next) => {
         LEFT JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
         LEFT JOIN products p ON p.id = sri.product_id
         WHERE p.store_id = ?
+          AND (sr.store_id = ? OR sr.store_id IS NULL)
         GROUP BY sr.id, sr.request_type, sr.status, sr.supplier_name, sr.note, sr.supplier_response_note, sr.supplier_responded_at, sr.created_at, su.display_name
         ORDER BY sr.id DESC
       `,
-      [storeId]
+      [storeId, storeId]
     );
 
     return res.json(rows.map((row) => ({
@@ -255,10 +256,11 @@ router.post("/movements", async (req, res, next) => {
 
       await connection.query(
         `
-          INSERT INTO inventory_movements (product_id, movement_type, quantity, notes, created_by)
-          VALUES (?, ?, ?, ?, ?)
+          INSERT INTO inventory_movements (store_id, product_id, movement_type, quantity, notes, created_by)
+          VALUES (?, ?, ?, ?, ?, ?)
         `,
         [
+          storeId,
           productId,
           movementType,
           movementQuantity,
@@ -276,15 +278,6 @@ router.post("/movements", async (req, res, next) => {
         movementType,
         movementQuantity
       };
-    });
-
-    // INVENTORY_SUPPLIER_NOTIFY_CALL_V2
-    await notifySupplierRequestTelegram({
-      requestId: result.id,
-      requestType: result.requestType || result.request_type || requestType,
-      supplierName: result.supplierName || result.supplier_name || supplierName,
-      note: result.note || note,
-      items
     });
 
     return res.status(201).json(result);
@@ -307,10 +300,10 @@ router.post("/supplier-requests", async (req, res, next) => {
     const result = await withTransaction(async (connection) => {
       const [requestResult] = await connection.query(
         `
-          INSERT INTO supplier_requests (request_type, status, supplier_name, note, requested_by_staff_id)
-          VALUES (?, 'PENDING_SUPPLIER', ?, ?, ?)
+          INSERT INTO supplier_requests (store_id, request_type, status, supplier_name, note, requested_by_staff_id)
+          VALUES (?, ?, 'PENDING_SUPPLIER', ?, ?, ?)
         `,
-        [requestType, supplierName || null, note || null, req.user.id]
+        [storeId, requestType, supplierName || null, note || null, req.user.id]
       );
 
       for (const item of items) {
@@ -374,9 +367,10 @@ router.post("/supplier-requests/:id/respond", async (req, res, next) => {
         INNER JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
         INNER JOIN products p ON p.id = sri.product_id AND p.store_id = ?
         WHERE sr.id = ?
+          AND (sr.store_id = ? OR sr.store_id IS NULL)
         LIMIT 1
       `,
-      [storeId, id]
+      [storeId, id, storeId]
     );
     if (!request) {
       throw createError("找不到供應商請求", 404);
@@ -389,7 +383,7 @@ router.post("/supplier-requests/:id/respond", async (req, res, next) => {
             supplier_response_note = ?,
             supplier_responded_at = NOW()
         WHERE id = ?
-            AND store_id = ?
+          AND (store_id = ? OR store_id IS NULL)
       `,
       [nextStatus, req.body.note || null, id, storeId]
     );
@@ -450,6 +444,7 @@ router.post("/supplier-requests/:id/receive", async (req, res, next) => {
         await connection.query(
           `
             INSERT INTO inventory_movements (
+              store_id,
               product_id,
               movement_type,
               quantity,
@@ -458,9 +453,10 @@ router.post("/supplier-requests/:id/receive", async (req, res, next) => {
               created_by,
               notes
             )
-            VALUES (?, 'RESTOCK', ?, 'SUPPLIER_REQUEST', ?, ?, ?)
+            VALUES (?, ?, 'RESTOCK', ?, 'SUPPLIER_REQUEST', ?, ?, ?)
           `,
           [
+            storeId,
             requestItem.productId,
             delta,
             id,
@@ -487,7 +483,7 @@ router.post("/supplier-requests/:id/receive", async (req, res, next) => {
       );
       const status = Number(summary.completedItems || 0) === Number(summary.totalItems || 0) ? "RECEIVED" : "PARTIALLY_RECEIVED";
       await connection.query(
-          "UPDATE supplier_requests SET status = ? WHERE id = ? AND store_id = ?",
+          "UPDATE supplier_requests SET status = ? WHERE id = ? AND (store_id = ? OR store_id IS NULL)",
           [status, id, storeId]
         );
       await logWorkflowEvent("supplier_request_received", "SUPPLIER_REQUEST", id, { status }, req.user.id, connection);

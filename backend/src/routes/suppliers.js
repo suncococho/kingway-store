@@ -249,10 +249,11 @@ router.get("/requests", async (req, res, next) => {
       LEFT JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
       LEFT JOIN products p ON p.id = sri.product_id
       WHERE p.store_id = ?
+        AND (sr.store_id = ? OR sr.store_id IS NULL)
         AND sr.status IN ('PENDING_SUPPLIER', 'PARTIALLY_RECEIVED')
       ORDER BY sr.id DESC
       LIMIT 200
-    `, [storeId]);
+    `, [storeId, storeId]);
 
     res.json(rows);
   } catch (error) {
@@ -284,10 +285,10 @@ router.post("/requests", async (req, res, next) => {
     const [requestResult] = await pool.query(
       `
         INSERT INTO supplier_requests
-        (request_type, status, supplier_name, note, requested_by_staff_id)
-        VALUES (?, 'PENDING_SUPPLIER', ?, ?, ?)
+        (store_id, request_type, status, supplier_name, note, requested_by_staff_id)
+        VALUES (?, ?, 'PENDING_SUPPLIER', ?, ?, ?)
       `,
-      [requestType, supplierName, note || null, req.user.id]
+      [storeId, requestType, supplierName, note || null, req.user.id]
     );
 
     await pool.query(
@@ -384,10 +385,11 @@ router.post("/:id/receive", async (req, res, next) => {
         INNER JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
         INNER JOIN products p ON p.id = sri.product_id AND p.store_id = ?
         WHERE sr.id = ?
+          AND (sr.store_id = ? OR sr.store_id IS NULL)
         LIMIT 1
         FOR UPDATE
       `,
-      [storeId, requestId]
+      [storeId, requestId, storeId]
     );
 
     if (!request) {
@@ -428,8 +430,8 @@ router.post("/:id/receive", async (req, res, next) => {
 
     if (remaining <= 0) {
       await conn.query(
-        "UPDATE supplier_requests SET status = 'RECEIVED', supplier_responded_at = NOW() WHERE id = ?",
-        [requestId]
+        "UPDATE supplier_requests SET status = 'RECEIVED', supplier_responded_at = NOW() WHERE id = ? AND (store_id = ? OR store_id IS NULL)",
+        [requestId, storeId]
       );
       await conn.commit();
       return res.json({ message: "此發注單已全部入庫", actualReceive: 0, status: "RECEIVED" });
@@ -456,9 +458,10 @@ router.post("/:id/receive", async (req, res, next) => {
 
     await conn.query(
       `INSERT INTO inventory_movements
-       (product_id, movement_type, quantity, reference_type, reference_id, created_by, notes)
-       VALUES (?, 'IN', ?, 'SUPPLIER_REQUEST', ?, ?, ?)`,
+       (store_id, product_id, movement_type, quantity, reference_type, reference_id, created_by, notes)
+       VALUES (?, ?, 'IN', ?, 'SUPPLIER_REQUEST', ?, ?, ?)`,
       [
+        storeId,
         item.productId,
         actualReceive,
         requestId,
@@ -473,8 +476,8 @@ router.post("/:id/receive", async (req, res, next) => {
     const newStatus = newReceived >= Number(item.quantity || 0) ? "RECEIVED" : "PARTIALLY_RECEIVED";
 
     await conn.query(
-      "UPDATE supplier_requests SET status = ?, supplier_responded_at = NOW() WHERE id = ?",
-      [newStatus, requestId]
+      "UPDATE supplier_requests SET status = ?, supplier_responded_at = NOW() WHERE id = ? AND (store_id = ? OR store_id IS NULL)",
+      [newStatus, requestId, storeId]
     );
 
     await conn.commit();
@@ -512,9 +515,10 @@ router.post("/:id/return-done", async (req, res, next) => {
         INNER JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
         INNER JOIN products p ON p.id = sri.product_id AND p.store_id = ?
         WHERE sr.id = ?
+          AND (sr.store_id = ? OR sr.store_id IS NULL)
         LIMIT 1
       `,
-      [storeId, requestId]
+      [storeId, requestId, storeId]
     );
 
     if (!request) {
@@ -554,8 +558,24 @@ router.post("/:id/return-done", async (req, res, next) => {
     );
 
     await pool.query(
-      "UPDATE supplier_requests SET status = 'RETURN_CONFIRMED', supplier_responded_at = NOW() WHERE id = ?",
-      [requestId]
+      `
+        INSERT INTO inventory_movements
+          (store_id, product_id, movement_type, quantity, reference_type, reference_id, created_by, notes)
+        VALUES (?, ?, 'OUT', ?, 'SUPPLIER_REQUEST', ?, ?, ?)
+      `,
+      [
+        storeId,
+        item.productId,
+        -Math.abs(Number(item.quantity || 0)),
+        requestId,
+        req.user?.id || 1,
+        `Supplier return confirmed #${requestId} / ${item.sku}`
+      ]
+    );
+
+    await pool.query(
+      "UPDATE supplier_requests SET status = 'RETURN_CONFIRMED', supplier_responded_at = NOW() WHERE id = ? AND (store_id = ? OR store_id IS NULL)",
+      [requestId, storeId]
     );
 
     return res.json({
@@ -588,10 +608,11 @@ router.get("/monthly", async (req, res, next) => {
       LEFT JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
       LEFT JOIN products p ON p.id = sri.product_id
       WHERE p.store_id = ?
+        AND (sr.store_id = ? OR sr.store_id IS NULL)
         AND DATE_FORMAT(sr.created_at, '%Y-%m') = DATE_FORMAT(NOW(), '%Y-%m')
       GROUP BY sr.supplier_name
       ORDER BY sr.supplier_name ASC
-    `, [storeId]);
+    `, [storeId, storeId]);
 
     res.json(rows);
   } catch (error) {

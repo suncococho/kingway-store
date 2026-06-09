@@ -165,6 +165,29 @@ async function getNextProductSku(connection, storeId, category, region = "C", sh
   });
 }
 
+async function assertSkuAvailableInStore(connection, sku, storeId, excludeProductId = null) {
+  const params = [normalizeProductSku(sku), storeId];
+  let sql = `
+    SELECT id
+    FROM products
+    WHERE sku = ?
+      AND store_id = ?
+  `;
+
+  if (excludeProductId) {
+    sql += " AND id <> ?";
+    params.push(excludeProductId);
+  }
+
+  sql += " LIMIT 1";
+  const [rows] = await connection.query(sql, params);
+  if (rows[0]) {
+    const error = new Error("同一門市內 SKU 已存在");
+    error.statusCode = 409;
+    throw error;
+  }
+}
+
 router.get("/", async (req, res, next) => {
   try {
     const search = req.query.search ? `%${req.query.search}%` : null;
@@ -342,6 +365,7 @@ router.post("/", async (req, res, next) => {
 
     const normalizedSku = normalizeProductSku(sku);
     const resolvedCategory = getCategoryFromSku(normalizedSku, category);
+    await assertSkuAvailableInStore(pool, normalizedSku, storeId);
 
     const [result] = await pool.query(
       `
@@ -387,7 +411,7 @@ router.post("/", async (req, res, next) => {
   } catch (error) {
     if (error.code === "ER_DUP_ENTRY") {
       error.statusCode = 409;
-      error.message = "SKU 已存在";
+      error.message = "SKU 已存在；目前資料庫索引仍限制全系統唯一，跨門市同 SKU 需先調整資料庫索引";
     }
     return next(error);
   }
@@ -402,6 +426,9 @@ router.patch("/:id", async (req, res, next) => {
     const resolvedCategory = categoryFromSku || (category ? normalizeProductCategory(category) : null);
 
     const storeId = getRequestStoreId(req);
+    if (normalizedSku) {
+      await assertSkuAvailableInStore(pool, normalizedSku, storeId, id);
+    }
 
     await pool.query(
       `
@@ -474,7 +501,7 @@ router.patch("/:id", async (req, res, next) => {
   } catch (error) {
     if (error.code === "ER_DUP_ENTRY") {
       error.statusCode = 409;
-      error.message = "SKU 已存在";
+      error.message = "SKU 已存在；目前資料庫索引仍限制全系統唯一，跨門市同 SKU 需先調整資料庫索引";
     }
     return next(error);
   }
