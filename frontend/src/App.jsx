@@ -3,6 +3,7 @@ import ProtectedLayout from "./components/ProtectedLayout";
 import { getStoredToken, getStoredUser } from "./lib/auth";
 import { getDefaultRouteForUser } from "./lib/permissions";
 import LoginPage from "./pages/LoginPage";
+import StoreSignupPage from "./pages/StoreSignupPage";
 import PlatformLoginPage, { PlatformAdminPage } from "./pages/PlatformLoginPage";
 import SaasAdminPage from "./pages/SaasAdminPage";
 import SaasStoreFeaturesPage from "./pages/SaasStoreFeaturesPage";
@@ -74,6 +75,7 @@ function App() {
       <Route path="/saas-admin/stores/:id/features" element={<SaasStoreFeaturesPage />} />
       <Route path="/saas-admin/*" element={<Navigate to="/platform-admin" replace />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/store-signup" element={<StoreSignupPage />} />
       <Route path="/" element={<Navigate to={token ? defaultProtectedRoute : "/login"} replace />} />
       <Route element={<ProtectedLayout />}>
         <Route path="/dashboard" element={<DashboardPage />} />

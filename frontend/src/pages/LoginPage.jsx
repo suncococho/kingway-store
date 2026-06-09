@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { apiRequest } from "../lib/api";
 import { storeAuth } from "../lib/auth";
 import { isMobileViewport, markMobileQuickActionPending } from "../lib/mobileQuickAction";
@@ -7,8 +7,11 @@ import { getDefaultRouteForUser } from "../lib/permissions";
 
 function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const signupMessage = location.state?.signupMessage || "";
+  const signupUsername = location.state?.signupUsername || "";
   const [form, setForm] = useState({
-    username: "",
+    username: signupUsername,
     password: ""
   });
   const [loading, setLoading] = useState(false);
@@ -74,10 +77,14 @@ function LoginPage() {
             required
           />
         </label>
+        {signupMessage ? <div className="success-banner">{signupMessage}</div> : null}
         {error ? <div className="error-banner">{error}</div> : null}
         <button type="submit" className="primary-button" disabled={loading}>
           {loading ? "登入中..." : "登入"}
         </button>
+        <Link className="login-secondary-link" to="/store-signup">
+          新店家註冊 / 建立店家帳號
+        </Link>
       </form>
     </div>
   );

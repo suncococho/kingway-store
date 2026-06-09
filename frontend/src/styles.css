@@ -142,6 +142,10 @@ textarea:focus-visible,
   padding: 24px;
 }
 
+.signup-card {
+  max-width: 520px;
+}
+
 .public-card {
   width: 100%;
   max-width: 760px;
@@ -1440,6 +1444,30 @@ textarea:focus-visible,
   border-color: #f1b5b5;
   background: #fdecec;
   color: #b83333;
+}
+
+.success-banner {
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid #a8d8bc;
+  background: #edf9f1;
+  color: #1d6b3b;
+}
+
+.login-secondary-link {
+  display: inline-flex;
+  justify-content: center;
+  width: 100%;
+  margin-top: 14px;
+  color: #1d4ed8;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.login-secondary-link:hover {
+  color: #1e3a8a;
+  text-decoration: underline;
 }
 
 .processing-overlay {

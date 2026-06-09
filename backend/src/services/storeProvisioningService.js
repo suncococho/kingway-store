@@ -2,6 +2,11 @@
 
 const crypto = require("crypto");
 const { withTransaction } = require("../db");
+const {
+  STORE_PROFILE_DEFAULTS,
+  STORE_PROFILE_SCOPE,
+  normalizeStoreProfilePayload
+} = require("./storeProfileSettingsService");
 const { hashPassword } = require("../utils/passwords");
 const { normalizeSlug } = require("../utils/publicStoreResolver");
 
@@ -95,7 +100,7 @@ function normalizeRequestedSlug(value, code) {
 
 function normalizeUsername(value) {
   const username = String(value || "").trim();
-  if (!/^[A-Za-z0-9_.-]{3,100}$/.test(username)) {
+  if (!/^[A-Za-z0-9_.@-]{3,100}$/.test(username)) {
     throw new ProvisioningError(400, "Invalid owner username");
   }
   return username;
@@ -213,13 +218,60 @@ async function insertStoreFeatures(connection, storeId) {
 }
 
 async function insertOwner(connection, payload) {
-  await connection.query(
+  const [result] = await connection.query(
     `
       INSERT INTO staff_users (username, password_hash, display_name, role, is_active, store_id)
       VALUES (?, ?, ?, ?, 1, ?)
     `,
     [payload.ownerUsername, payload.passwordHash, payload.ownerName, payload.ownerRole, payload.storeId]
   );
+  return result.insertId;
+}
+
+async function insertOwnerMembership(connection, payload) {
+  await connection.query(
+    `
+      INSERT INTO store_memberships (store_id, staff_user_id, role, is_default, status)
+      VALUES (?, ?, 'owner', 1, 'active')
+    `,
+    [payload.storeId, payload.staffUserId]
+  );
+}
+
+async function appSettingsTableHasStoreIdColumn(connection) {
+  const [rows] = await connection.query(
+    `
+      SELECT 1
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'app_settings'
+        AND COLUMN_NAME = 'store_id'
+      LIMIT 1
+    `
+  );
+  return Boolean(rows[0]);
+}
+
+async function insertStoreProfileSettings(connection, storeId, payload = {}) {
+  if (!(await appSettingsTableHasStoreIdColumn(connection))) {
+    return false;
+  }
+
+  const normalized = normalizeStoreProfilePayload({
+    ...STORE_PROFILE_DEFAULTS,
+    ...payload
+  });
+
+  await connection.query(
+    `
+      INSERT INTO app_settings (store_id, setting_scope, payload_json, updated_by_staff_id)
+      VALUES (?, ?, ?, NULL)
+      ON DUPLICATE KEY UPDATE payload_json = VALUES(payload_json)
+    `,
+    [storeId, STORE_PROFILE_SCOPE, JSON.stringify(normalized)]
+  );
+
+  return true;
 }
 
 function sanitizeStoreResponse(store) {
@@ -257,12 +309,17 @@ async function provisionStore(input, actor = null) {
 
     const storeId = await insertStore(connection, { code, name, slug, plan }, hasSlugColumn);
     await insertStoreFeatures(connection, storeId);
-    await insertOwner(connection, {
+    const staffUserId = await insertOwner(connection, {
       ownerUsername,
       passwordHash,
       ownerName,
       ownerRole,
       storeId
+    });
+    await insertOwnerMembership(connection, { storeId, staffUserId });
+    const profileSettingsPersisted = await insertStoreProfileSettings(connection, storeId, {
+      ...(input?.profileSettings && typeof input.profileSettings === "object" ? input.profileSettings : {}),
+      displayName: input?.profileSettings?.displayName || name
     });
 
     return {
@@ -276,12 +333,15 @@ async function provisionStore(input, actor = null) {
         plan
       }),
       owner: {
+        id: staffUserId,
         username: ownerUsername,
         role: ownerRole,
-        displayName: ownerName
+        displayName: ownerName,
+        storeRole: "owner"
       },
       temporaryPassword: providedPassword ? null : temporaryPassword,
-      slugPersisted: hasSlugColumn
+      slugPersisted: hasSlugColumn,
+      profileSettingsPersisted
     };
   });
 }

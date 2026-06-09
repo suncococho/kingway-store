@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { pool } = require("./db");
 const { seedDefaultSettings } = require("./services/settingsService");
-const { hashPassword } = require("./utils/passwords");
+const { hashPassword, verifyPassword } = require("./utils/passwords");
 
 function readOptionalEnvFile(fileName) {
   const envPath = path.join(__dirname, "..", "..", fileName);
@@ -307,12 +307,11 @@ async function ensureDefaultStaff() {
   const displayName = "門市員工";
   const role = "CASHIER";
   const permissions = ["POS", "PRODUCTS", "REPAIRS", "INVENTORY"];
-  const passwordHash = await hashPassword(password);
   const permissionsColumnType = await getColumnDefinition("staff_users", "permissions");
 
   const [rows] = await pool.query(
     `
-      SELECT id
+      SELECT id, password_hash, display_name, role, is_active${permissionsColumnType ? ", permissions" : ""}
       FROM staff_users
       WHERE username = ?
       LIMIT 1
@@ -331,6 +330,23 @@ async function ensureDefaultStaff() {
   }
 
   if (rows[0]) {
+    const existing = rows[0];
+    const { isMatch, needsRehash } = await verifyPassword(password, existing.password_hash);
+    const permissionJson = JSON.stringify(permissions);
+    const permissionsMatch = !permissionsColumnType || String(existing.permissions || "") === permissionJson;
+    const needsUpdate =
+      !isMatch ||
+      needsRehash ||
+      String(existing.display_name || "") !== displayName ||
+      String(existing.role || "").toUpperCase() !== role ||
+      Number(existing.is_active) !== 1 ||
+      !permissionsMatch;
+
+    if (!needsUpdate) {
+      return { created: false, updated: false, skipped: false };
+    }
+
+    const passwordHash = await hashPassword(password);
     if (permissionsColumnType) {
       await pool.query(
         `
@@ -354,6 +370,7 @@ async function ensureDefaultStaff() {
     return { created: false, updated: true, skipped: false };
   }
 
+  const passwordHash = await hashPassword(password);
   if (permissionsColumnType) {
     await pool.query(
       `

@@ -11,6 +11,7 @@ const { sendRepairPickupReminders } = require("./services/repairReminderService"
 const config = require("./config");
 const { pool } = require("./db");
 const authRoutes = require("./routes/auth");
+const storeSignupRoutes = require("./routes/storeSignup");
 const platformAuthRoutes = require("./routes/platformAuth");
 const staffRoutes = require("./routes/staff");
 const customerRoutes = require("./routes/customers");
@@ -490,6 +491,7 @@ app.use("/api/store", storeSettingsRoutes);
 app.use("/api/storefront", storefrontRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/system", systemStatusRoutes);
+app.use("/api", storeSignupRoutes);
 app.use("/api/platform-auth", platformAuthRoutes);
 app.use("/api/saas-admin", saasAdminRoutes);
 app.use("/api/store-features", storeFeatureRoutes);
