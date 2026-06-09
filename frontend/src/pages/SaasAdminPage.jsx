@@ -414,6 +414,16 @@ function SaasAdminPage() {
         <StatusBadge tone="warning">缺少 owner</StatusBadge>
       )
     },
+    {
+      key: "staffCount",
+      label: "員工",
+      render: (row) => (
+        <div className="stack-meta">
+          <strong>{toNumber(row.staffCount)}</strong>
+          <span>管理 {toNumber(row.ownerCount) + toNumber(row.adminCount)} / 一般 {toNumber(row.memberStaffCount)}</span>
+        </div>
+      )
+    },
     { key: "productCount", label: "商品" },
     { key: "customerCount", label: "客戶" },
     { key: "orderCount", label: "訂單" },
@@ -606,6 +616,7 @@ function SaasAdminPage() {
             <>
               <StatusBadge tone={getStatusTone(row.status)}>{getStatusLabel(row.status)}</StatusBadge>
               <StatusBadge tone="info">{getPlanLabel(row.plan)}</StatusBadge>
+              <StatusBadge tone="neutral">員工 {toNumber(row.staffCount)}</StatusBadge>
               {!row.hasOwner ? <StatusBadge tone="warning">缺少 owner</StatusBadge> : null}
             </>
           )}
@@ -640,6 +651,15 @@ function SaasAdminPage() {
               </div>
               <div className="muted-text">{selectedDetailStore.owner?.username || "-"}</div>
               {selectedDetailStore.owner?.email ? <div className="muted-text">{selectedDetailStore.owner.email}</div> : null}
+            </article>
+            <article className="admin-summary-card">
+              <div className="admin-summary-label">員工 / 管理者</div>
+              <div className="admin-summary-value admin-summary-value-small">
+                {toNumber(selectedDetailStore.staffCount)} / {toNumber(selectedDetailStore.ownerCount) + toNumber(selectedDetailStore.adminCount)}
+              </div>
+              <div className="muted-text">
+                Owner {toNumber(selectedDetailStore.ownerCount)} / 管理者 {toNumber(selectedDetailStore.adminCount)} / 一般員工 {toNumber(selectedDetailStore.memberStaffCount)}
+              </div>
             </article>
             <article className="admin-summary-card">
               <div className="admin-summary-label">商品 / 客戶</div>

@@ -13,6 +13,10 @@ const ROLE_OPTIONS = [
   { value: "REPAIR", label: "維修" },
   { value: "INVENTORY", label: "庫存" }
 ];
+const STORE_ROLE_OPTIONS = [
+  { value: "admin", label: "管理者" },
+  { value: "staff", label: "一般員工" }
+];
 
 function getRoleLabel(role) {
   const map = {
@@ -21,6 +25,16 @@ function getRoleLabel(role) {
     CASHIER: "收銀",
     REPAIR: "維修",
     INVENTORY: "庫存"
+  };
+
+  return map[role] || role || "-";
+}
+
+function getStoreRoleLabel(role) {
+  const map = {
+    owner: "Owner",
+    admin: "管理者",
+    staff: "一般員工"
   };
 
   return map[role] || role || "-";
@@ -35,9 +49,13 @@ function StaffPage() {
     password: "",
     displayName: "",
     role: "CASHIER",
+    storeRole: "staff",
     lineUserId: "",
     isActive: true
   });
+  const [staffSaving, setStaffSaving] = useState(false);
+  const [staffError, setStaffError] = useState("");
+  const [staffSuccess, setStaffSuccess] = useState("");
   const [kpiForm, setKpiForm] = useState({
     staffUserId: "",
     actionType: "",
@@ -50,9 +68,11 @@ function StaffPage() {
     () =>
       staff.items.map((item) => ({
         ...item,
-        isActive: Boolean(item.isActive),
-        activeLabel: item.isActive ? "啟用中" : "停用",
-        lineBindingLabel: item.lineUserId ? "已綁定" : "未綁定"
+        isActive: Boolean(item.isActive) && item.membershipStatus !== "disabled",
+        storeRoleLabel: getStoreRoleLabel(item.storeRole),
+        activeLabel: Boolean(item.isActive) && item.membershipStatus !== "disabled" ? "啟用中" : "停用",
+        lineBindingLabel: item.lineUserId ? "已綁定" : "未綁定",
+        membershipStatusLabel: item.membershipStatus === "disabled" ? "已停用" : "有效"
       })),
     [staff.items]
   );
@@ -70,6 +90,7 @@ function StaffPage() {
   const summaryCards = [
     { label: "員工總數", value: rows.length },
     { label: "啟用中", value: rows.filter((item) => item.isActive).length },
+    { label: "管理者", value: rows.filter((item) => item.storeRole === "owner" || item.storeRole === "admin").length },
     { label: "LINE 已綁定", value: rows.filter((item) => item.lineUserId).length },
     { label: "KPI 有紀錄", value: kpiRows.filter((item) => item.logCount > 0).length }
   ];
@@ -92,11 +113,14 @@ function StaffPage() {
 
   function startEditStaff(row) {
     setSelectedStaffId(row.id);
+    setStaffError("");
+    setStaffSuccess("");
     setStaffForm({
       username: row.username || "",
       password: "",
       displayName: row.displayName || "",
       role: row.role || "CASHIER",
+      storeRole: row.storeRole === "owner" ? "owner" : row.storeRole || "staff",
       lineUserId: row.lineUserId || "",
       isActive: Boolean(row.isActive)
     });
@@ -104,11 +128,14 @@ function StaffPage() {
 
   function clearStaffForm() {
     setSelectedStaffId(null);
+    setStaffError("");
+    setStaffSuccess("");
     setStaffForm({
       username: "",
       password: "",
       displayName: "",
       role: "CASHIER",
+      storeRole: "staff",
       lineUserId: "",
       isActive: true
     });
@@ -116,12 +143,16 @@ function StaffPage() {
 
   async function saveStaff(event) {
     event.preventDefault();
+    setStaffSaving(true);
+    setStaffError("");
+    setStaffSuccess("");
 
     try {
       const payload = {
         username: staffForm.username,
         displayName: staffForm.displayName,
         role: staffForm.role,
+        storeRole: staffForm.storeRole,
         lineUserId: staffForm.lineUserId.trim() || null,
         isActive: staffForm.isActive
       };
@@ -137,7 +168,7 @@ function StaffPage() {
         });
       } else {
         if (!staffForm.password) {
-          alert("新增員工時必須輸入密碼");
+          setStaffError("新增員工時必須輸入密碼");
           return;
         }
         await apiRequest("/staff", {
@@ -149,11 +180,13 @@ function StaffPage() {
         });
       }
 
-      staff.refetch();
+      await staff.refetch();
       clearStaffForm();
-      alert(selectedStaffId ? "員工已更新" : "員工已新增");
+      setStaffSuccess(selectedStaffId ? "員工已更新" : "員工已新增");
     } catch (error) {
-      alert(error.message);
+      setStaffError(error.message || "儲存員工失敗");
+    } finally {
+      setStaffSaving(false);
     }
   }
 
@@ -188,6 +221,8 @@ function StaffPage() {
     <div>
       <PageHeader title="員工管理" description="員工資料、LINE 綁定、啟用狀態與手動 KPI 紀錄都在同一個 web 控制面。" />
       {staff.error || kpi.error ? <div className="empty-state">{staff.error || kpi.error}</div> : null}
+      {staffError ? <div className="error-banner">{staffError}</div> : null}
+      {staffSuccess ? <div className="success-banner">{staffSuccess}</div> : null}
 
       <div className="admin-summary-grid">
         {summaryCards.map((card) => (
@@ -209,7 +244,8 @@ function StaffPage() {
             columns={[
               { key: "username", label: "帳號" },
               { key: "displayName", label: "姓名" },
-              { key: "role", label: "角色", render: (row) => getRoleLabel(row.role) },
+              { key: "role", label: "工作角色", render: (row) => getRoleLabel(row.role) },
+              { key: "storeRole", label: "管理權限", render: (row) => getStoreRoleLabel(row.storeRole) },
               { key: "lineUserId", label: "LINE userId", mobileHidden: true },
               {
                 key: "status",
@@ -230,15 +266,20 @@ function StaffPage() {
             rows={rows}
             emptyText="目前沒有員工資料。"
             cardTitle={(row) => row.displayName}
-            cardDescription={(row) => `${row.username} / ${getRoleLabel(row.role)}`}
+            cardDescription={(row) => `${row.username} / ${getRoleLabel(row.role)} / ${getStoreRoleLabel(row.storeRole)}`}
             cardBadges={(row) => (
               <>
                 <StatusBadge tone={row.isActive ? "success" : "neutral"}>{row.activeLabel}</StatusBadge>
+                <StatusBadge tone={row.storeRole === "owner" ? "warning" : "info"}>{row.storeRoleLabel}</StatusBadge>
                 <StatusBadge tone={row.lineUserId ? "info" : "neutral"}>{row.lineBindingLabel}</StatusBadge>
               </>
             )}
             cardFooter={(row) => (
               <div className="field-grid">
+                <div className="field-item">
+                  <div className="field-label">管理權限</div>
+                  <div className="field-value">{row.storeRoleLabel}</div>
+                </div>
                 <div className="field-item">
                   <div className="field-label">LINE userId</div>
                   <div className="field-value">{row.lineUserId || "-"}</div>
@@ -260,7 +301,7 @@ function StaffPage() {
           <AdminSectionHeader
             eyebrow={selectedStaffId ? "編輯員工" : "新增員工"}
             title={selectedStaffId ? `編輯 #${selectedStaffId}` : "新增員工"}
-            description="同一張表單同時支援新增與修改，避免出現第二套員工維護流程。"
+            description="工作角色決定日常職務，管理權限決定是否可管理門市設定與員工。密碼欄位留空就不變更。"
             actions={
               selectedStaffId ? (
                 <button type="button" className="secondary-button" onClick={clearStaffForm}>
@@ -276,17 +317,33 @@ function StaffPage() {
             </label>
             <label className="form-field">
               <span>密碼</span>
-              <input name="password" type="password" value={staffForm.password} onChange={handleStaffChange} placeholder={selectedStaffId ? "留空不變更" : "必填"} />
+              <input name="password" type="password" value={staffForm.password} onChange={handleStaffChange} placeholder={selectedStaffId ? "留空不變更；輸入新密碼即重設" : "必填"} />
             </label>
             <label className="form-field">
               <span>姓名</span>
               <input name="displayName" value={staffForm.displayName} onChange={handleStaffChange} required />
             </label>
             <label className="form-field">
-              <span>角色</span>
+              <span>工作角色</span>
               <select name="role" value={staffForm.role} onChange={handleStaffChange}>
                 {ROLE_OPTIONS.map((role) => (
               <option key={role.value} value={role.value}>
+                    {role.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="form-field">
+              <span>管理權限</span>
+              <select
+                name="storeRole"
+                value={staffForm.storeRole}
+                onChange={handleStaffChange}
+                disabled={staffForm.storeRole === "owner"}
+              >
+                {staffForm.storeRole === "owner" ? <option value="owner">Owner</option> : null}
+                {STORE_ROLE_OPTIONS.map((role) => (
+                  <option key={role.value} value={role.value}>
                     {role.label}
                   </option>
                 ))}
@@ -298,13 +355,18 @@ function StaffPage() {
             </label>
             <label className="form-field">
               <span>啟用狀態</span>
-              <select name="isActive" value={staffForm.isActive ? "1" : "0"} onChange={(event) => setStaffForm((current) => ({ ...current, isActive: event.target.value === "1" }))}>
+              <select
+                name="isActive"
+                value={staffForm.isActive ? "1" : "0"}
+                onChange={(event) => setStaffForm((current) => ({ ...current, isActive: event.target.value === "1" }))}
+                disabled={staffForm.storeRole === "owner"}
+              >
                 <option value="1">啟用</option>
                 <option value="0">停用</option>
               </select>
             </label>
-            <button type="submit" className="primary-button inline-submit">
-              {selectedStaffId ? "儲存變更" : "新增員工"}
+            <button type="submit" className="primary-button inline-submit" disabled={staffSaving}>
+              {staffSaving ? "儲存中..." : selectedStaffId ? "儲存變更" : "新增員工"}
             </button>
           </form>
         </section>

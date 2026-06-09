@@ -64,6 +64,10 @@ function buildStoreResponse(row) {
     plan: t(row.plan, "unknown"),
     owner,
     hasOwner: Boolean(owner),
+    staffCount: n(row.staffCount),
+    ownerCount: n(row.ownerCount),
+    adminCount: n(row.adminCount),
+    memberStaffCount: n(row.memberStaffCount),
     productCount: n(row.productCount),
     customerCount: n(row.customerCount),
     orderCount: n(row.orderCount),
@@ -105,7 +109,11 @@ async function getStore(storeId) {
         su.username AS ownerUsername,
         su.display_name AS ownerDisplayName,
         su.role AS ownerStaffRole,
-        sm.role AS ownerMembershipRole
+        sm.role AS ownerMembershipRole,
+        CAST((SELECT COUNT(*) FROM store_memberships msm WHERE msm.store_id = s.id AND msm.status = 'active') AS UNSIGNED) AS staffCount,
+        CAST((SELECT COUNT(*) FROM store_memberships msm WHERE msm.store_id = s.id AND msm.role = 'owner' AND msm.status = 'active') AS UNSIGNED) AS ownerCount,
+        CAST((SELECT COUNT(*) FROM store_memberships msm WHERE msm.store_id = s.id AND msm.role = 'admin' AND msm.status = 'active') AS UNSIGNED) AS adminCount,
+        CAST((SELECT COUNT(*) FROM store_memberships msm WHERE msm.store_id = s.id AND msm.role = 'staff' AND msm.status = 'active') AS UNSIGNED) AS memberStaffCount
       FROM stores s
       LEFT JOIN store_memberships sm
         ON sm.store_id = s.id
@@ -421,6 +429,10 @@ router.get("/stores", async (req, res, next) => {
         su.display_name AS ownerDisplayName,
         su.role AS ownerStaffRole,
         sm.role AS ownerMembershipRole,
+        CAST((SELECT COUNT(*) FROM store_memberships msm WHERE msm.store_id = s.id AND msm.status = 'active') AS UNSIGNED) AS staffCount,
+        CAST((SELECT COUNT(*) FROM store_memberships msm WHERE msm.store_id = s.id AND msm.role = 'owner' AND msm.status = 'active') AS UNSIGNED) AS ownerCount,
+        CAST((SELECT COUNT(*) FROM store_memberships msm WHERE msm.store_id = s.id AND msm.role = 'admin' AND msm.status = 'active') AS UNSIGNED) AS adminCount,
+        CAST((SELECT COUNT(*) FROM store_memberships msm WHERE msm.store_id = s.id AND msm.role = 'staff' AND msm.status = 'active') AS UNSIGNED) AS memberStaffCount,
         CAST((SELECT COUNT(*) FROM products p WHERE p.store_id = s.id) AS UNSIGNED) AS productCount,
         CAST((SELECT COUNT(*) FROM customers c WHERE c.store_id = s.id) AS UNSIGNED) AS customerCount,
         CAST((SELECT COUNT(*) FROM orders o WHERE o.store_id = s.id) AS UNSIGNED) AS orderCount,
