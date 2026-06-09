@@ -62,10 +62,12 @@ function buildProductPreviewUrl(imagePath, productId) {
 function ProductsPage() {
   const location = useLocation();
   const { items, loading, error, refetch } = useFetchList("/products");
+  const categories = useFetchList("/product-categories");
   const [form, setForm] = useState({
     name: "",
     sku: "",
     category: "OT",
+    categoryId: "",
     price: "",
     stock: "",
     reorderLevel: "0",
@@ -91,6 +93,7 @@ function ProductsPage() {
     sku: "",
     name: "",
     category: "OT",
+    categoryId: "",
     price: "",
     reorderLevel: "",
     imageUrl: "",
@@ -105,6 +108,8 @@ function ProductsPage() {
   const [selectedProductIds, setSelectedProductIds] = useState([]);
   const [productStep, setProductStep] = useState(1);
   const [warningModal, setWarningModal] = useState(null);
+  const [categoryForm, setCategoryForm] = useState({ id: null, code: "", name: "", sortOrder: "0" });
+  const [categorySaving, setCategorySaving] = useState(false);
   const currentSkuPreview = form.sku.trim() || "分類變更後會自動產生";
 
   useEffect(() => {
@@ -140,6 +145,45 @@ function ProductsPage() {
     [items]
   );
 
+  const categoryOptions = useMemo(() => {
+    const apiCategories = categories.items
+      .filter((item) => item.isActive)
+      .map((item) => ({
+        key: item.code,
+        label: item.name,
+        value: String(item.id),
+        id: item.id,
+        code: item.code,
+        name: item.name,
+        isActive: item.isActive,
+        productCount: item.productCount || 0
+      }));
+
+    if (apiCategories.length) {
+      return apiCategories;
+    }
+
+    return PRODUCT_CATEGORY_OPTIONS.map(({ key, label }) => ({
+      key,
+      label,
+      value: key,
+      id: null,
+      code: key,
+      name: label,
+      isActive: true,
+      productCount: productRows.filter((item) => item.category === key).length
+    }));
+  }, [categories.items, productRows]);
+
+  const categoryLookupByValue = useMemo(() => {
+    const lookup = new Map();
+    for (const option of categoryOptions) {
+      lookup.set(String(option.value), option);
+      lookup.set(String(option.code), option);
+    }
+    return lookup;
+  }, [categoryOptions]);
+
   const filteredItems = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
     return productRows.filter((item) => {
@@ -169,6 +213,37 @@ function ProductsPage() {
 
   const detailProduct = productRows.find((item) => item.id === detailProductId) || null;
 
+  function getSelectedCategoryValue(categoryId, categoryCode) {
+    if (categoryId) {
+      return String(categoryId);
+    }
+    return categoryCode || "OT";
+  }
+
+  function handleProductCategoryChange(event) {
+    const option = categoryLookupByValue.get(String(event.target.value));
+    if (!option) {
+      return;
+    }
+    setForm((current) => ({
+      ...current,
+      category: option.code,
+      categoryId: option.id ? String(option.id) : ""
+    }));
+  }
+
+  function handleDetailProductCategoryChange(event) {
+    const option = categoryLookupByValue.get(String(event.target.value));
+    if (!option) {
+      return;
+    }
+    setDetailForm((current) => ({
+      ...current,
+      category: option.code,
+      categoryId: option.id ? String(option.id) : ""
+    }));
+  }
+
   useEffect(() => {
     if (!detailProduct) {
       return;
@@ -182,6 +257,7 @@ function ProductsPage() {
       sku: detailProduct.sku || "",
       name: detailProduct.name || "",
       category: normalizedCategory,
+      categoryId: detailProduct.categoryId ? String(detailProduct.categoryId) : "",
       price: String(detailProduct.price ?? ""),
       reorderLevel: String(detailProduct.reorderLevel ?? ""),
       imageUrl: detailProduct.imagePath || "",
@@ -209,7 +285,12 @@ function ProductsPage() {
 
     async function loadNextSku() {
       try {
-        const data = await apiRequest(`/products/next-sku?category=${encodeURIComponent(form.category)}`);
+        const params = new URLSearchParams();
+        if (form.categoryId) {
+          params.set("categoryId", form.categoryId);
+        }
+        params.set("category", form.category);
+        const data = await apiRequest(`/products/next-sku?${params.toString()}`);
         if (!cancelled && data?.sku) {
           setForm((current) => ({
             ...current,
@@ -226,7 +307,7 @@ function ProductsPage() {
     return () => {
       cancelled = true;
     };
-  }, [form.category, section]);
+  }, [form.category, form.categoryId, section]);
 
   useEffect(() => {
     if (section !== "LIST") {
@@ -330,6 +411,7 @@ function ProductsPage() {
           name: form.name,
           sku: form.sku,
           category: form.category,
+          categoryId: form.categoryId ? Number(form.categoryId) : null,
           price: Number(form.price),
           stock: Number(form.stock),
           reorderLevel: Number(form.reorderLevel),
@@ -344,6 +426,7 @@ function ProductsPage() {
         name: "",
         sku: "",
         category: "OT",
+        categoryId: "",
         price: "",
         stock: "",
         reorderLevel: "0",
@@ -369,7 +452,12 @@ function ProductsPage() {
 
   async function generateSku() {
     try {
-      const data = await apiRequest(`/products/next-sku?category=${form.category}`);
+      const params = new URLSearchParams();
+      if (form.categoryId) {
+        params.set("categoryId", form.categoryId);
+      }
+      params.set("category", form.category);
+      const data = await apiRequest(`/products/next-sku?${params.toString()}`);
       setForm((current) => ({ ...current, sku: data.sku }));
     } catch (error) {
       alert(error.message || "產生 SKU 失敗");
@@ -390,6 +478,7 @@ function ProductsPage() {
           sku: detailForm.sku,
           name: detailForm.name,
           category: detailForm.category,
+          categoryId: detailForm.categoryId ? Number(detailForm.categoryId) : null,
           price: Number(detailForm.price || 0),
           reorderLevel: Number(detailForm.reorderLevel || 0),
           imageUrl: detailForm.imageUrl,
@@ -404,6 +493,60 @@ function ProductsPage() {
     } catch (error) {
       alert(error.message || "更新商品失敗");
     }
+  }
+
+  async function saveCategory(event) {
+    event.preventDefault();
+    setCategorySaving(true);
+
+    try {
+      const payload = {
+        code: categoryForm.code,
+        name: categoryForm.name,
+        sortOrder: Number(categoryForm.sortOrder || 0)
+      };
+      if (categoryForm.id) {
+        await apiRequest(`/product-categories/${categoryForm.id}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload)
+        });
+      } else {
+        await apiRequest("/product-categories", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+      }
+      setCategoryForm({ id: null, code: "", name: "", sortOrder: "0" });
+      await categories.refetch();
+    } catch (error) {
+      alert(error.message || "儲存分類失敗");
+    } finally {
+      setCategorySaving(false);
+    }
+  }
+
+  async function deactivateCategory(category) {
+    if (!category?.id) {
+      return;
+    }
+    setCategorySaving(true);
+    try {
+      await apiRequest(`/product-categories/${category.id}`, { method: "DELETE" });
+      await categories.refetch();
+    } catch (error) {
+      alert(error.message || "停用分類失敗");
+    } finally {
+      setCategorySaving(false);
+    }
+  }
+
+  function editCategory(category) {
+    setCategoryForm({
+      id: category.id,
+      code: category.code || "",
+      name: category.name || "",
+      sortOrder: String(category.sortOrder ?? 0)
+    });
   }
 
   function handleStockDraftChange(productId, value) {
@@ -525,7 +668,7 @@ function ProductsPage() {
 
   const categoryChipItems = [
     { key: "ALL", label: "全部分類" },
-    ...PRODUCT_CATEGORY_OPTIONS
+    ...categoryOptions.map((item) => ({ key: item.code, label: item.label }))
   ];
   const statusChipItems = [
     { key: "ALL", label: "全部狀態" },
@@ -821,8 +964,8 @@ function ProductsPage() {
                   </label>
                   <label className="form-field">
                     <span>分類</span>
-                    <select name="category" value={form.category} onChange={handleChange}>
-                      {PRODUCT_CATEGORY_OPTIONS.map(({ key: value, label }) => (
+                    <select name="category" value={getSelectedCategoryValue(form.categoryId, form.category)} onChange={handleProductCategoryChange}>
+                      {categoryOptions.map(({ value, label }) => (
                         <option key={value} value={value}>
                           {label}
                         </option>
@@ -833,7 +976,7 @@ function ProductsPage() {
                 <div className="sop-summary-box">
                   <div>
                     <strong>目前分類</strong>
-                    <span>{PRODUCT_CATEGORY_LABELS[form.category] || form.category || "-"}</span>
+                    <span>{categoryLookupByValue.get(getSelectedCategoryValue(form.categoryId, form.category))?.label || PRODUCT_CATEGORY_LABELS[form.category] || form.category || "-"}</span>
                   </div>
                   <div>
                     <strong>即將使用的 SKU</strong>
@@ -925,7 +1068,7 @@ function ProductsPage() {
                 <div className="section-title">確認</div>
                 <div className="sop-summary-box">
                   <div><strong>商品</strong><span>{form.name || "-"}</span></div>
-                  <div><strong>分類</strong><span>{PRODUCT_CATEGORY_LABELS[form.category] || form.category || "-"}</span></div>
+                  <div><strong>分類</strong><span>{categoryLookupByValue.get(getSelectedCategoryValue(form.categoryId, form.category))?.label || PRODUCT_CATEGORY_LABELS[form.category] || form.category || "-"}</span></div>
                   <div><strong>SKU</strong><span>{currentSkuPreview}</span></div>
                   <div><strong>庫存</strong><span>{form.stock || "0"}</span></div>
                   <div><strong>售價</strong><span>{formatCurrency(form.price)}</span></div>
@@ -960,13 +1103,49 @@ function ProductsPage() {
         ) : null}
         {section === "CATEGORY" ? (
           <section className="admin-panel">
-            <AdminSectionHeader eyebrow="分類管理" title="分類分布" description="維持現有分類規則，只整理呈現與統計，不另建第二套分類流程。" />
+            <AdminSectionHeader eyebrow="分類管理" title="門市商品分類" description="分類依目前門市分開管理，停用後保留既有商品歷史資料。" />
+            <form className="admin-subpanel grid-form" onSubmit={saveCategory}>
+              <label className="form-field">
+                <span>分類代碼</span>
+                <input value={categoryForm.code} onChange={(event) => setCategoryForm((current) => ({ ...current, code: event.target.value.toUpperCase() }))} required />
+              </label>
+              <label className="form-field">
+                <span>分類名稱</span>
+                <input value={categoryForm.name} onChange={(event) => setCategoryForm((current) => ({ ...current, name: event.target.value }))} required />
+              </label>
+              <label className="form-field">
+                <span>排序</span>
+                <input type="number" step="1" value={categoryForm.sortOrder} onChange={(event) => setCategoryForm((current) => ({ ...current, sortOrder: event.target.value }))} />
+              </label>
+              <div className="admin-form-actions">
+                <button type="submit" className="primary-button inline-submit" disabled={categorySaving}>
+                  {categorySaving ? "儲存中..." : categoryForm.id ? "儲存分類" : "新增分類"}
+                </button>
+                {categoryForm.id ? (
+                  <button type="button" className="secondary-button" onClick={() => setCategoryForm({ id: null, code: "", name: "", sortOrder: "0" })}>
+                    取消編輯
+                  </button>
+                ) : null}
+              </div>
+            </form>
+            {categories.loading ? <div className="loading-state">載入分類資料中...</div> : null}
+            {categories.error ? <div className="error-banner">{categories.error}</div> : null}
             <div className="admin-summary-grid">
-              {PRODUCT_CATEGORY_OPTIONS.map(({ key: value, label }) => (
-                <article key={value} className="admin-summary-card">
-                  <div className="admin-summary-label">{label}</div>
-                  <div className="admin-summary-value">{productRows.filter((item) => item.category === value).length}</div>
-                  <div className="muted-text">目前商品數量</div>
+              {(categories.items.length ? categories.items : categoryOptions).map((category) => (
+                <article key={category.id || category.code} className="admin-summary-card">
+                  <div className="admin-summary-label">{category.name || category.label}</div>
+                  <div className="admin-summary-value">{category.productCount ?? productRows.filter((item) => item.category === category.code).length}</div>
+                  <div className="muted-text">代碼：{category.code} / {category.isActive === false ? "已停用" : "啟用中"}</div>
+                  {category.id ? (
+                    <div className="admin-form-actions">
+                      <button type="button" className="secondary-button" onClick={() => editCategory(category)} disabled={categorySaving}>
+                        編輯
+                      </button>
+                      <button type="button" className="secondary-button" onClick={() => deactivateCategory(category)} disabled={categorySaving || category.isActive === false}>
+                        {category.isActive === false ? "已停用" : "停用"}
+                      </button>
+                    </div>
+                  ) : null}
                 </article>
               ))}
             </div>
@@ -987,7 +1166,7 @@ function ProductsPage() {
             <div className="admin-summary-grid">
               <article className="admin-summary-card">
                 <div className="admin-summary-label">目前分類</div>
-                <div className="admin-summary-value admin-summary-value-small">{PRODUCT_CATEGORY_LABELS[form.category] || form.category || "-"}</div>
+                <div className="admin-summary-value admin-summary-value-small">{categoryLookupByValue.get(getSelectedCategoryValue(form.categoryId, form.category))?.label || PRODUCT_CATEGORY_LABELS[form.category] || form.category || "-"}</div>
               </article>
               <article className="admin-summary-card">
                 <div className="admin-summary-label">草稿 SKU</div>
@@ -1125,8 +1304,8 @@ function ProductsPage() {
                 </label>
                 <label className="form-field">
                   <span>分類</span>
-                  <select value={detailForm.category} onChange={(event) => setDetailForm((current) => ({ ...current, category: event.target.value }))}>
-                    {PRODUCT_CATEGORY_OPTIONS.map(({ key: value, label }) => (
+                  <select value={getSelectedCategoryValue(detailForm.categoryId, detailForm.category)} onChange={handleDetailProductCategoryChange}>
+                    {categoryOptions.map(({ value, label }) => (
                       <option key={value} value={value}>
                         {label}
                       </option>

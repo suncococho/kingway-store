@@ -8,6 +8,7 @@ const {
   normalizeStoreProfilePayload
 } = require("./storeProfileSettingsService");
 const { hashPassword } = require("../utils/passwords");
+const { PRODUCT_CATEGORY_LABELS, PRODUCT_CATEGORY_ORDER } = require("../utils/productCategories");
 const { normalizeSlug } = require("../utils/publicStoreResolver");
 
 const STORE_STATUS = "active";
@@ -217,6 +218,46 @@ async function insertStoreFeatures(connection, storeId) {
   );
 }
 
+async function productCategoriesTableExists(connection) {
+  const [rows] = await connection.query(
+    `
+      SELECT 1
+      FROM INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'product_categories'
+      LIMIT 1
+    `
+  );
+  return Boolean(rows[0]);
+}
+
+async function insertDefaultProductCategories(connection, storeId) {
+  if (!(await productCategoriesTableExists(connection))) {
+    return false;
+  }
+
+  const rows = PRODUCT_CATEGORY_ORDER.map((code, index) => [
+    storeId,
+    code,
+    PRODUCT_CATEGORY_LABELS[code] || code,
+    (index + 1) * 10,
+    1
+  ]);
+
+  await connection.query(
+    `
+      INSERT INTO product_categories (store_id, code, name, sort_order, is_active)
+      VALUES ?
+      ON DUPLICATE KEY UPDATE
+        name = VALUES(name),
+        sort_order = VALUES(sort_order),
+        is_active = VALUES(is_active)
+    `,
+    [rows]
+  );
+  return true;
+}
+
 async function insertOwner(connection, payload) {
   const [result] = await connection.query(
     `
@@ -309,6 +350,7 @@ async function provisionStore(input, actor = null) {
 
     const storeId = await insertStore(connection, { code, name, slug, plan }, hasSlugColumn);
     await insertStoreFeatures(connection, storeId);
+    const productCategoriesPersisted = await insertDefaultProductCategories(connection, storeId);
     const staffUserId = await insertOwner(connection, {
       ownerUsername,
       passwordHash,
@@ -341,7 +383,8 @@ async function provisionStore(input, actor = null) {
       },
       temporaryPassword: providedPassword ? null : temporaryPassword,
       slugPersisted: hasSlugColumn,
-      profileSettingsPersisted
+      profileSettingsPersisted,
+      productCategoriesPersisted
     };
   });
 }

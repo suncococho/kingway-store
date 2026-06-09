@@ -8,11 +8,9 @@ const { mapCategoryLabel } = require("../utils/displayLabels");
 const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
 const {
   PRODUCT_CATEGORY_LABELS,
-  buildProductSku,
   deriveProductCategoryFromSku,
   normalizeProductCategory,
-  normalizeProductSku,
-  parseProductSku
+  normalizeProductSku
 } = require("../utils/productCategories");
 
 const router = express.Router();
@@ -33,6 +31,15 @@ function getRequestStoreId(req) {
 async function hasProductsStoreIdColumn(connection = pool) {
   const [rows] = await connection.query("SHOW COLUMNS FROM `products` LIKE 'store_id'");
   return rows.length > 0;
+}
+
+async function hasProductCategorySchema(connection = pool) {
+  const [tables] = await connection.query("SHOW TABLES LIKE 'product_categories'");
+  if (!tables.length) {
+    return false;
+  }
+  const [columns] = await connection.query("SHOW COLUMNS FROM `products` LIKE 'category_id'");
+  return columns.length > 0;
 }
 
 const allowedImageTypes = new Map([
@@ -114,13 +121,16 @@ function normalizeImageUrl(imageUrl, productId = null) {
 function mapProductRow(row) {
   const derivedCategory = deriveProductCategoryFromSku(row.sku || "");
   const storedCategory = normalizeProductCategory(row.category);
-  const category = PRODUCT_CATEGORY_LABELS[storedCategory] ? storedCategory : derivedCategory;
+  const category = row.categoryCode || (PRODUCT_CATEGORY_LABELS[storedCategory] ? storedCategory : derivedCategory);
   return {
     ...row,
+    categoryId: row.categoryId === undefined || row.categoryId === null ? null : Number(row.categoryId),
+    categoryName: row.categoryName || null,
+    categoryIsActive: row.categoryIsActive === undefined || row.categoryIsActive === null ? null : Boolean(row.categoryIsActive),
     imagePath: normalizeEditableImagePath(row.imageUrl),
     imageUrl: normalizeImageUrl(row.imageUrl, row.id),
     category,
-    categoryLabel: mapCategoryLabel(category)
+    categoryLabel: row.categoryName || mapCategoryLabel(category)
   };
 }
 
@@ -129,8 +139,60 @@ function getCategoryFromSku(sku, fallbackCategory = "OT") {
   return PRODUCT_CATEGORY_LABELS[parsedCategory] ? parsedCategory : normalizeProductCategory(fallbackCategory);
 }
 
+async function resolveProductCategory(connection, storeId, categoryId, fallbackCategory = "OT", requireActive = true) {
+  if (categoryId !== undefined && categoryId !== null && categoryId !== "") {
+    const [rows] = await connection.query(
+      `
+        SELECT id, code, name, is_active AS isActive
+        FROM product_categories
+        WHERE store_id = ?
+          AND id = ?
+        LIMIT 1
+      `,
+      [storeId, Number(categoryId)]
+    );
+    const category = rows[0];
+    if (!category || (requireActive && !category.isActive)) {
+      const error = new Error("找不到可用分類");
+      error.statusCode = 404;
+      throw error;
+    }
+    return {
+      categoryId: Number(category.id),
+      categoryCode: String(category.code || "").trim().toUpperCase(),
+      categoryName: category.name
+    };
+  }
+
+  const categoryCode = normalizeProductCategory(fallbackCategory);
+  const [rows] = await connection.query(
+    `
+      SELECT id, code, name, is_active AS isActive
+      FROM product_categories
+      WHERE store_id = ?
+        AND code = ?
+      LIMIT 1
+    `,
+    [storeId, categoryCode]
+  );
+
+  if (rows[0] && (!requireActive || rows[0].isActive)) {
+    return {
+      categoryId: Number(rows[0].id),
+      categoryCode: rows[0].code,
+      categoryName: rows[0].name
+    };
+  }
+
+  return {
+    categoryId: null,
+    categoryCode,
+    categoryName: mapCategoryLabel(categoryCode)
+  };
+}
+
 async function getNextProductSku(connection, storeId, category, region = "C", shelf = "S1") {
-  const normalizedCategory = PRODUCT_CATEGORY_LABELS[normalizeProductCategory(category)] ? normalizeProductCategory(category) : "OT";
+  const normalizedCategory = normalizeProductSku(category || "OT").slice(0, 12) || "OT";
   const normalizedRegion = normalizeProductSku(region) || "C";
   const normalizedShelf = normalizeProductSku(shelf) || "S1";
   const hasStoreId = await hasProductsStoreIdColumn(connection);
@@ -150,19 +212,15 @@ async function getNextProductSku(connection, storeId, category, region = "C", sh
 
   let maxSequence = 0;
   for (const row of rows) {
-    const parsed = parseProductSku(row.sku);
-    if (!parsed || parsed.region !== normalizedRegion || parsed.category !== normalizedCategory) {
+    const parts = normalizeProductSku(row.sku).split("-");
+    if (parts.length < 4 || parts[0] !== normalizedRegion || parts[1] !== normalizedCategory || !/^\d{3}$/.test(parts[2])) {
       continue;
     }
-    maxSequence = Math.max(maxSequence, Number(parsed.sequence || 0));
+    maxSequence = Math.max(maxSequence, Number(parts[2] || 0));
   }
 
-  return buildProductSku({
-    region: normalizedRegion,
-    category: normalizedCategory,
-    sequence: maxSequence + 1,
-    shelf: normalizedShelf
-  });
+  const sequence = String(maxSequence + 1).padStart(3, "0").slice(-3);
+  return `${normalizedRegion}-${normalizedCategory}-${sequence}-${normalizedShelf}`;
 }
 
 async function assertSkuAvailableInStore(connection, sku, storeId, excludeProductId = null) {
@@ -193,6 +251,7 @@ router.get("/", async (req, res, next) => {
     const search = req.query.search ? `%${req.query.search}%` : null;
     const productColumns = await getTableColumns(pool, "products");
     const hasStoreId = await hasProductsStoreIdColumn(pool);
+    const hasCategorySchema = await hasProductCategorySchema(pool);
     if (!hasStoreId) {
       return res.status(500).json({ message: "products.store_id 欄位不存在，請先更新資料表結構" });
     }
@@ -205,6 +264,10 @@ router.get("/", async (req, res, next) => {
         ${selectColumn(productColumns, "products", "sku", "sku")},
         ${selectColumn(productColumns, "products", "name", "name")},
         ${selectColumn(productColumns, "products", "category", "category", "'OTHER'")},
+        ${hasCategorySchema ? "products.category_id AS categoryId," : "NULL AS categoryId,"}
+        ${hasCategorySchema ? "pc.code AS categoryCode," : "NULL AS categoryCode,"}
+        ${hasCategorySchema ? "pc.name AS categoryName," : "NULL AS categoryName,"}
+        ${hasCategorySchema ? "pc.is_active AS categoryIsActive," : "NULL AS categoryIsActive,"}
         ${selectColumn(productColumns, "products", "description", "description")},
         ${selectColumn(productColumns, "products", "image_url", "imageUrl")},
         ${selectColumn(productColumns, "products", "cost_price", "costPrice", "0")},
@@ -218,17 +281,18 @@ router.get("/", async (req, res, next) => {
         ${selectColumn(productColumns, "products", "created_at", "createdAt")},
         ${selectColumn(productColumns, "products", "updated_at", "updatedAt")}
       FROM products
+      ${hasCategorySchema ? "LEFT JOIN product_categories pc ON pc.id = products.category_id AND pc.store_id = products.store_id" : ""}
     `;
     const params = [];
     const whereClauses = [];
 
-    whereClauses.push("store_id = ?");
+    whereClauses.push("products.store_id = ?");
     params.push(storeId);
 
     if (search) {
       const searchFields = ["sku", "name"].filter((column) => hasColumn(productColumns, column));
       if (searchFields.length) {
-        whereClauses.push(`(${searchFields.map((column) => `${column} LIKE ?`).join(" OR ")})`);
+        whereClauses.push(`(${searchFields.map((column) => `products.${column} LIKE ?`).join(" OR ")})`);
         params.push(...searchFields.map(() => search));
       }
     }
@@ -237,7 +301,7 @@ router.get("/", async (req, res, next) => {
       sql += ` WHERE ${whereClauses.join(" AND ")} `;
     }
 
-    sql += " ORDER BY id DESC";
+    sql += " ORDER BY products.id DESC";
 
     const [rows] = await pool.query(sql, params);
     return res.json(rows.map(mapProductRow));
@@ -330,17 +394,23 @@ router.post(
 
 router.get("/next-sku", async (req, res, next) => {
   try {
+    const storeId = getRequestStoreId(req);
+    let categoryCode = req.query.category;
+    if (await hasProductCategorySchema(pool)) {
+      const resolvedCategory = await resolveProductCategory(pool, storeId, req.query.categoryId, req.query.category || "OT", false);
+      categoryCode = resolvedCategory.categoryCode;
+    }
     const sku = await getNextProductSku(
       pool,
-      getRequestStoreId(req),
-      req.query.category,
+      storeId,
+      categoryCode,
       req.query.region || "C",
       req.query.shelf || "S1"
     );
     return res.json({
       sku,
-      category: deriveProductCategoryFromSku(sku),
-      categoryLabel: mapCategoryLabel(deriveProductCategoryFromSku(sku))
+      category: categoryCode,
+      categoryLabel: mapCategoryLabel(categoryCode)
     });
   } catch (error) {
     return next(error);
@@ -354,7 +424,7 @@ router.post("/", async (req, res, next) => {
       return res.status(500).json({ message: "products.store_id 欄位不存在，請先更新資料表結構" });
     }
 
-    const { sku, name, category, price, stock, reorderLevel, isActive, description, imageUrl, costPrice, location, inputterName, source } = req.body;
+    const { sku, name, category, categoryId, price, stock, reorderLevel, isActive, description, imageUrl, costPrice, location, inputterName, source } = req.body;
 
     if (!sku || !name || price === undefined || stock === undefined) {
       return res.status(400).json({ message: "SKU、商品名稱、售價與庫存為必填欄位" });
@@ -362,32 +432,42 @@ router.post("/", async (req, res, next) => {
 
     const productColumns = await getTableColumns(pool, "products");
     const storeId = getRequestStoreId(req);
+    const hasCategorySchema = await hasProductCategorySchema(pool);
 
     const normalizedSku = normalizeProductSku(sku);
-    const resolvedCategory = getCategoryFromSku(normalizedSku, category);
+    const resolvedProductCategory = hasCategorySchema
+      ? await resolveProductCategory(pool, storeId, categoryId, category || getCategoryFromSku(normalizedSku, "OT"))
+      : { categoryId: null, categoryCode: getCategoryFromSku(normalizedSku, category) };
+    const resolvedCategory = normalizeProductCategory(resolvedProductCategory.categoryCode);
     await assertSkuAvailableInStore(pool, normalizedSku, storeId);
+
+    const insertColumns = ["sku", "name", "category"];
+    const insertValues = [normalizedSku, name, resolvedCategory];
+    if (hasCategorySchema) {
+      insertColumns.push("category_id");
+      insertValues.push(resolvedProductCategory.categoryId);
+    }
+    insertColumns.push("price", "stock", "reorder_level", "is_active", "description", "image_url", "cost_price", "location", "inputter_name", "source", "store_id");
+    insertValues.push(
+      price,
+      stock,
+      reorderLevel || 0,
+      isActive === undefined ? 1 : Number(Boolean(isActive)),
+      description || null,
+      imageUrl || null,
+      costPrice === undefined ? 0 : Number(costPrice || 0),
+      location || null,
+      inputterName || null,
+      source || null,
+      hasColumn(productColumns, "store_id") ? storeId : null
+    );
 
     const [result] = await pool.query(
       `
-        INSERT INTO products (sku, name, category, price, stock, reorder_level, is_active, description, image_url, cost_price, location, inputter_name, source, store_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO products (${insertColumns.join(", ")})
+        VALUES (${insertColumns.map(() => "?").join(", ")})
       `,
-      [
-        normalizedSku,
-        name,
-        resolvedCategory,
-        price,
-        stock,
-        reorderLevel || 0,
-        isActive === undefined ? 1 : Number(Boolean(isActive)),
-        description || null,
-        imageUrl || null,
-        costPrice === undefined ? 0 : Number(costPrice || 0),
-        location || null,
-        inputterName || null,
-        source || null,
-        hasColumn(productColumns, "store_id") ? storeId : null
-      ]
+      insertValues
     );
 
     return res.status(201).json({
@@ -395,7 +475,9 @@ router.post("/", async (req, res, next) => {
       sku: normalizedSku,
       name,
       category: resolvedCategory,
-      categoryLabel: mapCategoryLabel(resolvedCategory),
+      categoryId: resolvedProductCategory.categoryId,
+      categoryName: resolvedProductCategory.categoryName || null,
+      categoryLabel: resolvedProductCategory.categoryName || mapCategoryLabel(resolvedCategory),
       price,
       stock,
       reorderLevel: reorderLevel || 0,
@@ -411,7 +493,7 @@ router.post("/", async (req, res, next) => {
   } catch (error) {
     if (error.code === "ER_DUP_ENTRY") {
       error.statusCode = 409;
-      error.message = "SKU 已存在；目前資料庫索引仍限制全系統唯一，跨門市同 SKU 需先調整資料庫索引";
+      error.message = "同一門市內 SKU 已存在";
     }
     return next(error);
   }
@@ -420,16 +502,35 @@ router.post("/", async (req, res, next) => {
 router.patch("/:id", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
-    const { sku, name, category, price, stock, reorderLevel, isActive, description, imageUrl, costPrice, location, inputterName, source } = req.body;
+    const { sku, name, category, categoryId, price, stock, reorderLevel, isActive, description, imageUrl, costPrice, location, inputterName, source } = req.body;
     const normalizedSku = sku !== undefined && sku !== null && sku !== "" ? normalizeProductSku(sku) : null;
-    const categoryFromSku = normalizedSku ? getCategoryFromSku(normalizedSku, category) : null;
-    const resolvedCategory = categoryFromSku || (category ? normalizeProductCategory(category) : null);
 
     const storeId = getRequestStoreId(req);
+    const hasCategorySchema = await hasProductCategorySchema(pool);
+    let resolvedProductCategory = null;
+    const hasCategoryInput =
+      Object.prototype.hasOwnProperty.call(req.body || {}, "categoryId") ||
+      Object.prototype.hasOwnProperty.call(req.body || {}, "category");
+
+    if (hasCategorySchema && hasCategoryInput) {
+      resolvedProductCategory = await resolveProductCategory(
+        pool,
+        storeId,
+        categoryId,
+        category || (normalizedSku ? getCategoryFromSku(normalizedSku, "OT") : "OT")
+      );
+    }
+
+    const categoryFromSku = normalizedSku && !resolvedProductCategory ? getCategoryFromSku(normalizedSku, category) : null;
+    const resolvedCategory = resolvedProductCategory
+      ? normalizeProductCategory(resolvedProductCategory.categoryCode)
+      : categoryFromSku || (category ? normalizeProductCategory(category) : null);
     if (normalizedSku) {
       await assertSkuAvailableInStore(pool, normalizedSku, storeId, id);
     }
 
+    const categoryIdAssignment = hasCategorySchema ? "category_id = COALESCE(?, category_id)," : "";
+    const categoryIdValue = hasCategorySchema && resolvedProductCategory ? resolvedProductCategory.categoryId : null;
     await pool.query(
       `
         UPDATE products
@@ -437,6 +538,7 @@ router.patch("/:id", async (req, res, next) => {
           sku = COALESCE(?, sku),
           name = COALESCE(?, name),
           category = COALESCE(?, category),
+          ${categoryIdAssignment}
           price = COALESCE(?, price),
           stock = COALESCE(?, stock),
           reorder_level = COALESCE(?, reorder_level),
@@ -454,6 +556,7 @@ router.patch("/:id", async (req, res, next) => {
         normalizedSku,
         name || null,
         resolvedCategory,
+        ...(hasCategorySchema ? [categoryIdValue] : []),
         price === undefined ? null : price,
         stock === undefined ? null : stock,
         reorderLevel === undefined ? null : reorderLevel,
@@ -469,26 +572,34 @@ router.patch("/:id", async (req, res, next) => {
       ]
     );
 
+    const categoryJoin = hasCategorySchema
+      ? "LEFT JOIN product_categories pc ON pc.id = products.category_id AND pc.store_id = products.store_id"
+      : "";
     const [rows] = await pool.query(
       `
         SELECT
-          id,
-          sku,
-          name,
-          category,
-          description,
-          image_url AS imageUrl,
-          cost_price AS costPrice,
-          location,
-          price,
-          stock,
-          reorder_level AS reorderLevel,
-          is_active AS isActive,
-          created_at AS createdAt,
-          updated_at AS updatedAt
+          products.id,
+          products.sku,
+          products.name,
+          products.category,
+          ${hasCategorySchema ? "products.category_id AS categoryId," : "NULL AS categoryId,"}
+          ${hasCategorySchema ? "pc.code AS categoryCode," : "NULL AS categoryCode,"}
+          ${hasCategorySchema ? "pc.name AS categoryName," : "NULL AS categoryName,"}
+          ${hasCategorySchema ? "pc.is_active AS categoryIsActive," : "NULL AS categoryIsActive,"}
+          products.description,
+          products.image_url AS imageUrl,
+          products.cost_price AS costPrice,
+          products.location,
+          products.price,
+          products.stock,
+          products.reorder_level AS reorderLevel,
+          products.is_active AS isActive,
+          products.created_at AS createdAt,
+          products.updated_at AS updatedAt
         FROM products
-        WHERE id = ?
-          AND store_id = ?
+        ${categoryJoin}
+        WHERE products.id = ?
+          AND products.store_id = ?
       `,
       [id, storeId]
     );
@@ -501,7 +612,7 @@ router.patch("/:id", async (req, res, next) => {
   } catch (error) {
     if (error.code === "ER_DUP_ENTRY") {
       error.statusCode = 409;
-      error.message = "SKU 已存在；目前資料庫索引仍限制全系統唯一，跨門市同 SKU 需先調整資料庫索引";
+      error.message = "同一門市內 SKU 已存在";
     }
     return next(error);
   }
