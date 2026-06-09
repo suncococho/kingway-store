@@ -13,6 +13,10 @@ const {
   getStoreProfileSettings,
   saveStoreProfileSettings
 } = require("../services/storeProfileSettingsService");
+const {
+  listPlatformAuditLogs,
+  recordPlatformAudit
+} = require("../services/platformAuditService");
 
 const router = express.Router();
 const ALLOWED_STORE_PLANS = new Set(["free", "premium"]);
@@ -180,6 +184,86 @@ function buildStoreSettingsResponse(store, settings) {
   };
 }
 
+function parseJson(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === "object") {
+    return value;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    return null;
+  }
+}
+
+async function getStoreAuditSnapshot(storeId) {
+  const [rows] = await pool.query(
+    `
+      SELECT id, code, name, status, plan, created_at AS createdAt, updated_at AS updatedAt
+      FROM stores
+      WHERE id = ?
+      LIMIT 1
+    `,
+    [storeId]
+  );
+  return rows[0] || null;
+}
+
+async function getStoreFeatureAuditSnapshot(storeId) {
+  await ensureStoreFeatureRow(storeId);
+  const [rows] = await pool.query(
+    `
+      SELECT
+        store_id AS storeId,
+        ${FEATURE_KEYS.join(", ")},
+        created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM store_features
+      WHERE store_id = ?
+      LIMIT 1
+    `,
+    [storeId]
+  );
+  return rows[0] || null;
+}
+
+async function getStoreProfileAuditSnapshot(storeId) {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        store_id AS storeId,
+        setting_scope AS settingScope,
+        payload_json AS payloadJson,
+        updated_by_staff_id AS updatedByStaffId,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM app_settings
+      WHERE store_id = ?
+        AND setting_scope = 'STORE_PROFILE'
+      LIMIT 1
+    `,
+    [storeId]
+  );
+
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    storeId: row.storeId,
+    settingScope: row.settingScope,
+    payload: parseJson(row.payloadJson),
+    updatedByStaffId: row.updatedByStaffId,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
 async function getStoreFeaturesHandler(req, res, next) {
   try {
     const storeId = n(req.params.id, 0);
@@ -213,6 +297,7 @@ async function patchStoreFeaturesHandler(req, res, next) {
     }
 
     await ensureStoreFeatureRow(storeId);
+    const before = await getStoreFeatureAuditSnapshot(storeId);
 
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const updates = [];
@@ -231,6 +316,15 @@ async function patchStoreFeaturesHandler(req, res, next) {
     }
 
     const featureRow = await getStoreFeatureRow(storeId);
+    if (updates.length) {
+      await recordPlatformAudit(req, {
+        action: "store_features.update",
+        targetType: "store_features",
+        targetId: storeId,
+        before,
+        after: await getStoreFeatureAuditSnapshot(storeId)
+      });
+    }
     return res.json(buildStoreFeatureResponse(store, featureRow));
   } catch (error) {
     console.error("[saasAdmin/storeFeatures:patch] failed", error);
@@ -257,6 +351,10 @@ async function applyStoreFeaturePresetHandler(req, res, next) {
     }
 
     await ensureStoreFeatureRow(storeId);
+    const before = {
+      store: await getStoreAuditSnapshot(storeId),
+      features: await getStoreFeatureAuditSnapshot(storeId)
+    };
 
     const updates = FEATURE_KEYS.map((key) => key + " = ?");
     const values = FEATURE_KEYS.map((key) => (preset[key] ? 1 : 0));
@@ -267,6 +365,17 @@ async function applyStoreFeaturePresetHandler(req, res, next) {
 
     const nextStore = await getStore(storeId);
     const featureRow = await getStoreFeatureRow(storeId);
+    await recordPlatformAudit(req, {
+      action: "store_features.apply_preset",
+      targetType: "store_features",
+      targetId: storeId,
+      before,
+      after: {
+        appliedPreset: presetKey,
+        store: await getStoreAuditSnapshot(storeId),
+        features: await getStoreFeatureAuditSnapshot(storeId)
+      }
+    });
     return res.json({
       ...buildStoreFeatureResponse(nextStore, featureRow),
       appliedPreset: presetKey
@@ -280,9 +389,36 @@ async function applyStoreFeaturePresetHandler(req, res, next) {
 router.use(authenticatePlatformAdmin);
 router.use(requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN", "SUPPORT"]));
 
+router.get("/audit-logs", async (req, res, next) => {
+  try {
+    const logs = await listPlatformAuditLogs({
+      targetType: req.query.targetType,
+      targetId: req.query.targetId,
+      action: req.query.action,
+      limit: req.query.limit
+    });
+    return res.json({ ok: true, logs });
+  } catch (error) {
+    console.error("[saasAdmin/auditLogs] failed", error);
+    return next(error);
+  }
+});
+
 router.post("/stores", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
   try {
     const result = await provisionStore(req.body, req.platformAdmin);
+    await recordPlatformAudit(req, {
+      action: "store.create",
+      targetType: "store",
+      targetId: result.store?.id || null,
+      before: null,
+      after: {
+        store: result.store,
+        owner: {
+          username: result.owner.username
+        }
+      }
+    });
     return res.status(201).json({
       ok: true,
       store: result.store,
@@ -346,8 +482,16 @@ router.patch("/stores/:id/settings", requirePlatformRole(["PLATFORM_OWNER", "PLA
     if (!store) {
       return res.status(404).json({ message: "Store not found" });
     }
+    const before = await getStoreProfileAuditSnapshot(storeId);
 
     const settings = await saveStoreProfileSettings(storeId, req.body || {}, req.platformAdmin?.id || null);
+    await recordPlatformAudit(req, {
+      action: "store_settings.update",
+      targetType: "store_settings",
+      targetId: storeId,
+      before,
+      after: await getStoreProfileAuditSnapshot(storeId)
+    });
     return res.json(buildStoreSettingsResponse(store, settings));
   } catch (error) {
     if (error?.statusCode) {
@@ -374,6 +518,7 @@ router.patch("/stores/:id", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADM
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const updates = [];
     const values = [];
+    const before = await getStoreAuditSnapshot(storeId);
 
     if (Object.prototype.hasOwnProperty.call(body, "plan")) {
       const plan = t(body.plan).trim().toLowerCase();
@@ -408,6 +553,13 @@ router.patch("/stores/:id", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADM
     );
 
     const nextStore = await getStore(storeId);
+    await recordPlatformAudit(req, {
+      action: "store.update_plan_status",
+      targetType: "store",
+      targetId: storeId,
+      before,
+      after: await getStoreAuditSnapshot(storeId)
+    });
     return res.json({ ok: true, store: nextStore });
   } catch (error) {
     console.error("[saasAdmin/stores:patch] failed", error);
