@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { pool } = require("../db");
+const ExcelJS = require("exceljs");
 const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { mapCategoryLabel } = require("../utils/displayLabels");
 const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
@@ -133,6 +134,55 @@ function mapProductRow(row) {
     category,
     categoryLabel: row.categoryName || mapCategoryLabel(category)
   };
+}
+
+function normalizeExportBoolean(value) {
+  if (typeof value === "boolean") {
+    return value ? 1 : 0;
+  }
+  if (value === null || value === undefined || value === "") {
+    return 0;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" ? 1 : 0;
+}
+
+function resolveExportCategoryCode(row) {
+  if (row.categoryCode) {
+    return String(row.categoryCode).trim();
+  }
+  if (row.category) {
+    return String(row.category).trim();
+  }
+  return deriveProductCategoryFromSku(row.sku || "");
+}
+
+function buildProductExportRows(rawRows) {
+  return rawRows.map((row) => {
+    const categoryCode = resolveExportCategoryCode(row);
+    return {
+      sku: row.sku || "",
+      name: row.name || "",
+      categoryCode: categoryCode || "",
+      categoryName: row.categoryName || mapCategoryLabel(categoryCode) || "",
+      price: Number(row.price || 0),
+      costPrice: Number(row.costPrice || 0),
+      stock: Number(row.stock || 0),
+      reorderLevel: Number(row.reorderLevel || 0),
+      isActive: normalizeExportBoolean(row.isActive),
+      description: row.description || "",
+      location: row.location || "",
+      inputterName: row.inputterName || "",
+      source: row.source || ""
+    };
+  });
+}
+
+function sanitizeWorksheetValue(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return value;
 }
 
 function getCategoryFromSku(sku, fallbackCategory = "OT") {
@@ -306,6 +356,154 @@ router.get("/", async (req, res, next) => {
 
     const [rows] = await pool.query(sql, params);
     return res.json(rows.map(mapProductRow));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/export", async (req, res, next) => {
+  try {
+    const storeId = getRequestStoreId(req);
+    const productColumns = await getTableColumns(pool, "products");
+    const hasCategorySchema = await hasProductCategorySchema(pool);
+
+    const [rows] = await pool.query(
+      `
+        SELECT
+          ${selectColumn(productColumns, "products", "sku", "sku")},
+          ${selectColumn(productColumns, "products", "name", "name")},
+          ${hasCategorySchema ? "pc.code AS categoryCode," : `${selectColumn(productColumns, "products", "category", "category", "'OT'")} AS categoryCode,`}
+          ${hasCategorySchema ? "pc.name AS categoryName," : "NULL AS categoryName,"}
+          ${selectColumn(productColumns, "products", "price", "price", "0")},
+          ${selectColumn(productColumns, "products", "cost_price", "costPrice", "0")},
+          ${selectColumn(productColumns, "products", "stock", "stock", "0")},
+          ${selectColumn(productColumns, "products", "reorder_level", "reorderLevel", "0")},
+          ${selectColumn(productColumns, "products", "is_active", "isActive", "1")},
+          ${selectColumn(productColumns, "products", "description", "description")},
+          ${selectColumn(productColumns, "products", "location", "location")},
+          ${selectColumn(productColumns, "products", "inputter_name", "inputterName")},
+          ${selectColumn(productColumns, "products", "source", "source")}
+        FROM products
+        ${hasCategorySchema ? "LEFT JOIN product_categories pc ON pc.id = products.category_id AND pc.store_id = products.store_id" : ""}
+        WHERE products.store_id = ?
+        ORDER BY products.id DESC
+      `,
+      [storeId]
+    );
+
+    const exportRows = buildProductExportRows(rows);
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "KINGWAY";
+    const sheet = workbook.addWorksheet("商品資料");
+    sheet.columns = [
+      { header: "sku", key: "sku", width: 20 },
+      { header: "name", key: "name", width: 30 },
+      { header: "categoryCode", key: "categoryCode", width: 16 },
+      { header: "categoryName", key: "categoryName", width: 22 },
+      { header: "price", key: "price", width: 12 },
+      { header: "costPrice", key: "costPrice", width: 14 },
+      { header: "stock", key: "stock", width: 10 },
+      { header: "reorderLevel", key: "reorderLevel", width: 14 },
+      { header: "isActive", key: "isActive", width: 12 },
+      { header: "description", key: "description", width: 36 },
+      { header: "location", key: "location", width: 16 },
+      { header: "inputterName", key: "inputterName", width: 18 },
+      { header: "source", key: "source", width: 16 }
+    ];
+    sheet.getRow(1).font = { bold: true };
+    sheet.addRows(exportRows);
+
+    const numberColumns = ["price", "costPrice", "stock", "reorderLevel", "isActive"];
+    for (const key of numberColumns) {
+      sheet.getColumn(key).numFmt = "#,##0";
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const filename = `KINGWAY_product_export_store_${storeId}.xlsx`;
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/import-template", async (req, res, next) => {
+  try {
+    const storeId = getRequestStoreId(req);
+    const [categoryTableRows] = await pool.query("SHOW TABLES LIKE 'product_categories'");
+    const [categoryRows] = categoryTableRows.length
+      ? await pool.query(
+          `
+            SELECT code, name
+            FROM product_categories
+            WHERE store_id = ?
+              AND is_active = 1
+            ORDER BY sort_order ASC, id ASC
+          `,
+          [storeId]
+        )
+      : [[]];
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "KINGWAY";
+    const sheet = workbook.addWorksheet("商品匯入範本");
+    sheet.columns = [
+      { header: "sku", key: "sku", width: 20 },
+      { header: "name", key: "name", width: 30 },
+      { header: "categoryCode", key: "categoryCode", width: 16 },
+      { header: "categoryName", key: "categoryName", width: 22 },
+      { header: "price", key: "price", width: 12 },
+      { header: "costPrice", key: "costPrice", width: 14 },
+      { header: "stock", key: "stock", width: 10 },
+      { header: "reorderLevel", key: "reorderLevel", width: 14 },
+      { header: "isActive", key: "isActive", width: 12 },
+      { header: "description", key: "description", width: 36 },
+      { header: "location", key: "location", width: 16 },
+      { header: "inputterName", key: "inputterName", width: 18 },
+      { header: "source", key: "source", width: 16 }
+    ];
+    sheet.getRow(1).font = { bold: true };
+
+    const firstCategory = categoryRows[0];
+    const fallbackCategoryCode = firstCategory?.code || "OT";
+    const fallbackCategoryName = firstCategory?.name || mapCategoryLabel(fallbackCategoryCode) || "";
+    sheet.addRow({
+      sku: "C-EB-001-S1",
+      name: "範本商品",
+      categoryCode: fallbackCategoryCode,
+      categoryName: fallbackCategoryName,
+      price: 0,
+      costPrice: 0,
+      stock: 10,
+      reorderLevel: 2,
+      isActive: 1,
+      description: "請依實際資料修改此列",
+      location: "A01",
+      inputterName: "staff",
+      source: "template"
+    });
+
+    const categorySheet = workbook.addWorksheet("門市分類清單");
+    categorySheet.columns = [
+      { header: "categoryCode", key: "categoryCode", width: 16 },
+      { header: "categoryName", key: "categoryName", width: 20 },
+      { header: "status", key: "status", width: 12 }
+    ];
+    categorySheet.getRow(1).font = { bold: true };
+    for (const category of categoryRows) {
+      categorySheet.addRow({
+        categoryCode: sanitizeWorksheetValue(category.code),
+        categoryName: sanitizeWorksheetValue(category.name),
+        status: "啟用"
+      });
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const filename = `KINGWAY_product_import_template_store_${storeId}.xlsx`;
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(buffer);
   } catch (error) {
     return next(error);
   }

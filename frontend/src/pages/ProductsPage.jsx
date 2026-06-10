@@ -11,9 +11,13 @@ import ProductImage from "../components/ProductImage";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
 import { useFetchList } from "../hooks/useFetchList";
-import { apiRequest, apiUploadImage } from "../lib/api";
+import { API_BASE_URL, apiRequest, apiUploadImage } from "../lib/api";
 import { getCategoryLabel } from "../lib/display";
+import { clearAuth, getStoredToken } from "../lib/auth";
 import { PRODUCT_CATEGORY_LABELS, PRODUCT_CATEGORY_OPTIONS, deriveProductCategoryFromSku, normalizeProductCategory } from "../lib/productCategories";
+
+const PRODUCT_EXPORT_FILENAME = "KINGWAY_product_export.xlsx";
+const PRODUCT_IMPORT_TEMPLATE_FILENAME = "KINGWAY_product_import_template.xlsx";
 
 function getStockTone(stock, reorderLevel) {
   if (Number(stock) <= 0) {
@@ -110,6 +114,8 @@ function ProductsPage() {
   const [warningModal, setWarningModal] = useState(null);
   const [categoryForm, setCategoryForm] = useState({ id: null, code: "", name: "", sortOrder: "0" });
   const [categorySaving, setCategorySaving] = useState(false);
+  const [downloadLoading, setDownloadLoading] = useState(null);
+  const [downloadError, setDownloadError] = useState("");
   const currentSkuPreview = form.sku.trim() || "分類變更後會自動產生";
 
   useEffect(() => {
@@ -590,6 +596,94 @@ function ProductsPage() {
     }
   }
 
+  function buildDownloadUrl(path) {
+    return `${API_BASE_URL}${path}`;
+  }
+
+  async function downloadBinaryFile(path) {
+    const token = getStoredToken();
+    const response = await fetch(buildDownloadUrl(path), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        clearAuth();
+      }
+      const rawText = await response.text();
+      let message = "下載失敗";
+      try {
+        const parsed = JSON.parse(rawText || "{}");
+        if (parsed?.message) {
+          message = parsed.message;
+        }
+      } catch (_error) {
+        if (rawText) {
+          message = rawText;
+        }
+      }
+      throw new Error(message);
+    }
+
+    return response;
+  }
+
+  function parseContentDispositionFilename(contentDisposition) {
+    if (!contentDisposition) {
+      return null;
+    }
+    const filenameMatch = /filename\*=UTF-8''([^;]+)|filename="?([^\";]+)"?/i.exec(contentDisposition);
+    const encoded = filenameMatch?.[1] || filenameMatch?.[2];
+    if (!encoded) {
+      return null;
+    }
+    try {
+      return decodeURIComponent(encoded);
+    } catch (_error) {
+      return encoded;
+    }
+  }
+
+  async function saveBlobToFile(response, fallbackFilename) {
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    const responseFilename = parseContentDispositionFilename(response.headers.get("content-disposition"));
+    link.download = responseFilename || fallbackFilename;
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+  }
+
+  async function handleDownloadExport() {
+    setDownloadError("");
+    setDownloadLoading("export");
+    try {
+      const response = await downloadBinaryFile("/products/export");
+      await saveBlobToFile(response, PRODUCT_EXPORT_FILENAME);
+    } catch (error) {
+      setDownloadError(error.message || "匯出失敗");
+    } finally {
+      setDownloadLoading(null);
+    }
+  }
+
+  async function handleDownloadTemplate() {
+    setDownloadError("");
+    setDownloadLoading("template");
+    try {
+      const response = await downloadBinaryFile("/products/import-template");
+      await saveBlobToFile(response, PRODUCT_IMPORT_TEMPLATE_FILENAME);
+    } catch (error) {
+      setDownloadError(error.message || "下載範本失敗");
+    } finally {
+      setDownloadLoading(null);
+    }
+  }
+
   const columns = [
     batchMode
       ? {
@@ -868,9 +962,27 @@ function ProductsPage() {
                   <button type="button" className="secondary-button" onClick={() => setSection("CREATE")}>
                     新增
                   </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={handleDownloadExport}
+                    disabled={Boolean(downloadLoading)}
+                  >
+                    {downloadLoading === "export" ? "匯出中..." : "匯出商品"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={handleDownloadTemplate}
+                    disabled={Boolean(downloadLoading)}
+                  >
+                    {downloadLoading === "template" ? "下載中..." : "下載匯入範本"}
+                  </button>
                 </>
               }
             />
+            {downloadError ? <div className="error-banner">{downloadError}</div> : null}
+            {!downloadError && downloadLoading ? <div className="loading-state">檔案下載中，請稍候...</div> : null}
             {batchMode ? (
               <div className="batch-action-bar">
                 <StatusBadge tone="info">已選 {selectedProductIds.length} 筆</StatusBadge>
