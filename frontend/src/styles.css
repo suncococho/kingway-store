@@ -1949,6 +1949,24 @@ textarea:focus-visible,
   overflow: auto;
 }
 
+.impersonation-banner {
+  margin: 0 0 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(234, 88, 12, 0.3);
+  background: rgba(255, 247, 237, 0.96);
+  color: #7c2d12;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-modal-copy {
+  color: #334155;
+  margin: 0 0 16px;
+}
+
 .pos-icon-button {
   border-radius: 14px;
   width: 40px;

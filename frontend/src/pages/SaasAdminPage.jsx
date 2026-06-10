@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { getStoredPlatformUser, platformRequest } from "../lib/platformAuth";
+import { startImpersonationSession } from "../lib/auth";
 
 const PLAN_OPTIONS = [
   { value: "ALL", label: "全部方案" },
@@ -39,6 +40,12 @@ const DEFAULT_SETTINGS_FORM = {
   defaultLanguage: "zh-TW",
   invoiceDisplayName: "",
   businessNumber: ""
+};
+const IMPERSONATION_TTL_LABEL = "2 小時";
+const STORE_ROLE_LABEL = {
+  owner: "Owner",
+  admin: "Admin",
+  staff: "Staff"
 };
 const LANGUAGE_OPTIONS = [
   { value: "zh-TW", label: "繁體中文（台灣）" },
@@ -100,7 +107,12 @@ function normalizeSettingsForm(settings) {
   };
 }
 
-function renderActionButtons(store, onOpenSettings, onSelectStore) {
+function getStoreRoleLabel(role) {
+  const normalized = String(role || "").toLowerCase();
+  return STORE_ROLE_LABEL[normalized] || normalized || "staff";
+}
+
+function renderActionButtons(store, onOpenSettings, onSelectStore, onImpersonate) {
   return (
     <div className="compact-actions">
       <button type="button" className="secondary-button" onClick={() => onSelectStore(store)}>
@@ -109,6 +121,11 @@ function renderActionButtons(store, onOpenSettings, onSelectStore) {
       <button type="button" className="secondary-button" onClick={() => onOpenSettings(store)}>
         店家設定
       </button>
+      {onImpersonate ? (
+        <button type="button" className="secondary-button" onClick={() => onImpersonate(store)}>
+          模擬登入店家
+        </button>
+      ) : null}
       <Link to={"/platform-admin/stores/" + store.id + "/features"} className="secondary-button">
         功能設定
       </Link>
@@ -117,6 +134,7 @@ function renderActionButtons(store, onOpenSettings, onSelectStore) {
 }
 
 function SaasAdminPage() {
+  const navigate = useNavigate();
   const currentUser = getStoredPlatformUser();
   const currentRole = String(currentUser?.role || "").trim().toUpperCase();
   const isAdmin = ["PLATFORM_OWNER", "PLATFORM_ADMIN", "SUPPORT"].includes(currentRole);
@@ -143,6 +161,16 @@ function SaasAdminPage() {
   const [storeSaving, setStoreSaving] = useState({ id: null, field: "" });
   const [storeUpdateError, setStoreUpdateError] = useState("");
   const [storeUpdateSuccess, setStoreUpdateSuccess] = useState("");
+  const [impersonationState, setImpersonationState] = useState({
+    open: false,
+    store: null,
+    loadingMembers: false,
+    starting: false,
+    members: [],
+    targetStaffUserId: "",
+    reason: "",
+    error: ""
+  });
 
   async function loadStores() {
     setLoading(true);
@@ -304,6 +332,137 @@ function SaasAdminPage() {
     }
   }
 
+  function resetImpersonationState() {
+    setImpersonationState({
+      open: false,
+      store: null,
+      loadingMembers: false,
+      starting: false,
+      members: [],
+      targetStaffUserId: "",
+      reason: "",
+      error: ""
+    });
+  }
+
+  async function openImpersonationModal(store) {
+    if (!store?.id) {
+      return;
+    }
+
+    setImpersonationState({
+      open: true,
+      store,
+      loadingMembers: true,
+      starting: false,
+      members: [],
+      targetStaffUserId: "",
+      reason: "",
+      error: ""
+    });
+
+    try {
+      const response = await platformRequest("/saas-admin/stores/" + store.id + "/staff-members");
+      const members = Array.isArray(response?.members) ? response.members : [];
+      setImpersonationState((current) => ({
+        ...current,
+        loadingMembers: false,
+        members,
+        targetStaffUserId: String(members[0]?.id || ""),
+        error: members.length ? "" : "此店家沒有可登入的啟用員工。"
+      }));
+    } catch (error) {
+      setImpersonationState((current) => ({
+        ...current,
+        loadingMembers: false,
+        members: [],
+        targetStaffUserId: "",
+        error: error.message || "讀取店家員工名單失敗"
+      }));
+    }
+  }
+
+  function closeImpersonationModal() {
+    resetImpersonationState();
+  }
+
+  function handleImpersonationInputChange(event) {
+    const { name, value } = event.target;
+    setImpersonationState((current) => ({
+      ...current,
+      [name]: value
+    }));
+  }
+
+  async function handleStartImpersonation(event) {
+    event.preventDefault();
+    const storeId = Number(impersonationState.store?.id || 0);
+    if (!storeId) {
+      return;
+    }
+
+    if (!impersonationState.targetStaffUserId) {
+      setImpersonationState((current) => ({
+        ...current,
+        error: "請先選擇要模擬登入的員工"
+      }));
+      return;
+    }
+
+    setImpersonationState((current) => ({
+      ...current,
+      starting: true,
+      error: ""
+    }));
+
+    try {
+      const response = await platformRequest("/saas-admin/stores/" + storeId + "/impersonate", {
+        method: "POST",
+        body: JSON.stringify({
+          targetStaffUserId: Number(impersonationState.targetStaffUserId),
+          reason: impersonationState.reason
+        })
+      });
+      const targetStaffUserId = response?.metadata?.targetStaffUserId || Number(impersonationState.targetStaffUserId);
+      const selectedStaffMember =
+        impersonationState.members.find((member) => Number(member.id) === Number(targetStaffUserId)) || null;
+
+      startImpersonationSession(
+        response?.token,
+        response?.user || {
+          id: targetStaffUserId,
+          username: response?.metadata?.targetUsername || selectedStaffMember?.username || "",
+          role: response?.user?.role || selectedStaffMember?.staffRole || "",
+          displayName: response?.user?.displayName || selectedStaffMember?.displayName || selectedStaffMember?.username || "",
+          storeId: Number(response?.metadata?.storeId || storeId),
+          storeRole: response?.user?.storeRole || response?.metadata?.targetStoreRole || selectedStaffMember?.storeRole || "",
+          storeName: response?.metadata?.storeName || impersonationState.store?.name || "",
+          permissions: response?.user?.permissions || []
+        },
+        {
+        storeId,
+        storeName: response?.metadata?.storeName || impersonationState.store?.name || "",
+        targetStaffUserId,
+        targetUsername: response?.metadata?.targetUsername || "",
+        targetStoreRole: response?.metadata?.targetStoreRole || "",
+        reason: response?.metadata?.reason || impersonationState.reason,
+        platformAdminId: currentUser?.id,
+        platformAdminEmail: currentUser?.email || ""
+      });
+
+      resetImpersonationState();
+      navigate("/dashboard");
+    } catch (error) {
+      setImpersonationState((current) => ({
+        ...current,
+        starting: false,
+        error: error.message || "啟動模擬登入失敗"
+      }));
+    }
+  }
+
+  const canImpersonate = ["PLATFORM_OWNER", "PLATFORM_ADMIN"].includes(currentRole);
+
   const stores = Array.isArray(data?.stores) ? data.stores : [];
   const selectedStore =
     stores.find((store) => store.id === selectedStoreId) ||
@@ -431,7 +590,13 @@ function SaasAdminPage() {
     {
       key: "actions",
       label: "管理入口",
-      render: (row) => renderActionButtons(row, handleOpenSettings, handleSelectDetail)
+      render: (row) =>
+        renderActionButtons(
+          row,
+          handleOpenSettings,
+          handleSelectDetail,
+          canImpersonate ? openImpersonationModal : null
+        )
     }
   ];
 
@@ -620,7 +785,14 @@ function SaasAdminPage() {
               {!row.hasOwner ? <StatusBadge tone="warning">缺少 owner</StatusBadge> : null}
             </>
           )}
-          cardFooter={(row) => renderActionButtons(row, handleOpenSettings, handleSelectDetail)}
+          cardFooter={(row) =>
+            renderActionButtons(
+              row,
+              handleOpenSettings,
+              handleSelectDetail,
+              canImpersonate ? openImpersonationModal : null
+            )
+          }
         />
       </section>
 
@@ -637,7 +809,12 @@ function SaasAdminPage() {
                 {!selectedDetailStore.hasOwner ? <StatusBadge tone="warning">缺少 owner</StatusBadge> : null}
               </>
             }
-            actions={renderActionButtons(selectedDetailStore, handleOpenSettings, handleSelectDetail)}
+            actions={renderActionButtons(
+              selectedDetailStore,
+              handleOpenSettings,
+              handleSelectDetail,
+              canImpersonate ? openImpersonationModal : null
+            )}
           />
           <div className="admin-summary-grid">
             <article className="admin-summary-card">
@@ -830,6 +1007,119 @@ function SaasAdminPage() {
           </article>
         </section>
       </div>
+
+      {impersonationState.open ? (
+        <div className="admin-modal-backdrop">
+          <section className="admin-modal">
+            <div className="admin-modal-header">
+              <h2>模擬登入店家</h2>
+              <button type="button" className="secondary-button" onClick={closeImpersonationModal} disabled={impersonationState.starting}>
+                關閉
+              </button>
+            </div>
+            <div className="admin-modal-body">
+              <div className="admin-summary-grid">
+                <article className="admin-summary-card">
+                  <div className="admin-summary-label">目標店家</div>
+                  <div className="admin-summary-value admin-summary-value-small">
+                    {impersonationState.store?.name || impersonationState.store?.code || `店家 ${impersonationState.store?.id || ""}`}
+                  </div>
+                  <div className="muted-text">ID：{impersonationState.store?.id || "-"}</div>
+                </article>
+                <article className="admin-summary-card">
+                  <div className="admin-summary-label">模擬權限有效期</div>
+                  <div className="admin-summary-value admin-summary-value-small">{IMPERSONATION_TTL_LABEL}</div>
+                  <div className="muted-text">自動到期後請重新申請</div>
+                </article>
+              </div>
+
+              {impersonationState.error ? <div className="error-banner">{impersonationState.error}</div> : null}
+
+              <p className="admin-modal-copy">
+                模擬登入需要先選擇欲登入的店員帳號。模擬登入期間，您將以該帳號權限操作，請謹慎變更訂單、庫存與價格資料。
+              </p>
+
+              <form className="form-grid" onSubmit={handleStartImpersonation}>
+                <label className="form-field">
+                  <span>登入員工</span>
+                  <select
+                    name="targetStaffUserId"
+                    value={impersonationState.targetStaffUserId}
+                    onChange={handleImpersonationInputChange}
+                    disabled={impersonationState.loadingMembers || impersonationState.starting}
+                  >
+                    {impersonationState.members.length ? (
+                      impersonationState.members.map((member) => (
+                        <option key={member.id} value={String(member.id)}>
+                          {member.displayName || member.username}（{getStoreRoleLabel(member.storeRole)}）
+                          {member.username ? ` / ${member.username}` : null}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="">尚無可選員工</option>
+                    )}
+                  </select>
+                </label>
+                <label className="form-field form-field-wide">
+                  <span>模擬原因（選填）</span>
+                  <input
+                    name="reason"
+                    value={impersonationState.reason}
+                    onChange={handleImpersonationInputChange}
+                    placeholder="請輸入本次模擬登入原因"
+                    disabled={impersonationState.starting}
+                  />
+                </label>
+                <div className="compact-actions">
+                  <button
+                    type="submit"
+                    className="primary-button"
+                    disabled={
+                      impersonationState.loadingMembers ||
+                      impersonationState.starting ||
+                      !impersonationState.targetStaffUserId
+                    }
+                  >
+                    {impersonationState.starting ? "啟動中..." : "開始模擬登入"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={closeImpersonationModal}
+                    disabled={impersonationState.starting}
+                  >
+                    取消
+                  </button>
+                </div>
+              </form>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {impersonationState.loadingMembers ? (
+        <div className="processing-overlay">
+          <div className="processing-overlay-card">
+            <div className="processing-spinner" aria-hidden="true"></div>
+            <div>
+              <div className="processing-overlay-title">讀取員工名單</div>
+              <div className="processing-overlay-text">正在載入可登入帳號，請稍候...</div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {impersonationState.starting ? (
+        <div className="processing-overlay">
+          <div className="processing-overlay-card">
+            <div className="processing-spinner" aria-hidden="true"></div>
+            <div>
+              <div className="processing-overlay-title">啟動模擬登入</div>
+              <div className="processing-overlay-text">請稍候，系統將切換為店員權限…</div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

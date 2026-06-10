@@ -1,5 +1,7 @@
 const express = require("express");
 const { pool } = require("../db");
+const jwt = require("jsonwebtoken");
+const config = require("../config");
 const { authenticatePlatformAdmin, requirePlatformRole } = require("../middleware/platformAuth");
 const {
   FEATURE_KEYS,
@@ -21,6 +23,33 @@ const {
 const router = express.Router();
 const ALLOWED_STORE_PLANS = new Set(["free", "premium"]);
 const ALLOWED_STORE_STATUSES = new Set(["active", "inactive", "suspended"]);
+const IMPERSONATION_TTL_SECONDS = 2 * 60 * 60;
+const IMPERSONATION_TTL_TEXT = "2 小時";
+
+function normalizeText(value) {
+  return typeof value === "string" ? value.trim() : value === undefined || value === null ? "" : String(value).trim();
+}
+
+function normalizeRoleForPermissions(role) {
+  return String(role || "").toUpperCase().trim();
+}
+
+function getStaffPermissions(staffRole) {
+  const normalized = normalizeRoleForPermissions(staffRole);
+  if (normalized === "CASHIER") {
+    return ["POS", "PRODUCTS", "REPAIRS", "INVENTORY"];
+  }
+
+  return [];
+}
+
+function normalizeImpersonationReason(value, maxLength = 256) {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+  return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized;
+}
 
 function n(value, fallback = 0) {
   const parsed = Number(value);
@@ -76,6 +105,22 @@ function buildStoreResponse(row) {
     customerCount: n(row.customerCount),
     orderCount: n(row.orderCount),
     repairCount: n(row.repairCount)
+  };
+}
+
+function buildStoreStaffMemberResponse(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: n(row.id),
+    username: t(row.username, ""),
+    displayName: t(row.displayName, t(row.username)),
+    staffRole: t(row.staffRole),
+    storeRole: t(row.storeRole),
+    membershipStatus: t(row.membershipStatus),
+    isActive: Boolean(row.isActive)
   };
 }
 
@@ -136,6 +181,144 @@ async function getStore(storeId) {
   if (!store) return null;
 
   return buildStoreResponse(store);
+}
+
+async function getStoreForImpersonation(storeId) {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        CAST(id AS UNSIGNED) AS id,
+        code,
+        name,
+        status,
+        plan
+      FROM stores
+      WHERE id = ?
+      LIMIT 1
+    `,
+    [storeId]
+  );
+
+  const store = rows[0];
+  if (!store) {
+    return null;
+  }
+
+  return {
+    id: n(store.id),
+    code: t(store.code, "UNKNOWN"),
+    name: t(store.name, t(store.code, "UNKNOWN")),
+    status: t(store.status, "unknown"),
+    plan: t(store.plan, "unknown")
+  };
+}
+
+async function getActiveStaffMembersByStore(storeId) {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        su.id,
+        su.username,
+        su.display_name AS displayName,
+        su.role AS staffRole,
+        sm.role AS storeRole,
+        sm.status AS membershipStatus,
+        su.is_active AS isActive
+      FROM staff_users su
+      INNER JOIN store_memberships sm
+        ON sm.staff_user_id = su.id
+       AND sm.store_id = ?
+       AND sm.status = 'active'
+      WHERE su.is_active = 1
+      ORDER BY FIELD(sm.role, 'owner', 'admin', 'staff'), su.username ASC
+    `,
+    [storeId]
+  );
+
+  return (rows || []).map(buildStoreStaffMemberResponse);
+}
+
+async function getActiveStoreMember(staffUserId, storeId) {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        su.id,
+        su.username,
+        su.display_name AS displayName,
+        su.role AS staffRole,
+        sm.role AS storeRole,
+        sm.status AS membershipStatus,
+        su.is_active AS isActive
+      FROM staff_users su
+      INNER JOIN store_memberships sm
+        ON sm.staff_user_id = su.id
+       AND sm.store_id = ?
+       AND sm.status = 'active'
+      WHERE su.id = ?
+        AND su.is_active = 1
+      LIMIT 1
+    `,
+    [storeId, staffUserId]
+  );
+
+  if (!rows[0]) {
+    return null;
+  }
+
+  return buildStoreStaffMemberResponse(rows[0]);
+}
+
+async function getDefaultImpersonationTarget(storeId) {
+  const [ownerRows] = await pool.query(
+    `
+      SELECT
+        su.id,
+        su.username,
+        su.display_name AS displayName,
+        su.role AS staffRole,
+        sm.role AS storeRole,
+        sm.status AS membershipStatus,
+        su.is_active AS isActive
+      FROM staff_users su
+      INNER JOIN store_memberships sm
+        ON sm.staff_user_id = su.id
+       AND sm.store_id = ?
+       AND sm.status = 'active'
+      WHERE su.is_active = 1
+        AND sm.role = 'owner'
+      ORDER BY su.id ASC
+      LIMIT 1
+    `,
+    [storeId]
+  );
+  if (ownerRows[0]) {
+    return buildStoreStaffMemberResponse(ownerRows[0]);
+  }
+
+  const [adminRows] = await pool.query(
+    `
+      SELECT
+        su.id,
+        su.username,
+        su.display_name AS displayName,
+        su.role AS staffRole,
+        sm.role AS storeRole,
+        sm.status AS membershipStatus,
+        su.is_active AS isActive
+      FROM staff_users su
+      INNER JOIN store_memberships sm
+        ON sm.staff_user_id = su.id
+       AND sm.store_id = ?
+       AND sm.status = 'active'
+      WHERE su.is_active = 1
+        AND sm.role = 'admin'
+      ORDER BY su.id ASC
+      LIMIT 1
+    `,
+    [storeId]
+  );
+
+  return buildStoreStaffMemberResponse(adminRows[0] || null);
 }
 
 async function ensureStoreFeatureRow(storeId) {
@@ -450,6 +633,172 @@ router
   .route("/stores/:id/features")
   .get(getStoreFeaturesHandler)
   .patch(patchStoreFeaturesHandler);
+
+router.get("/stores/:id/staff-members", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
+  try {
+    const storeId = n(req.params.id, 0);
+    if (!storeId) {
+      return res.status(404).json({ message: "找不到店家" });
+    }
+
+    const store = await getStoreForImpersonation(storeId);
+    if (!store) {
+      return res.status(404).json({ message: "找不到店家" });
+    }
+
+    const members = await getActiveStaffMembersByStore(storeId);
+    return res.json({ ok: true, storeId: store.id, members });
+  } catch (error) {
+    console.error("[saasAdmin/storeStaffMembers:get] failed", error);
+    return next(error);
+  }
+});
+
+router.post("/stores/:id/impersonate", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
+  try {
+    const storeId = n(req.params.id, 0);
+    if (!storeId) {
+      return res.status(404).json({ message: "找不到店家" });
+    }
+
+    const store = await getStoreForImpersonation(storeId);
+    if (!store) {
+      return res.status(404).json({ message: "找不到店家" });
+    }
+    if (String(store.status).toLowerCase() !== "active") {
+      return res.status(409).json({ message: "目前店家不是啟用狀態，無法模擬登入" });
+    }
+
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    let targetStaffUserId = n(body.targetStaffUserId, 0);
+    let member = null;
+
+    if (targetStaffUserId) {
+      member = await getActiveStoreMember(targetStaffUserId, storeId);
+      if (!member) {
+        return res.status(404).json({ message: "找不到可用的目標員工" });
+      }
+    } else {
+      member = await getDefaultImpersonationTarget(storeId);
+      if (!member?.id) {
+        return res.status(404).json({ message: "此店家沒有可用目標員工" });
+      }
+
+      targetStaffUserId = n(member.id, 0);
+    }
+
+    const staffRole = t(member.staffRole);
+    const storeRole = t(member.storeRole);
+    const token = jwt.sign(
+      {
+        id: member.id,
+        username: member.username,
+        role: staffRole,
+        displayName: t(member.displayName, member.username),
+        storeId: store.id,
+        storeRole,
+        storeName: t(store.name, "KINGWAY 門市"),
+        permissions: getStaffPermissions(staffRole),
+        impersonation: true,
+        impersonatedByPlatformAdminId: req.platformAdmin?.id || null,
+        impersonatedByPlatformAdminEmail: t(req.platformAdmin?.email)
+      },
+      config.jwtSecret,
+      { expiresIn: `${IMPERSONATION_TTL_SECONDS}s` }
+    );
+
+    const payload = {
+      storeId: store.id,
+      storeCode: store.code,
+      storeName: t(store.name, t(store.code)),
+      targetStaffUserId: member.id,
+      targetUsername: member.username,
+      targetStoreRole: storeRole,
+      ttl: IMPERSONATION_TTL_TEXT,
+      reason: normalizeImpersonationReason(body.reason),
+      targetDisplayName: t(member.displayName, t(member.username))
+    };
+
+    await recordPlatformAudit(req, {
+      action: "store.impersonation.start",
+      targetType: "store",
+      targetId: store.id,
+      before: null,
+      after: payload
+    });
+
+    return res.json({
+      ok: true,
+      token,
+      user: {
+        id: member.id,
+        username: member.username,
+        role: staffRole,
+        displayName: t(member.displayName, member.username),
+        storeId: store.id,
+        storeRole,
+        storeName: t(store.name, t(store.code)),
+        permissions: getStaffPermissions(staffRole)
+      },
+      expiresIn: `${IMPERSONATION_TTL_TEXT}`,
+      impersonation: true,
+      metadata: payload
+    });
+  } catch (error) {
+    console.error("[saasAdmin/storeImpersonation:start] failed", error);
+    return next(error);
+  }
+});
+
+router.post(
+  "/stores/:id/impersonation/stop",
+  requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]),
+  async (req, res, next) => {
+    try {
+      const storeId = n(req.params.id, 0);
+      if (!storeId) {
+        return res.status(404).json({ message: "找不到店家" });
+      }
+
+      const store = await getStoreForImpersonation(storeId);
+      if (!store) {
+        return res.status(404).json({ message: "找不到店家" });
+      }
+
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      const targetStaffUserId = n(body.targetStaffUserId, 0);
+
+      let targetStaff = null;
+      if (targetStaffUserId) {
+        targetStaff = await getActiveStoreMember(targetStaffUserId, storeId);
+      }
+
+      await recordPlatformAudit(req, {
+        action: "store.impersonation.stop",
+        targetType: "store",
+        targetId: storeId,
+        before: null,
+        after: {
+          storeId,
+          storeName: t(store.name),
+          targetStaffUserId: targetStaff?.id ? n(targetStaff.id) : targetStaffUserId || null,
+          targetUsername: targetStaff?.username || null,
+          targetStoreRole: targetStaff?.storeRole || null,
+          reason: normalizeImpersonationReason(body.reason)
+        }
+      });
+
+      return res.json({
+        ok: true,
+        storeId: store.id,
+        storeName: t(store.name)
+      });
+    } catch (error) {
+      console.error("[saasAdmin/storeImpersonation:stop] failed", error);
+      return next(error);
+    }
+  }
+);
 
 router.get("/stores/:id/settings", async (req, res, next) => {
   try {

@@ -1,9 +1,33 @@
 const TOKEN_KEY = "kingway_admin_token";
 const USER_KEY = "kingway_admin_user";
+const IMPERSONATION_SESSION_KEY = "kingway_staff_impersonation_session";
+const IMPERSONATION_BACKUP_TOKEN_KEY = "kingway_admin_token_impersonation_backup";
+const IMPERSONATION_BACKUP_USER_KEY = "kingway_admin_user_impersonation_backup";
+const IMPERSONATION_TTL_MS = 2 * 60 * 60 * 1000;
 
 const STORE_NAME_DISPLAY_BY_STORE_ID = {
   1: "KINGWAY 台南店"
 };
+
+function toNumber(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed;
+}
+
+function parseJsonValue(rawValue, fallback = null) {
+  if (!rawValue) {
+    return fallback;
+  }
+
+  try {
+    return JSON.parse(rawValue);
+  } catch (_error) {
+    return fallback;
+  }
+}
 
 function decodeLatin1Mojibake(value) {
   if (typeof value !== "string") {
@@ -98,4 +122,84 @@ export function getStoredStoreName() {
 export function clearAuth() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+}
+
+export function getImpersonationSession() {
+  const rawSession = localStorage.getItem(IMPERSONATION_SESSION_KEY);
+  const session = parseJsonValue(rawSession, null);
+  if (!session || typeof session !== "object") {
+    return null;
+  }
+
+  const expiresAt = toNumber(session.expiresAt);
+  return {
+    ...session,
+    active: Boolean(session.active),
+    expiresAt,
+    expired: expiresAt !== null ? expiresAt <= Date.now() : false
+  };
+}
+
+export function startImpersonationSession(staffToken, staffUser, metadata = {}) {
+  const now = Date.now();
+  const startedAt = toNumber(metadata.startedAt) || now;
+  const expiresAt = toNumber(metadata.expiresAt) || (now + IMPERSONATION_TTL_MS);
+
+  const currentToken = getStoredToken();
+  const currentUser = getStoredUser();
+
+  if (currentToken) {
+    localStorage.setItem(IMPERSONATION_BACKUP_TOKEN_KEY, currentToken);
+  } else {
+    localStorage.removeItem(IMPERSONATION_BACKUP_TOKEN_KEY);
+  }
+
+  if (currentUser) {
+    localStorage.setItem(IMPERSONATION_BACKUP_USER_KEY, JSON.stringify(currentUser));
+  } else {
+    localStorage.removeItem(IMPERSONATION_BACKUP_USER_KEY);
+  }
+
+  storeAuth(staffToken, staffUser);
+  localStorage.setItem(
+    IMPERSONATION_SESSION_KEY,
+    JSON.stringify({
+      active: true,
+      startedAt,
+      expiresAt,
+      platformAdminId: metadata.platformAdminId || null,
+      platformAdminEmail: metadata.platformAdminEmail || "",
+      storeId: metadata.storeId,
+      targetStaffUserId: metadata.targetStaffUserId,
+      targetUsername: metadata.targetUsername || "",
+      targetStoreRole: metadata.targetStoreRole || "",
+      storeName: metadata.storeName || "",
+      reason: metadata.reason || ""
+    })
+  );
+
+  return getImpersonationSession();
+}
+
+export function stopImpersonationSession() {
+  const backupToken = localStorage.getItem(IMPERSONATION_BACKUP_TOKEN_KEY);
+  const backupUser = parseJsonValue(localStorage.getItem(IMPERSONATION_BACKUP_USER_KEY), null);
+
+  localStorage.removeItem(IMPERSONATION_SESSION_KEY);
+  localStorage.removeItem(IMPERSONATION_BACKUP_TOKEN_KEY);
+  localStorage.removeItem(IMPERSONATION_BACKUP_USER_KEY);
+
+  if (backupToken) {
+    storeAuth(backupToken, backupUser);
+    return true;
+  }
+
+  clearAuth();
+  return false;
+}
+
+export function clearImpersonationState() {
+  localStorage.removeItem(IMPERSONATION_SESSION_KEY);
+  localStorage.removeItem(IMPERSONATION_BACKUP_TOKEN_KEY);
+  localStorage.removeItem(IMPERSONATION_BACKUP_USER_KEY);
 }
