@@ -10,9 +10,26 @@ const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
 const {
   PRODUCT_CATEGORY_LABELS,
   deriveProductCategoryFromSku,
+  normalizeProductCategoryCode,
   normalizeProductCategory,
   normalizeProductSku
 } = require("../utils/productCategories");
+
+const PRODUCT_IMPORT_COLUMNS = [
+  "sku",
+  "name",
+  "categoryCode",
+  "categoryName",
+  "price",
+  "costPrice",
+  "stock",
+  "reorderLevel",
+  "isActive",
+  "description",
+  "location",
+  "inputterName",
+  "source"
+];
 
 const router = express.Router();
 const productsStorageDir = path.join(__dirname, "..", "..", "storage", "products");
@@ -183,6 +200,311 @@ function sanitizeWorksheetValue(value) {
     return "";
   }
   return value;
+}
+
+function normalizeImportHeader(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\uFEFF/g, "")
+    .replace(/\s+/g, "");
+}
+
+function normalizeImportCellValue(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "number") {
+    return value;
+  }
+
+  if (typeof value === "object") {
+    if (value.text !== undefined) {
+      return String(value.text).trim();
+    }
+    if (value.result !== undefined) {
+      return value.result;
+    }
+    if (Array.isArray(value.richText)) {
+      return value.richText
+        .map((segment) => normalizeImportCellValue(segment.text))
+        .join("");
+    }
+    if (value.hyperlink) {
+      return String(value.hyperlink);
+    }
+  }
+
+  return String(value).trim();
+}
+
+function normalizeImportString(value) {
+  const normalized = normalizeImportCellValue(value);
+  return typeof normalized === "number" ? String(normalized) : normalized;
+}
+
+function parseImportNumber(value) {
+  const normalized = normalizeImportString(value);
+  if (!normalized) {
+    return NaN;
+  }
+  const cleaned = normalized.replace(/,/g, "");
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function parseImportBooleanAsNumber(value) {
+  const normalized = normalizeImportString(value).trim().toLowerCase();
+  if (!normalized) {
+    return 0;
+  }
+  if (["1", "true", "yes", "是", "啟用", "on"].includes(normalized)) {
+    return 1;
+  }
+  if (["0", "false", "no", "否", "停用", "off"].includes(normalized)) {
+    return 0;
+  }
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function readProductImportRows(buffer) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) {
+    return [];
+  }
+
+  const headerMap = new Map();
+  const headerRow = worksheet.getRow(1);
+  headerRow.eachCell((cell, column) => {
+    const normalized = normalizeImportHeader(normalizeImportString(cell.value));
+    if (!normalized) {
+      return;
+    }
+
+    if (["sku"].includes(normalized)) {
+      headerMap.set(column, "sku");
+    } else if (["name"].includes(normalized)) {
+      headerMap.set(column, "name");
+    } else if (["categorycode"].includes(normalized)) {
+      headerMap.set(column, "categoryCode");
+    } else if (["categoryname"].includes(normalized)) {
+      headerMap.set(column, "categoryName");
+    } else if (["price"].includes(normalized)) {
+      headerMap.set(column, "price");
+    } else if (["costprice"].includes(normalized)) {
+      headerMap.set(column, "costPrice");
+    } else if (["stock"].includes(normalized)) {
+      headerMap.set(column, "stock");
+    } else if (["reorderlevel"].includes(normalized)) {
+      headerMap.set(column, "reorderLevel");
+    } else if (["isactive", "active"].includes(normalized)) {
+      headerMap.set(column, "isActive");
+    } else if (["description"].includes(normalized)) {
+      headerMap.set(column, "description");
+    } else if (["location"].includes(normalized)) {
+      headerMap.set(column, "location");
+    } else if (["inputtername"].includes(normalized)) {
+      headerMap.set(column, "inputterName");
+    } else if (["source"].includes(normalized)) {
+      headerMap.set(column, "source");
+    }
+  });
+
+  const rows = [];
+  for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+    const row = worksheet.getRow(rowNumber);
+    const rowData = {};
+    for (const [column, field] of headerMap.entries()) {
+      rowData[field] = normalizeImportString(row.getCell(column).value);
+    }
+
+    const hasAnyValue = Object.values(rowData).some((value) => String(value || "").trim() !== "");
+    if (!hasAnyValue) {
+      continue;
+    }
+
+    rows.push({
+      rowNumber,
+      data: rowData
+    });
+  }
+
+  return rows;
+}
+
+async function runProductImportDryRun(storeId, buffer) {
+  const importRows = await readProductImportRows(buffer);
+
+  const [categoryTableRows] = await pool.query("SHOW TABLES LIKE 'product_categories'");
+  const [activeCategories] = categoryTableRows.length
+    ? await pool.query(
+        `
+          SELECT id, code, name
+          FROM product_categories
+          WHERE store_id = ?
+            AND is_active = 1
+          ORDER BY sort_order ASC, id ASC
+        `,
+        [storeId]
+      )
+    : [[]];
+
+  const categoryByCode = new Map();
+  const categoryByName = new Map();
+  for (const category of activeCategories) {
+    const code = normalizeProductCategoryCode(category.code || "");
+    if (code) {
+      const payload = {
+        id: Number(category.id),
+        code,
+        name: String(category.name || "")
+      };
+      categoryByCode.set(code, payload);
+      if (payload.name) {
+        categoryByName.set(payload.name.toLowerCase(), payload);
+      }
+    }
+  }
+
+  const [storeProducts] = await pool.query(
+    "SELECT sku FROM products WHERE store_id = ?",
+    [storeId]
+  );
+  const existingSkuSet = new Set((storeProducts || []).map((product) => String(product.sku || "").trim().toUpperCase()));
+
+  const result = {
+    ok: true,
+    dryRun: true,
+    totalRows: 0,
+    createCount: 0,
+    updateCount: 0,
+    skipCount: 0,
+    errors: [],
+    preview: []
+  };
+
+  const seenSkuSet = new Set();
+
+  for (const { rowNumber, data } of importRows) {
+    result.totalRows += 1;
+
+    const sku = normalizeProductSku(data.sku || "");
+    const name = String(data.name || "").trim();
+    const categoryCode = normalizeProductCategoryCode(data.categoryCode || "");
+    const categoryName = String(data.categoryName || "").trim();
+    const price = parseImportNumber(data.price);
+    const stock = parseImportNumber(data.stock);
+    const reorderLevel = parseImportNumber(data.reorderLevel);
+    const isActive = parseImportBooleanAsNumber(data.isActive);
+    const categoryByCodeMatch = categoryCode ? categoryByCode.get(categoryCode) : null;
+    const categoryByNameMatch = categoryName ? categoryByName.get(categoryName.toLowerCase()) : null;
+
+    if (!sku) {
+      result.skipCount += 1;
+      const message = "sku 欄位為必填";
+      result.errors.push({ row: rowNumber, sku: data.sku || "", message });
+      result.preview.push({ row: rowNumber, sku: data.sku || "", name, action: "skip", message });
+      continue;
+    }
+
+    if (!name) {
+      result.skipCount += 1;
+      const message = "name 欄位為必填";
+      result.errors.push({ row: rowNumber, sku, message });
+      result.preview.push({ row: rowNumber, sku, name: "", action: "skip", message });
+      continue;
+    }
+
+    if (Number.isNaN(price)) {
+      result.skipCount += 1;
+      const message = "price 欄位必須是數字";
+      result.errors.push({ row: rowNumber, sku, message });
+      result.preview.push({ row: rowNumber, sku, name, action: "skip", message });
+      continue;
+    }
+
+    if (Number.isNaN(stock)) {
+      result.skipCount += 1;
+      const message = "stock 欄位必須是數字";
+      result.errors.push({ row: rowNumber, sku, message });
+      result.preview.push({ row: rowNumber, sku, name, action: "skip", message });
+      continue;
+    }
+
+    if (Number.isNaN(reorderLevel)) {
+      result.skipCount += 1;
+      const message = "reorderLevel 欄位必須是數字";
+      result.errors.push({ row: rowNumber, sku, message });
+      result.preview.push({ row: rowNumber, sku, name, action: "skip", message });
+      continue;
+    }
+
+    if (!categoryCode && !categoryName) {
+      result.skipCount += 1;
+      const message = "請填寫 categoryCode 或 categoryName";
+      result.errors.push({ row: rowNumber, sku, message });
+      result.preview.push({ row: rowNumber, sku, name, action: "skip", message });
+      continue;
+    }
+
+    if (!categoryByCodeMatch && !categoryByNameMatch) {
+      result.skipCount += 1;
+      const message = "找不到門市商品分類";
+      result.errors.push({ row: rowNumber, sku, message });
+      result.preview.push({ row: rowNumber, sku, name, action: "skip", message });
+      continue;
+    }
+
+    if (seenSkuSet.has(sku)) {
+      result.skipCount += 1;
+      const message = "同一檔案內 SKU 重複";
+      result.errors.push({ row: rowNumber, sku, message });
+      result.preview.push({ row: rowNumber, sku, name, action: "skip", message });
+      continue;
+    }
+    seenSkuSet.add(sku);
+
+    if (existingSkuSet.has(sku)) {
+      result.updateCount += 1;
+      result.preview.push({
+        row: rowNumber,
+        sku,
+        name,
+        action: "update",
+        message: "更新予定",
+        price,
+        stock,
+        reorderLevel,
+        isActive,
+        categoryCode: categoryByCodeMatch?.code || categoryCode || categoryByNameMatch?.code || "",
+        categoryName: categoryByNameMatch?.name || categoryByCodeMatch?.name || categoryName || ""
+      });
+      continue;
+    }
+
+    result.createCount += 1;
+    result.preview.push({
+      row: rowNumber,
+      sku,
+      name,
+      action: "create",
+      message: "新增予定",
+      price,
+      stock,
+      reorderLevel,
+      isActive,
+      categoryCode: categoryByCodeMatch?.code || categoryCode || categoryByNameMatch?.code || "",
+      categoryName: categoryByNameMatch?.name || categoryByCodeMatch?.name || categoryName || ""
+    });
+  }
+
+  result.ok = result.errors.length === 0;
+  result.preview = result.preview.slice(0, 20);
+  return result;
 }
 
 function getCategoryFromSku(sku, fallbackCategory = "OT") {
@@ -508,6 +830,38 @@ router.get("/import-template", async (req, res, next) => {
     return next(error);
   }
 });
+
+router.post(
+  "/import",
+  express.raw({
+    type: [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/octet-stream"
+    ],
+    limit: "16mb"
+  }),
+  requireStoreAdminRole,
+  async (req, res, next) => {
+    try {
+      const isDryRun = String(req.query.dryRun || req.body?.dryRun || "").toLowerCase() === "true";
+      if (!isDryRun) {
+        return res.status(400).json({
+          message: "目前僅支援 dryRun 模式（請加上 ?dryRun=true）"
+        });
+      }
+
+      if (!Buffer.isBuffer(req.body) || !req.body.length) {
+        return res.status(400).json({ message: "請上傳 XLSX 檔案內容" });
+      }
+
+      const storeId = getRequestStoreId(req);
+      const result = await runProductImportDryRun(storeId, req.body);
+      return res.json(result);
+    } catch (error) {
+      return next(error);
+    }
+  }
+);
 
 router.get("/:id/image", async (req, res, next) => {
   try {

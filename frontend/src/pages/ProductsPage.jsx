@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import ActionModal from "../components/ActionModal";
 import AdminSectionHeader from "../components/AdminSectionHeader";
@@ -116,6 +116,10 @@ function ProductsPage() {
   const [categorySaving, setCategorySaving] = useState(false);
   const [downloadLoading, setDownloadLoading] = useState(null);
   const [downloadError, setDownloadError] = useState("");
+  const importFileInputRef = useRef(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importError, setImportError] = useState("");
+  const [importResult, setImportResult] = useState(null);
   const currentSkuPreview = form.sku.trim() || "分類變更後會自動產生";
 
   useEffect(() => {
@@ -684,6 +688,85 @@ function ProductsPage() {
     }
   }
 
+  async function readErrorMessage(response, fallbackMessage = "請求失敗") {
+    const rawText = await response.text();
+    try {
+      const payload = JSON.parse(rawText || "{}");
+      if (payload?.message) {
+        return payload.message;
+      }
+    } catch (_error) {
+      if (rawText) {
+        return rawText;
+      }
+    }
+    return `${fallbackMessage}（${response.status}）`;
+  }
+
+  function triggerImportUpload() {
+    if (importLoading || downloadLoading) {
+      return;
+    }
+    setImportError("");
+    if (importFileInputRef.current) {
+      importFileInputRef.current.click();
+    }
+  }
+
+  function formatImportActionLabel(action) {
+    if (action === "create") {
+      return "新增予定";
+    }
+    if (action === "update") {
+      return "更新予定";
+    }
+    return "錯誤";
+  }
+
+  async function handleImportFileChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setImportError("");
+    setImportResult(null);
+    setImportLoading(true);
+
+    try {
+      const response = await fetch(buildDownloadUrl("/products/import?dryRun=true"), {
+        method: "POST",
+        headers: {
+          Authorization: getStoredToken() ? `Bearer ${getStoredToken()}` : "",
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        },
+        body: file
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          clearAuth();
+        }
+        const message = await readErrorMessage(response, "匯入預覽請求失敗");
+        throw new Error(message);
+      }
+
+      const payload = await response.json();
+      if (!payload || typeof payload !== "object") {
+        throw new Error("回傳資料格式不正確");
+      }
+      setImportResult(payload);
+      if (!payload.ok) {
+        setImportError(payload.errors?.[0]?.message || "匯入資料驗證失敗");
+      }
+    } catch (error) {
+      setImportError(error.message || "匯入預覽失敗");
+    } finally {
+      setImportLoading(false);
+      event.target.value = "";
+    }
+  }
+
   const columns = [
     batchMode
       ? {
@@ -822,6 +905,18 @@ function ProductsPage() {
       ))}
     </div>
   );
+
+  const importPreviewColumns = [
+    { key: "row", label: "列" },
+    { key: "sku", label: "SKU" },
+    { key: "name", label: "商品名稱" },
+    {
+      key: "action",
+      label: "結果",
+      render: (row) => <StatusBadge tone={row.action === "create" ? "success" : row.action === "update" ? "warning" : "danger"}>{formatImportActionLabel(row.action)}</StatusBadge>
+    },
+    { key: "message", label: "訊息" }
+  ];
 
   return (
     <div>
@@ -978,11 +1073,58 @@ function ProductsPage() {
                   >
                     {downloadLoading === "template" ? "下載中..." : "下載匯入範本"}
                   </button>
+                  <button type="button" className="secondary-button" onClick={triggerImportUpload} disabled={Boolean(importLoading) || Boolean(downloadLoading)}>
+                    {importLoading ? "匯入預覽中..." : "匯入商品"}
+                  </button>
+                  <input
+                    ref={importFileInputRef}
+                    type="file"
+                    accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    onChange={handleImportFileChange}
+                    style={{ display: "none" }}
+                  />
                 </>
               }
             />
             {downloadError ? <div className="error-banner">{downloadError}</div> : null}
+            {importError ? <div className="error-banner">{importError}</div> : null}
             {!downloadError && downloadLoading ? <div className="loading-state">檔案下載中，請稍候...</div> : null}
+            {importResult ? (
+              <section className="admin-subpanel">
+                <div className="section-title">匯入結果預覽</div>
+                <div className="admin-summary-grid">
+                  <article className="admin-summary-card">
+                    <div className="admin-summary-label">新增予定</div>
+                    <div className="admin-summary-value">{importResult.createCount}</div>
+                  </article>
+                  <article className="admin-summary-card">
+                    <div className="admin-summary-label">更新予定</div>
+                    <div className="admin-summary-value">{importResult.updateCount}</div>
+                  </article>
+                  <article className="admin-summary-card">
+                    <div className="admin-summary-label">錯誤</div>
+                    <div className="admin-summary-value">{importResult.errors?.length || 0}</div>
+                  </article>
+                  <article className="admin-summary-card">
+                    <div className="admin-summary-label">總列數</div>
+                    <div className="admin-summary-value">{importResult.totalRows}</div>
+                  </article>
+                  <article className="admin-summary-card">
+                    <div className="admin-summary-label">dryRun</div>
+                    <div className="admin-summary-value">{String(importResult.dryRun)}</div>
+                  </article>
+                </div>
+                <DataTable
+                  columns={importPreviewColumns}
+                  rows={importResult.preview || []}
+                  emptyText="預覽資料為空。"
+                  cardTitle={(row) => `第 ${row.row} 列`}
+                  cardDescription={(row) => `SKU：${row.sku}`}
+                  cardBadges={(row) => <StatusBadge tone={row.action === "create" ? "success" : row.action === "update" ? "warning" : "danger"}>{formatImportActionLabel(row.action)}</StatusBadge>}
+                />
+              </section>
+            ) : null}
+            {importLoading && <div className="loading-state">正在進行匯入預覽，請稍候...</div>}
             {batchMode ? (
               <div className="batch-action-bar">
                 <StatusBadge tone="info">已選 {selectedProductIds.length} 筆</StatusBadge>
