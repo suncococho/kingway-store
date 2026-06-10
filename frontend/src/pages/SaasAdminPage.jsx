@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
@@ -47,6 +47,23 @@ const STORE_ROLE_LABEL = {
   admin: "Admin",
   staff: "Staff"
 };
+const AUDIT_ACTION_PRESETS = [
+  { value: "", label: "全部" },
+  { value: "store.impersonation.start", label: "store.impersonation.start（啟用模擬登入）" },
+  { value: "store.impersonation.stop", label: "store.impersonation.stop（停止模擬登入）" },
+  { value: "store_settings.update", label: "store_settings.update（店家設定更新）" },
+  { value: "store.update_plan_status", label: "store.update_plan_status（店家方案／狀態更新）" },
+  { value: "store_features.apply_preset", label: "store_features.apply_preset（套用功能預設）" }
+];
+const AUDIT_TARGET_TYPE_PRESETS = [
+  { value: "", label: "全部" },
+  { value: "store", label: "store（店家）" },
+  { value: "staff", label: "staff（員工）" },
+  { value: "user", label: "user（使用者）" },
+  { value: "store_settings", label: "store_settings（店家設定）" },
+  { value: "store_features", label: "store_features（功能設定）" }
+];
+const AUDIT_LIMIT_PRESETS = [10, 20, 50, 100, 200];
 const LANGUAGE_OPTIONS = [
   { value: "zh-TW", label: "繁體中文（台灣）" },
   { value: "en", label: "English" }
@@ -112,7 +129,98 @@ function getStoreRoleLabel(role) {
   return STORE_ROLE_LABEL[normalized] || normalized || "staff";
 }
 
-function renderActionButtons(store, onOpenSettings, onSelectStore, onImpersonate) {
+function toAuditFilterValue(value) {
+  return String(value || "").trim();
+}
+
+function buildAuditLogQuery(filters) {
+  const params = new URLSearchParams();
+  const normalizedTargetType = toAuditFilterValue(filters?.targetType);
+  const normalizedTargetId = toAuditFilterValue(filters?.targetId);
+  const normalizedAction = toAuditFilterValue(filters?.action);
+  const normalizedLimit = String(Number(toAuditFilterValue(filters?.limit)) || 20);
+
+  if (normalizedTargetType) {
+    params.set("targetType", normalizedTargetType);
+  }
+  if (normalizedTargetId) {
+    params.set("targetId", normalizedTargetId);
+  }
+  if (normalizedAction) {
+    params.set("action", normalizedAction);
+  }
+  params.set("limit", normalizedLimit);
+
+  return params.toString();
+}
+
+function formatAuditDate(value) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return date.toLocaleString("zh-TW", {
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+}
+
+function stringifyAuditPayload(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    const trimValue = value.trim();
+    if (!trimValue) {
+      return "";
+    }
+    if ((trimValue.startsWith("{") && trimValue.endsWith("}")) || (trimValue.startsWith("[") && trimValue.endsWith("]"))) {
+      try {
+        return JSON.stringify(JSON.parse(trimValue), null, 2);
+      } catch {
+        return trimValue;
+      }
+    }
+    return trimValue;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function shortenAuditPayload(value, maxLength = 160) {
+  if (!value) {
+    return "-";
+  }
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength)}...`;
+}
+
+function getAuditPayload(log, field) {
+  const key = `${field}_json`;
+  if (log && Object.prototype.hasOwnProperty.call(log, key)) {
+    return log[key];
+  }
+  const camelKey = `${field}Json`;
+  if (log && Object.prototype.hasOwnProperty.call(log, camelKey)) {
+    return log[camelKey];
+  }
+  return log?.[field];
+}
+
+function renderActionButtons(store, onOpenSettings, onSelectStore, onImpersonate, onOpenAuditLog) {
   return (
     <div className="compact-actions">
       <button type="button" className="secondary-button" onClick={() => onSelectStore(store)}>
@@ -121,6 +229,11 @@ function renderActionButtons(store, onOpenSettings, onSelectStore, onImpersonate
       <button type="button" className="secondary-button" onClick={() => onOpenSettings(store)}>
         店家設定
       </button>
+      {onOpenAuditLog ? (
+        <button type="button" className="secondary-button" onClick={() => onOpenAuditLog(store)}>
+          變更紀錄
+        </button>
+      ) : null}
       {onImpersonate ? (
         <button type="button" className="secondary-button" onClick={() => onImpersonate(store)}>
           模擬登入店家
@@ -154,6 +267,19 @@ function SaasAdminPage() {
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState("");
   const [settingsSuccess, setSettingsSuccess] = useState("");
+  const [auditFilters, setAuditFilters] = useState({
+    targetType: "",
+    targetId: "",
+    action: "",
+    limit: "20"
+  });
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState("");
+  const [auditHasLoaded, setAuditHasLoaded] = useState(false);
+  const [expandedAuditRows, setExpandedAuditRows] = useState({});
+  const [auditHighlightedStoreId, setAuditHighlightedStoreId] = useState(null);
+  const auditPanelRef = useRef(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [planFilter, setPlanFilter] = useState("ALL");
@@ -304,6 +430,77 @@ function SaasAdminPage() {
     setSelectedDetailId(store?.id || null);
     setStoreUpdateError("");
     setStoreUpdateSuccess("");
+  }
+
+  function normalizeAuditFilters(nextFilters = {}) {
+    return {
+      targetType: toAuditFilterValue(nextFilters.targetType || auditFilters.targetType),
+      targetId: toAuditFilterValue(nextFilters.targetId || auditFilters.targetId),
+      action: toAuditFilterValue(nextFilters.action || auditFilters.action),
+      limit: String(Number(toAuditFilterValue(nextFilters.limit || auditFilters.limit)) || 20)
+    };
+  }
+
+  async function loadAuditLogs(nextFilters = {}) {
+    const filters = normalizeAuditFilters(nextFilters);
+    setAuditFilters(filters);
+    setAuditLoading(true);
+    setAuditError("");
+    try {
+      const query = buildAuditLogQuery(filters);
+      const response = await platformRequest(`/saas-admin/audit-logs${query ? `?${query}` : ""}`);
+      const logs = Array.isArray(response?.logs) ? response.logs : Array.isArray(response?.items) ? response.items : [];
+      setAuditLogs(logs);
+      setAuditHasLoaded(true);
+      setExpandedAuditRows({});
+    } catch (auditError) {
+      setAuditError(auditError.message || "載入變更紀錄失敗");
+      setAuditLogs([]);
+      setAuditHasLoaded(true);
+    } finally {
+      setAuditLoading(false);
+    }
+  }
+
+  function handleAuditFilterChange(event) {
+    const { name, value } = event.target;
+    setAuditFilters((current) => ({
+      ...current,
+      [name]: value
+    }));
+  }
+
+  function handleClearAuditFilters() {
+    setAuditFilters({
+      targetType: "",
+      targetId: "",
+      action: "",
+      limit: "20"
+    });
+    setAuditLogs([]);
+    setAuditHasLoaded(false);
+    setExpandedAuditRows({});
+  }
+
+  function toggleAuditJsonExpand(logId, field) {
+    const key = `${String(logId)}-${field}`;
+    setExpandedAuditRows((current) => ({
+      ...current,
+      [key]: !current[key]
+    }));
+  }
+
+  function handleOpenAuditLogs(store) {
+    const storeId = store?.id;
+    const nextFilters = {
+      targetType: "store",
+      targetId: storeId ? String(storeId) : ""
+    };
+    setAuditHighlightedStoreId(storeId || null);
+    loadAuditLogs(nextFilters);
+    if (auditPanelRef.current) {
+      auditPanelRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   }
 
   async function handleUpdateStore(store, field, value) {
@@ -461,6 +658,67 @@ function SaasAdminPage() {
     }
   }
 
+  function getAuditLogLabel() {
+    const count = auditLogs.length;
+    if (!auditHasLoaded) {
+      return "尚未查詢變更紀錄";
+    }
+    if (auditLoading) {
+      return `載入中（目前 ${count} 筆）`;
+    }
+    return `${count} 筆變更紀錄`;
+  }
+
+  function renderAuditJsonCell(log, field) {
+    const rowId = String(log.__auditRowId || log.id || "no-id");
+    const rawText = stringifyAuditPayload(getAuditPayload(log, field));
+    const displayText = rawText || "-";
+    const fieldKey = `${rowId}-${field}`;
+    const isExpanded = Boolean(expandedAuditRows[fieldKey]);
+    const shouldCollapse = displayText !== "-" && displayText.length > 160;
+    const text = shouldCollapse && !isExpanded ? shortenAuditPayload(displayText, 160) : displayText;
+    if (displayText === "-") {
+      return <span>-</span>;
+    }
+
+    return (
+      <div className="platform-admin-audit-json-cell">
+        <pre className="platform-admin-audit-json">{text}</pre>
+        {shouldCollapse ? (
+          <button
+            type="button"
+            className="ghost-button compact-detail-button"
+            onClick={() => toggleAuditJsonExpand(log.__auditRowId || log.id, field)}
+          >
+            {isExpanded ? "收合" : "展開"}
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  const auditRows = useMemo(
+    () =>
+      auditLogs.map((log, index) => ({
+        ...log,
+        __auditRowId: `${toAuditFilterValue(log?.id) || "log"}-${index}`
+      })),
+    [auditLogs]
+  );
+
+  const auditColumns = useMemo(
+    () => [
+      { key: "createdAt", label: "created_at（建立時間）", render: (row) => formatAuditDate(row.createdAt || row.created_at) },
+      { key: "adminEmail", label: "admin_email（管理員）", render: (row) => row.adminEmail || "-" },
+      { key: "action", label: "action（動作）", render: (row) => row.action || "-" },
+      { key: "targetType", label: "target_type（目標類型）", render: (row) => row.targetType || "-" },
+      { key: "targetId", label: "target_id（目標 ID）", render: (row) => row.targetId ?? "-" },
+      { key: "before", label: "before_json（變更前）", render: (row) => renderAuditJsonCell(row, "before") },
+      { key: "after", label: "after_json（變更後）", render: (row) => renderAuditJsonCell(row, "after") }
+    ],
+    [auditLogs, expandedAuditRows]
+  );
+
   const canImpersonate = ["PLATFORM_OWNER", "PLATFORM_ADMIN"].includes(currentRole);
 
   const stores = Array.isArray(data?.stores) ? data.stores : [];
@@ -595,7 +853,8 @@ function SaasAdminPage() {
           row,
           handleOpenSettings,
           handleSelectDetail,
-          canImpersonate ? openImpersonationModal : null
+          canImpersonate ? openImpersonationModal : null,
+          handleOpenAuditLogs
         )
     }
   ];
@@ -790,7 +1049,8 @@ function SaasAdminPage() {
               row,
               handleOpenSettings,
               handleSelectDetail,
-              canImpersonate ? openImpersonationModal : null
+              canImpersonate ? openImpersonationModal : null,
+              handleOpenAuditLogs
             )
           }
         />
@@ -813,7 +1073,8 @@ function SaasAdminPage() {
               selectedDetailStore,
               handleOpenSettings,
               handleSelectDetail,
-              canImpersonate ? openImpersonationModal : null
+              canImpersonate ? openImpersonationModal : null,
+              handleOpenAuditLogs
             )}
           />
           <div className="admin-summary-grid">
@@ -853,6 +1114,106 @@ function SaasAdminPage() {
           </div>
         </section>
       ) : null}
+
+      <section className="admin-panel platform-admin-audit-panel" ref={auditPanelRef}>
+        <AdminSectionHeader
+          eyebrow="稽核"
+          title="平台變更紀錄"
+          description="查詢 /platform admin 操作紀錄，用於追蹤店家設定或模擬登入等關鍵操作。"
+          badges={
+            <>
+              <StatusBadge tone="info">{getAuditLogLabel()}</StatusBadge>
+              {auditHighlightedStoreId ? <StatusBadge tone="warning">目標店家 {auditHighlightedStoreId}</StatusBadge> : null}
+            </>
+          }
+        />
+
+        <form className="platform-admin-audit-filter-bar filter-bar-compact" onSubmit={(event) => {
+          event.preventDefault();
+          loadAuditLogs(auditFilters);
+        }}>
+          <label className="form-field">
+            <span>目標類型</span>
+            <input
+              name="targetType"
+              list="platform-audit-target-type-options"
+              value={auditFilters.targetType}
+              onChange={handleAuditFilterChange}
+              placeholder="例如 store"
+            />
+            <datalist id="platform-audit-target-type-options">
+              {AUDIT_TARGET_TYPE_PRESETS.filter((item) => item.value).map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </datalist>
+          </label>
+          <label className="form-field">
+            <span>目標 ID</span>
+            <input
+              type="text"
+              name="targetId"
+              value={auditFilters.targetId}
+              onChange={handleAuditFilterChange}
+              placeholder="例如 2"
+            />
+          </label>
+          <label className="form-field">
+            <span>行為</span>
+            <input
+              name="action"
+              list="platform-audit-action-options"
+              value={auditFilters.action}
+              onChange={handleAuditFilterChange}
+              placeholder="例如 store.impersonation.start"
+            />
+            <datalist id="platform-audit-action-options">
+              {AUDIT_ACTION_PRESETS.filter((item) => item.value).map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </datalist>
+          </label>
+          <label className="form-field">
+            <span>筆數上限</span>
+            <select name="limit" value={auditFilters.limit} onChange={handleAuditFilterChange}>
+              {AUDIT_LIMIT_PRESETS.map((value) => (
+                <option key={value} value={value}>{value}</option>
+              ))}
+            </select>
+          </label>
+          <div className="platform-admin-audit-filter-actions">
+            <button type="submit" className="primary-button" disabled={auditLoading}>
+              {auditLoading ? "查詢中..." : "查詢"}
+            </button>
+            <button type="button" className="secondary-button" onClick={handleClearAuditFilters} disabled={auditLoading}>
+              清除
+            </button>
+          </div>
+        </form>
+
+        {auditError ? <div className="error-banner">{auditError}</div> : null}
+        {auditLoading ? <div className="loading-state">載入變更紀錄中...</div> : null}
+        {!auditLoading && (
+          auditHasLoaded ? (
+            auditRows.length ? (
+              <DataTable
+                columns={auditColumns}
+                rows={auditRows}
+                emptyText="目前條件沒有變更紀錄。"
+                cardTitle={(row) => row.action || "action"}
+                cardDescription={(row) => `${row.adminEmail || "-"} / ${row.targetType || "-"}`}
+              />
+            ) : (
+              <div className="empty-state">目前沒有符合條件的變更紀錄。</div>
+            )
+          ) : (
+            <div className="empty-state">請先設定查詢條件並點選「查詢」。</div>
+          )
+        )}
+      </section>
 
       <div className="platform-store-settings-grid">
         <section className="admin-panel platform-store-settings-main-panel">

@@ -1171,6 +1171,56 @@ textarea:focus-visible,
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
+.platform-admin-audit-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  padding: 12px;
+  border-radius: 18px;
+  background: #eef2f7;
+  border: 1px solid #e4eaf1;
+  align-items: end;
+}
+
+.platform-admin-audit-filter-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.platform-admin-audit-json-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.platform-admin-audit-json {
+  margin: 0;
+  width: 100%;
+  min-height: 44px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 12px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-surface-subtle);
+  padding: 12px;
+}
+
+@media (max-width: 640px) {
+  .platform-admin-audit-filter-actions {
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .platform-admin-audit-filter-actions .primary-button,
+  .platform-admin-audit-filter-actions .secondary-button {
+    width: auto;
+    min-height: 38px;
+  }
+}
+
 .product-search-screen {
   margin-bottom: 18px;
 }
