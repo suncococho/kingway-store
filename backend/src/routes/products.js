@@ -336,7 +336,20 @@ async function readProductImportRows(buffer) {
   return rows;
 }
 
-async function runProductImportDryRun(storeId, buffer) {
+function normalizeImportError(result, row, sku, message, name = "") {
+  result.skipCount += 1;
+  result.errors.push({ row, sku, message });
+  const payload = {
+    row,
+    sku,
+    name,
+    action: "skip",
+    message
+  };
+  result.preview.push(payload);
+}
+
+async function analyzeProductImportRows(storeId, buffer) {
   const importRows = await readProductImportRows(buffer);
 
   const [categoryTableRows] = await pool.query("SHOW TABLES LIKE 'product_categories'");
@@ -378,7 +391,6 @@ async function runProductImportDryRun(storeId, buffer) {
 
   const result = {
     ok: true,
-    dryRun: true,
     totalRows: 0,
     createCount: 0,
     updateCount: 0,
@@ -400,111 +412,104 @@ async function runProductImportDryRun(storeId, buffer) {
     const stock = parseImportNumber(data.stock);
     const reorderLevel = parseImportNumber(data.reorderLevel);
     const isActive = parseImportBooleanAsNumber(data.isActive);
+    const costPrice = Number.isFinite(parseImportNumber(data.costPrice)) ? parseImportNumber(data.costPrice) : 0;
     const categoryByCodeMatch = categoryCode ? categoryByCode.get(categoryCode) : null;
     const categoryByNameMatch = categoryName ? categoryByName.get(categoryName.toLowerCase()) : null;
 
     if (!sku) {
-      result.skipCount += 1;
-      const message = "sku 欄位為必填";
-      result.errors.push({ row: rowNumber, sku: data.sku || "", message });
-      result.preview.push({ row: rowNumber, sku: data.sku || "", name, action: "skip", message });
+      normalizeImportError(result, rowNumber, data.sku || "", "sku 欄位為必填", String(data.sku || "").trim());
       continue;
     }
 
     if (!name) {
-      result.skipCount += 1;
-      const message = "name 欄位為必填";
-      result.errors.push({ row: rowNumber, sku, message });
-      result.preview.push({ row: rowNumber, sku, name: "", action: "skip", message });
+      normalizeImportError(result, rowNumber, sku, "name 欄位為必填");
       continue;
     }
 
     if (Number.isNaN(price)) {
-      result.skipCount += 1;
-      const message = "price 欄位必須是數字";
-      result.errors.push({ row: rowNumber, sku, message });
-      result.preview.push({ row: rowNumber, sku, name, action: "skip", message });
+      normalizeImportError(result, rowNumber, sku, "price 欄位必須是數字", name);
       continue;
     }
 
     if (Number.isNaN(stock)) {
-      result.skipCount += 1;
-      const message = "stock 欄位必須是數字";
-      result.errors.push({ row: rowNumber, sku, message });
-      result.preview.push({ row: rowNumber, sku, name, action: "skip", message });
+      normalizeImportError(result, rowNumber, sku, "stock 欄位必須是數字", name);
       continue;
     }
 
     if (Number.isNaN(reorderLevel)) {
-      result.skipCount += 1;
-      const message = "reorderLevel 欄位必須是數字";
-      result.errors.push({ row: rowNumber, sku, message });
-      result.preview.push({ row: rowNumber, sku, name, action: "skip", message });
+      normalizeImportError(result, rowNumber, sku, "reorderLevel 欄位必須是數字", name);
       continue;
     }
 
     if (!categoryCode && !categoryName) {
-      result.skipCount += 1;
-      const message = "請填寫 categoryCode 或 categoryName";
-      result.errors.push({ row: rowNumber, sku, message });
-      result.preview.push({ row: rowNumber, sku, name, action: "skip", message });
+      normalizeImportError(result, rowNumber, sku, "請填寫 categoryCode 或 categoryName", name);
       continue;
     }
 
     if (!categoryByCodeMatch && !categoryByNameMatch) {
-      result.skipCount += 1;
-      const message = "找不到門市商品分類";
-      result.errors.push({ row: rowNumber, sku, message });
-      result.preview.push({ row: rowNumber, sku, name, action: "skip", message });
+      normalizeImportError(result, rowNumber, sku, "找不到門市商品分類", name);
       continue;
     }
 
     if (seenSkuSet.has(sku)) {
-      result.skipCount += 1;
-      const message = "同一檔案內 SKU 重複";
-      result.errors.push({ row: rowNumber, sku, message });
-      result.preview.push({ row: rowNumber, sku, name, action: "skip", message });
+      normalizeImportError(result, rowNumber, sku, "同一檔案內 SKU 重複", name);
       continue;
     }
     seenSkuSet.add(sku);
 
-    if (existingSkuSet.has(sku)) {
-      result.updateCount += 1;
-      result.preview.push({
-        row: rowNumber,
-        sku,
-        name,
-        action: "update",
-        message: "更新予定",
-        price,
-        stock,
-        reorderLevel,
-        isActive,
-        categoryCode: categoryByCodeMatch?.code || categoryCode || categoryByNameMatch?.code || "",
-        categoryName: categoryByNameMatch?.name || categoryByCodeMatch?.name || categoryName || ""
-      });
-      continue;
-    }
-
-    result.createCount += 1;
-    result.preview.push({
+    const resolvedCategory = categoryByCodeMatch || categoryByNameMatch;
+    const rowPayload = {
       row: rowNumber,
       sku,
       name,
-      action: "create",
-      message: "新增予定",
+      action: existingSkuSet.has(sku) ? "update" : "create",
+      message: existingSkuSet.has(sku) ? "更新予定" : "新增予定",
       price,
       stock,
       reorderLevel,
       isActive,
-      categoryCode: categoryByCodeMatch?.code || categoryCode || categoryByNameMatch?.code || "",
-      categoryName: categoryByNameMatch?.name || categoryByCodeMatch?.name || categoryName || ""
+      costPrice,
+      categoryId: Number.isFinite(Number(resolvedCategory?.id)) ? Number(resolvedCategory.id) : null,
+      categoryCode: resolvedCategory?.code || categoryCode || "",
+      categoryName: resolvedCategory?.name || categoryName || "",
+      description: String(data.description || "").trim() || null,
+      location: String(data.location || "").trim() || null,
+      inputterName: String(data.inputterName || "").trim() || null,
+      source: String(data.source || "").trim() || null
+    };
+
+    if (rowPayload.action === "update") {
+      result.updateCount += 1;
+    } else {
+      result.createCount += 1;
+    }
+
+    result.preview.push({
+      row: rowPayload.row,
+      sku: rowPayload.sku,
+      name: rowPayload.name,
+      action: rowPayload.action,
+      message: rowPayload.message
     });
   }
 
   result.ok = result.errors.length === 0;
   result.preview = result.preview.slice(0, 20);
   return result;
+}
+
+async function runProductImportDryRun(storeId, buffer) {
+  const result = await analyzeProductImportRows(storeId, buffer);
+  return {
+    ok: result.ok,
+    dryRun: true,
+    totalRows: result.totalRows,
+    createCount: result.createCount,
+    updateCount: result.updateCount,
+    skipCount: result.skipCount,
+    errors: result.errors,
+    preview: result.preview
+  };
 }
 
 function getCategoryFromSku(sku, fallbackCategory = "OT") {
@@ -843,7 +848,8 @@ router.post(
   requireStoreAdminRole,
   async (req, res, next) => {
     try {
-      const isDryRun = String(req.query.dryRun || req.body?.dryRun || "").toLowerCase() === "true";
+      const isDryRun = String(req.query.dryRun || "").toLowerCase() === "true";
+
       if (!isDryRun) {
         return res.status(400).json({
           message: "目前僅支援 dryRun 模式（請加上 ?dryRun=true）"

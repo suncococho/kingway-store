@@ -1103,7 +1103,7 @@ function ProductsPage() {
                   </article>
                   <article className="admin-summary-card">
                     <div className="admin-summary-label">錯誤</div>
-                    <div className="admin-summary-value">{importResult.errors?.length || 0}</div>
+                    <div className="admin-summary-value">{(importResult.errors || []).length}</div>
                   </article>
                   <article className="admin-summary-card">
                     <div className="admin-summary-label">總列數</div>
