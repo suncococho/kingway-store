@@ -396,6 +396,7 @@ async function analyzeProductImportRows(storeId, buffer) {
     updateCount: 0,
     skipCount: 0,
     errors: [],
+    rows: [],
     preview: []
   };
 
@@ -478,6 +479,8 @@ async function analyzeProductImportRows(storeId, buffer) {
       source: String(data.source || "").trim() || null
     };
 
+    result.rows.push(rowPayload);
+
     if (rowPayload.action === "update") {
       result.updateCount += 1;
     } else {
@@ -507,9 +510,200 @@ async function runProductImportDryRun(storeId, buffer) {
     createCount: result.createCount,
     updateCount: result.updateCount,
     skipCount: result.skipCount,
+    createdCount: result.createCount,
+    updatedCount: result.updateCount,
+    skippedCount: result.skipCount,
     errors: result.errors,
+    rows: result.rows,
     preview: result.preview
   };
+}
+
+async function runProductImportApply(storeId, buffer) {
+  const result = await analyzeProductImportRows(storeId, buffer);
+  const base = {
+    dryRun: false,
+    totalRows: result.totalRows,
+    createCount: result.createCount,
+    updateCount: result.updateCount,
+    skipCount: result.skipCount,
+    createdCount: result.createCount,
+    updatedCount: result.updateCount,
+    skippedCount: result.skipCount,
+    errors: result.errors,
+    preview: result.preview,
+    appliedRows: []
+  };
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      ...base
+    };
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    const hasCategorySchema = await hasProductCategorySchema(connection);
+    await connection.beginTransaction();
+
+    let createdCount = 0;
+    let updatedCount = 0;
+    const appliedRows = [];
+
+    for (const row of result.rows) {
+      const [currentRows] = await connection.query(
+        `
+          SELECT id
+          FROM products
+          WHERE sku = ?
+            AND store_id = ?
+          LIMIT 1
+          FOR UPDATE
+        `,
+        [row.sku, storeId]
+      );
+      const current = currentRows[0];
+
+      if (current?.id) {
+        const categoryValue = row.categoryCode || getCategoryFromSku(row.sku, "OT");
+        const sqlParts = [
+          "sku = ?",
+          "name = ?",
+          "category = ?",
+          "price = ?",
+          "stock = ?",
+          "reorder_level = ?",
+          "is_active = ?",
+          "description = ?",
+          "cost_price = ?",
+          "location = ?",
+          "inputter_name = ?",
+          "source = ?"
+        ];
+        const params = [
+          row.sku,
+          row.name,
+          categoryValue,
+          Number(row.price),
+          Number(row.stock),
+          Number(row.reorderLevel),
+          row.isActive,
+          row.description,
+          row.costPrice,
+          row.location,
+          row.inputterName,
+          row.source
+        ];
+
+        if (hasCategorySchema) {
+          sqlParts.splice(3, 0, "category_id = ?");
+          params.splice(3, 0, row.categoryId ?? null);
+        }
+
+        const [updateResult] = await connection.query(
+          `
+            UPDATE products
+            SET ${sqlParts.join(", ")}
+            WHERE id = ?
+              AND store_id = ?
+          `,
+          [...params, current.id, storeId]
+        );
+
+        if (updateResult.affectedRows !== 1) {
+          const error = new Error("套用時更新商品失敗");
+          error.statusCode = 409;
+          throw error;
+        }
+
+        updatedCount += 1;
+        appliedRows.push({
+          row: row.row,
+          sku: row.sku,
+          name: row.name,
+          action: "update",
+          status: "applied",
+          productId: current.id
+        });
+        continue;
+      }
+
+      const insertColumns = ["sku", "name", "category", "price", "stock", "reorder_level", "is_active", "description", "image_url", "cost_price", "location", "inputter_name", "source", "store_id"];
+      const insertValues = [
+        row.sku,
+        row.name,
+        row.categoryCode || getCategoryFromSku(row.sku, "OT"),
+        Number(row.price),
+        Number(row.stock),
+        Number(row.reorderLevel),
+        row.isActive,
+        row.description,
+        null,
+        row.costPrice,
+        row.location,
+        row.inputterName,
+        row.source,
+        storeId
+      ];
+      const columns = [...insertColumns];
+      const values = [...insertValues];
+
+      if (hasCategorySchema) {
+        columns.splice(3, 0, "category_id");
+        values.splice(3, 0, row.categoryId ?? null);
+      }
+
+      const [insertResult] = await connection.query(
+        `
+          INSERT INTO products (${columns.join(", ")})
+          VALUES (${columns.map(() => "?").join(", ")})
+        `,
+        values
+      );
+
+      createdCount += 1;
+      appliedRows.push({
+        row: row.row,
+        sku: row.sku,
+        name: row.name,
+        action: "create",
+        status: "applied",
+        productId: insertResult.insertId
+      });
+    }
+
+    await connection.commit();
+
+    return {
+      ok: true,
+      ...base,
+      createCount: createdCount,
+      updateCount: updatedCount,
+      createdCount,
+      updatedCount,
+      appliedRows
+    };
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch (_rollbackError) {
+      // ignore rollback error
+    }
+
+    if (error?.code === "ER_DUP_ENTRY") {
+      error.statusCode = 409;
+      error.message = "同一門市內 SKU 已存在";
+    }
+
+    return {
+      ok: false,
+      ...base,
+      errors: [...base.errors, { row: "", sku: "", message: error.message || "套用失敗" }]
+    };
+  } finally {
+    connection.release();
+  }
 }
 
 function getCategoryFromSku(sku, fallbackCategory = "OT") {
@@ -848,20 +1042,25 @@ router.post(
   requireStoreAdminRole,
   async (req, res, next) => {
     try {
-      const isDryRun = String(req.query.dryRun || "").toLowerCase() === "true";
-
-      if (!isDryRun) {
-        return res.status(400).json({
-          message: "目前僅支援 dryRun 模式（請加上 ?dryRun=true）"
-        });
+      const rawDryRun = String(req.query.dryRun || "").toLowerCase();
+      const rawApply = String(req.query.apply || "").toLowerCase();
+      if (rawDryRun && !["true", "false"].includes(rawDryRun)) {
+        return res.status(400).json({ message: "dryRun 參數僅支援 true 或 false" });
       }
+      if (rawApply && rawApply !== "true") {
+        return res.status(400).json({ message: "apply 參數僅支援 true" });
+      }
+
+      const isApply = rawApply === "true" || rawDryRun === "false";
 
       if (!Buffer.isBuffer(req.body) || !req.body.length) {
         return res.status(400).json({ message: "請上傳 XLSX 檔案內容" });
       }
 
       const storeId = getRequestStoreId(req);
-      const result = await runProductImportDryRun(storeId, req.body);
+      const result = isApply
+        ? await runProductImportApply(storeId, req.body)
+        : await runProductImportDryRun(storeId, req.body);
       return res.json(result);
     } catch (error) {
       return next(error);

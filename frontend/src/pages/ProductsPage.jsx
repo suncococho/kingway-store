@@ -117,7 +117,9 @@ function ProductsPage() {
   const [downloadLoading, setDownloadLoading] = useState(null);
   const [downloadError, setDownloadError] = useState("");
   const importFileInputRef = useRef(null);
+  const [importFile, setImportFile] = useState(null);
   const [importLoading, setImportLoading] = useState(false);
+  const [importApplyLoading, setImportApplyLoading] = useState(false);
   const [importError, setImportError] = useState("");
   const [importResult, setImportResult] = useState(null);
   const currentSkuPreview = form.sku.trim() || "分類變更後會自動產生";
@@ -729,6 +731,7 @@ function ProductsPage() {
       return;
     }
 
+    setImportFile(file);
     setImportError("");
     setImportResult(null);
     setImportLoading(true);
@@ -764,6 +767,78 @@ function ProductsPage() {
     } finally {
       setImportLoading(false);
       event.target.value = "";
+    }
+  }
+
+  function getImportPreviewSummary() {
+    const createCount = Number(importResult?.createCount || 0);
+    const updateCount = Number(importResult?.updateCount || 0);
+    const errorCount = Number(importResult?.errors?.length || 0);
+    return {
+      createCount,
+      updateCount,
+      errorCount
+    };
+  }
+
+  async function handleApplyImport() {
+    if (!importFile) {
+      setImportError("尚未選擇匯入檔案");
+      return;
+    }
+
+    if (!importResult?.ok || (importResult?.errors || []).length > 0) {
+      setImportError("目前匯入資料有錯誤，無法套用");
+      return;
+    }
+
+    const { createCount, updateCount, errorCount } = getImportPreviewSummary();
+    if (errorCount) {
+      setImportError("目前有錯誤資料，請先修正後再套用");
+      return;
+    }
+
+    const confirmMessage = `確認套用匯入？\n新增 ${createCount} 筆\n更新 ${updateCount} 筆\n錯誤 ${errorCount} 筆`;
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    setImportError("");
+    setImportApplyLoading(true);
+
+    try {
+      const response = await fetch(buildDownloadUrl("/products/import?apply=true"), {
+        method: "POST",
+        headers: {
+          Authorization: getStoredToken() ? `Bearer ${getStoredToken()}` : "",
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        },
+        body: importFile
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          clearAuth();
+        }
+        const message = await readErrorMessage(response, "匯入套用失敗");
+        throw new Error(message);
+      }
+
+      const payload = await response.json();
+      if (!payload || typeof payload !== "object") {
+        throw new Error("回傳資料格式不正確");
+      }
+      setImportResult(payload);
+      if (!payload.ok) {
+        setImportError(payload.errors?.[0]?.message || "匯入套用失敗");
+        return;
+      }
+      setImportFile(null);
+      await refetch();
+    } catch (error) {
+      setImportError(error.message || "匯入套用失敗");
+    } finally {
+      setImportApplyLoading(false);
     }
   }
 
@@ -1090,7 +1165,7 @@ function ProductsPage() {
             {importError ? <div className="error-banner">{importError}</div> : null}
             {!downloadError && downloadLoading ? <div className="loading-state">檔案下載中，請稍候...</div> : null}
             {importResult ? (
-              <section className="admin-subpanel">
+              <section className="admin-subpanel compact">
                 <div className="section-title">匯入結果預覽</div>
                 <div className="admin-summary-grid">
                   <article className="admin-summary-card">
@@ -1114,6 +1189,11 @@ function ProductsPage() {
                     <div className="admin-summary-value">{String(importResult.dryRun)}</div>
                   </article>
                 </div>
+                {!importResult.dryRun ? (
+                  <div className="admin-summary-note">
+                    本次套用已完成，成功 {importResult.appliedRows?.length || 0} 筆
+                  </div>
+                ) : null}
                 <DataTable
                   columns={importPreviewColumns}
                   rows={importResult.preview || []}
@@ -1122,9 +1202,22 @@ function ProductsPage() {
                   cardDescription={(row) => `SKU：${row.sku}`}
                   cardBadges={(row) => <StatusBadge tone={row.action === "create" ? "success" : row.action === "update" ? "warning" : "danger"}>{formatImportActionLabel(row.action)}</StatusBadge>}
                 />
+                {importResult.dryRun ? (
+                  <div className="admin-summary-actions">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={importApplyLoading || Boolean(importLoading) || Boolean(downloadLoading) || importResult?.errors?.length > 0}
+                      onClick={handleApplyImport}
+                    >
+                      {importApplyLoading ? "套用中..." : "確認套用匯入"}
+                    </button>
+                  </div>
+                ) : null}
               </section>
             ) : null}
             {importLoading && <div className="loading-state">正在進行匯入預覽，請稍候...</div>}
+            {importApplyLoading && <div className="loading-state">正在套用匯入，請稍候...</div>}
             {batchMode ? (
               <div className="batch-action-bar">
                 <StatusBadge tone="info">已選 {selectedProductIds.length} 筆</StatusBadge>
