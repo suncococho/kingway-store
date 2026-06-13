@@ -18,6 +18,7 @@ import { PRODUCT_CATEGORY_LABELS, PRODUCT_CATEGORY_OPTIONS, deriveProductCategor
 
 const PRODUCT_EXPORT_FILENAME = "KINGWAY_product_export.xlsx";
 const PRODUCT_IMPORT_TEMPLATE_FILENAME = "KINGWAY_product_import_template.xlsx";
+const isProductImportApplyEnabled = String(import.meta?.env?.VITE_PRODUCT_IMPORT_APPLY_ENABLED || "").toLowerCase() === "true";
 
 function getStockTone(stock, reorderLevel) {
   if (Number(stock) <= 0) {
@@ -1231,14 +1232,18 @@ function ProductsPage() {
                 ) : null}
                 {importResult.dryRun ? (
                   <div className="admin-summary-actions">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={importApplyLoading || Boolean(importLoading) || Boolean(downloadLoading) || importResult?.errors?.length > 0 || !getImportPreviewSummary().okToApply}
-                      onClick={openImportApplyConfirm}
-                    >
-                      {importApplyLoading ? "套用中..." : "確認套用匯入"}
-                    </button>
+                    {isProductImportApplyEnabled ? (
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={importApplyLoading || Boolean(importLoading) || Boolean(downloadLoading) || importResult?.errors?.length > 0 || !getImportPreviewSummary().okToApply}
+                        onClick={openImportApplyConfirm}
+                      >
+                        {importApplyLoading ? "套用中..." : "確認套用匯入"}
+                      </button>
+                    ) : (
+                      <div className="admin-summary-note">目前僅提供匯入檢查，尚未開放正式匯入套用</div>
+                    )}
                   </div>
                 ) : null}
               </section>
