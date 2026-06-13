@@ -4,6 +4,7 @@ import liff from "@line/liff";
 import { apiRequest } from "../lib/api";
 import LinePhoneBindGate from "./LinePhoneBindGate";
 import { resolveLineContext } from "../lib/lineContext";
+import { formatOrderStatus, formatPaymentStatus, formatRepairStatus } from "../lib/display";
 import {
   DEFAULT_LINE_BINDING_STORE_CODE,
   cacheLineCustomerToObject,
@@ -270,8 +271,8 @@ export default function LineProgressPage() {
                     {visibleOrders.length ? visibleOrders.map((o) => (
                       <Card key={o.id}>
                         <Title>{o.orderNo}</Title>
-                        <Row label="狀態" value={o.status || "-"} />
-                        <Row label="付款" value={o.finalPaymentStatus || "-"} />
+                        <Row label="訂單狀態" value={formatOrderStatus(o.status)} />
+                        <Row label="付款狀態" value={formatPaymentStatus(o.finalPaymentStatus)} />
                         <Row label="總金額" value={money(o.totalAmount)} />
                         <Row label="未付" value={money(o.unpaidBalance)} danger={Number(o.unpaidBalance || 0) > 0} />
 
@@ -308,7 +309,7 @@ export default function LineProgressPage() {
                         <Row label="車款" value={r.bikeModel || "-"} />
                         <Row label="問題" value={r.issueDescription || "-"} />
                         <RepairSteps status={r.status} />
-                        <Row label="狀態" value={r.status || "-"} />
+                        <Row label="維修狀態" value={formatRepairStatus(r.status)} />
                         <Row label="報價" value={money(r.estimateAmount)} />
                       </Card>
                     )) : <Card>目前沒有維修紀錄。</Card>}
