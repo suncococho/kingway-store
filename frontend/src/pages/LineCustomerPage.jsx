@@ -3,6 +3,7 @@ import liff from "@line/liff";
 import { apiRequest } from "../lib/api";
 import LinePhoneBindGate from "./LinePhoneBindGate";
 import { resolveLineContext } from "../lib/lineContext";
+import { formatRepairStatus } from "../lib/display";
 import {
   DEFAULT_LINE_BINDING_STORE_CODE,
   cacheLineCustomerToObject,
@@ -39,27 +40,27 @@ function resolveDisplayName(profileName, customerName) {
 const CUSTOMER_MENU_ITEMS = [
   {
     id: "repair-estimate",
-    label: "수리견적",
+    label: "維修估價",
     description: "快速送出維修預約",
     href: "/line-repair-request"
   },
   {
     id: "repair-history",
-    label: "수리내역",
+    label: "維修進度",
     description: "追蹤維修估價與進度",
     href: "/line-progress?tab=repair"
   },
   {
-    id: "order-create",
-    label: "주문예약",
-    description: "立即預約試乘與試車",
-    href: "/line-order"
+    id: "order-history",
+    label: "我的訂單",
+    description: "查詢訂單狀態與明細",
+    href: "/line-progress?tab=order"
   },
   {
-    id: "order-history",
-    label: "주문내역",
-    description: "查詢付款與訂單狀態",
-    href: "/line-progress?tab=order"
+    id: "coupon-benefit",
+    label: "專屬優惠",
+    description: "查看您的專屬優惠券",
+    href: "/line-coupon"
   }
 ];
 
@@ -232,11 +233,11 @@ export default function LineCustomerPage() {
       ) : data?.customer ? (
         <section className="line-customer-summary">
           <div className="line-customer-summary-title">{resolveDisplayName(profileName, data.customer.name)}</div>
-          <div className="line-customer-info-row">電話 <strong>{data.customer.phone || "-"}</strong></div>
+          <div className="line-customer-info-row">手機號碼 <strong>{data.customer.phone || "-"}</strong></div>
           <div className="line-customer-info-row">最近訂單 <strong>{latestOrder?.orderNo || "目前沒有訂單"}</strong></div>
-          <div className="line-customer-info-row">最近維修 <strong>{latestRepair ? `#${latestRepair.id} ${latestRepair.status}` : "目前沒有維修"}</strong></div>
+          <div className="line-customer-info-row">最近維修 <strong>{latestRepair ? `#${latestRepair.id} ${formatRepairStatus(latestRepair.status)}` : "目前沒有維修"}</strong></div>
           {latestOrder ? (
-            <div className="line-customer-info-row danger">未付金額 <strong>{money(latestOrder.unpaidBalance)}</strong></div>
+            <div className="line-customer-info-row danger">未付款金額 <strong>{money(latestOrder.unpaidBalance)}</strong></div>
           ) : null}
         </section>
       ) : (

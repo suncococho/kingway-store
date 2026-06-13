@@ -26,34 +26,68 @@ export const PAYMENT_METHOD_LABELS = {
 };
 
 export const ORDER_STATUS_LABELS = {
-  COMPLETED: "已完成",
+  pending: "待處理",
+  confirmed: "已確認",
+  processing: "處理中",
+  ready: "待取貨",
+  ready_for_pickup: "待取貨",
+  picked_up: "已取貨",
+  completed: "已完成",
+  cancelled: "已取消",
+  refunded: "已退款",
   PENDING: "待處理",
-  PENDING_PAYMENT: "待付款",
-  REPAIRING: "維修中",
+  CONFIRMED: "已確認",
+  PROCESSING: "處理中",
+  READY: "待取貨",
+  READY_FOR_PICKUP: "待取貨",
+  PICKED_UP: "已取貨",
+  COMPLETED: "已完成",
   CANCELED: "已取消",
-  CANCELLED: "已取消"
+  CANCELLED: "已取消",
+  REFUNDED: "已退款",
+  PENDING_PAYMENT: "待付款",
+  REPAIRING: "維修中"
 };
 
 export const REPAIR_STATUS_LABELS = {
+  pending: "待處理",
+  new: "待處理",
+  estimate_pending: "待估價",
+  estimate_pending_approval: "待報價確認",
+  estimate_approved: "報價已確認",
+  estimate_rejected: "報價已拒絕",
+  waiting_parts: "待料中",
+  repairing: "維修中",
+  in_progress: "維修中",
+  completed: "維修完成",
+  completed_waiting_pickup: "待取車",
+  ready_for_pickup: "待取車",
+  picked_up: "已取車",
+  cancelled: "已取消",
+  canceled: "已取消",
   reserved: "已確認",
   confirmed: "已確認",
   waiting_quote: "已預約待報價",
-  checking: "待群組確認",
-  pending: "待確認",
-  new: "待確認",
-  estimate_pending_approval: "待核准報價",
-  quoted: "已報價待客戶回覆",
   waiting_customer_confirm: "已報價待客戶回覆",
-  estimate_approved: "報價已核准",
+  quoted: "已報價待客戶回覆",
   customer_confirmed: "客戶已同意報價",
   repair_order_created: "已建立維修訂單",
-  estimate_rejected: "報價已拒絕",
-  repairing: "維修中",
-  in_progress: "維修中",
-  completed_waiting_pickup: "已完修待取車",
-  ready_for_pickup: "已完修待取車",
-  picked_up: "已取車",
-  canceled: "已取消"
+  checking: "待群組確認",
+  PENDING: "待處理",
+  NEW: "待處理",
+  ESTIMATE_PENDING: "待估價",
+  ESTIMATE_PENDING_APPROVAL: "待報價確認",
+  ESTIMATE_APPROVED: "報價已確認",
+  ESTIMATE_REJECTED: "報價已拒絕",
+  WAITING_PARTS: "待料中",
+  REPAIRING: "維修中",
+  IN_PROGRESS: "維修中",
+  COMPLETED: "維修完成",
+  COMPLETED_WAITING_PICKUP: "待取車",
+  READY_FOR_PICKUP: "待取車",
+  PICKED_UP: "已取車",
+  CANCELLED: "已取消",
+  CANCELED: "已取消"
 };
 
 export const COUPON_TYPE_LABELS = {
@@ -62,19 +96,55 @@ export const COUPON_TYPE_LABELS = {
 };
 
 export const COUPON_STATUS_LABELS = {
+  available: "可使用",
+  inactive: "未啟用",
+  used: "已使用",
+  expired: "已過期",
   pending_approval: "待審核",
   approved: "已核准",
   rejected: "已拒絕",
   issued: "已發券",
-  used: "已使用",
-  expired: "已過期"
+  AVAILABLE: "可使用",
+  INACTIVE: "未啟用",
+  USED: "已使用",
+  EXPIRED: "已過期",
+  PENDING_APPROVAL: "待審核",
+  APPROVED: "已核准",
+  REJECTED: "已拒絕",
+  ISSUED: "已發券"
 };
 
 export const FINAL_PAYMENT_STATUS_LABELS = {
+  unpaid: "未付款",
+  paid: "已付款",
+  partially_paid: "部分付款",
+  partial: "部分付款",
+  deposit_paid: "已付訂金",
+  refunded: "已退款",
+  cancelled: "已取消",
   UNPAID: "未付款",
+  PAID: "已付款",
   PARTIAL: "部分付款",
-  PAID: "已完款"
+  PARTIALLY_PAID: "部分付款",
+  PARTIAL_PAID: "部分付款",
+  DEPOSIT_PAID: "已付訂金",
+  REFUNDED: "已退款",
+  CANCELED: "已取消",
+  CANCELLED: "已取消"
 };
+
+const UNKNOWN_STATUS_LABEL = "未知狀態";
+
+function resolveStatusLabel(labelMap, status) {
+  const raw = String(status || "").trim();
+  if (!raw) return UNKNOWN_STATUS_LABEL;
+  return (
+    labelMap[raw] ||
+    labelMap[raw.toLowerCase()] ||
+    labelMap[raw.toUpperCase()] ||
+    UNKNOWN_STATUS_LABEL
+  );
+}
 
 export const SUPPLIER_REQUEST_TYPE_LABELS = {
   PURCHASE_ORDER: "發注",
@@ -100,11 +170,19 @@ export function getPaymentMethodLabel(method) {
 }
 
 export function getOrderStatusLabel(status) {
-  return ORDER_STATUS_LABELS[status] || status || "-";
+  return formatOrderStatus(status);
+}
+
+export function formatOrderStatus(status) {
+  return resolveStatusLabel(ORDER_STATUS_LABELS, status);
 }
 
 export function getRepairStatusLabel(status) {
-  return REPAIR_STATUS_LABELS[status] || status || "-";
+  return formatRepairStatus(status);
+}
+
+export function formatRepairStatus(status) {
+  return resolveStatusLabel(REPAIR_STATUS_LABELS, status);
 }
 
 export function getCouponTypeLabel(type) {
@@ -112,11 +190,19 @@ export function getCouponTypeLabel(type) {
 }
 
 export function getCouponStatusLabel(status) {
-  return COUPON_STATUS_LABELS[status] || status || "-";
+  return formatCouponStatus(status);
+}
+
+export function formatCouponStatus(status) {
+  return resolveStatusLabel(COUPON_STATUS_LABELS, status);
 }
 
 export function getFinalPaymentStatusLabel(status) {
-  return FINAL_PAYMENT_STATUS_LABELS[status] || status || "-";
+  return formatPaymentStatus(status);
+}
+
+export function formatPaymentStatus(status) {
+  return resolveStatusLabel(FINAL_PAYMENT_STATUS_LABELS, status);
 }
 
 export function getSupplierRequestTypeLabel(type) {
