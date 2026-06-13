@@ -25,6 +25,8 @@ const resolvePublicStoreContext = createPublicStoreContextMiddleware({
 });
 
 const REPAIR_RESERVATION_FLOW = "repair_reservation";
+const REPAIR_RESERVATION_DUPLICATE_WINDOW_MS = 10 * 1000;
+const recentRepairReservationRequests = new Map();
 
 function getReservationDay(date) {
   const day = dayjs(date).day();
@@ -91,6 +93,41 @@ async function resolveLineRepairStoreContext(req, lineUserId, reason) {
 
 function normalizeText(value) {
   return String(value || "").trim();
+}
+
+function buildRepairReservationRequestKey({ storeId, lineUserId, bikeModel, issueDescription, reservationDate, reservationTime }) {
+  return [
+    storeId,
+    normalizeText(lineUserId),
+    normalizeText(bikeModel).toLowerCase(),
+    normalizeText(issueDescription).toLowerCase(),
+    normalizeText(reservationDate),
+    normalizeText(reservationTime)
+  ].join("|");
+}
+
+function acquireRepairReservationRequestLock(key) {
+  const now = Date.now();
+  const expiresAt = recentRepairReservationRequests.get(key) || 0;
+
+  if (expiresAt > now) {
+    return false;
+  }
+
+  recentRepairReservationRequests.set(key, now + REPAIR_RESERVATION_DUPLICATE_WINDOW_MS);
+  return true;
+}
+
+function releaseRepairReservationRequestLock(key) {
+  recentRepairReservationRequests.delete(key);
+}
+
+function keepRepairReservationRequestLockTemporarily(key) {
+  setTimeout(() => {
+    if ((recentRepairReservationRequests.get(key) || 0) <= Date.now()) {
+      recentRepairReservationRequests.delete(key);
+    }
+  }, REPAIR_RESERVATION_DUPLICATE_WINDOW_MS + 1000).unref?.();
 }
 
 function isPlaceholderCustomerName(value) {
@@ -182,122 +219,143 @@ router.post("/create", async (req, res, next) => {
     }
 
     const resolvedStoreId = storeContext.storeId;
-
-    await pool.query(
-      `
-        INSERT INTO line_chat_sessions (line_user_id, flow_type, step_key, payload)
-        VALUES (?, ?, 'confirm', ?)
-        ON DUPLICATE KEY UPDATE
-          step_key = VALUES(step_key),
-          payload = VALUES(payload),
-          updated_at = CURRENT_TIMESTAMP
-      `,
-      [
-        lineUserId,
-        REPAIR_RESERVATION_FLOW,
-        JSON.stringify({
-          reservationDate,
-          reservationTime,
-          bikeModel,
-          issueDescription,
-          storeId: resolvedStoreId,
-          storeCode: storeContext.storeCode || null
-        })
-      ]
-    );
-
-    const result = await createRepairReservationFromSession(lineUserId, {
+    const requestKey = buildRepairReservationRequestKey({
       storeId: resolvedStoreId,
-      displayName
+      lineUserId,
+      bikeModel,
+      issueDescription,
+      reservationDate,
+      reservationTime
     });
 
-    if (result?.phoneRequired) {
-      return res.status(400).json({ message: "請先回 LINE 對話輸入手機號碼完成綁定。" });
-    }
-
-    if (!result) {
-      return res.status(500).json({ message: "維修預約建立失敗" });
-    }
-
-    if (result.duplicate) {
-      return res.status(409).json({
-        message: `已有相同時段的維修預約，工單 #${result.repairId}`,
-        repairId: result.repairId
-      });
+    if (!acquireRepairReservationRequestLock(requestKey)) {
+      return res.status(409).json({ message: "維修預約正在建立中，請不要重複送出。" });
     }
 
     try {
-      const lineNotificationResult = await notifyRepairReservationCreated({
-        repairId: result.repairId,
-        storeId: resolvedStoreId,
-        customerName: result.customer.name || "LINE 客戶",
-        customerPhone: result.customer.phone || null,
-        reservationDate: result.payload.reservationDate,
-        reservationTime: result.payload.reservationTime,
-        bikeModel: result.payload.bikeModel,
-        issueDescription: result.payload.issueDescription,
-        sourceLabel: "LINE 維修預約",
-        storeName: storeContext?.storeName,
-        adminUrl: `${config.frontendBaseUrl}/repairs/${result.repairId}`
-      }, {
-        registrationTypes: ["repair", "staff", "admin"]
-      });
-      try {
-        await logWorkflowEvent(
-          "repair_reservation_line_group_notified",
-          "REPAIR_ORDER",
-          result.repairId,
-          {
-            fromLine: true,
-            source: "line_repair_page",
-            delivered: lineNotificationResult.delivered,
-            skipped: Boolean(lineNotificationResult.skipped),
-            reason: lineNotificationResult.reason || null,
-            targetGroupIds: lineNotificationResult.targetGroupIds || [],
-            lineGroupId: lineNotificationResult.lineGroupId || null
-          },
-          null
-        );
-      } catch (lineLogError) {
-        console.warn("[staff-line] log line reservation notify event failed", {
-          repairId: result.repairId,
-          message: lineLogError.message
-        });
-      }
-    } catch (staffLineError) {
-      console.warn("[staff-line] line repair page notification failed after creation", {
-        repairId: result.repairId,
-        message: staffLineError.message
-      });
-      try {
-        await logWorkflowEvent(
-          "repair_reservation_line_group_notified",
-          "REPAIR_ORDER",
-          result.repairId,
-          {
-            fromLine: true,
-            source: "line_repair_page",
-            delivered: 0,
-            skipped: false,
-            reason: staffLineError.message || "notification_exception",
-            targetGroupIds: [],
-            exception: true
-          },
-          null
-        );
-      } catch (lineLogError) {
-        console.warn("[staff-line] log line reservation notify failure event failed", {
-          repairId: result.repairId,
-          message: lineLogError.message
-        });
-      }
-    }
+      await pool.query(
+        `
+          INSERT INTO line_chat_sessions (line_user_id, flow_type, step_key, payload)
+          VALUES (?, ?, 'confirm', ?)
+          ON DUPLICATE KEY UPDATE
+            step_key = VALUES(step_key),
+            payload = VALUES(payload),
+            updated_at = CURRENT_TIMESTAMP
+        `,
+        [
+          lineUserId,
+          REPAIR_RESERVATION_FLOW,
+          JSON.stringify({
+            reservationDate,
+            reservationTime,
+            bikeModel,
+            issueDescription,
+            storeId: resolvedStoreId,
+            storeCode: storeContext.storeCode || null
+          })
+        ]
+      );
 
-    return res.json({
-      ok: true,
-      repairId: result.repairId,
-      reservationDay: getReservationDay(reservationDate)
-    });
+      const result = await createRepairReservationFromSession(lineUserId, {
+        storeId: resolvedStoreId,
+        displayName
+      });
+
+      if (result?.phoneRequired) {
+        releaseRepairReservationRequestLock(requestKey);
+        return res.status(400).json({ message: "請先回 LINE 對話輸入手機號碼完成綁定。" });
+      }
+
+      if (!result) {
+        releaseRepairReservationRequestLock(requestKey);
+        return res.status(500).json({ message: "維修預約建立失敗" });
+      }
+
+      if (result.duplicate) {
+        keepRepairReservationRequestLockTemporarily(requestKey);
+        return res.status(409).json({
+          message: `已有相同時段的維修預約，工單 #${result.repairId}`,
+          repairId: result.repairId
+        });
+      }
+
+      try {
+        const lineNotificationResult = await notifyRepairReservationCreated({
+          repairId: result.repairId,
+          storeId: resolvedStoreId,
+          customerName: result.customer.name || "LINE 客戶",
+          customerPhone: result.customer.phone || null,
+          reservationDate: result.payload.reservationDate,
+          reservationTime: result.payload.reservationTime,
+          bikeModel: result.payload.bikeModel,
+          issueDescription: result.payload.issueDescription,
+          sourceLabel: "LINE 維修預約",
+          storeName: storeContext?.storeName,
+          adminUrl: `${config.frontendBaseUrl}/repairs/${result.repairId}`
+        }, {
+          registrationTypes: ["repair", "staff", "admin"]
+        });
+        try {
+          await logWorkflowEvent(
+            "repair_reservation_line_group_notified",
+            "REPAIR_ORDER",
+            result.repairId,
+            {
+              fromLine: true,
+              source: "line_repair_page",
+              delivered: lineNotificationResult.delivered,
+              skipped: Boolean(lineNotificationResult.skipped),
+              reason: lineNotificationResult.reason || null,
+              targetGroupIds: lineNotificationResult.targetGroupIds || [],
+              lineGroupId: lineNotificationResult.lineGroupId || null
+            },
+            null
+          );
+        } catch (lineLogError) {
+          console.warn("[staff-line] log line reservation notify event failed", {
+            repairId: result.repairId,
+            message: lineLogError.message
+          });
+        }
+      } catch (staffLineError) {
+        console.warn("[staff-line] line repair page notification failed after creation", {
+          repairId: result.repairId,
+          message: staffLineError.message
+        });
+        try {
+          await logWorkflowEvent(
+            "repair_reservation_line_group_notified",
+            "REPAIR_ORDER",
+            result.repairId,
+            {
+              fromLine: true,
+              source: "line_repair_page",
+              delivered: 0,
+              skipped: false,
+              reason: staffLineError.message || "notification_exception",
+              targetGroupIds: [],
+              exception: true
+            },
+            null
+          );
+        } catch (lineLogError) {
+          console.warn("[staff-line] log line reservation notify failure event failed", {
+            repairId: result.repairId,
+            message: lineLogError.message
+          });
+        }
+      }
+
+      keepRepairReservationRequestLockTemporarily(requestKey);
+      return res.json({
+        ok: true,
+        repairId: result.repairId,
+        reservationDay: getReservationDay(reservationDate)
+      });
+    } catch (createError) {
+      releaseRepairReservationRequestLock(requestKey);
+      throw createError;
+    }
   } catch (error) {
     return next(error);
   }

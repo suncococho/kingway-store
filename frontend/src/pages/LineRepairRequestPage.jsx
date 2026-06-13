@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import liff from "@line/liff";
 import { apiRequest } from "../lib/api";
 import { resolveLineContext } from "../lib/lineContext";
@@ -67,6 +67,8 @@ function LineRepairRequestPage() {
   });
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const submitLockRef = useRef(false);
   const [lineContextFailureReason, setLineContextFailureReason] = useState("");
   const [lineInClient, setLineInClient] = useState(false);
   const [lineContextDebug, setLineContextDebug] = useState({
@@ -208,20 +210,33 @@ function LineRepairRequestPage() {
 
   async function submit(event) {
     event.preventDefault();
+
+    if (submitLockRef.current) {
+      return;
+    }
+
+    submitLockRef.current = true;
+    setSubmitting(true);
     setError("");
 
     if (!customer?.id) {
       setError("尚未找到綁定資料，請先回 LINE 對話輸入手機號碼完成綁定。");
+      setSubmitting(false);
+      submitLockRef.current = false;
       return;
     }
 
     if (!form.bikeModel.trim()) {
       setError("請填寫車款 / 車種。");
+      setSubmitting(false);
+      submitLockRef.current = false;
       return;
     }
 
     if (!form.issueDescription.trim()) {
       setError("請填寫問題描述。");
+      setSubmitting(false);
+      submitLockRef.current = false;
       return;
     }
 
@@ -244,6 +259,8 @@ function LineRepairRequestPage() {
       setDone(true);
     } catch (err) {
       setError(err.message || "送出失敗");
+      setSubmitting(false);
+      submitLockRef.current = false;
     }
   }
 
@@ -336,24 +353,32 @@ function LineRepairRequestPage() {
           </section>
 
           {error ? <div className="error-banner">{error}</div> : null}
+          {submitting ? (
+            <section className="line-customer-summary">
+              <div className="line-customer-summary-title">正在送出維修預約，請不要重複點擊</div>
+              <div>請稍候，我們正在建立您的預約</div>
+            </section>
+          ) : null}
 
           <form className="line-customer-summary" onSubmit={submit}>
         <label className="form-field">
           <span>車款 / 車種</span>
-          <input value={form.bikeModel} onChange={(e) => update("bikeModel", e.target.value)} placeholder="例如 Fatbike / 電動自行車 / 車款名稱" />
+          <input value={form.bikeModel} onChange={(e) => update("bikeModel", e.target.value)} placeholder="例如 Fatbike / 電動自行車 / 車款名稱" disabled={submitting} />
         </label>
 
         <label className="form-field">
           <span>希望到店日期</span>
-          <input type="date" value={form.reservationDate} onChange={(e) => update("reservationDate", e.target.value)} />
+          <input type="date" value={form.reservationDate} onChange={(e) => update("reservationDate", e.target.value)} disabled={submitting} />
         </label>
 
         <label className="form-field">
           <span>問題描述</span>
-          <textarea rows="5" value={form.issueDescription} onChange={(e) => update("issueDescription", e.target.value)} placeholder="請描述故障情況，例如無法啟動、煞車異音、電池問題、控制器問題等" />
+          <textarea rows="5" value={form.issueDescription} onChange={(e) => update("issueDescription", e.target.value)} placeholder="請描述故障情況，例如無法啟動、煞車異音、電池問題、控制器問題等" disabled={submitting} />
         </label>
 
-        <button className="line-customer-close" type="submit">送出維修預約</button>
+        <button className="line-customer-close" type="submit" disabled={submitting}>
+          {submitting ? "預約送出中..." : "送出維修預約"}
+        </button>
           </form>
         </>
       )}
