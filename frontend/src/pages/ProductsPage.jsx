@@ -122,6 +122,8 @@ function ProductsPage() {
   const [importApplyLoading, setImportApplyLoading] = useState(false);
   const [importError, setImportError] = useState("");
   const [importResult, setImportResult] = useState(null);
+  const [showImportPreviewDetails, setShowImportPreviewDetails] = useState(true);
+  const [importApplyConfirm, setImportApplyConfirm] = useState(null);
   const currentSkuPreview = form.sku.trim() || "分類變更後會自動產生";
 
   useEffect(() => {
@@ -734,6 +736,8 @@ function ProductsPage() {
     setImportFile(file);
     setImportError("");
     setImportResult(null);
+    setImportApplyConfirm(null);
+    setShowImportPreviewDetails(true);
     setImportLoading(true);
 
     try {
@@ -775,13 +779,35 @@ function ProductsPage() {
     const updateCount = Number(importResult?.updateCount || 0);
     const errorCount = Number(importResult?.errors?.length || 0);
     return {
+      okToApply: importResult?.ok && !errorCount,
       createCount,
       updateCount,
       errorCount
     };
   }
 
-  async function handleApplyImport() {
+  async function openImportApplyConfirm() {
+    const summary = getImportPreviewSummary();
+    if (!summary.okToApply) {
+      setImportError("目前匯入資料有錯誤，無法套用");
+      return;
+    }
+
+    if (!importFile) {
+      setImportError("尚未選擇匯入檔案");
+      return;
+    }
+
+    setImportApplyConfirm({
+      createCount: summary.createCount,
+      updateCount: summary.updateCount,
+      errorCount: summary.errorCount,
+      totalRows: Number(importResult?.totalRows || 0)
+    });
+  }
+
+  async function executeApplyImport() {
+    setImportApplyConfirm(null);
     if (!importFile) {
       setImportError("尚未選擇匯入檔案");
       return;
@@ -792,14 +818,9 @@ function ProductsPage() {
       return;
     }
 
-    const { createCount, updateCount, errorCount } = getImportPreviewSummary();
+    const { errorCount } = getImportPreviewSummary();
     if (errorCount) {
       setImportError("目前有錯誤資料，請先修正後再套用");
-      return;
-    }
-
-    const confirmMessage = `確認套用匯入？\n新增 ${createCount} 筆\n更新 ${updateCount} 筆\n錯誤 ${errorCount} 筆`;
-    if (!window.confirm(confirmMessage)) {
       return;
     }
 
@@ -1180,35 +1201,41 @@ function ProductsPage() {
                     <div className="admin-summary-label">錯誤</div>
                     <div className="admin-summary-value">{(importResult.errors || []).length}</div>
                   </article>
-                  <article className="admin-summary-card">
-                    <div className="admin-summary-label">總列數</div>
-                    <div className="admin-summary-value">{importResult.totalRows}</div>
-                  </article>
-                  <article className="admin-summary-card">
-                    <div className="admin-summary-label">dryRun</div>
-                    <div className="admin-summary-value">{String(importResult.dryRun)}</div>
-                  </article>
                 </div>
+                <div className="admin-summary-note">匯入總列數：{importResult.totalRows}</div>
                 {!importResult.dryRun ? (
                   <div className="admin-summary-note">
                     本次套用已完成，成功 {importResult.appliedRows?.length || 0} 筆
                   </div>
                 ) : null}
-                <DataTable
-                  columns={importPreviewColumns}
-                  rows={importResult.preview || []}
-                  emptyText="預覽資料為空。"
-                  cardTitle={(row) => `第 ${row.row} 列`}
-                  cardDescription={(row) => `SKU：${row.sku}`}
-                  cardBadges={(row) => <StatusBadge tone={row.action === "create" ? "success" : row.action === "update" ? "warning" : "danger"}>{formatImportActionLabel(row.action)}</StatusBadge>}
-                />
+                {importResult?.preview?.length ? (
+                  <div className="admin-summary-actions">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => setShowImportPreviewDetails((current) => !current)}
+                    >
+                      {showImportPreviewDetails ? "收合詳細預覽" : "展開詳細預覽"}
+                    </button>
+                  </div>
+                ) : null}
+                {showImportPreviewDetails ? (
+                  <DataTable
+                    columns={importPreviewColumns}
+                    rows={importResult.preview || []}
+                    emptyText="預覽資料為空。"
+                    cardTitle={(row) => `第 ${row.row} 列`}
+                    cardDescription={(row) => `SKU：${row.sku}`}
+                    cardBadges={(row) => <StatusBadge tone={row.action === "create" ? "success" : row.action === "update" ? "warning" : "danger"}>{formatImportActionLabel(row.action)}</StatusBadge>}
+                  />
+                ) : null}
                 {importResult.dryRun ? (
                   <div className="admin-summary-actions">
                     <button
                       type="button"
                       className="secondary-button"
-                      disabled={importApplyLoading || Boolean(importLoading) || Boolean(downloadLoading) || importResult?.errors?.length > 0}
-                      onClick={handleApplyImport}
+                      disabled={importApplyLoading || Boolean(importLoading) || Boolean(downloadLoading) || importResult?.errors?.length > 0 || !getImportPreviewSummary().okToApply}
+                      onClick={openImportApplyConfirm}
                     >
                       {importApplyLoading ? "套用中..." : "確認套用匯入"}
                     </button>
@@ -1752,6 +1779,22 @@ function ProductsPage() {
           </div>
         ) : null}
       </DetailModal>
+      <ActionModal
+        open={Boolean(importApplyConfirm)}
+        tone="danger"
+        title="確認套用匯入"
+        cancelText="取消"
+        confirmText="我已確認，執行套用"
+        message={
+          `請再次確認匯入套用內容：\n` +
+          `新增 ${importApplyConfirm?.createCount || 0} 筆\n` +
+          `更新 ${importApplyConfirm?.updateCount || 0} 筆\n` +
+          `錯誤 ${importApplyConfirm?.errorCount || 0} 筆\n` +
+          `共 ${importApplyConfirm?.totalRows || 0} 列`
+        }
+        onConfirm={executeApplyImport}
+        onCancel={() => setImportApplyConfirm(null)}
+      />
       <ActionModal
         open={Boolean(warningModal)}
         tone="warning"

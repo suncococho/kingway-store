@@ -4,6 +4,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { pool } = require("../db");
 const ExcelJS = require("exceljs");
+const config = require("../config");
 const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { mapCategoryLabel } = require("../utils/displayLabels");
 const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
@@ -14,6 +15,7 @@ const {
   normalizeProductCategory,
   normalizeProductSku
 } = require("../utils/productCategories");
+const { recordPlatformAudit } = require("../services/platformAuditService");
 
 const PRODUCT_IMPORT_COLUMNS = [
   "sku",
@@ -44,6 +46,72 @@ function getRequestStoreId(req) {
   const rawStoreId = req.storeId || req.user?.store_id || req.user?.storeId || 1;
   const storeId = Number(rawStoreId);
   return Number.isFinite(storeId) && storeId > 0 ? storeId : 1;
+}
+
+function isProductionEnvironment() {
+  const nodeEnv = String(config.nodeEnv || "").trim().toLowerCase();
+  const appEnv = String(config.appEnv || "").trim().toLowerCase();
+  return nodeEnv === "production" || appEnv === "production" || nodeEnv.includes("production") || appEnv.includes("production");
+}
+
+function parseOverrideFlag(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+  return null;
+}
+
+function getRequestActorEmail(req) {
+  const candidates = [
+    req?.platformAdmin?.email,
+    req?.user?.username,
+    req?.user?.displayName,
+    req?.user?.email
+  ];
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    if (value) {
+      return value;
+    }
+  }
+  if (req?.user?.id) {
+    return `user:${req.user.id}`;
+  }
+  return "unknown-user";
+}
+
+async function recordProductImportApplyAudit(req, payload = {}) {
+  const actorEmail = getRequestActorEmail(req);
+  if (!actorEmail) {
+    return { recorded: false, skipped: true };
+  }
+
+  const auditContext = {
+    platformAdmin: {
+      id: req?.platformAdmin?.id || req?.user?.id || null,
+      email: actorEmail,
+      role: req?.platformAdmin?.role || req?.user?.role || req?.user?.storeRole || "ADMIN",
+      displayName: req?.platformAdmin?.displayName || req?.user?.displayName || actorEmail
+    },
+    get: (headerName) => (typeof req.get === "function" ? req.get(headerName) : ""),
+    ip: req?.ip || null,
+    socket: req?.socket || null
+  };
+
+  return recordPlatformAudit(auditContext, {
+    action: "PRODUCT_IMPORT_APPLY",
+    targetType: "product_import",
+    targetId: Number(payload.storeId || 0) > 0 ? Number(payload.storeId) : null,
+    before: payload.before || null,
+    after: payload.after || null
+  });
 }
 
 async function hasProductsStoreIdColumn(connection = pool) {
@@ -519,7 +587,7 @@ async function runProductImportDryRun(storeId, buffer) {
   };
 }
 
-async function runProductImportApply(storeId, buffer) {
+async function runProductImportApply(storeId, buffer, req) {
   const result = await analyzeProductImportRows(storeId, buffer);
   const base = {
     dryRun: false,
@@ -674,9 +742,34 @@ async function runProductImportApply(storeId, buffer) {
     }
 
     await connection.commit();
+    let auditRecorded = false;
+    try {
+      const auditResult = await recordProductImportApplyAudit(req, {
+        storeId,
+        before: {
+          source: "dryRunSummary",
+          totalRows: result.totalRows,
+          createCount: result.createCount,
+          updateCount: result.updateCount,
+          skipCount: result.skipCount,
+          errors: result.errors.length
+        },
+        after: {
+          totalRows: result.totalRows,
+          createCount: createdCount,
+          updateCount: updatedCount,
+          skipCount: result.skipCount,
+          successCount: createdCount + updatedCount
+        }
+      });
+      auditRecorded = !!auditResult.recorded;
+    } catch (auditError) {
+      console.warn("[products/import] audit record failed", { error: auditError.message, storeId });
+    }
 
     return {
       ok: true,
+      auditRecorded,
       ...base,
       createCount: createdCount,
       updateCount: updatedCount,
@@ -968,62 +1061,122 @@ router.get("/import-template", async (req, res, next) => {
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "KINGWAY";
+
+    const resolveTemplateCategoryCode = (searchCode, fallbackCode = "OT") => {
+      const normalizedSearchCode = String(searchCode || "").trim().toLowerCase();
+      if (!normalizedSearchCode) {
+        return fallbackCode;
+      }
+      const exactCodeMatch = categoryRows.find((row) => String(row.code || "").trim().toLowerCase() === normalizedSearchCode);
+      if (exactCodeMatch?.code) {
+        return String(exactCodeMatch.code).trim();
+      }
+      const nameMatch = categoryRows.find((row) => String(row.name || "")
+        .trim()
+        .toLowerCase()
+        .includes(normalizedSearchCode)
+      );
+      return nameMatch?.code ? String(nameMatch.code).trim() : fallbackCode;
+    };
+
+    const templateCodeHint = String(categoryRows[0]?.code || "OT").trim() || "OT";
     const sheet = workbook.addWorksheet("商品匯入範本");
     sheet.columns = [
       { header: "sku", key: "sku", width: 20 },
       { header: "name", key: "name", width: 30 },
       { header: "categoryCode", key: "categoryCode", width: 16 },
-      { header: "categoryName", key: "categoryName", width: 22 },
       { header: "price", key: "price", width: 12 },
-      { header: "costPrice", key: "costPrice", width: 14 },
       { header: "stock", key: "stock", width: 10 },
-      { header: "reorderLevel", key: "reorderLevel", width: 14 },
-      { header: "isActive", key: "isActive", width: 12 },
-      { header: "description", key: "description", width: 36 },
-      { header: "location", key: "location", width: 16 },
-      { header: "inputterName", key: "inputterName", width: 18 },
-      { header: "source", key: "source", width: 16 }
+      { header: "description", key: "description", width: 36 }
     ];
     sheet.getRow(1).font = { bold: true };
-
-    const firstCategory = categoryRows[0];
-    const fallbackCategoryCode = firstCategory?.code || "OT";
-    const fallbackCategoryName = firstCategory?.name || mapCategoryLabel(fallbackCategoryCode) || "";
-    sheet.addRow({
-      sku: "C-EB-001-S1",
-      name: "範本商品",
-      categoryCode: fallbackCategoryCode,
-      categoryName: fallbackCategoryName,
-      price: 0,
-      costPrice: 0,
-      stock: 10,
-      reorderLevel: 2,
-      isActive: 1,
-      description: "請依實際資料修改此列",
-      location: "A01",
-      inputterName: "staff",
-      source: "template"
-    });
+    sheet.getRow(2).values = {
+      sku: "商品編號（必填）",
+      name: "商品名稱（必填）",
+      categoryCode: "分類代碼（請參考分類表）",
+      price: "售價（數字）",
+      stock: "庫存數量（數字）",
+      description: "備註（選填）"
+    };
+    sheet.getRow(2).font = { italic: true };
+    sheet.getRow(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF5F7FA" } };
+    for (const column of ["A", "B", "C", "D", "E", "F"]) {
+      sheet.getCell(`${column}2`).alignment = { vertical: "middle", horizontal: "left", wrapText: true };
+    }
+    sheet.addRows([
+      {
+        sku: "C-EB-001-S1",
+        name: "CityRun 電動自行車",
+        categoryCode: resolveTemplateCategoryCode("EB", templateCodeHint),
+        price: 25800,
+        stock: 12,
+        description: "示例：電動自行車主款，可直接上架"
+      },
+      {
+        sku: "A-AC-002-S1",
+        name: "變速組件維修配件",
+        categoryCode: resolveTemplateCategoryCode("配件", templateCodeHint),
+        price: 1250,
+        stock: 30,
+        description: "示例：配件類商品，建議啟用快速補貨管理"
+      },
+      {
+        sku: "T-TI-003-S1",
+        name: "公路輪胎 700x32",
+        categoryCode: resolveTemplateCategoryCode("輪胎", templateCodeHint),
+        price: 980,
+        stock: 18,
+        description: "示例：耗材類，請維持庫存更新"
+      }
+    ]);
 
     const categorySheet = workbook.addWorksheet("門市分類清單");
     categorySheet.columns = [
       { header: "categoryCode", key: "categoryCode", width: 16 },
-      { header: "categoryName", key: "categoryName", width: 20 },
-      { header: "status", key: "status", width: 12 }
+      { header: "categoryName", key: "categoryName", width: 24 }
     ];
     categorySheet.getRow(1).font = { bold: true };
+    categorySheet.mergeCells("A2:B2");
+    categorySheet.getCell("A2").value = "請勿自行新增分類";
+    categorySheet.getCell("A2").font = { italic: true };
+    categorySheet.getCell("A2").alignment = { vertical: "middle", horizontal: "left" };
     for (const category of categoryRows) {
       categorySheet.addRow({
         categoryCode: sanitizeWorksheetValue(category.code),
-        categoryName: sanitizeWorksheetValue(category.name),
-        status: "啟用"
+        categoryName: sanitizeWorksheetValue(category.name)
       });
+    }
+
+    const helpSheet = workbook.addWorksheet("匯入說明");
+    helpSheet.columns = [
+      { header: "項目", key: "item", width: 22 },
+      { header: "內容", key: "content", width: 86 }
+    ];
+    helpSheet.getRow(1).font = { bold: true };
+    helpSheet.addRows([
+      { item: "使用步驟", content: "1. 下載範本後，請先依欄位格式填寫資料。\n2. 欄位順序請勿任意調整，請保留第 1 列是欄位名稱。\n3. 儲存為 .xlsx 再回到商品管理頁上傳。\n4. 上傳後先用預覽確認資料無誤再執行套用。" },
+      { item: "必填欄位", content: "sku（商品編號）、name（商品名稱）、categoryCode（分類代碼）、price（售價）、stock（庫存數量）為必填。" },
+      { item: "常見錯誤", content: "常見欄位錯誤包含：售價/庫存非數字、欄位名稱拼字錯誤、欄位位移或刪除。\n遇到錯誤會在預覽中顯示失敗列與原因。" },
+      { item: "SKU 重複說明", content: "同一檔案內若有重複 SKU，第二筆會被視為錯誤並略過。\n請先修正後再重新預覽上傳。" },
+      { item: "分類錯誤說明", content: "請使用「門市分類清單」中的 categoryCode，不可使用不存在的代碼。\n若分類代碼不在清單中，該列會被略過。分類名稱欄位不建議直接輸入到範本。" }
+    ]);
+    helpSheet.getCell("A1").alignment = { vertical: "middle", horizontal: "center" };
+    helpSheet.getCell("A1").alignment = { vertical: "middle", horizontal: "center" };
+    for (let rowNumber = 2; rowNumber <= helpSheet.rowCount; rowNumber += 1) {
+      helpSheet.getRow(rowNumber).getCell("B").alignment = { wrapText: true, vertical: "top" };
+      helpSheet.getRow(rowNumber).height = 38;
+    }
+
+    for (const column of ["A", "B"]) {
+      helpSheet.getColumn(column).alignment = { vertical: "middle", horizontal: "left" };
     }
 
     const buffer = await workbook.xlsx.writeBuffer();
     const filename = `KINGWAY_product_import_template_store_${storeId}.xlsx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    sheet.getColumn("D").numFmt = "#,##0";
+    sheet.getColumn("E").numFmt = "#,##0";
     res.send(buffer);
   } catch (error) {
     return next(error);
@@ -1044,6 +1197,9 @@ router.post(
     try {
       const rawDryRun = String(req.query.dryRun || "").toLowerCase();
       const rawApply = String(req.query.apply || "").toLowerCase();
+      const rawAdminOverride = String(req.query.adminOverride || "").toLowerCase();
+      const adminOverride = parseOverrideFlag(rawAdminOverride);
+
       if (rawDryRun && !["true", "false"].includes(rawDryRun)) {
         return res.status(400).json({ message: "dryRun 參數僅支援 true 或 false" });
       }
@@ -1052,6 +1208,13 @@ router.post(
       }
 
       const isApply = rawApply === "true" || rawDryRun === "false";
+      if (isApply && rawAdminOverride && adminOverride === null) {
+        return res.status(400).json({ message: "adminOverride 參數僅支援 true 或 false" });
+      }
+
+      if (isApply && isProductionEnvironment() && !config.productImportApplyEnabled && !adminOverride) {
+        return res.status(403).json({ message: "目前尚未開放正式匯入功能" });
+      }
 
       if (!Buffer.isBuffer(req.body) || !req.body.length) {
         return res.status(400).json({ message: "請上傳 XLSX 檔案內容" });
@@ -1059,7 +1222,7 @@ router.post(
 
       const storeId = getRequestStoreId(req);
       const result = isApply
-        ? await runProductImportApply(storeId, req.body)
+        ? await runProductImportApply(storeId, req.body, req)
         : await runProductImportDryRun(storeId, req.body);
       return res.json(result);
     } catch (error) {

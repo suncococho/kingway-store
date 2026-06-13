@@ -49,6 +49,7 @@ function parseBoolean(value, fallback = false) {
 module.exports = {
   nodeEnv: process.env.NODE_ENV || "development",
   appEnv: process.env.APP_ENV || "",
+  productImportApplyEnabled: parseBoolean(process.env.PRODUCT_IMPORT_APPLY_ENABLED, false),
   port: Number(process.env.PORT || 3000),
   jwtSecret: requireEnv("JWT_SECRET", "change-me-in-production"),
   frontendBaseUrl: resolveFrontendBaseUrl(),
