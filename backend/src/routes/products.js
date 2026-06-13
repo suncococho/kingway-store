@@ -1212,7 +1212,11 @@ router.post(
         return res.status(400).json({ message: "adminOverride 參數僅支援 true 或 false" });
       }
 
-      if (isApply && isProductionEnvironment() && !config.productImportApplyEnabled && !adminOverride) {
+      if (
+        isApply &&
+        !config.productImportApplyEnabled &&
+        !(adminOverride && config.productImportAdminOverrideEnabled)
+      ) {
         return res.status(403).json({ message: "目前尚未開放正式匯入功能" });
       }
 
