@@ -3,6 +3,7 @@ const { pool } = require("../db");
 const jwt = require("jsonwebtoken");
 const config = require("../config");
 const { authenticatePlatformAdmin, requirePlatformRole } = require("../middleware/platformAuth");
+const { hashPassword } = require("../utils/passwords");
 const {
   FEATURE_KEYS,
   FEATURE_PRESETS,
@@ -25,6 +26,7 @@ const ALLOWED_STORE_PLANS = new Set(["free", "premium"]);
 const ALLOWED_STORE_STATUSES = new Set(["active", "inactive", "suspended"]);
 const IMPERSONATION_TTL_SECONDS = 2 * 60 * 60;
 const IMPERSONATION_TTL_TEXT = "2 小時";
+const OWNER_PASSWORD_MIN_LENGTH = 8;
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : value === undefined || value === null ? "" : String(value).trim();
@@ -266,6 +268,33 @@ async function getActiveStoreMember(staffUserId, storeId) {
   }
 
   return buildStoreStaffMemberResponse(rows[0]);
+}
+
+async function getActiveStoreOwner(storeId) {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        su.id,
+        su.username,
+        su.display_name AS displayName,
+        su.role AS staffRole,
+        sm.role AS storeRole,
+        sm.status AS membershipStatus,
+        su.is_active AS isActive
+      FROM staff_users su
+      INNER JOIN store_memberships sm
+        ON sm.staff_user_id = su.id
+       AND sm.store_id = ?
+       AND sm.role = 'owner'
+       AND sm.status = 'active'
+      WHERE su.is_active = 1
+      ORDER BY sm.is_default DESC, sm.id ASC
+      LIMIT 1
+    `,
+    [storeId]
+  );
+
+  return rows[0] || null;
 }
 
 async function getDefaultImpersonationTarget(storeId) {
@@ -653,6 +682,72 @@ router.get("/stores/:id/staff-members", requirePlatformRole(["PLATFORM_OWNER", "
     return next(error);
   }
 });
+
+router.post(
+  "/stores/:id/owner-password-reset",
+  requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]),
+  async (req, res, next) => {
+    try {
+      const storeId = n(req.params.id, 0);
+      if (!storeId) {
+        return res.status(404).json({ message: "找不到店家" });
+      }
+
+      const store = await getStoreForImpersonation(storeId);
+      if (!store) {
+        return res.status(404).json({ message: "找不到店家" });
+      }
+
+      const newPassword = typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
+      if (newPassword.length < OWNER_PASSWORD_MIN_LENGTH) {
+        return res.status(400).json({ message: "Owner 密碼至少需要 8 個字元" });
+      }
+
+      const owner = await getActiveStoreOwner(storeId);
+      if (!owner?.id) {
+        return res.status(404).json({ message: "找不到啟用中的 owner 帳號" });
+      }
+
+      const passwordHash = await hashPassword(newPassword);
+      const [result] = await pool.query(
+        `
+          UPDATE staff_users
+          SET password_hash = ?
+          WHERE id = ?
+            AND is_active = 1
+          LIMIT 1
+        `,
+        [passwordHash, owner.id]
+      );
+
+      if (result.affectedRows !== 1) {
+        return res.status(409).json({ message: "Owner 密碼重設失敗" });
+      }
+
+      await recordPlatformAudit(req, {
+        action: "STORE_OWNER_PASSWORD_RESET",
+        targetType: "store",
+        targetId: storeId,
+        before: null,
+        after: {
+          targetStoreId: storeId,
+          targetUserId: n(owner.id),
+          ownerUsername: t(owner.username)
+        }
+      });
+
+      return res.json({
+        ok: true,
+        storeId,
+        ownerUsername: t(owner.username),
+        updated: true
+      });
+    } catch (error) {
+      console.error("[saasAdmin/storeOwnerPasswordReset] failed", error);
+      return next(error);
+    }
+  }
+);
 
 router.post("/stores/:id/impersonate", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
   try {

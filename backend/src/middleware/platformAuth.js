@@ -14,8 +14,8 @@ async function authenticatePlatformAdmin(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, config.jwtSecret);
-    if (decoded?.type !== "platform_admin" && decoded?.scope !== "platform_admin") {
-      return res.status(401).json({ message: "Unauthorized" });
+    if (decoded?.type !== "platform_admin" || decoded?.scope !== "platform_admin") {
+      return res.status(403).json({ message: "Insufficient platform role" });
     }
 
     const [rows] = await pool.query(

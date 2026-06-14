@@ -51,6 +51,7 @@ const AUDIT_ACTION_PRESETS = [
   { value: "", label: "全部" },
   { value: "store.impersonation.start", label: "store.impersonation.start（啟用模擬登入）" },
   { value: "store.impersonation.stop", label: "store.impersonation.stop（停止模擬登入）" },
+  { value: "STORE_OWNER_PASSWORD_RESET", label: "STORE_OWNER_PASSWORD_RESET（Owner 密碼重設）" },
   { value: "store_settings.update", label: "store_settings.update（店家設定更新）" },
   { value: "store.update_plan_status", label: "store.update_plan_status（店家方案／狀態更新）" },
   { value: "store_features.apply_preset", label: "store_features.apply_preset（套用功能預設）" }
@@ -220,7 +221,7 @@ function getAuditPayload(log, field) {
   return log?.[field];
 }
 
-function renderActionButtons(store, onOpenSettings, onSelectStore, onImpersonate, onOpenAuditLog) {
+function renderActionButtons(store, onOpenSettings, onSelectStore, onImpersonate, onOpenAuditLog, onOpenOwnerPasswordReset) {
   return (
     <div className="compact-actions">
       <button type="button" className="secondary-button" onClick={() => onSelectStore(store)}>
@@ -239,6 +240,11 @@ function renderActionButtons(store, onOpenSettings, onSelectStore, onImpersonate
           模擬登入店家
         </button>
       ) : null}
+      {onOpenOwnerPasswordReset ? (
+        <button type="button" className="secondary-button" onClick={() => onOpenOwnerPasswordReset(store)} disabled={!store.owner}>
+          Owner 密碼重設
+        </button>
+      ) : null}
       <Link to={"/platform-admin/stores/" + store.id + "/features"} className="secondary-button">
         功能設定
       </Link>
@@ -253,6 +259,7 @@ function SaasAdminPage() {
   const isAdmin = ["PLATFORM_OWNER", "PLATFORM_ADMIN", "SUPPORT"].includes(currentRole);
   const canCreateStore = ["PLATFORM_OWNER", "PLATFORM_ADMIN"].includes(currentRole);
   const canEditSettings = ["PLATFORM_OWNER", "PLATFORM_ADMIN"].includes(currentRole);
+  const canResetOwnerPassword = ["PLATFORM_OWNER", "PLATFORM_ADMIN"].includes(currentRole);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -296,6 +303,15 @@ function SaasAdminPage() {
     targetStaffUserId: "",
     reason: "",
     error: ""
+  });
+  const [ownerPasswordResetState, setOwnerPasswordResetState] = useState({
+    open: false,
+    store: null,
+    newPassword: "",
+    confirmPassword: "",
+    saving: false,
+    error: "",
+    success: ""
   });
 
   async function loadStores() {
@@ -526,6 +542,105 @@ function SaasAdminPage() {
       setStoreUpdateError(updateError.message || "更新店家資料失敗");
     } finally {
       setStoreSaving({ id: null, field: "" });
+    }
+  }
+
+  function openOwnerPasswordResetModal(store) {
+    if (!store?.id || !canResetOwnerPassword) {
+      return;
+    }
+
+    setOwnerPasswordResetState({
+      open: true,
+      store,
+      newPassword: "",
+      confirmPassword: "",
+      saving: false,
+      error: "",
+      success: ""
+    });
+  }
+
+  function closeOwnerPasswordResetModal() {
+    if (ownerPasswordResetState.saving) {
+      return;
+    }
+
+    setOwnerPasswordResetState({
+      open: false,
+      store: null,
+      newPassword: "",
+      confirmPassword: "",
+      saving: false,
+      error: "",
+      success: ""
+    });
+  }
+
+  function handleOwnerPasswordResetChange(event) {
+    const { name, value } = event.target;
+    setOwnerPasswordResetState((current) => ({
+      ...current,
+      [name]: value,
+      error: "",
+      success: ""
+    }));
+  }
+
+  async function handleOwnerPasswordResetSubmit(event) {
+    event.preventDefault();
+    const storeId = Number(ownerPasswordResetState.store?.id || 0);
+    const newPassword = ownerPasswordResetState.newPassword;
+    const confirmPassword = ownerPasswordResetState.confirmPassword;
+
+    if (!storeId || !canResetOwnerPassword) {
+      return;
+    }
+    if (newPassword.length < 8) {
+      setOwnerPasswordResetState((current) => ({
+        ...current,
+        error: "Owner 密碼至少需要 8 個字元"
+      }));
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setOwnerPasswordResetState((current) => ({
+        ...current,
+        error: "兩次輸入的密碼不一致"
+      }));
+      return;
+    }
+    if (!window.confirm("確定要重設此門市 owner 密碼嗎？")) {
+      return;
+    }
+
+    setOwnerPasswordResetState((current) => ({
+      ...current,
+      saving: true,
+      error: "",
+      success: ""
+    }));
+
+    try {
+      await platformRequest("/saas-admin/stores/" + storeId + "/owner-password-reset", {
+        method: "POST",
+        body: JSON.stringify({ newPassword })
+      });
+      setOwnerPasswordResetState((current) => ({
+        ...current,
+        newPassword: "",
+        confirmPassword: "",
+        saving: false,
+        success: "Owner 密碼已重設"
+      }));
+      setStoreUpdateSuccess("Owner 密碼已重設");
+      await loadStores();
+    } catch (error) {
+      setOwnerPasswordResetState((current) => ({
+        ...current,
+        saving: false,
+        error: error.message || "Owner 密碼重設失敗"
+      }));
     }
   }
 
@@ -854,7 +969,8 @@ function SaasAdminPage() {
           handleOpenSettings,
           handleSelectDetail,
           canImpersonate ? openImpersonationModal : null,
-          handleOpenAuditLogs
+          handleOpenAuditLogs,
+          canResetOwnerPassword ? openOwnerPasswordResetModal : null
         )
     }
   ];
@@ -1050,7 +1166,8 @@ function SaasAdminPage() {
               handleOpenSettings,
               handleSelectDetail,
               canImpersonate ? openImpersonationModal : null,
-              handleOpenAuditLogs
+              handleOpenAuditLogs,
+              canResetOwnerPassword ? openOwnerPasswordResetModal : null
             )
           }
         />
@@ -1074,7 +1191,8 @@ function SaasAdminPage() {
               handleOpenSettings,
               handleSelectDetail,
               canImpersonate ? openImpersonationModal : null,
-              handleOpenAuditLogs
+              handleOpenAuditLogs,
+              canResetOwnerPassword ? openOwnerPasswordResetModal : null
             )}
           />
           <div className="admin-summary-grid">
@@ -1368,6 +1486,89 @@ function SaasAdminPage() {
           </article>
         </section>
       </div>
+
+      {ownerPasswordResetState.open ? (
+        <div className="admin-modal-backdrop">
+          <section className="admin-modal">
+            <div className="admin-modal-header">
+              <h2>Owner 密碼重設</h2>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={closeOwnerPasswordResetModal}
+                disabled={ownerPasswordResetState.saving}
+              >
+                關閉
+              </button>
+            </div>
+            <div className="admin-modal-body">
+              <div className="admin-summary-grid">
+                <article className="admin-summary-card">
+                  <div className="admin-summary-label">目標店家</div>
+                  <div className="admin-summary-value admin-summary-value-small">
+                    {ownerPasswordResetState.store?.name || ownerPasswordResetState.store?.code || "-"}
+                  </div>
+                  <div className="muted-text">ID：{ownerPasswordResetState.store?.id || "-"}</div>
+                </article>
+                <article className="admin-summary-card">
+                  <div className="admin-summary-label">Owner 帳號</div>
+                  <div className="admin-summary-value admin-summary-value-small">
+                    {ownerPasswordResetState.store?.owner?.username || "-"}
+                  </div>
+                  <div className="muted-text">{ownerPasswordResetState.store?.owner?.displayName || "-"}</div>
+                </article>
+              </div>
+
+              <p className="admin-modal-copy">
+                請輸入新的 owner 密碼。系統只會更新 owner 登入密碼，不會顯示或保存明文密碼。
+              </p>
+
+              {ownerPasswordResetState.error ? <div className="error-banner">{ownerPasswordResetState.error}</div> : null}
+              {ownerPasswordResetState.success ? <div className="platform-store-settings-success">{ownerPasswordResetState.success}</div> : null}
+
+              <form className="form-grid" onSubmit={handleOwnerPasswordResetSubmit}>
+                <label className="form-field">
+                  <span>新密碼</span>
+                  <input
+                    name="newPassword"
+                    type="password"
+                    value={ownerPasswordResetState.newPassword}
+                    onChange={handleOwnerPasswordResetChange}
+                    placeholder="至少 8 個字元"
+                    disabled={ownerPasswordResetState.saving}
+                    autoComplete="new-password"
+                  />
+                </label>
+                <label className="form-field">
+                  <span>再次輸入新密碼</span>
+                  <input
+                    name="confirmPassword"
+                    type="password"
+                    value={ownerPasswordResetState.confirmPassword}
+                    onChange={handleOwnerPasswordResetChange}
+                    placeholder="請再次輸入新密碼"
+                    disabled={ownerPasswordResetState.saving}
+                    autoComplete="new-password"
+                  />
+                </label>
+                <div className="compact-actions">
+                  <button type="submit" className="primary-button" disabled={ownerPasswordResetState.saving}>
+                    {ownerPasswordResetState.saving ? "重設中..." : "確認重設"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={closeOwnerPasswordResetModal}
+                    disabled={ownerPasswordResetState.saving}
+                  >
+                    取消
+                  </button>
+                </div>
+              </form>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {impersonationState.open ? (
         <div className="admin-modal-backdrop">
