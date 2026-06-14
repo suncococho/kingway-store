@@ -6,7 +6,12 @@ const { validateTelegramConfig } = require("./services/telegramService");
 async function start() {
   await runSchemaGuard();
   ensureStorageDirectories();
-  await ensureV2Schema();
+  if (config.runSchemaBootstrap) {
+    console.warn("[SchemaBootstrap] Schema bootstrap enabled. Startup may run DDL/data backfill checks.");
+    await ensureV2Schema();
+  } else {
+    console.log("[SchemaBootstrap] Schema bootstrap skipped. Set RUN_SCHEMA_BOOTSTRAP=true to run explicit schema bootstrap.");
+  }
   validateTelegramConfig();
   const created = await ensureDefaultAdmin();
   if (created) {

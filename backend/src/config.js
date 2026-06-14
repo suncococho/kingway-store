@@ -49,6 +49,7 @@ function parseBoolean(value, fallback = false) {
 module.exports = {
   nodeEnv: process.env.NODE_ENV || "development",
   appEnv: process.env.APP_ENV || "",
+  runSchemaBootstrap: parseBoolean(process.env.RUN_SCHEMA_BOOTSTRAP, false),
   productImportApplyEnabled: parseBoolean(process.env.PRODUCT_IMPORT_APPLY_ENABLED, false),
   productImportAdminOverrideEnabled: parseBoolean(process.env.PRODUCT_IMPORT_ADMIN_OVERRIDE_ENABLED, false),
   port: Number(process.env.PORT || 3000),
