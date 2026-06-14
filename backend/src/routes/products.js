@@ -322,6 +322,14 @@ function parseImportNumber(value) {
   return Number.isFinite(parsed) ? parsed : NaN;
 }
 
+function parseImportNumberOrDefault(value, defaultValue = 0) {
+  const normalized = normalizeImportString(value).trim();
+  if (!normalized) {
+    return defaultValue;
+  }
+  return parseImportNumber(normalized);
+}
+
 function parseImportBooleanAsNumber(value) {
   const normalized = normalizeImportString(value).trim().toLowerCase();
   if (!normalized) {
@@ -335,6 +343,29 @@ function parseImportBooleanAsNumber(value) {
   }
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isSkippableProductImportRow(rowData) {
+  const values = Object.values(rowData).map((value) => String(value || "").trim());
+  const joined = values.join(" ");
+  const sku = String(rowData.sku || "").trim();
+  const name = String(rowData.name || "").trim();
+  const description = String(rowData.description || "").trim();
+
+  if (/商品編號|商品名稱|分類代碼|售價|庫存數量|備註/.test(joined)) {
+    return true;
+  }
+
+  if (/^示例[:：]|^範例[:：]/.test(description)) {
+    return true;
+  }
+
+  const legacyTemplateExamples = new Set(["C-EB-001-S1", "A-AC-002-S1", "T-TI-003-S1"]);
+  if (legacyTemplateExamples.has(sku) && /CityRun|變速組件維修配件|公路輪胎/.test(name)) {
+    return true;
+  }
+
+  return false;
 }
 
 async function readProductImportRows(buffer) {
@@ -395,6 +426,10 @@ async function readProductImportRows(buffer) {
       continue;
     }
 
+    if (isSkippableProductImportRow(rowData)) {
+      continue;
+    }
+
     rows.push({
       rowNumber,
       data: rowData
@@ -406,13 +441,14 @@ async function readProductImportRows(buffer) {
 
 function normalizeImportError(result, row, sku, message, name = "") {
   result.skipCount += 1;
-  result.errors.push({ row, sku, message });
+  const rowMessage = `第 ${row} 列 ${message}`;
+  result.errors.push({ row, sku, message: rowMessage });
   const payload = {
     row,
     sku,
     name,
     action: "skip",
-    message
+    message: rowMessage
   };
   result.preview.push(payload);
 }
@@ -477,9 +513,9 @@ async function analyzeProductImportRows(storeId, buffer) {
     const name = String(data.name || "").trim();
     const categoryCode = normalizeProductCategoryCode(data.categoryCode || "");
     const categoryName = String(data.categoryName || "").trim();
-    const price = parseImportNumber(data.price);
-    const stock = parseImportNumber(data.stock);
-    const reorderLevel = parseImportNumber(data.reorderLevel);
+    const price = parseImportNumberOrDefault(data.price, 0);
+    const stock = parseImportNumberOrDefault(data.stock, 0);
+    const reorderLevel = parseImportNumberOrDefault(data.reorderLevel, 0);
     const isActive = parseImportBooleanAsNumber(data.isActive);
     const costPrice = Number.isFinite(parseImportNumber(data.costPrice)) ? parseImportNumber(data.costPrice) : 0;
     const categoryByCodeMatch = categoryCode ? categoryByCode.get(categoryCode) : null;
@@ -1087,29 +1123,22 @@ router.get("/import-template", async (req, res, next) => {
       { header: "categoryCode", key: "categoryCode", width: 16 },
       { header: "price", key: "price", width: 12 },
       { header: "stock", key: "stock", width: 10 },
+      { header: "reorderLevel", key: "reorderLevel", width: 14 },
       { header: "description", key: "description", width: 36 }
     ];
     sheet.getRow(1).font = { bold: true };
-    sheet.getRow(2).values = {
-      sku: "商品編號（必填）",
-      name: "商品名稱（必填）",
-      categoryCode: "分類代碼（請參考分類表）",
-      price: "售價（數字）",
-      stock: "庫存數量（數字）",
-      description: "備註（選填）"
-    };
-    sheet.getRow(2).font = { italic: true };
-    sheet.getRow(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF5F7FA" } };
-    for (const column of ["A", "B", "C", "D", "E", "F"]) {
-      sheet.getCell(`${column}2`).alignment = { vertical: "middle", horizontal: "left", wrapText: true };
-    }
-    sheet.addRows([
+    sheet.getColumn("D").numFmt = "#,##0";
+    sheet.getColumn("E").numFmt = "#,##0";
+    sheet.getColumn("F").numFmt = "#,##0";
+
+    const exampleRows = [
       {
         sku: "C-EB-001-S1",
         name: "CityRun 電動自行車",
         categoryCode: resolveTemplateCategoryCode("EB", templateCodeHint),
         price: 25800,
         stock: 12,
+        reorderLevel: 0,
         description: "示例：電動自行車主款，可直接上架"
       },
       {
@@ -1118,6 +1147,7 @@ router.get("/import-template", async (req, res, next) => {
         categoryCode: resolveTemplateCategoryCode("配件", templateCodeHint),
         price: 1250,
         stock: 30,
+        reorderLevel: 5,
         description: "示例：配件類商品，建議啟用快速補貨管理"
       },
       {
@@ -1126,9 +1156,10 @@ router.get("/import-template", async (req, res, next) => {
         categoryCode: resolveTemplateCategoryCode("輪胎", templateCodeHint),
         price: 980,
         stock: 18,
+        reorderLevel: 3,
         description: "示例：耗材類，請維持庫存更新"
       }
-    ]);
+    ];
 
     const categorySheet = workbook.addWorksheet("門市分類清單");
     categorySheet.columns = [
@@ -1147,6 +1178,22 @@ router.get("/import-template", async (req, res, next) => {
       });
     }
 
+    const exampleSheet = workbook.addWorksheet("範例");
+    exampleSheet.columns = [
+      { header: "sku", key: "sku", width: 20 },
+      { header: "name", key: "name", width: 30 },
+      { header: "categoryCode", key: "categoryCode", width: 16 },
+      { header: "price", key: "price", width: 12 },
+      { header: "stock", key: "stock", width: 10 },
+      { header: "reorderLevel", key: "reorderLevel", width: 14 },
+      { header: "description", key: "description", width: 36 }
+    ];
+    exampleSheet.getRow(1).font = { bold: true };
+    exampleSheet.addRows(exampleRows);
+    exampleSheet.getColumn("D").numFmt = "#,##0";
+    exampleSheet.getColumn("E").numFmt = "#,##0";
+    exampleSheet.getColumn("F").numFmt = "#,##0";
+
     const helpSheet = workbook.addWorksheet("匯入說明");
     helpSheet.columns = [
       { header: "項目", key: "item", width: 22 },
@@ -1154,11 +1201,15 @@ router.get("/import-template", async (req, res, next) => {
     ];
     helpSheet.getRow(1).font = { bold: true };
     helpSheet.addRows([
-      { item: "使用步驟", content: "1. 下載範本後，請先依欄位格式填寫資料。\n2. 欄位順序請勿任意調整，請保留第 1 列是欄位名稱。\n3. 儲存為 .xlsx 再回到商品管理頁上傳。\n4. 上傳後先用預覽確認資料無誤再執行套用。" },
-      { item: "必填欄位", content: "sku（商品編號）、name（商品名稱）、categoryCode（分類代碼）、price（售價）、stock（庫存數量）為必填。" },
-      { item: "常見錯誤", content: "常見欄位錯誤包含：售價/庫存非數字、欄位名稱拼字錯誤、欄位位移或刪除。\n遇到錯誤會在預覽中顯示失敗列與原因。" },
+      { item: "使用步驟", content: "1. 第一個工作表只保留第 1 列欄位名稱，請從第 2 列開始填寫商品資料。\n2. 欄位順序請勿任意調整。\n3. 儲存為 .xlsx 再回到商品管理頁上傳。\n4. 上傳後先用預覽確認資料無誤再執行套用。" },
+      { item: "必填欄位", content: "sku（商品編號）、name（商品名稱）為必填。" },
+      { item: "分類欄位", content: "categoryCode 請參考「門市分類清單」。不可使用不存在的代碼。" },
+      { item: "數字欄位", content: "price、stock、reorderLevel 請填數字。price 可空白，系統會視為 0；stock 可空白，系統會視為 0；reorderLevel 可空白，系統會視為 0。可輸入 25800 或 25,800，請勿輸入 NT$。" },
+      { item: "選填欄位", content: "description 為選填備註。" },
+      { item: "常見錯誤", content: "常見欄位錯誤包含：售價/庫存/安全庫存非數字、欄位名稱拼字錯誤、欄位位移或刪除。\n遇到錯誤會在預覽中顯示失敗列與原因。" },
       { item: "SKU 重複說明", content: "同一檔案內若有重複 SKU，第二筆會被視為錯誤並略過。\n請先修正後再重新預覽上傳。" },
-      { item: "分類錯誤說明", content: "請使用「門市分類清單」中的 categoryCode，不可使用不存在的代碼。\n若分類代碼不在清單中，該列會被略過。分類名稱欄位不建議直接輸入到範本。" }
+      { item: "分類錯誤說明", content: "若分類代碼不在「門市分類清單」中，該列會被略過。分類名稱欄位不建議直接輸入到範本。" },
+      { item: "範例資料", content: "範例資料已移到「範例」工作表，請不要把範例工作表當作正式匯入資料。" }
     ]);
     helpSheet.getCell("A1").alignment = { vertical: "middle", horizontal: "center" };
     helpSheet.getCell("A1").alignment = { vertical: "middle", horizontal: "center" };
@@ -1175,8 +1226,6 @@ router.get("/import-template", async (req, res, next) => {
     const filename = `KINGWAY_product_import_template_store_${storeId}.xlsx`;
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    sheet.getColumn("D").numFmt = "#,##0";
-    sheet.getColumn("E").numFmt = "#,##0";
     res.send(buffer);
   } catch (error) {
     return next(error);
