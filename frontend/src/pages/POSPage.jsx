@@ -5,8 +5,10 @@ import ActionModal from "../components/ActionModal";
 import DetailModal from "../components/DetailModal";
 import FilterBar from "../components/FilterBar";
 import PageHeader from "../components/PageHeader";
+import ProcessingOverlay from "../components/ProcessingOverlay";
 import ProductImage from "../components/ProductImage";
 import StatusBadge from "../components/StatusBadge";
+import { useProcessingGuard } from "../hooks/useProcessingGuard";
 import { useStoreFeatures } from "../hooks/useStoreFeatures";
 import { apiRequest } from "../lib/api";
 import { getCategoryLabel } from "../lib/display";
@@ -61,6 +63,13 @@ function isPhoneRequiredCustomerType(value) {
 
 function isOfflineCustomerType(value) {
   return normalizeCustomerType(value) !== "LINE";
+}
+
+function createClientRequestId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
 function createCartDraft(index = 1, overrides = {}) {
@@ -152,6 +161,7 @@ function loadInitialCartState() {
 function POSPage() {
   const navigate = useNavigate();
   const { features, loading: featuresLoading } = useStoreFeatures();
+  const { isProcessing, pendingAction, runWithProcessing } = useProcessingGuard();
   const posEnabled = features.pos_enabled !== false;
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -177,6 +187,7 @@ function POSPage() {
   const customerNameRef = useRef(null);
   const notesRef = useRef(null);
   const checkoutRef = useRef(null);
+  const orderCreateRequestIdRef = useRef("");
 
   useEffect(() => {
     async function loadProducts() {
@@ -562,52 +573,68 @@ function POSPage() {
       return;
     }
 
-    try {
-      const data = await apiRequest("/orders", {
-        method: "POST",
-        body: JSON.stringify({
-          customer_name: activeCart.customerName,
-          customer_phone: activeCustomerType === "OFFLINE_NO_PHONE" ? null : activeCart.customerPhone,
-          customerId: activeCart.customerId || undefined,
-          customerType: activeCustomerType,
-          paymentMethod: activeCart.paymentMethod,
-          isReservationOrder: Boolean(activeCart.isReservationOrder),
-          depositAmount: activeCart.depositAmount === "" ? 0 : Number(activeCart.depositAmount || 0),
-          unpaidBalance: activeCart.unpaidBalance === "" ? undefined : Number(activeCart.unpaidBalance || 0),
-          finalPaymentStatus: activeCart.finalPaymentStatus || "PAID",
-          couponCode: activeCart.couponCode || "",
-          couponAmount: Number(activeCart.couponAmount || 0),
-          notes: activeCart.notes,
-          items: activeCart.items.map((item) => ({
-            product_id: item.id,
-            qty: item.qty
-          }))
-        })
-      });
+    await runWithProcessing(async () => {
+      if (!orderCreateRequestIdRef.current) {
+        orderCreateRequestIdRef.current = createClientRequestId();
+      }
 
-      updateActiveCart((cart) => ({
-        ...cart,
-        items: [],
-        customerType: "LINE",
-        customerName: "",
-        customerPhone: "",
-        customerId: "",
-        notes: "",
-        customAmount: "",
-        shippingFee: "",
-        couponCode: "",
-        couponAmount: "",
-        paymentMethod: "CASH",
-        isReservationOrder: false,
-        depositAmount: "",
-        unpaidBalance: "",
-        finalPaymentStatus: "PAID"
-      }));
-      setSuccessModal(data);
-      setPosStep(1);
-    } catch (requestError) {
-      alert(requestError.message || "建立訂單失敗");
-    }
+      try {
+        const data = await apiRequest("/orders", {
+          method: "POST",
+          actionKey: `pos-order-create-${activeCart.id}`,
+          processingMessage: "處理中",
+          processingDescription: "正在建立訂單，請勿重複點擊。",
+          body: JSON.stringify({
+            orderCreateRequestId: orderCreateRequestIdRef.current,
+            customer_name: activeCart.customerName,
+            customer_phone: activeCustomerType === "OFFLINE_NO_PHONE" ? null : activeCart.customerPhone,
+            customerId: activeCart.customerId || undefined,
+            customerType: activeCustomerType,
+            paymentMethod: activeCart.paymentMethod,
+            isReservationOrder: Boolean(activeCart.isReservationOrder),
+            depositAmount: activeCart.depositAmount === "" ? 0 : Number(activeCart.depositAmount || 0),
+            unpaidBalance: activeCart.unpaidBalance === "" ? undefined : Number(activeCart.unpaidBalance || 0),
+            finalPaymentStatus: activeCart.finalPaymentStatus || "PAID",
+            couponCode: activeCart.couponCode || "",
+            couponAmount: Number(activeCart.couponAmount || 0),
+            notes: activeCart.notes,
+            items: activeCart.items.map((item) => ({
+              product_id: item.id,
+              qty: item.qty
+            }))
+          })
+        });
+
+        updateActiveCart((cart) => ({
+          ...cart,
+          items: [],
+          customerType: "LINE",
+          customerName: "",
+          customerPhone: "",
+          customerId: "",
+          notes: "",
+          customAmount: "",
+          shippingFee: "",
+          couponCode: "",
+          couponAmount: "",
+          paymentMethod: "CASH",
+          isReservationOrder: false,
+          depositAmount: "",
+          unpaidBalance: "",
+          finalPaymentStatus: "PAID"
+        }));
+        orderCreateRequestIdRef.current = "";
+        setSuccessModal(data);
+        setPosStep(1);
+      } catch (requestError) {
+        orderCreateRequestIdRef.current = "";
+        alert(requestError.message || "建立訂單失敗");
+      }
+    }, {
+      id: "pos-create-order",
+      label: "處理中",
+      description: "正在建立訂單，請勿重複點擊。"
+    });
   }
 
   const subtotalPrice = (activeCart?.items || []).reduce(
@@ -626,6 +653,7 @@ function POSPage() {
     { number: 3, title: "付款", tone: posStep === 3 ? "blue" : posStep > 3 ? "green" : "yellow" },
     { number: 4, title: "確認", tone: posStep === 4 ? "blue" : "yellow" }
   ];
+  const isOrderSubmitting = pendingAction?.id === "pos-create-order";
 
   function showStepRequired(stepName) {
     setWarningModal({
@@ -1033,8 +1061,8 @@ function POSPage() {
           </button>
           <div className="wizard-actions">
             <button type="button" className="secondary-button" onClick={() => setPosStep(3)}>上一步</button>
-            <button ref={checkoutRef} type="button" className="primary-button inline-submit" onClick={submitOrder}>
-              {activeCart?.finalPaymentStatus === "PAID" ? "完成付款" : "建立訂單"}
+            <button ref={checkoutRef} type="button" className="primary-button inline-submit" onClick={submitOrder} disabled={isProcessing}>
+              {isOrderSubmitting ? "建立中..." : activeCart?.finalPaymentStatus === "PAID" ? "完成付款" : "建立訂單"}
             </button>
           </div>
         </section>
@@ -1068,6 +1096,11 @@ function POSPage() {
 
   return (
     <div>
+      <ProcessingOverlay
+        active={isProcessing}
+        message={pendingAction?.label || "處理中"}
+        description={pendingAction?.description || "系統正在處理，請勿重複點擊。"}
+      />
       <PageHeader
         title="POS"
         description="Step 1 到 Step 4 一次只處理一件事，依序完成商品、客戶、付款與確認。"

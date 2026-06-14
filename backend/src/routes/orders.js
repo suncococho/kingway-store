@@ -36,6 +36,93 @@ const router = express.Router();
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER", "REPAIR"]));
 const requireOrderManagementFeature = requireStoreFeature("orders_enabled");
 const requirePosFeature = requireStoreFeature("pos_enabled");
+const ORDER_CREATE_GUARD_TTL_MS = 60 * 1000;
+const recentOrderCreateRequests = new Map();
+
+function pruneOrderCreateGuards(now = Date.now()) {
+  for (const [key, entry] of recentOrderCreateRequests.entries()) {
+    if (!entry || entry.expiresAt <= now) {
+      recentOrderCreateRequests.delete(key);
+    }
+  }
+}
+
+function normalizeOrderItemsForFingerprint(items) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items
+    .map((item) => ({
+      productId: Number(item.productId || item.product_id || 0),
+      qty: Number(item.quantity || item.qty || 0),
+      unitPrice: item.unitPrice === undefined ? null : Number(item.unitPrice)
+    }))
+    .sort((a, b) => a.productId - b.productId || a.qty - b.qty || Number(a.unitPrice || 0) - Number(b.unitPrice || 0));
+}
+
+function getOrderCreateGuardKey(storeId, body = {}) {
+  const requestId = String(body.orderCreateRequestId || body.requestId || "").trim();
+  if (requestId) {
+    return `store:${storeId}:request:${requestId.slice(0, 120)}`;
+  }
+
+  const fingerprint = {
+    customerId: body.customerId || null,
+    customerName: body.customer_name || body.customerName || "",
+    customerPhone: body.customer_phone || body.customerPhone || "",
+    customerType: body.customer_type || body.customerType || "",
+    paymentMethod: body.paymentMethod || "",
+    depositAmount: body.depositAmount || 0,
+    unpaidBalance: body.unpaidBalance || 0,
+    finalPaymentStatus: body.finalPaymentStatus || "",
+    couponCode: body.couponCode || "",
+    couponAmount: body.couponAmount || 0,
+    items: normalizeOrderItemsForFingerprint(body.items)
+  };
+  return `store:${storeId}:fingerprint:${JSON.stringify(fingerprint)}`;
+}
+
+function startOrderCreateGuard(storeId, body = {}) {
+  const now = Date.now();
+  pruneOrderCreateGuards(now);
+  const key = getOrderCreateGuardKey(storeId, body);
+  const existing = recentOrderCreateRequests.get(key);
+
+  if (existing && existing.expiresAt > now) {
+    return {
+      duplicate: true,
+      response: existing.status === "completed" ? existing.response : null
+    };
+  }
+
+  const entry = {
+    status: "processing",
+    response: null,
+    expiresAt: now + ORDER_CREATE_GUARD_TTL_MS
+  };
+  recentOrderCreateRequests.set(key, entry);
+  return { duplicate: false, key, entry };
+}
+
+function completeOrderCreateGuard(guard, response) {
+  if (!guard?.key || !guard.entry) {
+    return;
+  }
+
+  guard.entry.status = "completed";
+  guard.entry.response = response;
+  guard.entry.expiresAt = Date.now() + ORDER_CREATE_GUARD_TTL_MS;
+}
+
+function clearOrderCreateGuard(guard) {
+  if (guard?.entry?.status === "completed") {
+    return;
+  }
+  if (guard?.key) {
+    recentOrderCreateRequests.delete(guard.key);
+  }
+}
 
 function normalizeCustomerType(value) {
   const normalized = String(value || "").trim().toUpperCase();
@@ -548,6 +635,7 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
 });
 
 router.post("/", requirePosFeature, async (req, res, next) => {
+  let orderCreateGuard = null;
   try {
     const storeId = req.storeId;
     const {
@@ -572,6 +660,19 @@ router.post("/", requirePosFeature, async (req, res, next) => {
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "必須提供訂單品項" });
+    }
+
+    orderCreateGuard = startOrderCreateGuard(storeId, req.body || {});
+    if (orderCreateGuard.duplicate) {
+      if (orderCreateGuard.response) {
+        return res.status(200).json({
+          ...orderCreateGuard.response,
+          duplicate: true,
+          message: "訂單正在建立中，請勿重複送出。"
+        });
+      }
+
+      return res.status(409).json({ message: "訂單正在建立中，請勿重複送出。" });
     }
 
     const order = await withTransaction(async (connection) => {
@@ -853,6 +954,7 @@ router.post("/", requirePosFeature, async (req, res, next) => {
         items: normalizedItems
       };
     });
+    completeOrderCreateGuard(orderCreateGuard, order);
 
     await logKpi(req.user.id, "ORDER_CREATED", "ORDER", order.id, 2);
     await logWorkflowEvent("order_created", "ORDER", order.id, {
@@ -879,6 +981,7 @@ router.post("/", requirePosFeature, async (req, res, next) => {
 
     return res.status(201).json(order);
   } catch (error) {
+    clearOrderCreateGuard(orderCreateGuard);
     return next(error);
   }
 });

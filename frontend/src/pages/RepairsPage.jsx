@@ -727,7 +727,7 @@ function RepairsPage() {
         message={warningModal?.message}
         onConfirm={() => setWarningModal(null)}
       />
-      <ProcessingOverlay active={isProcessing} message={pendingAction?.label || "處理中，請稍候..."} />
+      <ProcessingOverlay active={isProcessing} message={pendingAction?.label || "處理中"} description={pendingAction?.description || "系統正在處理，請勿重複點擊。"} />
     </div>
   );
 }

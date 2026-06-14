@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import GlobalProcessingOverlay from "./components/GlobalProcessingOverlay";
 import ProtectedLayout from "./components/ProtectedLayout";
 import { getStoredToken, getStoredUser } from "./lib/auth";
 import { getDefaultRouteForUser } from "./lib/permissions";
@@ -48,6 +49,8 @@ function App() {
   const defaultProtectedRoute = getDefaultRouteForUser(user);
 
   return (
+    <>
+    <GlobalProcessingOverlay />
     <Routes>
       <Route path="/purchase-confirm/manual" element={<PurchaseConfirmPublicPage />} />
       <Route path="/purchase-confirm/:token" element={<PurchaseConfirmPublicPage />} />
@@ -109,6 +112,7 @@ function App() {
         element={<Navigate to={token ? defaultProtectedRoute : "/login"} replace />}
       />
     </Routes>
+    </>
   );
 }
 

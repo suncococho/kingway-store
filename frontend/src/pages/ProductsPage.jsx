@@ -7,6 +7,7 @@ import DetailModal from "../components/DetailModal";
 import FilterBar from "../components/FilterBar";
 import FilterChips from "../components/FilterChips";
 import PageHeader from "../components/PageHeader";
+import ProcessingOverlay from "../components/ProcessingOverlay";
 import ProductImage from "../components/ProductImage";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
@@ -1020,6 +1021,11 @@ function ProductsPage() {
 
   return (
     <div>
+      <ProcessingOverlay
+        active={importLoading || importApplyLoading}
+        message="處理中"
+        description="系統正在處理，請勿重複點擊。"
+      />
       <PageHeader title="商品管理" description="商品列表、設定與圖片管理統一使用 POS 同一套資訊架構與元件語言。" />
       <SectionTabs items={sectionItems} value={section} onChange={setSection} label="商品子功能" />
       {searchMode && section === "LIST" ? (

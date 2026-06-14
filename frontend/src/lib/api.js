@@ -1,6 +1,59 @@
 import { clearAuth, getStoredToken } from "./auth";
 
 export const API_BASE_URL = "/api";
+export const WRITE_PROCESSING_EVENT = "kingway:write-processing";
+
+const writeLocks = new Map();
+let activeWriteCount = 0;
+
+function isMutatingMethod(method) {
+  return ["POST", "PUT", "PATCH", "DELETE"].includes(String(method || "GET").toUpperCase());
+}
+
+function getWriteLockKey(path, method, options) {
+  const explicitKey = options.actionKey || options.writeLockKey;
+  if (explicitKey) {
+    return String(explicitKey);
+  }
+  const body = typeof options.body === "string" ? options.body : "";
+  return `${String(method || "GET").toUpperCase()}:${path}:${body}`;
+}
+
+function emitWriteProcessing(active, meta = {}) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(
+    new CustomEvent(WRITE_PROCESSING_EVENT, {
+      detail: {
+        active,
+        message: meta.message || "處理中",
+        description: meta.description || "系統正在處理，請勿重複點擊。"
+      }
+    })
+  );
+}
+
+function beginWriteProcessing(meta = {}) {
+  if (
+    typeof window !== "undefined" &&
+    Number(window.__kingwayLocalProcessingCount || 0) > 0 &&
+    !meta.forceGlobalProcessing
+  ) {
+    return () => {};
+  }
+
+  activeWriteCount += 1;
+  emitWriteProcessing(true, meta);
+
+  return () => {
+    activeWriteCount = Math.max(0, activeWriteCount - 1);
+    if (activeWriteCount === 0) {
+      emitWriteProcessing(false);
+    }
+  };
+}
 
 async function parseJson(response) {
   const text = await response.text();
@@ -16,37 +69,103 @@ async function parseJson(response) {
 }
 
 export async function apiRequest(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  const shouldLockWrite = isMutatingMethod(method);
+  const lockKey = shouldLockWrite ? getWriteLockKey(path, method, options) : null;
+
+  if (lockKey && writeLocks.has(lockKey)) {
+    return writeLocks.get(lockKey);
+  }
+
+  const releaseWriteProcessing = shouldLockWrite
+    ? beginWriteProcessing({
+        message: options.processingMessage || "處理中",
+        description: options.processingDescription || "系統正在處理，請勿重複點擊。",
+        forceGlobalProcessing: Boolean(options.forceGlobalProcessing)
+      })
+    : null;
+
+  const requestPromise = executeApiRequest(path, options, method, releaseWriteProcessing);
+
+  if (lockKey) {
+    writeLocks.set(lockKey, requestPromise);
+    requestPromise.finally(() => {
+      if (writeLocks.get(lockKey) === requestPromise) {
+        writeLocks.delete(lockKey);
+      }
+    }).catch(() => {});
+  }
+
+  return requestPromise;
+}
+
+async function executeApiRequest(path, options = {}, method = "GET", releaseWriteProcessing = null) {
   const token = getStoredToken();
+  const {
+    actionKey,
+    writeLockKey,
+    processingMessage,
+    processingDescription,
+    forceGlobalProcessing,
+    ...fetchOptions
+  } = options;
   const headers = {
     "Content-Type": "application/json",
-    ...(options.headers || {})
+    ...(fetchOptions.headers || {})
   };
 
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers
-  });
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...fetchOptions,
+      method,
+      headers
+    });
+    const data = await parseJson(response);
+    if (!response.ok) {
+      if (response.status === 401) {
+        clearAuth();
+      }
 
-  const data = await parseJson(response);
-  if (!response.ok) {
-    if (response.status === 401) {
-      clearAuth();
+      const error = new Error(data.message || "Request failed");
+      error.status = response.status;
+      error.data = data;
+      throw error;
     }
 
-    const error = new Error(data.message || "Request failed");
-    error.status = response.status;
-    error.data = data;
-    throw error;
+    return data;
+  } finally {
+    if (releaseWriteProcessing) {
+      releaseWriteProcessing();
+    }
   }
-
-  return data;
 }
 
 export async function apiUploadImage(path, file) {
+  const lockKey = `POST:${path}:${file?.name || "image"}:${file?.size || 0}`;
+  if (writeLocks.has(lockKey)) {
+    return writeLocks.get(lockKey);
+  }
+
+  const releaseWriteProcessing = beginWriteProcessing({
+    message: "處理中",
+    description: "系統正在處理，請勿重複點擊。"
+  });
+  const uploadPromise = executeApiUploadImage(path, file, releaseWriteProcessing);
+  writeLocks.set(lockKey, uploadPromise);
+  uploadPromise.finally(() => {
+    if (writeLocks.get(lockKey) === uploadPromise) {
+      writeLocks.delete(lockKey);
+    }
+  }).catch(() => {});
+
+  return uploadPromise;
+}
+
+async function executeApiUploadImage(path, file, releaseWriteProcessing) {
   const token = getStoredToken();
   const headers = {
     "Content-Type": file.type || "application/octet-stream",
@@ -57,23 +176,26 @@ export async function apiUploadImage(path, file) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: "POST",
-    headers,
-    body: file
-  });
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers,
+      body: file
+    });
+    const data = await parseJson(response);
+    if (!response.ok) {
+      if (response.status === 401) {
+        clearAuth();
+      }
 
-  const data = await parseJson(response);
-  if (!response.ok) {
-    if (response.status === 401) {
-      clearAuth();
+      const error = new Error(data.message || "圖片上傳失敗");
+      error.status = response.status;
+      error.data = data;
+      throw error;
     }
 
-    const error = new Error(data.message || "圖片上傳失敗");
-    error.status = response.status;
-    error.data = data;
-    throw error;
+    return data;
+  } finally {
+    releaseWriteProcessing();
   }
-
-  return data;
 }

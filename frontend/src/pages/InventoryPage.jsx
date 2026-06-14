@@ -6,6 +6,7 @@ import DetailModal from "../components/DetailModal";
 import FilterBar from "../components/FilterBar";
 import FilterChips from "../components/FilterChips";
 import PageHeader from "../components/PageHeader";
+import ProcessingOverlay from "../components/ProcessingOverlay";
 import ProductImage from "../components/ProductImage";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
@@ -485,6 +486,11 @@ function InventoryPage() {
 
   return (
     <div>
+      <ProcessingOverlay
+        active={importLoading}
+        message="處理中"
+        description="系統正在處理，請勿重複點擊。"
+      />
       <PageHeader title="庫存管理" description="庫存總覽、異動與供應商流程統一使用 POS 同一套視覺語言與資訊架構。" />
       {featureError ? <div className="empty-state">{featureError}</div> : null}
       <SectionTabs

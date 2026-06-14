@@ -1,7 +1,7 @@
 function ProcessingOverlay({
   active,
-  message = "處理中，請稍候...",
-  description = "請勿關閉頁面或重複點擊"
+  message = "處理中",
+  description = "系統正在處理，請勿重複點擊。"
 }) {
   if (!active) {
     return null;

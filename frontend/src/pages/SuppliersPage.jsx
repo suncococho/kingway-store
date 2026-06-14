@@ -658,7 +658,7 @@ export default function SuppliersPage() {
           {!monthly.length ? <div className="empty-state">目前沒有月結資料。</div> : null}
         </div>
       </section>
-      <ProcessingOverlay active={isProcessing} message={pendingAction?.label || "處理中，請稍候..."} />
+      <ProcessingOverlay active={isProcessing} message={pendingAction?.label || "處理中"} description={pendingAction?.description || "系統正在處理，請勿重複點擊。"} />
     </div>
   );
 }
