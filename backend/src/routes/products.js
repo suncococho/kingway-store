@@ -617,6 +617,7 @@ async function runProductImportDryRun(storeId, buffer) {
     createdCount: result.createCount,
     updatedCount: result.updateCount,
     skippedCount: result.skipCount,
+    errorCount: result.errors.length,
     errors: result.errors,
     rows: result.rows,
     preview: result.preview
@@ -634,6 +635,7 @@ async function runProductImportApply(storeId, buffer, req) {
     createdCount: result.createCount,
     updatedCount: result.updateCount,
     skippedCount: result.skipCount,
+    errorCount: result.errors.length,
     errors: result.errors,
     preview: result.preview,
     appliedRows: []
@@ -811,6 +813,7 @@ async function runProductImportApply(storeId, buffer, req) {
       updateCount: updatedCount,
       createdCount,
       updatedCount,
+      errorCount: 0,
       appliedRows
     };
   } catch (error) {
@@ -828,11 +831,20 @@ async function runProductImportApply(storeId, buffer, req) {
     return {
       ok: false,
       ...base,
+      errorCount: base.errors.length + 1,
       errors: [...base.errors, { row: "", sku: "", message: error.message || "套用失敗" }]
     };
   } finally {
     connection.release();
   }
+}
+
+function isProductImportApplyAllowedForStore(storeId) {
+  const normalizedStoreId = Number(storeId);
+  if (!Number.isSafeInteger(normalizedStoreId) || normalizedStoreId <= 0) {
+    return false;
+  }
+  return config.productImportApplyAllowedStoreIds.has(normalizedStoreId);
 }
 
 function getCategoryFromSku(sku, fallbackCategory = "OT") {
@@ -1261,19 +1273,24 @@ router.post(
         return res.status(400).json({ message: "adminOverride 參數僅支援 true 或 false" });
       }
 
-      if (
-        isApply &&
-        !config.productImportApplyEnabled &&
-        !(adminOverride && config.productImportAdminOverrideEnabled)
-      ) {
-        return res.status(403).json({ message: "目前尚未開放正式匯入功能" });
-      }
-
       if (!Buffer.isBuffer(req.body) || !req.body.length) {
         return res.status(400).json({ message: "請上傳 XLSX 檔案內容" });
       }
 
       const storeId = getRequestStoreId(req);
+      if (isApply) {
+        if (!isProductImportApplyAllowedForStore(storeId)) {
+          return res.status(403).json({ message: "目前門市尚未開放正式商品匯入" });
+        }
+
+        if (
+          !config.productImportApplyEnabled &&
+          !(adminOverride && config.productImportAdminOverrideEnabled)
+        ) {
+          return res.status(403).json({ message: "目前尚未開放正式匯入功能" });
+        }
+      }
+
       const result = isApply
         ? await runProductImportApply(storeId, req.body, req)
         : await runProductImportDryRun(storeId, req.body);

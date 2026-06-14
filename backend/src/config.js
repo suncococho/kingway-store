@@ -38,6 +38,14 @@ function parseCsvList(value) {
     .filter(Boolean);
 }
 
+function parseIntegerSet(value) {
+  return new Set(
+    parseCsvList(value)
+      .map((item) => Number(item))
+      .filter((item) => Number.isSafeInteger(item) && item > 0)
+  );
+}
+
 function parseBoolean(value, fallback = false) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (!normalized) {
@@ -52,6 +60,7 @@ module.exports = {
   runSchemaBootstrap: parseBoolean(process.env.RUN_SCHEMA_BOOTSTRAP, false),
   productImportApplyEnabled: parseBoolean(process.env.PRODUCT_IMPORT_APPLY_ENABLED, false),
   productImportAdminOverrideEnabled: parseBoolean(process.env.PRODUCT_IMPORT_ADMIN_OVERRIDE_ENABLED, false),
+  productImportApplyAllowedStoreIds: parseIntegerSet(process.env.PRODUCT_IMPORT_APPLY_ALLOWED_STORE_IDS),
   port: Number(process.env.PORT || 3000),
   jwtSecret: requireEnv("JWT_SECRET", "change-me-in-production"),
   frontendBaseUrl: resolveFrontendBaseUrl(),

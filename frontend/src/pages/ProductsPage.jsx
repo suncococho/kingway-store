@@ -18,7 +18,6 @@ import { PRODUCT_CATEGORY_LABELS, PRODUCT_CATEGORY_OPTIONS, deriveProductCategor
 
 const PRODUCT_EXPORT_FILENAME = "KINGWAY_product_export.xlsx";
 const PRODUCT_IMPORT_TEMPLATE_FILENAME = "KINGWAY_product_import_template.xlsx";
-const isProductImportApplyEnabled = String(import.meta?.env?.VITE_PRODUCT_IMPORT_APPLY_ENABLED || "").toLowerCase() === "true";
 
 function getStockTone(stock, reorderLevel) {
   if (Number(stock) <= 0) {
@@ -122,6 +121,7 @@ function ProductsPage() {
   const [importLoading, setImportLoading] = useState(false);
   const [importApplyLoading, setImportApplyLoading] = useState(false);
   const [importError, setImportError] = useState("");
+  const [importSuccess, setImportSuccess] = useState("");
   const [importResult, setImportResult] = useState(null);
   const [showImportPreviewDetails, setShowImportPreviewDetails] = useState(true);
   const [importApplyConfirm, setImportApplyConfirm] = useState(null);
@@ -736,6 +736,7 @@ function ProductsPage() {
 
     setImportFile(file);
     setImportError("");
+    setImportSuccess("");
     setImportResult(null);
     setImportApplyConfirm(null);
     setShowImportPreviewDetails(true);
@@ -826,6 +827,7 @@ function ProductsPage() {
     }
 
     setImportError("");
+    setImportSuccess("");
     setImportApplyLoading(true);
 
     try {
@@ -855,6 +857,7 @@ function ProductsPage() {
         setImportError(payload.errors?.[0]?.message || "匯入套用失敗");
         return;
       }
+      setImportSuccess("商品匯入完成");
       setImportFile(null);
       await refetch();
     } catch (error) {
@@ -1185,6 +1188,7 @@ function ProductsPage() {
             />
             {downloadError ? <div className="error-banner">{downloadError}</div> : null}
             {importError ? <div className="error-banner">{importError}</div> : null}
+            {importSuccess ? <div className="success-banner">{importSuccess}</div> : null}
             {!downloadError && downloadLoading ? <div className="loading-state">檔案下載中，請稍候...</div> : null}
             {importResult ? (
               <section className="admin-subpanel compact">
@@ -1232,18 +1236,14 @@ function ProductsPage() {
                 ) : null}
                 {importResult.dryRun ? (
                   <div className="admin-summary-actions">
-                    {isProductImportApplyEnabled ? (
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        disabled={importApplyLoading || Boolean(importLoading) || Boolean(downloadLoading) || importResult?.errors?.length > 0 || !getImportPreviewSummary().okToApply}
-                        onClick={openImportApplyConfirm}
-                      >
-                        {importApplyLoading ? "套用中..." : "確認套用匯入"}
-                      </button>
-                    ) : (
-                      <div className="admin-summary-note">目前僅提供匯入檢查，尚未開放正式匯入套用</div>
-                    )}
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={importApplyLoading || Boolean(importLoading) || Boolean(downloadLoading) || importResult?.errors?.length > 0 || !getImportPreviewSummary().okToApply}
+                      onClick={openImportApplyConfirm}
+                    >
+                      {importApplyLoading ? "匯入中..." : "正式匯入商品"}
+                    </button>
                   </div>
                 ) : null}
               </section>
@@ -1789,14 +1789,8 @@ function ProductsPage() {
         tone="danger"
         title="確認套用匯入"
         cancelText="取消"
-        confirmText="我已確認，執行套用"
-        message={
-          `請再次確認匯入套用內容：\n` +
-          `新增 ${importApplyConfirm?.createCount || 0} 筆\n` +
-          `更新 ${importApplyConfirm?.updateCount || 0} 筆\n` +
-          `錯誤 ${importApplyConfirm?.errorCount || 0} 筆\n` +
-          `共 ${importApplyConfirm?.totalRows || 0} 列`
-        }
+        confirmText="正式匯入商品"
+        message={`確定要正式匯入商品嗎？此動作會變更目前門市商品資料。\n新增 ${importApplyConfirm?.createCount || 0} 筆，更新 ${importApplyConfirm?.updateCount || 0} 筆，共 ${importApplyConfirm?.totalRows || 0} 列。`}
         onConfirm={executeApplyImport}
         onCancel={() => setImportApplyConfirm(null)}
       />
