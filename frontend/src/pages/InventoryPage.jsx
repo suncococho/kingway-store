@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
@@ -82,6 +82,11 @@ function InventoryPage() {
   const [section, setSection] = useState("OVERVIEW");
   const [downloadLoading, setDownloadLoading] = useState(null);
   const [downloadError, setDownloadError] = useState("");
+  const inventoryImportInputRef = useRef(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importError, setImportError] = useState("");
+  const [importResult, setImportResult] = useState(null);
+  const [showImportPreview, setShowImportPreview] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -313,6 +318,21 @@ function InventoryPage() {
     return response;
   }
 
+  async function readErrorMessage(response, fallbackMessage) {
+    const rawText = await response.text();
+    try {
+      const parsed = JSON.parse(rawText || "{}");
+      if (parsed?.message) {
+        return parsed.message;
+      }
+    } catch (_error) {
+      if (rawText) {
+        return rawText;
+      }
+    }
+    return `${fallbackMessage}（${response.status}）`;
+  }
+
   function parseContentDispositionFilename(contentDisposition) {
     if (!contentDisposition) {
       return null;
@@ -369,6 +389,100 @@ function InventoryPage() {
     }
   }
 
+  function triggerInventoryImportUpload() {
+    if (downloadLoading || importLoading) {
+      return;
+    }
+    setImportError("");
+    inventoryImportInputRef.current?.click();
+  }
+
+  function formatImportActionLabel(action) {
+    if (action === "increase") {
+      return "增加";
+    }
+    if (action === "decrease") {
+      return "減少";
+    }
+    if (action === "no_change") {
+      return "無變更";
+    }
+    return "錯誤";
+  }
+
+  function getImportActionTone(action) {
+    if (action === "increase") {
+      return "success";
+    }
+    if (action === "decrease") {
+      return "warning";
+    }
+    if (action === "no_change") {
+      return "info";
+    }
+    return "danger";
+  }
+
+  async function handleInventoryImportFileChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setImportLoading(true);
+    setImportError("");
+    setImportResult(null);
+    setShowImportPreview(true);
+
+    try {
+      const token = getStoredToken();
+      const response = await fetch(buildDownloadUrl("/inventory/import?dryRun=true"), {
+        method: "POST",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        },
+        body: file
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          clearAuth();
+        }
+        const message = await readErrorMessage(response, "庫存匯入檢查失敗");
+        throw new Error(message);
+      }
+
+      const payload = await response.json();
+      setImportResult(payload);
+      if (!payload?.ok) {
+        setImportError(payload?.errors?.[0]?.message || "庫存匯入資料有錯誤");
+      }
+    } catch (error) {
+      setImportError(error.message || "庫存匯入檢查失敗");
+    } finally {
+      setImportLoading(false);
+      event.target.value = "";
+    }
+  }
+
+  const importPreviewColumns = [
+    { key: "row", label: "列" },
+    { key: "sku", label: "SKU" },
+    { key: "name", label: "商品名稱" },
+    { key: "currentStock", label: "目前庫存" },
+    { key: "newStock", label: "檢查後庫存" },
+    { key: "adjustmentQty", label: "調整量" },
+    {
+      key: "action",
+      label: "結果",
+      render: (row) => <StatusBadge tone={getImportActionTone(row.action)}>{formatImportActionLabel(row.action)}</StatusBadge>
+    },
+    { key: "reason", label: "原因" },
+    { key: "note", label: "備註" },
+    { key: "message", label: "訊息", render: (row) => row.message || "-" }
+  ];
+
   return (
     <div>
       <PageHeader title="庫存管理" description="庫存總覽、異動與供應商流程統一使用 POS 同一套視覺語言與資訊架構。" />
@@ -413,10 +527,62 @@ function InventoryPage() {
                   <button type="button" className="secondary-button" onClick={handleDownloadInventoryTemplate} disabled={Boolean(downloadLoading)}>
                     {downloadLoading === "template" ? "下載中..." : "下載庫存匯入範本"}
                   </button>
+                  <button type="button" className="secondary-button" onClick={triggerInventoryImportUpload} disabled={Boolean(downloadLoading) || importLoading}>
+                    {importLoading ? "檢查中..." : "匯入庫存"}
+                  </button>
+                  <input
+                    ref={inventoryImportInputRef}
+                    type="file"
+                    accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    onChange={handleInventoryImportFileChange}
+                    style={{ display: "none" }}
+                  />
                 </div>
               }
             />
             {downloadError ? <div className="error-banner">{downloadError}</div> : null}
+            {importError ? <div className="error-banner">{importError}</div> : null}
+            {importResult ? (
+              <section className="admin-subpanel compact">
+                <div className="section-title">庫存匯入檢查結果</div>
+                <div className="admin-summary-grid">
+                  <article className="admin-summary-card">
+                    <div className="admin-summary-label">增加</div>
+                    <div className="admin-summary-value">{importResult.increaseCount || 0}</div>
+                  </article>
+                  <article className="admin-summary-card">
+                    <div className="admin-summary-label">減少</div>
+                    <div className="admin-summary-value">{importResult.decreaseCount || 0}</div>
+                  </article>
+                  <article className="admin-summary-card">
+                    <div className="admin-summary-label">無變更</div>
+                    <div className="admin-summary-value">{importResult.noChangeCount || 0}</div>
+                  </article>
+                  <article className="admin-summary-card">
+                    <div className="admin-summary-label">錯誤</div>
+                    <div className="admin-summary-value">{importResult.errorCount || 0}</div>
+                  </article>
+                </div>
+                <div className="admin-summary-note">檢查總列數：{importResult.totalRows || 0}</div>
+                {(importResult.preview || []).length ? (
+                  <div className="admin-summary-actions">
+                    <button type="button" className="secondary-button" onClick={() => setShowImportPreview((current) => !current)}>
+                      {showImportPreview ? "收合詳細預覽" : "展開詳細預覽"}
+                    </button>
+                  </div>
+                ) : null}
+                {showImportPreview ? (
+                  <DataTable
+                    columns={importPreviewColumns}
+                    rows={importResult.preview || []}
+                    emptyText="目前沒有匯入檢查資料。"
+                    cardTitle={(row) => `第 ${row.row} 列`}
+                    cardDescription={(row) => `SKU：${row.sku || "-"}`}
+                    cardBadges={(row) => <StatusBadge tone={getImportActionTone(row.action)}>{formatImportActionLabel(row.action)}</StatusBadge>}
+                  />
+                ) : null}
+              </section>
+            ) : null}
 
             <div className="admin-summary-grid">
               <article className="admin-summary-card">

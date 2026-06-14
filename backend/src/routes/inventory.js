@@ -142,6 +142,248 @@ function normalizeExportBoolean(value) {
   return Number(value) ? 1 : 0;
 }
 
+function normalizeImportString(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "object") {
+    if (value.text !== undefined) {
+      return String(value.text || "").trim();
+    }
+    if (Array.isArray(value.richText)) {
+      return value.richText.map((item) => item.text || "").join("").trim();
+    }
+    if (value.result !== undefined) {
+      return normalizeImportString(value.result);
+    }
+    if (value.formula !== undefined) {
+      return "";
+    }
+  }
+  return String(value).trim();
+}
+
+function normalizeImportHeader(value) {
+  return normalizeImportString(value).replace(/\s+/g, "").toLowerCase();
+}
+
+function parseImportNumber(value) {
+  const normalized = normalizeImportString(value).replace(/,/g, "");
+  if (!normalized) {
+    return null;
+  }
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+async function readInventoryImportRows(buffer) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const worksheet = workbook.getWorksheet("商品庫存匯入範本") || workbook.worksheets[0];
+  if (!worksheet) {
+    return [];
+  }
+
+  const headerMap = new Map();
+  worksheet.getRow(1).eachCell((cell, column) => {
+    const normalized = normalizeImportHeader(cell.value);
+    if (["sku", "name", "currentstock", "newstock", "adjustmentqty", "reason", "note"].includes(normalized)) {
+      headerMap.set(column, normalized);
+    }
+  });
+
+  const fieldByHeader = {
+    sku: "sku",
+    name: "name",
+    currentstock: "currentStock",
+    newstock: "newStock",
+    adjustmentqty: "adjustmentQty",
+    reason: "reason",
+    note: "note"
+  };
+
+  const rows = [];
+  for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+    const row = worksheet.getRow(rowNumber);
+    const data = {};
+    for (const [column, header] of headerMap.entries()) {
+      data[fieldByHeader[header]] = normalizeImportString(row.getCell(column).value);
+    }
+    const hasAnyValue = Object.values(data).some((value) => String(value || "").trim() !== "");
+    if (!hasAnyValue) {
+      continue;
+    }
+    rows.push({ rowNumber, data });
+  }
+
+  return rows;
+}
+
+function getInventoryImportAction(adjustmentQty) {
+  if (adjustmentQty > 0) {
+    return "increase";
+  }
+  if (adjustmentQty < 0) {
+    return "decrease";
+  }
+  return "no_change";
+}
+
+function addInventoryImportError(result, row, sku, message, payload = {}) {
+  result.errorCount += 1;
+  result.errors.push({ row, sku, message });
+  result.preview.push({
+    row,
+    sku,
+    name: payload.name || "",
+    currentStock: payload.currentStock ?? "",
+    newStock: payload.newStock ?? "",
+    adjustmentQty: payload.adjustmentQty ?? "",
+    action: "error",
+    reason: payload.reason || "庫存匯入檢查",
+    note: payload.note || "",
+    message
+  });
+}
+
+async function runInventoryImportDryRun(storeId, buffer) {
+  const importRows = await readInventoryImportRows(buffer);
+  const [products] = await pool.query(
+    `
+      SELECT sku, name, stock
+      FROM products
+      WHERE store_id = ?
+    `,
+    [storeId]
+  );
+  const productBySku = new Map(
+    products.map((product) => [String(product.sku || "").trim().toUpperCase(), {
+      sku: String(product.sku || "").trim(),
+      name: product.name || "",
+      stock: Number(product.stock || 0)
+    }])
+  );
+
+  const result = {
+    ok: true,
+    dryRun: true,
+    totalRows: 0,
+    increaseCount: 0,
+    decreaseCount: 0,
+    noChangeCount: 0,
+    errorCount: 0,
+    errors: [],
+    preview: []
+  };
+  const seenSkuSet = new Set();
+
+  for (const { rowNumber, data } of importRows) {
+    result.totalRows += 1;
+
+    const rawSku = String(data.sku || "").trim();
+    const skuKey = rawSku.toUpperCase();
+    const rowReason = String(data.reason || "").trim() || "庫存匯入檢查";
+    const rowNote = String(data.note || "").trim();
+    const templateCurrentStock = parseImportNumber(data.currentStock);
+    const inputNewStock = parseImportNumber(data.newStock);
+    const inputAdjustmentQty = parseImportNumber(data.adjustmentQty);
+
+    if (!rawSku) {
+      addInventoryImportError(result, rowNumber, rawSku, "sku 欄位為必填", { reason: rowReason, note: rowNote });
+      continue;
+    }
+
+    if (seenSkuSet.has(skuKey)) {
+      addInventoryImportError(result, rowNumber, rawSku, "同一檔案內 SKU 重複", { reason: rowReason, note: rowNote });
+      continue;
+    }
+    seenSkuSet.add(skuKey);
+
+    const product = productBySku.get(skuKey);
+    if (!product) {
+      addInventoryImportError(result, rowNumber, rawSku, "SKU 不屬於目前門市商品", { reason: rowReason, note: rowNote });
+      continue;
+    }
+
+    const hasNewStock = inputNewStock !== null;
+    const hasAdjustmentQty = inputAdjustmentQty !== null;
+    const basePayload = {
+      name: product.name,
+      currentStock: product.stock,
+      reason: rowReason,
+      note: rowNote
+    };
+
+    if (!hasNewStock && !hasAdjustmentQty) {
+      addInventoryImportError(result, rowNumber, product.sku, "newStock 或 adjustmentQty 必須擇一填寫", basePayload);
+      continue;
+    }
+
+    if ((hasNewStock && Number.isNaN(inputNewStock)) || (hasAdjustmentQty && Number.isNaN(inputAdjustmentQty))) {
+      addInventoryImportError(result, rowNumber, product.sku, "newStock 與 adjustmentQty 必須是數字", basePayload);
+      continue;
+    }
+
+    if (templateCurrentStock !== null && Number.isNaN(templateCurrentStock)) {
+      addInventoryImportError(result, rowNumber, product.sku, "currentStock 必須是數字", basePayload);
+      continue;
+    }
+
+    if (hasNewStock && inputNewStock < 0) {
+      addInventoryImportError(result, rowNumber, product.sku, "newStock 不可小於 0", {
+        ...basePayload,
+        newStock: inputNewStock
+      });
+      continue;
+    }
+
+    const nextStock = hasNewStock ? inputNewStock : product.stock + inputAdjustmentQty;
+    const adjustmentQty = hasAdjustmentQty ? inputAdjustmentQty : inputNewStock - product.stock;
+
+    if (hasNewStock && hasAdjustmentQty && inputNewStock - product.stock !== inputAdjustmentQty) {
+      addInventoryImportError(result, rowNumber, product.sku, "newStock 與 adjustmentQty 換算結果不一致", {
+        ...basePayload,
+        newStock: inputNewStock,
+        adjustmentQty: inputAdjustmentQty
+      });
+      continue;
+    }
+
+    if (nextStock < 0) {
+      addInventoryImportError(result, rowNumber, product.sku, "adjustmentQty 套用後庫存不可小於 0", {
+        ...basePayload,
+        newStock: nextStock,
+        adjustmentQty
+      });
+      continue;
+    }
+
+    const action = getInventoryImportAction(adjustmentQty);
+    if (action === "increase") {
+      result.increaseCount += 1;
+    } else if (action === "decrease") {
+      result.decreaseCount += 1;
+    } else {
+      result.noChangeCount += 1;
+    }
+
+    result.preview.push({
+      row: rowNumber,
+      sku: product.sku,
+      name: product.name,
+      currentStock: product.stock,
+      newStock: nextStock,
+      adjustmentQty,
+      action,
+      reason: rowReason,
+      note: rowNote
+    });
+  }
+
+  result.ok = result.errorCount === 0;
+  return result;
+}
+
 async function fetchInventoryRows(storeId) {
   const productColumns = await getTableColumns(pool, "products");
   const hasCategorySchema = await hasProductCategorySchema(pool);
@@ -297,6 +539,34 @@ router.get("/import-template", async (req, res, next) => {
     return next(error);
   }
 });
+
+router.post(
+  "/import",
+  express.raw({
+    type: [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/octet-stream"
+    ],
+    limit: "16mb"
+  }),
+  requireStoreAdminRole,
+  async (req, res, next) => {
+    try {
+      const rawDryRun = String(req.query.dryRun || "").trim().toLowerCase();
+      if (rawDryRun !== "true") {
+        return res.status(400).json({ message: "目前僅支援 dryRun=true 的庫存匯入檢查" });
+      }
+      if (!Buffer.isBuffer(req.body) || !req.body.length) {
+        return res.status(400).json({ message: "請上傳 XLSX 檔案內容" });
+      }
+
+      const result = await runInventoryImportDryRun(req.storeId, req.body);
+      return res.json(result);
+    } catch (error) {
+      return next(error);
+    }
+  }
+);
 
 router.get("/movements", async (req, res, next) => {
   try {
