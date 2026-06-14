@@ -1,8 +1,10 @@
 const express = require("express");
+const ExcelJS = require("exceljs");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { requireStoreFeature } = require("../middleware/storeFeature");
 const { createError } = require("../utils/errors");
+const { getTableColumns, selectColumn } = require("../utils/schema");
 const {
   createButtonMessage,
   createConfirmTemplate,
@@ -12,6 +14,7 @@ const {
   sendToGroups
 } = require("../services/lineWorkflowService");
 const {
+  mapCategoryLabel,
   mapSupplierRequestStatusLabel,
   mapSupplierRequestTypeLabel
 } = require("../utils/displayLabels");
@@ -118,6 +121,182 @@ function requireStoreAdminForAdjustment(req, res, next) {
   }
   return next();
 }
+
+async function hasProductCategorySchema(connection = pool) {
+  const [tables] = await connection.query("SHOW TABLES LIKE 'product_categories'");
+  if (!tables.length) {
+    return false;
+  }
+  const [columns] = await connection.query("SHOW COLUMNS FROM `products` LIKE 'category_id'");
+  return columns.length > 0;
+}
+
+function sanitizeWorksheetValue(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return value;
+}
+
+function normalizeExportBoolean(value) {
+  return Number(value) ? 1 : 0;
+}
+
+async function fetchInventoryRows(storeId) {
+  const productColumns = await getTableColumns(pool, "products");
+  const hasCategorySchema = await hasProductCategorySchema(pool);
+
+  const [rows] = await pool.query(
+    `
+      SELECT
+        ${selectColumn(productColumns, "products", "sku", "sku")},
+        ${selectColumn(productColumns, "products", "name", "name")},
+        ${hasCategorySchema ? "pc.code AS categoryCode," : `${selectColumn(productColumns, "products", "category", "categoryCode", "'OT'")},`}
+        ${hasCategorySchema ? "pc.name AS categoryName," : "NULL AS categoryName,"}
+        ${selectColumn(productColumns, "products", "stock", "currentStock", "0")},
+        ${selectColumn(productColumns, "products", "reorder_level", "reorderLevel", "0")},
+        ${selectColumn(productColumns, "products", "location", "location")},
+        ${selectColumn(productColumns, "products", "is_active", "isActive", "1")},
+        ${selectColumn(productColumns, "products", "updated_at", "updatedAt")}
+      FROM products
+      ${hasCategorySchema ? "LEFT JOIN product_categories pc ON pc.id = products.category_id AND pc.store_id = products.store_id" : ""}
+      WHERE products.store_id = ?
+      ORDER BY products.id DESC
+    `,
+    [storeId]
+  );
+
+  return rows.map((row) => {
+    const categoryCode = String(row.categoryCode || "").trim();
+    return {
+      sku: sanitizeWorksheetValue(row.sku),
+      name: sanitizeWorksheetValue(row.name),
+      categoryCode: sanitizeWorksheetValue(categoryCode),
+      categoryName: sanitizeWorksheetValue(row.categoryName || mapCategoryLabel(categoryCode) || ""),
+      currentStock: Number(row.currentStock || 0),
+      reorderLevel: Number(row.reorderLevel || 0),
+      location: sanitizeWorksheetValue(row.location),
+      isActive: normalizeExportBoolean(row.isActive),
+      updatedAt: sanitizeWorksheetValue(row.updatedAt)
+    };
+  });
+}
+
+function applyHeaderStyle(sheet) {
+  sheet.getRow(1).font = { bold: true };
+  sheet.getRow(1).alignment = { vertical: "middle", horizontal: "center" };
+}
+
+async function sendInventoryWorkbook(res, workbook, filename) {
+  const buffer = await workbook.xlsx.writeBuffer();
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(buffer);
+}
+
+router.get("/export", async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const rows = await fetchInventoryRows(storeId);
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "KINGWAY";
+
+    const sheet = workbook.addWorksheet("庫存資料");
+    sheet.columns = [
+      { header: "sku", key: "sku", width: 20 },
+      { header: "name", key: "name", width: 30 },
+      { header: "categoryCode", key: "categoryCode", width: 16 },
+      { header: "categoryName", key: "categoryName", width: 22 },
+      { header: "currentStock", key: "currentStock", width: 14 },
+      { header: "reorderLevel", key: "reorderLevel", width: 14 },
+      { header: "location", key: "location", width: 16 },
+      { header: "isActive", key: "isActive", width: 12 },
+      { header: "updatedAt", key: "updatedAt", width: 22 }
+    ];
+    applyHeaderStyle(sheet);
+    sheet.addRows(rows);
+    for (const key of ["currentStock", "reorderLevel", "isActive"]) {
+      sheet.getColumn(key).numFmt = "#,##0";
+    }
+
+    return sendInventoryWorkbook(res, workbook, `KINGWAY_inventory_export_store_${storeId}.xlsx`);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/import-template", async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const rows = await fetchInventoryRows(storeId);
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "KINGWAY";
+
+    const templateSheet = workbook.addWorksheet("商品庫存匯入範本");
+    templateSheet.columns = [
+      { header: "sku", key: "sku", width: 20 },
+      { header: "name", key: "name", width: 30 },
+      { header: "currentStock", key: "currentStock", width: 14 },
+      { header: "newStock", key: "newStock", width: 14 },
+      { header: "adjustmentQty", key: "adjustmentQty", width: 16 },
+      { header: "reason", key: "reason", width: 24 },
+      { header: "note", key: "note", width: 36 }
+    ];
+    applyHeaderStyle(templateSheet);
+    templateSheet.addRows(rows.map((row) => ({
+      sku: row.sku,
+      name: row.name,
+      currentStock: row.currentStock,
+      newStock: "",
+      adjustmentQty: "",
+      reason: "",
+      note: ""
+    })));
+    for (const key of ["currentStock", "newStock", "adjustmentQty"]) {
+      templateSheet.getColumn(key).numFmt = "#,##0";
+    }
+
+    const currentStockSheet = workbook.addWorksheet("目前庫存清單");
+    currentStockSheet.columns = [
+      { header: "sku", key: "sku", width: 20 },
+      { header: "name", key: "name", width: 30 },
+      { header: "categoryCode", key: "categoryCode", width: 16 },
+      { header: "categoryName", key: "categoryName", width: 22 },
+      { header: "currentStock", key: "currentStock", width: 14 },
+      { header: "reorderLevel", key: "reorderLevel", width: 14 },
+      { header: "location", key: "location", width: 16 },
+      { header: "isActive", key: "isActive", width: 12 },
+      { header: "updatedAt", key: "updatedAt", width: 22 }
+    ];
+    applyHeaderStyle(currentStockSheet);
+    currentStockSheet.addRows(rows);
+    for (const key of ["currentStock", "reorderLevel", "isActive"]) {
+      currentStockSheet.getColumn(key).numFmt = "#,##0";
+    }
+
+    const helpSheet = workbook.addWorksheet("匯入說明");
+    helpSheet.columns = [
+      { header: "項目", key: "item", width: 28 },
+      { header: "內容", key: "content", width: 90 }
+    ];
+    applyHeaderStyle(helpSheet);
+    helpSheet.addRows([
+      { item: "填寫方式", content: "newStock 或 adjustmentQty 中請擇一填寫。" },
+      { item: "雙欄一致", content: "如果 newStock 與 adjustmentQty 都有填寫，兩者換算後必須一致。" },
+      { item: "庫存限制", content: "newStock 不可為負數。" },
+      { item: "SKU 範圍", content: "SKU 只允許目前門市商品，不可匯入其他門市或不存在的商品。" },
+      { item: "檢查流程", content: "實際套用前會先以 dry-run 檢查資料，確認無誤後才可套用。" }
+    ]);
+    for (let rowNumber = 2; rowNumber <= helpSheet.rowCount; rowNumber += 1) {
+      helpSheet.getRow(rowNumber).getCell("B").alignment = { wrapText: true, vertical: "top" };
+      helpSheet.getRow(rowNumber).height = 34;
+    }
+
+    return sendInventoryWorkbook(res, workbook, `KINGWAY_inventory_import_template_store_${storeId}.xlsx`);
+  } catch (error) {
+    return next(error);
+  }
+});
 
 router.get("/movements", async (req, res, next) => {
   try {

@@ -10,9 +10,13 @@ import ProductImage from "../components/ProductImage";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
 import { useFetchList } from "../hooks/useFetchList";
-import { apiRequest } from "../lib/api";
+import { API_BASE_URL, apiRequest } from "../lib/api";
+import { clearAuth, getStoredToken } from "../lib/auth";
 import { formatTaipeiDateTime, getCategoryLabel } from "../lib/display";
 import { PRODUCT_CATEGORY_OPTIONS } from "../lib/productCategories";
+
+const INVENTORY_EXPORT_FILENAME = "KINGWAY_inventory_export.xlsx";
+const INVENTORY_IMPORT_TEMPLATE_FILENAME = "KINGWAY_inventory_import_template.xlsx";
 
 const movementColumns = [
   { key: "productName", label: "商品" },
@@ -76,6 +80,8 @@ function InventoryPage() {
   const [stockFilter, setStockFilter] = useState("ALL");
   const [detailProductId, setDetailProductId] = useState(null);
   const [section, setSection] = useState("OVERVIEW");
+  const [downloadLoading, setDownloadLoading] = useState(null);
+  const [downloadError, setDownloadError] = useState("");
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -275,6 +281,94 @@ function InventoryPage() {
     }
   }
 
+  function buildDownloadUrl(path) {
+    return `${API_BASE_URL}${path}`;
+  }
+
+  async function downloadBinaryFile(path) {
+    const token = getStoredToken();
+    const response = await fetch(buildDownloadUrl(path), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        clearAuth();
+      }
+      const rawText = await response.text();
+      let message = "下載失敗";
+      try {
+        const parsed = JSON.parse(rawText || "{}");
+        if (parsed?.message) {
+          message = parsed.message;
+        }
+      } catch (_error) {
+        if (rawText) {
+          message = rawText;
+        }
+      }
+      throw new Error(message);
+    }
+
+    return response;
+  }
+
+  function parseContentDispositionFilename(contentDisposition) {
+    if (!contentDisposition) {
+      return null;
+    }
+    const filenameMatch = /filename\*=UTF-8''([^;]+)|filename="?([^\";]+)"?/i.exec(contentDisposition);
+    const encoded = filenameMatch?.[1] || filenameMatch?.[2];
+    if (!encoded) {
+      return null;
+    }
+    try {
+      return decodeURIComponent(encoded);
+    } catch (_error) {
+      return encoded;
+    }
+  }
+
+  async function saveBlobToFile(response, fallbackFilename) {
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    const responseFilename = parseContentDispositionFilename(response.headers.get("content-disposition"));
+    link.download = responseFilename || fallbackFilename;
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+  }
+
+  async function handleDownloadInventoryExport() {
+    setDownloadError("");
+    setDownloadLoading("export");
+    try {
+      const response = await downloadBinaryFile("/inventory/export");
+      await saveBlobToFile(response, INVENTORY_EXPORT_FILENAME);
+    } catch (error) {
+      setDownloadError(error.message || "匯出庫存失敗");
+    } finally {
+      setDownloadLoading(null);
+    }
+  }
+
+  async function handleDownloadInventoryTemplate() {
+    setDownloadError("");
+    setDownloadLoading("template");
+    try {
+      const response = await downloadBinaryFile("/inventory/import-template");
+      await saveBlobToFile(response, INVENTORY_IMPORT_TEMPLATE_FILENAME);
+    } catch (error) {
+      setDownloadError(error.message || "下載庫存匯入範本失敗");
+    } finally {
+      setDownloadLoading(null);
+    }
+  }
+
   return (
     <div>
       <PageHeader title="庫存管理" description="庫存總覽、異動與供應商流程統一使用 POS 同一套視覺語言與資訊架構。" />
@@ -311,7 +405,18 @@ function InventoryPage() {
                   <StatusBadge tone="success">有庫存 {inventoryRows.filter((item) => item.stockLabel === "有庫存").length}</StatusBadge>
                 </>
               }
+              actions={
+                <div className="action-row compact-actions">
+                  <button type="button" className="secondary-button" onClick={handleDownloadInventoryExport} disabled={Boolean(downloadLoading)}>
+                    {downloadLoading === "export" ? "匯出中..." : "匯出庫存"}
+                  </button>
+                  <button type="button" className="secondary-button" onClick={handleDownloadInventoryTemplate} disabled={Boolean(downloadLoading)}>
+                    {downloadLoading === "template" ? "下載中..." : "下載庫存匯入範本"}
+                  </button>
+                </div>
+              }
             />
+            {downloadError ? <div className="error-banner">{downloadError}</div> : null}
 
             <div className="admin-summary-grid">
               <article className="admin-summary-card">
