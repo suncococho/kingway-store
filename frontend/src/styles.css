@@ -3057,6 +3057,24 @@ button:hover {
   gap: 10px;
 }
 
+.responsive-data-view > .table-wrapper.desktop-only {
+  display: block;
+}
+
+.responsive-data-view > .data-card-list.mobile-only {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .responsive-data-view > .table-wrapper.desktop-only {
+    display: none !important;
+  }
+
+  .responsive-data-view > .data-card-list.mobile-only {
+    display: flex !important;
+  }
+}
+
 .data-card {
   padding: 13px 14px;
 }
