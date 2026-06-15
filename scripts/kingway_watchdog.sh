@@ -5,6 +5,7 @@ set -u
 BASE_DIR="/volume1/docker/kingway-store"
 LOG_DIR="$BASE_DIR/logs"
 LOG_FILE="$LOG_DIR/kingway_watchdog.log"
+LOCK_DIR="/tmp/kingway_watchdog.lock"
 WATCHDOG_ENV="$BASE_DIR/.env.watchdog"
 PROJECT_ENV="$BASE_DIR/.env"
 THRESHOLD_PERCENT=85
@@ -19,6 +20,22 @@ chmod 600 "$LOG_FILE" 2>/dev/null || true
 
 log() {
   printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S%z')" "$*" >> "$LOG_FILE"
+}
+
+release_lock() {
+  rm -f "$LOCK_DIR/pid" 2>/dev/null || true
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+acquire_lock() {
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    printf '%s\n' "$$" > "$LOCK_DIR/pid" 2>/dev/null || true
+    trap 'release_lock' EXIT INT TERM
+    return 0
+  fi
+
+  log "another watchdog is already running; exit"
+  return 1
 }
 
 env_value() {
@@ -107,12 +124,12 @@ start_container_manager() {
   log "ContainerManager is not running; attempting start"
 
   if command -v timeout >/dev/null 2>&1; then
-    timeout 120 synopkg start ContainerManager >>"$LOG_FILE" 2>&1 || true
+    timeout 90 synopkg start ContainerManager >>"$LOG_FILE" 2>&1 || true
   else
     synopkg start ContainerManager >>"$LOG_FILE" 2>&1 &
     start_pid="$!"
     waited=0
-    while kill -0 "$start_pid" 2>/dev/null && [ "$waited" -lt 120 ]; do
+    while kill -0 "$start_pid" 2>/dev/null && [ "$waited" -lt 90 ]; do
       sleep 2
       waited=$((waited + 2))
     done
@@ -152,18 +169,22 @@ docker_available() {
 
 ensure_docker() {
   if docker_available; then
-    log "Docker daemon is available"
+    log "Docker daemon is available; skip ContainerManager start"
     return 0
   fi
 
-  log "Docker daemon unavailable; retrying ContainerManager start"
-  start_container_manager || true
-  sleep 5
+  log "Docker daemon unavailable; checking ContainerManager"
+  ensure_container_manager || true
 
-  if docker_available; then
-    log "Docker daemon is available after recovery"
-    return 0
-  fi
+  waited=0
+  while [ "$waited" -lt 60 ]; do
+    if docker_available; then
+      log "Docker daemon is available after ContainerManager recovery"
+      return 0
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
 
   log "Docker daemon not available"
   alert "KINGWAY Watchdog: Docker daemon not available"
@@ -248,9 +269,10 @@ check_disk() {
 }
 
 main() {
+  acquire_lock || exit 0
+
   log "===== KINGWAY watchdog start ====="
 
-  ensure_container_manager || true
   if ensure_docker; then
     compose_up || true
     check_url "backend" "http://127.0.0.1:3000/health" "KINGWAY Watchdog: backend health failed" || true
