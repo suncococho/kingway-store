@@ -3,6 +3,11 @@ services:
     image: mysql:8.0
     container_name: kingway-mysql
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
@@ -22,6 +27,11 @@ services:
     image: node:20-alpine
     container_name: kingway-backend
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
     working_dir: /app
     depends_on:
       - mysql
@@ -41,6 +51,11 @@ services:
       dockerfile: Dockerfile
     container_name: kingway-frontend
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
     depends_on:
       - backend
     ports:
