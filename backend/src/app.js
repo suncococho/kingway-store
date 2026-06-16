@@ -519,7 +519,7 @@ app.use("/api/telegram", telegramWebhookRoutes);
 app.use("/api/line", lineRoutes);
 app.use("/api/debug", debugRoutes);
 app.use("/files/pdfs", (req, res) => res.status(404).json({ message: "Not found" }));
-app.use("/files/products", (req, res) => res.status(404).json({ message: "Not found" }));
+app.use("/files/products", express.static(path.join(__dirname, "..", "storage", "products")));
 app.use("/files", express.static(path.join(__dirname, "..", "storage")));
 
 cron.schedule(
