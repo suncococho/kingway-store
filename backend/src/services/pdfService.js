@@ -40,6 +40,10 @@ function buildChecklistLine(selectedItems, item) {
   return `${selectedItems.includes(item) ? "[已確認]" : "[未確認]"} ${item}`;
 }
 
+function getVehicleTypeLabel(vehicleType, fallback = "") {
+  return purchaseConfirmationContent.vehicleTypes?.[vehicleType]?.label || fallback || "-";
+}
+
 function createPdfDocument() {
   const doc = new PDFDocument({
     size: "A4",
@@ -82,13 +86,19 @@ function writePurchaseConfirmationContent(doc, payload) {
     customerName,
     customerPhone,
     buyerIdNumber,
+    vehicleType,
+    vehicleTypeLabel,
     deliveryChecks,
     staffExplanations,
     submittedAt,
     signatureData
   } = payload;
 
-  doc.font("NotoSansTC").fontSize(20).text("KINGWAY 購買確認書", { align: "center" });
+  const selectedVehicleType = vehicleType || "road";
+  const selectedVehicleTerms = purchaseConfirmationContent.vehicleTerms?.[selectedVehicleType] || null;
+
+  doc.font("NotoSansTC").fontSize(20).text(purchaseConfirmationContent.pageTitle, { align: "center" });
+  doc.font("NotoSansTC").fontSize(14).text(purchaseConfirmationContent.pageSubtitle, { align: "center" });
   doc.moveDown(0.5);
   writeBodyText(doc, `確認書編號：${confirmationId}`);
   writeBodyText(doc, `訂單編號：${orderNo}`);
@@ -97,29 +107,60 @@ function writePurchaseConfirmationContent(doc, payload) {
   writeSectionTitle(doc, "1. 購買者資料");
   writeBodyText(doc, `客戶姓名：${customerName || "-"}`);
   writeBodyText(doc, `電話：${customerPhone || "-"}`);
-  writeBodyText(doc, `證件號碼或末四碼：${buyerIdNumber || "-"}`);
+  writeBodyText(doc, `身份證後四碼：${buyerIdNumber || "-"}`);
 
-  writeSectionTitle(doc, "2. 自行車交付檢查");
+  writeSectionTitle(doc, "2. 車輛類型確認");
+  writeBodyText(doc, purchaseConfirmationContent.vehicleTypeNotice);
+  writeBodyText(doc, `已選擇：${getVehicleTypeLabel(selectedVehicleType, vehicleTypeLabel)}`);
+  writeBodyText(doc, purchaseConfirmationContent.vehicleTypes?.[selectedVehicleType]?.description || "");
+
+  writeSectionTitle(doc, "3. 自行車交付檢查");
+  writeBodyText(doc, purchaseConfirmationContent.deliveryNotice);
   purchaseConfirmationContent.deliveryChecks.forEach((item) => {
     writeBodyText(doc, buildChecklistLine(deliveryChecks, item));
   });
 
-  writeSectionTitle(doc, "3. 店員說明確認");
+  writeSectionTitle(doc, "4. 購買使用條款");
+  writeBodyText(doc, purchaseConfirmationContent.termsTitle, { fontSize: 13 });
+  writeBodyText(doc, purchaseConfirmationContent.termsIntroTitle);
+  writeBodyText(doc, purchaseConfirmationContent.termsIntro);
+  if (selectedVehicleTerms) {
+    writeBodyText(doc, selectedVehicleTerms.title);
+    selectedVehicleTerms.items.forEach((term, index) => {
+      writeBodyText(doc, `${index + 1}. ${term}`);
+    });
+    doc.moveDown(0.2);
+  }
+  purchaseConfirmationContent.commonTerms.forEach((section) => {
+    writeBodyText(doc, section.title, { fontSize: 12 });
+    if (section.intro) {
+      writeBodyText(doc, section.intro);
+    }
+    if (section.paragraph) {
+      writeBodyText(doc, section.paragraph);
+    }
+    if (Array.isArray(section.items)) {
+      section.items.forEach((term, index) => {
+        writeBodyText(doc, `${index + 1}. ${term}`);
+      });
+    }
+    if (section.warning) {
+      writeBodyText(doc, section.warning);
+    }
+    doc.moveDown(0.2);
+  });
+  writeBodyText(doc, `[已確認] ${purchaseConfirmationContent.termsAgreement}`);
+
+  writeSectionTitle(doc, "5. 店員說明確認");
+  writeBodyText(doc, purchaseConfirmationContent.staffExplanationNotice);
   purchaseConfirmationContent.staffExplanations.forEach((item) => {
     writeBodyText(doc, buildChecklistLine(staffExplanations, item));
   });
 
-  writeSectionTitle(doc, "4. 購買條款");
-  purchaseConfirmationContent.terms.forEach((term, index) => {
-    writeBodyText(doc, `${index + 1}. ${term}`);
-    doc.moveDown(0.2);
-  });
+  writeSectionTitle(doc, "6. 確認聲明");
+  writeBodyText(doc, `[已確認] ${purchaseConfirmationContent.finalStatement}`);
 
-  writeSectionTitle(doc, "5. 最終確認");
-  writeBodyText(doc, purchaseConfirmationContent.finalStatement);
-  writeBodyText(doc, "簽名狀態：已完成電子簽名");
-
-  writeSectionTitle(doc, "6. 客戶簽名");
+  writeSectionTitle(doc, "7. 購買者簽名");
   const signatureImage = parseDataUriImage(signatureData);
   if (signatureImage) {
     const startX = doc.x;
@@ -142,6 +183,8 @@ async function writePurchaseConfirmationPdf({
   customerName,
   customerPhone,
   buyerIdNumber,
+  vehicleType,
+  vehicleTypeLabel,
   deliveryChecks,
   staffExplanations,
   submittedAt,
@@ -167,6 +210,8 @@ async function writePurchaseConfirmationPdf({
       customerName,
       customerPhone,
       buyerIdNumber,
+      vehicleType,
+      vehicleTypeLabel,
       deliveryChecks,
       staffExplanations,
       submittedAt,

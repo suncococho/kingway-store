@@ -5,47 +5,67 @@ import SignaturePad from "../components/SignaturePad";
 import { apiRequest } from "../lib/api";
 
 const DELIVERY_CHECK_ITEMS = [
-  { id: "check-appearance", label: "外觀無損", value: "外觀無損" },
-  { id: "check-function", label: "功能正常", value: "功能正常" },
-  { id: "check-accessories", label: "配件齊全", value: "配件齊全" },
-  { id: "check-spec", label: "規格相符", value: "規格相符" },
-  {
-    id: "legal-notice-no-lightning-label",
-    label: "法規與閃電標章說明",
-    key: "legal_notice_no_lightning_label",
-    value: "本人已了解本車輛目前未屬於台灣「微型電動二輪車」掛牌管理車輛，亦未配置「閃電標章（審驗合格標章）」，並已知悉相關使用範圍、道路限制與交通法規；若因個人違規使用、非法改裝、進入限制道路或未遵守相關法令所產生之責任、罰則或事故，需由使用者自行負責，且本人確認門市已完成相關說明。"
-  },
+  { id: "check-appearance", label: "外觀無損", value: "外觀無損", description: "車架、前叉、輪圈、漆面等無明顯刮傷或損傷" },
+  { id: "check-function", label: "功能正常", value: "功能正常", description: "電機、控制器、剎車等主要功能運作正常" },
+  { id: "check-accessories", label: "配件齊全", value: "配件齊全", description: "所有隨車配件（鑰匙、充電器、說明書等）已完整交付" },
+  { id: "check-spec", label: "規格相符", value: "規格相符", description: "自行車型號、規格與訂單內容相同" }
 ];
 
 const EXPLANATION_CHECK_ITEMS = [
   { id: "explain-usage", label: "使用方法", value: "使用方法" },
-  { id: "explain-warranty", label: "保固範圍", value: "保固範圍與期限（1 年）" },
+  { id: "explain-warranty", label: "保固範圍", value: "保固範圍與期限（1年）" },
   { id: "explain-maintenance", label: "保養方法", value: "日常維護與保養方法" },
   { id: "explain-laws", label: "法規說明", value: "臺灣電動自行車相關法規及速度限制" },
   { id: "explain-safety", label: "安全事項", value: "騎乘安全注意事項" }
 ];
 
 const DEFAULT_CONTENT = {
+  pageTitle: "KINGWAY 自行車交付確認",
+  pageSubtitle: "購買後自行車確認簽名表單",
+  vehicleTypeNotice: "✓ 請店員依本車輛實際配備狀況勾選，此項將決定適用之法規條款內容。",
+  vehicleTypes: {
+    road: {
+      value: "road",
+      label: "道路合法版",
+      description: "道路合法版 - 本車輛已配備臺灣「閃電標章」（審驗合格標章），可依法於一般道路、自行車道行駛（須遵守時速25公里限制及相關交通法規）。"
+    },
+    offroad: {
+      value: "offroad",
+      label: "越野休閒版",
+      description: "越野休閒版 - 本車輛未配備臺灣「閃電標章」，僅限於私有土地、封閉式賽道、室內空間等休閒用途使用，絕對不得於公共道路行駛。"
+    }
+  },
+  deliveryNotice: "✓ 請仔細檢查自行車的狀況，確認以下所有項目。交車後如有問題，本公司不負責。",
+  deliveryCheckItems: DELIVERY_CHECK_ITEMS,
   deliveryChecks: DELIVERY_CHECK_ITEMS.map((item) => item.value),
+  staffExplanationNotice: "✓ 我已收到店員的以下說明，並理解相關內容。",
+  staffExplanationItems: EXPLANATION_CHECK_ITEMS.map((item) => ({
+    ...item,
+    description:
+      item.id === "explain-usage" ? "店員已說明自行車的正確使用方法與注意事項" :
+      item.id === "explain-warranty" ? "店員已說明產品保固範圍與期限（1年）" :
+      item.id === "explain-maintenance" ? "店員已說明日常維護與保養方法" :
+      item.id === "explain-laws" ? "店員已說明臺灣電動自行車相關法規及速度限制" :
+      "店員已說明騎乘安全注意事項"
+  })),
   staffExplanations: EXPLANATION_CHECK_ITEMS.map((item) => item.value),
-  terms: [
-    "本人已確認所購商品之外觀、功能、配件及規格皆與訂購內容相符，並經本人現場檢查確認無誤。",
-    "門市店員已完成商品使用方式、保固範圍與期限、日常維護保養方式、臺灣電動自行車相關法規及速度限制、騎乘安全注意事項等說明。",
-    "本人已了解本車輛目前未屬於台灣「微型電動二輪車」掛牌管理車輛，亦未配置「閃電標章（審驗合格標章）」，並已知悉相關使用範圍、道路限制與交通法規；若因個人違規使用、非法改裝、進入限制道路或未遵守相關法令所產生之責任、罰則或事故，需由使用者自行負責，且本人確認門市已完成相關說明。",
-    "如因違規、改裝、超速、個人過失或不當使用所致之損害、事故、罰則或其他法律責任，概由本人自行負責。",
-    "商品保固期間自交車日起算一年，保固範圍限於非人為因素造成之製造瑕疵。",
-    "耗材、外觀磨損、人為損壞、正常耗損、改裝或不當使用所致之故障或損害，不屬保固範圍。",
-    "電池及充電注意事項：應使用原廠或店家認可之充電器，避免高溫、潮濕、無人看管或不當環境下充電；若發現電池膨脹、漏液、異常發熱等情形，應立即停止使用並聯絡門市；電池自然衰退屬正常耗損，不屬一般保固範圍。"
-  ],
+  termsTitle: "購買自行車條款與責任聲明",
+  termsIntroTitle: "一、產品信息與法規合規",
+  termsIntro: "購買本公司電動自行車，購買者確認已知悉（依本表單第2項「車輛類型確認」勾選結果適用）：",
+  vehicleTerms: {},
+  commonTerms: [],
+  termsAgreement: "我已詳細閱讀並同意上述所有購買使用條款與責任聲明。",
+  finalStatement: "本人已確認上述自行車交付項目皆已完成，且自行檢查無誤，正式領回此自行車。對於已領回之產品，交車後如有問題，本公司不負責。",
   errors: {
-    buyerName: "請填寫姓名",
-    buyerPhone: "請填寫電話",
-    buyerIdNumber: "請填寫證件號碼",
+    buyerName: "請完成所有必填欄位與勾選項目",
+    buyerPhone: "請完成所有必填欄位與勾選項目",
+    buyerIdNumber: "請輸入身份證後四碼",
+    vehicleType: "請選擇車輛類型",
     signatureData: "請完成簽名",
-    deliveryChecks: "請確認所有交車檢查項目",
-    staffExplanations: "請確認店員說明項目",
-    termsAccepted: "請先同意購買使用條款",
-    finalConfirmationAccepted: "請勾選最終確認聲明"
+    deliveryChecks: "請完成所有必填欄位與勾選項目",
+    staffExplanations: "請完成所有必填欄位與勾選項目",
+    termsAccepted: "請確認購買使用條款",
+    finalConfirmationAccepted: "請完成所有必填欄位與勾選項目"
   }
 };
 
@@ -53,6 +73,7 @@ const EMPTY_FORM = {
   buyerName: "",
   buyerPhone: "",
   buyerIdNumber: "",
+  vehicleType: "",
   deliveryChecks: [],
   staffExplanations: [],
   termsAccepted: false,
@@ -76,6 +97,67 @@ function buildResolvedStoreContext(response, requestedStoreCode) {
   };
 }
 
+function normalizeIdLast4(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 4);
+}
+
+function parseSnapshot(value) {
+  try {
+    return value ? JSON.parse(value) : {};
+  } catch {
+    return {};
+  }
+}
+
+function getDeliveryItems(content) {
+  return Array.isArray(content?.deliveryCheckItems) && content.deliveryCheckItems.length
+    ? content.deliveryCheckItems
+    : DELIVERY_CHECK_ITEMS;
+}
+
+function getExplanationItems(content) {
+  return Array.isArray(content?.staffExplanationItems) && content.staffExplanationItems.length
+    ? content.staffExplanationItems
+    : EXPLANATION_CHECK_ITEMS;
+}
+
+function getVehicleOptions(content) {
+  const types = content?.vehicleTypes || DEFAULT_CONTENT.vehicleTypes;
+  return [types.road, types.offroad].filter(Boolean);
+}
+
+function TermsContent({ content, vehicleType }) {
+  const selectedVehicleTerms = content?.vehicleTerms?.[vehicleType] || null;
+  return (
+    <div className="purchase-terms-list">
+      <h3>{content.termsTitle}</h3>
+      <h4>{content.termsIntroTitle}</h4>
+      <p>{content.termsIntro}</p>
+      {selectedVehicleTerms ? (
+        <div className="terms-block">
+          <h4>{selectedVehicleTerms.title}</h4>
+          <ol>
+            {selectedVehicleTerms.items.map((item) => <li key={item}>{item}</li>)}
+          </ol>
+        </div>
+      ) : null}
+      {(content.commonTerms || []).map((section) => (
+        <div className="terms-block" key={section.title}>
+          <h4>{section.title}</h4>
+          {section.intro ? <p>{section.intro}</p> : null}
+          {section.paragraph ? <p>{section.paragraph}</p> : null}
+          {Array.isArray(section.items) ? (
+            <ol>
+              {section.items.map((item) => <li key={item}>{item}</li>)}
+            </ol>
+          ) : null}
+          {section.warning ? <p className="terms-warning">{section.warning}</p> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PurchaseConfirmPublicPage() {
   const { token } = useParams();
   const location = useLocation();
@@ -93,9 +175,17 @@ function PurchaseConfirmPublicPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [manualSuccess, setManualSuccess] = useState(null);
-  const [termsOpen, setTermsOpen] = useState(false);
 
   useEffect(() => {
+    async function loadContent() {
+      try {
+        const response = await apiRequest("/purchase-confirmations/content");
+        return response?.content || DEFAULT_CONTENT;
+      } catch {
+        return DEFAULT_CONTENT;
+      }
+    }
+
     async function loadRequestedStoreContext() {
       if (isManual || !requestedStoreCode) {
         setStoreContext(null);
@@ -125,6 +215,8 @@ function PurchaseConfirmPublicPage() {
         try {
           setLoading(true);
           setError("");
+          const content = await loadContent();
+          setData({ content });
 
           await liff.init({
             liffId: import.meta.env.VITE_LIFF_ID || "2010080463-s7I6a2BG"
@@ -162,7 +254,7 @@ function PurchaseConfirmPublicPage() {
             return;
           }
 
-          setData({ content: DEFAULT_CONTENT });
+          setData({ content });
         } catch (error) {
           const message = error?.message || "";
 
@@ -180,7 +272,8 @@ function PurchaseConfirmPublicPage() {
           }
 
           setError(message || "尚未找到可建立購買確認書的訂單。");
-          setData({ content: DEFAULT_CONTENT });
+          const content = await loadContent();
+          setData({ content });
         } finally {
           setLoading(false);
         }
@@ -204,11 +297,13 @@ function PurchaseConfirmPublicPage() {
           ? `?store=${encodeURIComponent(resolvedStoreContext.storeCode)}`
           : "";
         const response = await apiRequest(`/purchase-confirmations/public/${token}${storeQuery}`);
+        const snapshot = parseSnapshot(response.htmlSnapshot);
         setData(response);
         setForm({
           buyerName: sessionStorage.getItem("lineProfileName") || response.buyerName || response.customerName || "",
           buyerPhone: response.buyerPhone || response.customerPhone || "",
-          buyerIdNumber: response.buyerIdNumber || "",
+          buyerIdNumber: normalizeIdLast4(response.idLast4 || response.buyerIdNumber || ""),
+          vehicleType: response.vehicleType || snapshot.vehicleType || "",
           deliveryChecks: response.deliveryChecks || [],
           staffExplanations: response.staffExplanations || [],
           termsAccepted: Boolean(response.termsAccepted),
@@ -243,12 +338,16 @@ function PurchaseConfirmPublicPage() {
       alert(content.errors.buyerPhone);
       return;
     }
-    if (!form.buyerIdNumber.trim()) {
+    if (!/^\d{4}$/.test(form.buyerIdNumber.trim())) {
       alert(content.errors.buyerIdNumber);
       return;
     }
-    const requiredDeliveryValues = DELIVERY_CHECK_ITEMS.map((item) => item.value);
-    const requiredExplanationValues = EXPLANATION_CHECK_ITEMS.map((item) => item.value);
+    if (!form.vehicleType) {
+      alert(content.errors.vehicleType);
+      return;
+    }
+    const requiredDeliveryValues = getDeliveryItems(content).map((item) => item.value);
+    const requiredExplanationValues = getExplanationItems(content).map((item) => item.value);
 
     const checkedDeliveryValues = new Set(form.deliveryChecks || []);
     const checkedExplanationValues = new Set(form.staffExplanations || []);
@@ -278,15 +377,17 @@ function PurchaseConfirmPublicPage() {
     try {
       const zhPayload = {
         姓名: form.buyerName.trim(),
-        身份證: form.buyerIdNumber.trim(),
+        身份證後四碼: form.buyerIdNumber.trim(),
         電話: form.buyerPhone.trim(),
+        車輛類型: form.vehicleType,
+        車輛類型名稱: content.vehicleTypes?.[form.vehicleType]?.label || "",
         外觀無損: form.deliveryChecks.includes("外觀無損") ? "✓" : "✗",
         功能正常: form.deliveryChecks.includes("功能正常") ? "✓" : "✗",
         配件齊全: form.deliveryChecks.includes("配件齊全") ? "✓" : "✗",
         規格相符: form.deliveryChecks.includes("規格相符") ? "✓" : "✗",
         條款同意: form.termsAccepted ? "✓" : "✗",
         使用方法: form.staffExplanations.includes("使用方法") ? "✓" : "✗",
-        保固範圍: form.staffExplanations.includes("保固範圍與期限（1 年）") ? "✓" : "✗",
+        保固範圍: form.staffExplanations.includes("保固範圍與期限（1年）") ? "✓" : "✗",
         保養方法: form.staffExplanations.includes("日常維護與保養方法") ? "✓" : "✗",
         法規說明: form.staffExplanations.includes("臺灣電動自行車相關法規及速度限制") ? "✓" : "✗",
         安全事項: form.staffExplanations.includes("騎乘安全注意事項") ? "✓" : "✗",
@@ -298,6 +399,8 @@ function PurchaseConfirmPublicPage() {
         ? zhPayload
         : {
             ...form,
+            idLast4: form.buyerIdNumber.trim(),
+            vehicleTypeLabel: content.vehicleTypes?.[form.vehicleType]?.label || "",
             ...zhPayload
           };
 
@@ -342,7 +445,7 @@ function PurchaseConfirmPublicPage() {
     const { name, value, type, checked } = event.target;
     setForm((current) => ({
       ...current,
-      [name]: type === "checkbox" ? checked : value
+      [name]: name === "buyerIdNumber" ? normalizeIdLast4(value) : type === "checkbox" ? checked : value
     }));
   }
 
@@ -415,12 +518,17 @@ function PurchaseConfirmPublicPage() {
     );
   }
 
+  const content = data.content || DEFAULT_CONTENT;
+  const deliveryItems = getDeliveryItems(content);
+  const explanationItems = getExplanationItems(content);
+  const selectedVehicle = content.vehicleTypes?.[form.vehicleType] || null;
+
   return (
     <div className="public-page">
       <form className={`public-card purchase-confirm-card ${isManual ? "manual-tablet-card" : ""}`} onSubmit={handleSubmit}>
-        <h1>{"購買確認書"}</h1>
+        <h1>{content.pageTitle}</h1>
+        <p>{content.pageSubtitle}</p>
         {storeContext?.isExplicitStore ? <p>{`門市：${storeContext.storeName}`}</p> : null}
-        <p>{"請依序完成下列購買確認項目，內容確認無誤後再簽名送出。"}</p>
         {manualSuccess ? (
           <div className="page-section">
             <h2>{"已完成送出"}</h2>
@@ -433,36 +541,72 @@ function PurchaseConfirmPublicPage() {
           </div>
         ) : null}
         <div className="page-section">
-          <h2>{"基本資料"}</h2>
+          <h2>{"1. 購買者資料"}</h2>
           <div className="grid-form compact-grid">
             <label className="form-field">
-              <span>{"姓名"}</span>
+              <span>{"購買者姓名 *"}</span>
               <input name="buyerName" value={form.buyerName} onChange={handleInputChange} />
             </label>
             <label className="form-field">
-              <span>{"身份證"}</span>
-              <input name="buyerIdNumber" value={form.buyerIdNumber} onChange={handleInputChange} />
+              <span>{"身份證後四碼 *"}</span>
+              <input
+                name="buyerIdNumber"
+                value={form.buyerIdNumber}
+                onChange={handleInputChange}
+                placeholder="請輸入身份證後四碼"
+                inputMode="numeric"
+                pattern="\d{4}"
+                maxLength={4}
+              />
             </label>
             <label className="form-field">
-              <span>{"電話"}</span>
+              <span>{"聯絡電話 *"}</span>
               <input name="buyerPhone" value={form.buyerPhone} onChange={handleInputChange} />
             </label>
           </div>
         </div>
         <div className="page-section">
-          <h2>{"確認項目"}</h2>
+          <h2>{"2. 車輛類型確認"}</h2>
+          <p className="muted-text">{content.vehicleTypeNotice}</p>
           <div className="checklist-list">
-            {DELIVERY_CHECK_ITEMS.map((item) => (
-              <label key={item.id} className="checklist-item" htmlFor={item.id}>
+            {getVehicleOptions(content).map((item) => (
+              <label key={item.value} className="checklist-item" htmlFor={`vehicle-${item.value}`}>
                 <input
-                  id={item.id}
+                  id={`vehicle-${item.value}`}
+                  type="radio"
+                  name="vehicleType"
+                  value={item.value}
+                  checked={form.vehicleType === item.value}
+                  onChange={handleInputChange}
+                />
+                <span><strong>{item.label}</strong><br />{item.description}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="page-section">
+          <h2>{"3. 自行車交付檢查"}</h2>
+          <p className="muted-text">{content.deliveryNotice}</p>
+          <div className="checklist-list">
+            {deliveryItems.map((item) => (
+              <label key={item.value} className="checklist-item" htmlFor={`delivery-${item.value}`}>
+                <input
+                  id={`delivery-${item.value}`}
                   type="checkbox"
                   checked={form.deliveryChecks.includes(item.value)}
                   onChange={() => toggleChecklist("deliveryChecks", item.value)}
                 />
-                <span>{item.label}</span>
+                <span><strong>{item.label}</strong>{item.description ? ` - ${item.description}` : ""}</span>
               </label>
             ))}
+          </div>
+        </div>
+        <div className="page-section">
+          <h2>{"4. 購買使用條款"}</h2>
+          {!form.vehicleType ? <p className="muted-text">{"請先選擇車輛類型，系統會顯示適用條款。"}</p> : null}
+          {form.vehicleType ? <TermsContent content={content} vehicleType={form.vehicleType} /> : null}
+          {selectedVehicle ? <p className="muted-text">{`目前選擇：${selectedVehicle.label}`}</p> : null}
+          <div className="checklist-list">
             <label className="checklist-item" htmlFor="acceptance-terms">
               <input
                 id="acceptance-terms"
@@ -471,19 +615,30 @@ function PurchaseConfirmPublicPage() {
                 checked={form.termsAccepted}
                 onChange={handleInputChange}
               />
-              <span>{"條款同意"}</span>
+              <span>{content.termsAgreement}</span>
             </label>
-            {EXPLANATION_CHECK_ITEMS.map((item) => (
-              <label key={item.id} className="checklist-item" htmlFor={item.id}>
+          </div>
+        </div>
+        <div className="page-section">
+          <h2>{"5. 店員說明確認"}</h2>
+          <p className="muted-text">{content.staffExplanationNotice}</p>
+          <div className="checklist-list">
+            {explanationItems.map((item) => (
+              <label key={item.value} className="checklist-item" htmlFor={`explanation-${item.value}`}>
                 <input
-                  id={item.id}
+                  id={`explanation-${item.value}`}
                   type="checkbox"
                   checked={form.staffExplanations.includes(item.value)}
                   onChange={() => toggleChecklist("staffExplanations", item.value)}
                 />
-                <span>{item.label}</span>
+                <span><strong>{item.label}</strong>{item.description ? ` - ${item.description}` : ""}</span>
               </label>
             ))}
+          </div>
+        </div>
+        <div className="page-section">
+          <h2>{"6. 確認聲明"}</h2>
+          <div className="checklist-list">
             <label className="checklist-item" htmlFor="acceptance-final">
               <input
                 id="acceptance-final"
@@ -492,33 +647,12 @@ function PurchaseConfirmPublicPage() {
                 checked={form.finalConfirmationAccepted}
                 onChange={handleInputChange}
               />
-              <span>{"最終確認"}</span>
+              <span>{content.finalStatement}</span>
             </label>
           </div>
         </div>
         <div className="page-section">
-          <div className="section-header">
-            <div>
-              <h2>{"條款內容"}</h2>
-              <p className="muted-text">{"平板簽名時先保留主要欄位，需要時再展開查看完整條款。"}</p>
-            </div>
-            <button type="button" className="secondary-button inline-submit" onClick={() => setTermsOpen((current) => !current)}>
-              {termsOpen ? "收合條款" : "查看條款"}
-            </button>
-          </div>
-          {termsOpen ? (
-            <div className="stack-list purchase-terms-list">
-              {data.content.terms.map((term, index) => (
-                <div key={term} className="log-row">
-                  <strong>{index + 1}.</strong>
-                  <div>{term}</div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-        <div className="page-section">
-          <h2>{"簽名圖片"}</h2>
+          <h2>{"7. 購買者簽名"}</h2>
           <SignaturePad value={form.signatureData} onChange={(value) => setForm((current) => ({ ...current, signatureData: value }))} />
         </div>
         <button type="submit" className="primary-button" disabled={submitting}>

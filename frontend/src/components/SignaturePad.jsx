@@ -37,6 +37,7 @@ function SignaturePad({ value, onChange }) {
   }
 
   function startDrawing(event) {
+    event.preventDefault();
     const canvas = canvasRef.current;
     const context = canvas.getContext("2d");
     const point = getPosition(event);
@@ -49,6 +50,7 @@ function SignaturePad({ value, onChange }) {
     if (!drawingRef.current) {
       return;
     }
+    event.preventDefault();
 
     const canvas = canvasRef.current;
     const context = canvas.getContext("2d");

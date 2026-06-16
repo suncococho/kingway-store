@@ -348,6 +348,45 @@ function addManualChecklistIfChecked(reqBody, fieldName, checklistValue, selecte
   }
 }
 
+function normalizeIdLast4(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length === 4) {
+    return digits;
+  }
+  if (digits.length > 4) {
+    return digits.slice(-4);
+  }
+  return digits;
+}
+
+function assertIdLast4(value) {
+  const normalized = String(value || "").trim();
+  if (!/^\d{4}$/.test(normalized)) {
+    throw createError(purchaseConfirmationContent.errors.buyerIdNumber, 400);
+  }
+  return normalized;
+}
+
+function normalizeVehicleType(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return ["road", "offroad"].includes(normalized) ? normalized : "";
+}
+
+function getVehicleTypeLabel(vehicleType) {
+  return purchaseConfirmationContent.vehicleTypes?.[vehicleType]?.label || "";
+}
+
+function assertVehicleType(value) {
+  const vehicleType = normalizeVehicleType(value);
+  if (!vehicleType) {
+    throw createError(purchaseConfirmationContent.errors.vehicleType, 400);
+  }
+  return {
+    vehicleType,
+    vehicleTypeLabel: getVehicleTypeLabel(vehicleType)
+  };
+}
+
 function normalizeManualPurchaseConfirmationPayload(body) {
   const deliveryChecks = [];
   const staffExplanations = [];
@@ -357,7 +396,7 @@ function normalizeManualPurchaseConfirmationPayload(body) {
   addManualChecklistIfChecked(body, "配件齊全", "配件齊全", deliveryChecks);
   addManualChecklistIfChecked(body, "規格相符", "規格相符", deliveryChecks);
   addManualChecklistIfChecked(body, "使用方法", "使用方法", staffExplanations);
-  addManualChecklistIfChecked(body, "保固範圍", "保固範圍與期限（1 年）", staffExplanations);
+  addManualChecklistIfChecked(body, "保固範圍", "保固範圍與期限（1年）", staffExplanations);
   addManualChecklistIfChecked(body, "保養方法", "日常維護與保養方法", staffExplanations);
   addManualChecklistIfChecked(body, "法規說明", "臺灣電動自行車相關法規及速度限制", staffExplanations);
   addManualChecklistIfChecked(body, "安全事項", "騎乘安全注意事項", staffExplanations);
@@ -365,7 +404,9 @@ function normalizeManualPurchaseConfirmationPayload(body) {
   return {
     buyerName: String(body["姓名"] || body.buyerName || "").trim(),
     buyerPhone: String(body["電話"] || body.buyerPhone || "").trim(),
-    buyerIdNumber: String(body["身份證"] || body.buyerIdNumber || "").trim(),
+    buyerIdNumber: normalizeIdLast4(body["身份證後四碼"] || body.idLast4 || body.buyerIdNumber || body["身份證"] || ""),
+    vehicleType: normalizeVehicleType(body.vehicleType || body["車輛類型"] || ""),
+    vehicleTypeLabel: String(body.vehicleTypeLabel || body["車輛類型名稱"] || "").trim(),
     deliveryChecks,
     staffExplanations,
     termsAccepted: isChecked(body["條款同意"]),
@@ -455,25 +496,50 @@ function buildPurchaseConfirmationSnapshot({
   buyerName,
   buyerPhone,
   buyerIdNumber,
+  vehicleType,
+  vehicleTypeLabel,
   deliveryChecks,
   staffExplanations,
   submittedAt
 }) {
   return JSON.stringify({
-    title: "KINGWAY 購買確認書",
+    title: purchaseConfirmationContent.pageTitle,
+    subtitle: purchaseConfirmationContent.pageSubtitle,
     orderNo,
     customerName,
     customerPhone,
     buyerName,
     buyerPhone,
+    idLast4: buyerIdNumber,
     buyerIdNumber,
+    vehicleType,
+    vehicleTypeLabel,
+    checkAppearance: deliveryChecks.includes("外觀無損"),
+    checkFunction: deliveryChecks.includes("功能正常"),
+    checkAccessories: deliveryChecks.includes("配件齊全"),
+    checkSpec: deliveryChecks.includes("規格相符"),
+    acceptanceTerms: true,
+    explainUsage: staffExplanations.includes("使用方法"),
+    explainWarranty: staffExplanations.includes("保固範圍與期限（1年）"),
+    explainMaintenance: staffExplanations.includes("日常維護與保養方法"),
+    explainLaws: staffExplanations.includes("臺灣電動自行車相關法規及速度限制"),
+    explainSafety: staffExplanations.includes("騎乘安全注意事項"),
+    acceptanceFinal: true,
     deliveryChecks,
     staffExplanations,
-    terms: purchaseConfirmationContent.terms,
+    termsTitle: purchaseConfirmationContent.termsTitle,
+    termsIntroTitle: purchaseConfirmationContent.termsIntroTitle,
+    termsIntro: purchaseConfirmationContent.termsIntro,
+    vehicleTerms: purchaseConfirmationContent.vehicleTerms?.[vehicleType] || null,
+    commonTerms: purchaseConfirmationContent.commonTerms,
     finalStatement: purchaseConfirmationContent.finalStatement,
     submittedAt
   });
 }
+
+router.get("/content", async (req, res) => {
+  return res.json({ content: purchaseConfirmationContent });
+});
 
 router.get("/public/:token", async (req, res, next) => {
   try {
@@ -528,7 +594,8 @@ router.get("/public/:token", async (req, res, next) => {
       items,
       buyerName: existing?.buyerName || tokenRow.customerName || "",
       buyerPhone: existing?.buyerPhone || tokenRow.customerPhone || "",
-      buyerIdNumber: existing?.buyerIdNumber || "",
+      buyerIdNumber: normalizeIdLast4(existing?.buyerIdNumber || ""),
+      idLast4: normalizeIdLast4(existing?.buyerIdNumber || ""),
       deliveryChecks: parseJsonArray(existing?.deliveryChecksJson),
       staffExplanations: parseJsonArray(existing?.staffExplanationsJson),
       termsAccepted: Boolean(existing?.termsAccepted),
@@ -620,6 +687,9 @@ router.post("/public/:token", async (req, res, next) => {
       buyerName,
       buyerPhone,
       buyerIdNumber,
+      idLast4,
+      vehicleType: vehicleTypeInput,
+      vehicleTypeLabel: vehicleTypeLabelInput,
       deliveryChecks,
       staffExplanations,
       termsAccepted,
@@ -632,9 +702,8 @@ router.post("/public/:token", async (req, res, next) => {
     if (!String(buyerPhone || "").trim()) {
       throw createError(purchaseConfirmationContent.errors.buyerPhone, 400);
     }
-    if (!String(buyerIdNumber || "").trim()) {
-      throw createError(purchaseConfirmationContent.errors.buyerIdNumber, 400);
-    }
+    const normalizedIdLast4 = assertIdLast4(normalizeIdLast4(idLast4 || buyerIdNumber));
+    const { vehicleType, vehicleTypeLabel } = assertVehicleType(vehicleTypeInput);
     if (!signatureData) {
       throw createError(purchaseConfirmationContent.errors.signatureData, 400);
     }
@@ -672,7 +741,9 @@ router.post("/public/:token", async (req, res, next) => {
       customerPhone: tokenRow.customerPhone,
       buyerName: String(buyerName).trim(),
       buyerPhone: String(buyerPhone).trim(),
-      buyerIdNumber: String(buyerIdNumber).trim(),
+      buyerIdNumber: normalizedIdLast4,
+      vehicleType,
+      vehicleTypeLabel: vehicleTypeLabelInput || vehicleTypeLabel,
       deliveryChecks: confirmedDeliveryChecks,
       staffExplanations: confirmedStaffExplanations,
       submittedAt
@@ -715,7 +786,7 @@ router.post("/public/:token", async (req, res, next) => {
           [
             String(buyerName).trim(),
             String(buyerPhone).trim(),
-            String(buyerIdNumber).trim(),
+            normalizedIdLast4,
             JSON.stringify(confirmedDeliveryChecks),
             JSON.stringify(confirmedStaffExplanations),
             signatureData,
@@ -754,7 +825,7 @@ router.post("/public/:token", async (req, res, next) => {
             tokenRow.customerId,
             String(buyerName).trim(),
             String(buyerPhone).trim(),
-            String(buyerIdNumber).trim(),
+            normalizedIdLast4,
             JSON.stringify(confirmedDeliveryChecks),
             JSON.stringify(confirmedStaffExplanations),
             signatureData,
@@ -794,7 +865,9 @@ router.post("/public/:token", async (req, res, next) => {
         orderNo: tokenRow.orderNo,
         customerName: String(buyerName).trim(),
         customerPhone: String(buyerPhone).trim(),
-        buyerIdNumber: String(buyerIdNumber).trim(),
+        buyerIdNumber: normalizedIdLast4,
+        vehicleType,
+        vehicleTypeLabel: vehicleTypeLabelInput || vehicleTypeLabel,
         deliveryChecks: confirmedDeliveryChecks,
         staffExplanations: confirmedStaffExplanations,
         htmlSnapshot: snapshot
@@ -807,6 +880,8 @@ router.post("/public/:token", async (req, res, next) => {
       customerName: confirmation.customerName,
       customerPhone: confirmation.customerPhone,
       buyerIdNumber: confirmation.buyerIdNumber,
+      vehicleType,
+      vehicleTypeLabel: vehicleTypeLabelInput || vehicleTypeLabel,
       deliveryChecks: confirmation.deliveryChecks,
       staffExplanations: confirmation.staffExplanations,
       submittedAt,
@@ -968,6 +1043,8 @@ router.post("/manual", optionalStaffStoreContext, resolvePublicStoreContext, asy
       buyerName,
       buyerPhone,
       buyerIdNumber,
+      vehicleType: vehicleTypeInput,
+      vehicleTypeLabel: vehicleTypeLabelInput,
       deliveryChecks,
       staffExplanations,
       termsAccepted,
@@ -981,9 +1058,8 @@ router.post("/manual", optionalStaffStoreContext, resolvePublicStoreContext, asy
     if (!String(buyerPhone || "").trim()) {
       throw createError(purchaseConfirmationContent.errors.buyerPhone, 400);
     }
-    if (!String(buyerIdNumber || "").trim()) {
-      throw createError(purchaseConfirmationContent.errors.buyerIdNumber, 400);
-    }
+    const normalizedIdLast4 = assertIdLast4(buyerIdNumber);
+    const { vehicleType, vehicleTypeLabel } = assertVehicleType(vehicleTypeInput);
     if (!signatureData) {
       throw createError(purchaseConfirmationContent.errors.signatureData, 400);
     }
@@ -1020,7 +1096,9 @@ router.post("/manual", optionalStaffStoreContext, resolvePublicStoreContext, asy
       customerPhone: matchedCustomerPhone,
       buyerName: String(buyerName).trim(),
       buyerPhone: String(buyerPhone).trim(),
-      buyerIdNumber: String(buyerIdNumber).trim(),
+      buyerIdNumber: normalizedIdLast4,
+      vehicleType,
+      vehicleTypeLabel: vehicleTypeLabelInput || vehicleTypeLabel,
       deliveryChecks: confirmedDeliveryChecks,
       staffExplanations: confirmedStaffExplanations,
       submittedAt
@@ -1052,7 +1130,7 @@ router.post("/manual", optionalStaffStoreContext, resolvePublicStoreContext, asy
         matchedCustomer?.id || null,
         String(buyerName).trim(),
         String(buyerPhone).trim(),
-        String(buyerIdNumber).trim(),
+        normalizedIdLast4,
         stringifyUtf8SafeJson(confirmedDeliveryChecks),
         stringifyUtf8SafeJson(confirmedStaffExplanations),
         signatureData,
@@ -1066,7 +1144,9 @@ router.post("/manual", optionalStaffStoreContext, resolvePublicStoreContext, asy
       orderNo: matchedOrderNo || "MANUAL",
       customerName: String(buyerName).trim(),
       customerPhone: String(buyerPhone).trim(),
-      buyerIdNumber: String(buyerIdNumber).trim(),
+      buyerIdNumber: normalizedIdLast4,
+      vehicleType,
+      vehicleTypeLabel: vehicleTypeLabelInput || vehicleTypeLabel,
       deliveryChecks: confirmedDeliveryChecks,
       staffExplanations: confirmedStaffExplanations,
       submittedAt,
@@ -1154,6 +1234,7 @@ router.get("/", async (req, res, next) => {
     return res.json(
       rows.map((row) => ({
         ...row,
+        buyerIdNumber: normalizeIdLast4(row.buyerIdNumber),
         deliveryChecks: parseJsonArray(row.deliveryChecksJson),
         staffExplanations: parseJsonArray(row.staffExplanationsJson),
         pdfUrl: row.pdfPath ? (row.token ? buildPurchaseConfirmationPdfUrl(row.token) : buildStaffPurchaseConfirmationPdfUrl(row.id, row.storeId)) : null
