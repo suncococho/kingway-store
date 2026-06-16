@@ -323,6 +323,32 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
     const staffColumns = await getTableColumns(pool, "staff_users");
     const orderItemColumns = await getTableColumns(pool, "order_items");
     const canClassifyRepair = hasColumn(orderItemColumns, "product_category_snapshot");
+    const orderItemTotalSql = hasColumn(orderItemColumns, "line_total")
+      ? `
+          (
+            SELECT COALESCE(SUM(oi_amount.line_total), 0)
+            FROM order_items oi_amount
+            WHERE oi_amount.order_id = o.id
+              AND oi_amount.store_id = o.store_id
+          )
+        `
+      : "0";
+    const orderTotalAmountSql = hasColumn(orderColumns, "total_amount") ? "COALESCE(o.total_amount, 0)" : "0";
+    const orderOtherDiscountSql = hasColumn(orderColumns, "other_discount") ? "COALESCE(o.other_discount, 0)" : "0";
+    const orderNotesSql = hasColumn(orderColumns, "notes") ? "COALESCE(o.notes, '')" : "''";
+    const orderDisplayFinalAmountSql = `
+      GREATEST(
+        ${orderItemTotalSql}
+        - CASE
+            WHEN ${orderNotesSql} LIKE '%新朋友折扣%'
+              OR ${orderNotesSql} LIKE '%新朋友優惠%'
+              THEN 500
+            ELSE GREATEST(${orderItemTotalSql} - ${orderTotalAmountSql} - ${orderOtherDiscountSql}, 0)
+          END
+        - ${orderOtherDiscountSql},
+        0
+      )
+    `;
     const repairExistsChecks = [
       hasColumn(orderColumns, "repair_order_id") ? "o.repair_order_id IS NOT NULL" : null,
       hasColumn(orderColumns, "source") ? "o.source = 'repair_quote'" : null,
@@ -389,6 +415,9 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
           ${selectColumn(orderColumns, "o", "order_no", "orderNo")},
           ${selectColumn(orderColumns, "o", "business_date", "businessDate")},
           ${selectColumn(orderColumns, "o", "total_amount", "totalAmount", "0")},
+          ${orderItemTotalSql} AS itemTotal,
+          ${orderOtherDiscountSql} AS otherDiscount,
+          ${orderDisplayFinalAmountSql} AS displayFinalAmount,
           ${selectColumn(orderColumns, "o", "customer_name", "customerNameSnapshot")},
           ${selectColumn(orderColumns, "o", "customer_phone", "customerPhoneSnapshot")},
           ${selectColumn(orderColumns, "o", "customer_type", "customerType", "'LINE'")},
@@ -624,9 +653,19 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
       `,
       [orderId, storeId]
     );
+    const itemTotal = items.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
+    const otherDiscount = Number(rows[0].otherDiscount || 0);
+    const notes = String(rows[0].notes || "");
+    const couponDiscount =
+      notes.includes("新朋友折扣") || notes.includes("新朋友優惠")
+        ? 500
+        : Math.max(itemTotal - Number(rows[0].totalAmount || 0) - otherDiscount, 0);
+    const displayFinalAmount = Math.max(itemTotal - couponDiscount - otherDiscount, 0);
 
     return res.json({
       ...rows[0],
+      itemTotal,
+      displayFinalAmount,
       repairStatusLabel: mapRepairStatusLabel(rows[0].repairStatus),
       items
     });

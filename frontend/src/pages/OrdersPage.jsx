@@ -21,6 +21,10 @@ function formatAmount(value) {
 
 function getDisplayFinalAmount(order) {
   const candidates = [
+    order?.displayFinalAmount,
+    order?.display_final_amount,
+    order?.finalDisplayAmount,
+    order?.final_display_amount,
     order?.finalAmount,
     order?.final_amount,
     order?.finalChargedAmount,
