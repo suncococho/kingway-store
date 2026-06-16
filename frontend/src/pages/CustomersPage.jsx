@@ -16,6 +16,7 @@ const FOLLOW_UP_ACTIONS = [
   { key: "14日追蹤", label: "14日追蹤", tone: "neutral" },
   { key: "手動發送", label: "手動發送", tone: "dark" }
 ];
+const DUPLICATE_PHONE_MESSAGE = "此電話號碼已存在，請勿重複建立客戶";
 
 function FollowUpButtonGroup({ customer, onSelect, activeAction }) {
   return (
@@ -105,6 +106,8 @@ function CustomersPage() {
   const [confirmationFilter, setConfirmationFilter] = useState("ALL");
   const [surveyFilter, setSurveyFilter] = useState("ALL");
   const [crmQueueFilter, setCrmQueueFilter] = useState("ALL");
+  const [formError, setFormError] = useState("");
+  const [detailFormError, setDetailFormError] = useState("");
   const searchQuery = searchParams.get("search") || searchParams.get("phone") || "";
 
   const sectionItems = [
@@ -467,14 +470,24 @@ function CustomersPage() {
 
   function handleChange(event) {
     const { name, value } = event.target;
+    setFormError("");
     setForm((current) => ({
       ...current,
       [name]: value
     }));
   }
 
+  function updateDetailForm(patch) {
+    setDetailFormError("");
+    setDetailForm((current) => ({
+      ...current,
+      ...patch
+    }));
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
+    setFormError("");
 
     try {
       await apiRequest("/customers", {
@@ -500,6 +513,10 @@ function CustomersPage() {
       refetch();
       alert("客戶已新增");
     } catch (requestError) {
+      if (requestError.status === 409 || requestError.message === DUPLICATE_PHONE_MESSAGE) {
+        setFormError(DUPLICATE_PHONE_MESSAGE);
+        return;
+      }
       alert(requestError.message);
     }
   }
@@ -540,6 +557,7 @@ function CustomersPage() {
         usagePurpose: data.customer.usagePurpose || "",
         notes: data.customer.notes || ""
       });
+      setDetailFormError("");
     } catch (error) {
       alert(error.message);
     }
@@ -550,6 +568,7 @@ function CustomersPage() {
     if (!detail) {
       return;
     }
+    setDetailFormError("");
 
     try {
       await apiRequest(`/customers/${detail.customer.id}`, {
@@ -570,6 +589,10 @@ function CustomersPage() {
       refetch();
       alert("客戶資料已更新");
     } catch (error) {
+      if (error.status === 409 || error.message === DUPLICATE_PHONE_MESSAGE) {
+        setDetailFormError(DUPLICATE_PHONE_MESSAGE);
+        return;
+      }
       alert(error.message);
     }
   }
@@ -866,6 +889,7 @@ function CustomersPage() {
                   </div>
                 </div>
                 <form className="grid-form compact-grid" onSubmit={handleSubmit}>
+                  {formError ? <div className="error-banner form-field-wide">{formError}</div> : null}
                   <label className="form-field">
                     <span>姓名</span>
                     <input name="name" value={form.name} onChange={handleChange} required />
@@ -999,13 +1023,14 @@ function CustomersPage() {
             <section className="stack-card">
               <div className="section-title">編輯客戶資料</div>
               <form className="grid-form compact-grid" onSubmit={saveCustomerDetail}>
+                {detailFormError ? <div className="error-banner form-field-wide">{detailFormError}</div> : null}
                 <label className="form-field">
                   <span>姓名</span>
-                  <input value={detailForm.name} onChange={(event) => setDetailForm((current) => ({ ...current, name: event.target.value }))} required />
+                  <input value={detailForm.name} onChange={(event) => updateDetailForm({ name: event.target.value })} required />
                 </label>
                 <label className="form-field">
                   <span>客戶類型</span>
-                  <select value={detailForm.customerType} onChange={(event) => setDetailForm((current) => ({ ...current, customerType: event.target.value }))}>
+                  <select value={detailForm.customerType} onChange={(event) => updateDetailForm({ customerType: event.target.value })}>
                     <option value="LINE">LINE 客戶</option>
                     <option value="OFFLINE_WITH_PHONE">一般客戶（有電話）</option>
                     <option value="OFFLINE_NO_PHONE">一般客戶（無電話）</option>
@@ -1014,34 +1039,34 @@ function CustomersPage() {
                 {normalizeCustomerType(detailForm.customerType) !== "OFFLINE_NO_PHONE" ? (
                 <label className="form-field">
                   <span>電話</span>
-                  <input value={detailForm.phone} onChange={(event) => setDetailForm((current) => ({ ...current, phone: event.target.value }))} />
+                  <input value={detailForm.phone} onChange={(event) => updateDetailForm({ phone: event.target.value })} />
                 </label>
                 ) : null}
                 {!isOfflineCustomerType(detailForm.customerType) ? (
                 <label className="form-field">
                   <span>LINE userId</span>
-                  <input value={detailForm.lineUserId} onChange={(event) => setDetailForm((current) => ({ ...current, lineUserId: event.target.value }))} />
+                  <input value={detailForm.lineUserId} onChange={(event) => updateDetailForm({ lineUserId: event.target.value })} />
                 </label>
                 ) : null}
                 <label className="form-field">
                   <span>CRM 階段</span>
-                  <input value={detailForm.crmStage} onChange={(event) => setDetailForm((current) => ({ ...current, crmStage: event.target.value }))} />
+                  <input value={detailForm.crmStage} onChange={(event) => updateDetailForm({ crmStage: event.target.value })} />
                 </label>
                 <label className="form-field">
                   <span>預算</span>
-                  <input value={detailForm.budget} onChange={(event) => setDetailForm((current) => ({ ...current, budget: event.target.value }))} />
+                  <input value={detailForm.budget} onChange={(event) => updateDetailForm({ budget: event.target.value })} />
                 </label>
                 <label className="form-field">
                   <span>預計購買時間</span>
-                  <input value={detailForm.purchaseTiming} onChange={(event) => setDetailForm((current) => ({ ...current, purchaseTiming: event.target.value }))} />
+                  <input value={detailForm.purchaseTiming} onChange={(event) => updateDetailForm({ purchaseTiming: event.target.value })} />
                 </label>
                 <label className="form-field">
                   <span>用途</span>
-                  <input value={detailForm.usagePurpose} onChange={(event) => setDetailForm((current) => ({ ...current, usagePurpose: event.target.value }))} />
+                  <input value={detailForm.usagePurpose} onChange={(event) => updateDetailForm({ usagePurpose: event.target.value })} />
                 </label>
                 <label className="form-field">
                   <span>備註</span>
-                  <input value={detailForm.notes} onChange={(event) => setDetailForm((current) => ({ ...current, notes: event.target.value }))} />
+                  <input value={detailForm.notes} onChange={(event) => updateDetailForm({ notes: event.target.value })} />
                 </label>
                 <button type="submit" className="primary-button inline-submit">
                   儲存客戶

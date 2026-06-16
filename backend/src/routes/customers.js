@@ -6,6 +6,7 @@ const config = require("../config");
 const { logWorkflowEvent } = require("../services/lineWorkflowService");
 
 const router = express.Router();
+const DUPLICATE_PHONE_MESSAGE = "此電話號碼已存在，請勿重複建立客戶";
 
 function normalizeCustomerType(value, lineUserId, phone) {
   const normalized = String(value || "").trim().toUpperCase();
@@ -19,6 +20,43 @@ function normalizeCustomerType(value, lineUserId, phone) {
     return "LINE";
   }
   return lineUserId ? "LINE" : phone ? "OFFLINE_WITH_PHONE" : "OFFLINE_NO_PHONE";
+}
+
+function normalizePhone(value) {
+  return String(value || "").replace(/[\s-]/g, "");
+}
+
+async function findDuplicateCustomerByPhone(storeId, phone, excludeCustomerId = null) {
+  const normalizedPhone = normalizePhone(phone);
+  if (!normalizedPhone) {
+    return null;
+  }
+
+  const params = [storeId, normalizedPhone];
+  let excludeSql = "";
+  if (excludeCustomerId) {
+    excludeSql = " AND id <> ?";
+    params.push(excludeCustomerId);
+  }
+
+  const [rows] = await pool.query(
+    `
+      SELECT id, name, phone
+      FROM customers
+      WHERE store_id = ?
+        AND COALESCE(crm_stage, '') <> 'deleted'
+        AND REPLACE(REPLACE(REPLACE(COALESCE(phone, ''), '-', ''), ' ', ''), '\t', '') = ?
+        ${excludeSql}
+      LIMIT 1
+    `,
+    params
+  );
+
+  return rows[0] || null;
+}
+
+function sendDuplicatePhoneResponse(res) {
+  return res.status(409).json({ message: DUPLICATE_PHONE_MESSAGE });
 }
 
 function buildPurchaseConfirmationPdfUrl(token) {
@@ -144,25 +182,9 @@ router.post("/", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, ne
     const normalizedCustomerType = normalizeCustomerType(customerType, lineUserId, phone);
 
     if (phone && normalizedCustomerType !== "OFFLINE_NO_PHONE") {
-      const [existingCustomers] = await pool.query(
-        `
-          SELECT
-            id,
-            name,
-            phone,
-            line_user_id AS lineUserId,
-            customer_type AS customerType,
-            crm_stage AS crmStage
-          FROM customers
-          WHERE phone = ?
-            AND store_id = ?
-          LIMIT 1
-        `,
-        [phone, storeId]
-      );
-
-      if (existingCustomers.length > 0) {
-        return res.json(existingCustomers[0]);
+      const duplicateCustomer = await findDuplicateCustomerByPhone(storeId, phone);
+      if (duplicateCustomer) {
+        return sendDuplicatePhoneResponse(res);
       }
     }
     const [result] = await pool.query(
@@ -289,6 +311,16 @@ router.patch("/:id", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res
 
     if (updates.length === 0) {
       return res.status(400).json({ message: "沒有提供可更新欄位" });
+    }
+
+    if (phone !== undefined) {
+      const nextCustomerType = customerType !== undefined ? normalizeCustomerType(customerType, lineUserId, phone) : null;
+      if (phone && nextCustomerType !== "OFFLINE_NO_PHONE") {
+        const duplicateCustomer = await findDuplicateCustomerByPhone(storeId, phone, id);
+        if (duplicateCustomer) {
+          return sendDuplicatePhoneResponse(res);
+        }
+      }
     }
 
     values.push(id, storeId);
