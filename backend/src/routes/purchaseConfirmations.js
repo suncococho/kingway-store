@@ -564,6 +564,8 @@ router.get("/public/:token", async (req, res, next) => {
     const [confirmationRows] = await pool.query(
       `
         SELECT
+          id,
+          status,
           buyer_name AS buyerName,
           buyer_phone AS buyerPhone,
           buyer_id_number AS buyerIdNumber,
@@ -572,16 +574,37 @@ router.get("/public/:token", async (req, res, next) => {
           terms_accepted AS termsAccepted,
           final_confirmation_accepted AS finalConfirmationAccepted,
           signature_data AS signatureData,
-          html_snapshot AS htmlSnapshot
+          html_snapshot AS htmlSnapshot,
+          submitted_at AS submittedAt,
+          pdf_path AS pdfPath
         FROM purchase_confirmations
-        WHERE token = ?
-          AND store_id = ?
+        WHERE store_id = ?
+          AND (
+            token = ?
+            OR order_id = ?
+          )
+          AND status <> 'CANCELED'
+        ORDER BY
+          CASE WHEN status = 'COMPLETED' OR submitted_at IS NOT NULL THEN 0 ELSE 1 END,
+          id DESC
         LIMIT 1
       `,
-      [req.params.token, tokenRow.storeId]
+      [tokenRow.storeId, req.params.token, tokenRow.orderId]
     );
 
     const existing = confirmationRows[0] || null;
+    const completed = Boolean(
+      existing &&
+      (
+        existing.status === "COMPLETED" ||
+        existing.submittedAt ||
+        existing.finalConfirmationAccepted ||
+        existing.signatureData
+      )
+    );
+    const pdfUrl = completed && existing?.pdfPath
+      ? appendStoreQuery(buildPurchaseConfirmationPdfUrl(req.params.token), storeContext?.storeCode)
+      : null;
 
     return res.json({
       orderId: tokenRow.orderId,
@@ -593,6 +616,11 @@ router.get("/public/:token", async (req, res, next) => {
       orderNo: tokenRow.orderNo,
       expiresAt: tokenRow.expiresAt,
       usedAt: tokenRow.usedAt,
+      completed,
+      status: completed ? "COMPLETED" : existing?.status || "PENDING",
+      completedAt: existing?.submittedAt || null,
+      submittedAt: existing?.submittedAt || null,
+      pdfUrl,
       items,
       buyerName: existing?.buyerName || tokenRow.customerName || "",
       buyerPhone: existing?.buyerPhone || tokenRow.customerPhone || "",
@@ -698,6 +726,37 @@ router.post("/public/:token", async (req, res, next) => {
       finalConfirmationAccepted,
       signatureData
     } = req.body;
+
+    const tokenRow = await fetchPurchaseConfirmationToken(req.params.token);
+    if (!tokenRow) {
+      throw createError("找不到購買確認連結", 404);
+    }
+    const storeContext = await assertPurchaseConfirmationStoreMatch(req, tokenRow);
+
+    const [completedRows] = await pool.query(
+      `
+        SELECT id
+        FROM purchase_confirmations
+        WHERE store_id = ?
+          AND (
+            token = ?
+            OR order_id = ?
+          )
+          AND (
+            status = 'COMPLETED'
+            OR submitted_at IS NOT NULL
+            OR final_confirmation_accepted = 1
+            OR (signature_data IS NOT NULL AND signature_data <> '')
+          )
+        LIMIT 1
+      `,
+      [tokenRow.storeId, req.params.token, tokenRow.orderId]
+    );
+
+    if (completedRows[0] || tokenRow.usedAt) {
+      throw createError("此購買確認書已完成，無需重複提交", 409);
+    }
+
     if (!String(buyerName || "").trim()) {
       throw createError(purchaseConfirmationContent.errors.buyerName, 400);
     }
@@ -724,16 +783,6 @@ router.post("/public/:token", async (req, res, next) => {
     }
     if (!finalConfirmationAccepted) {
       throw createError(purchaseConfirmationContent.errors.finalConfirmationAccepted, 400);
-    }
-
-    const tokenRow = await fetchPurchaseConfirmationToken(req.params.token);
-    if (!tokenRow) {
-      throw createError("找不到購買確認連結", 404);
-    }
-    const storeContext = await assertPurchaseConfirmationStoreMatch(req, tokenRow);
-
-    if (tokenRow.usedAt) {
-      throw createError("此購買確認連結已使用", 409);
     }
 
     const submittedAt = new Date().toISOString();

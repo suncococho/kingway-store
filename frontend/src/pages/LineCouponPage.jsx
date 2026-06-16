@@ -1,5 +1,15 @@
 import { useEffect, useState } from "react";
 import liff from "@line/liff";
+import { apiRequest } from "../lib/api";
+import { resolveLineContext } from "../lib/lineContext";
+import LinePhoneBindGate from "./LinePhoneBindGate";
+import {
+  DEFAULT_LINE_BINDING_STORE_CODE,
+  cacheLineCustomerToObject,
+  fetchLineBindingSnapshot,
+  getLineBindingCache,
+  saveLineBindingCache
+} from "../lib/lineBindingRecovery";
 
 const money = (v) => `NT$ ${Number(v || 0).toLocaleString()}`;
 
@@ -25,22 +35,81 @@ function statusLabel(coupon) {
 export default function LineCouponPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [lineUserId, setLineUserId] = useState("");
+  const [profileName, setProfileName] = useState("");
+  const [lineContextInfo, setLineContextInfo] = useState({
+    inClient: false,
+    failureReason: "",
+    liffId: "",
+    isLoggedIn: false,
+    contextUserId: "",
+    profileUserId: "",
+    recoveredLineUserId: ""
+  });
 
   useEffect(() => {
     async function init() {
       try {
-        await liff.init({ liffId: import.meta.env.VITE_LIFF_ID || "2010080463-s7I6a2BG" });
+        const context = await resolveLineContext();
+        setLineContextInfo({
+          inClient: Boolean(context.inClient),
+          failureReason: context.failureReason || "",
+          liffId: context.liffId || "",
+          isLoggedIn: Boolean(context.isLoggedIn),
+          contextUserId: context.contextUserId || "",
+          profileUserId: context.profileUserId || "",
+          recoveredLineUserId: context.lineUserId || ""
+        });
 
-        if (!liff.isLoggedIn()) {
-          liff.login();
+        if (!context.isLoggedIn || context.shouldLogin) {
           return;
         }
 
-        const profile = await liff.getProfile();
-        const res = await fetch(`/api/customer-status?q=${encodeURIComponent(profile.userId)}`);
-        setData(await res.json());
+        setLineUserId(context.lineUserId || "");
+        setProfileName(context.displayName || "");
+
+        if (!context.lineUserId) {
+          const cachedBinding = context.inClient ? getLineBindingCache() : null;
+          const cachedCustomer = cacheLineCustomerToObject(cachedBinding);
+          if (cachedCustomer) {
+            const couponData = cachedCustomer.phone
+              ? await apiRequest(`/coupons/by-phone/${encodeURIComponent(cachedCustomer.phone)}`)
+              : { coupons: [] };
+            setData({ customer: cachedCustomer, coupons: couponData?.coupons || [] });
+          }
+          return;
+        }
+
+        const lineCustomer = await fetchLineBindingSnapshot({
+          lineUserId: context.lineUserId,
+          displayName: context.displayName || "",
+          endpoint: "/line-order/customer",
+          storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+        });
+
+        if (lineCustomer?.customer) {
+          saveLineBindingCache({
+            lineUserId: context.lineUserId,
+            customer: lineCustomer.customer,
+            storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+          });
+          const couponData = lineCustomer.customer.phone
+            ? await apiRequest(`/coupons/by-phone/${encodeURIComponent(lineCustomer.customer.phone)}`)
+            : { coupons: [] };
+          setData({ customer: lineCustomer.customer, coupons: couponData?.coupons || [] });
+          return;
+        }
+
+        const cachedCustomer = cacheLineCustomerToObject(getLineBindingCache(context.lineUserId));
+        if (cachedCustomer) {
+          const couponData = cachedCustomer.phone
+            ? await apiRequest(`/coupons/by-phone/${encodeURIComponent(cachedCustomer.phone)}`)
+            : { coupons: [] };
+          setData({ customer: cachedCustomer, coupons: couponData?.coupons || [] });
+        }
       } catch (e) {
         console.error(e);
+        setData(null);
       } finally {
         setLoading(false);
       }
@@ -68,6 +137,32 @@ export default function LineCouponPage() {
 
       {loading ? (
         <Card>資料讀取中...</Card>
+      ) : !data?.customer?.phone ? (
+        <LinePhoneBindGate
+          lineUserId={lineUserId}
+          displayName={profileName}
+          inClient={lineContextInfo.inClient}
+          failureReason={lineContextInfo.failureReason}
+          lineContextDebug={lineContextInfo}
+          onBound={async (phone) => {
+            const restored = await fetchLineBindingSnapshot({
+              lineUserId,
+              displayName: profileName,
+              endpoint: "/line-order/customer",
+              storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+            });
+            const customer = restored?.customer || { phone, lineUserId, name: profileName || "LINE 客戶" };
+            const couponData = phone
+              ? await apiRequest(`/coupons/by-phone/${encodeURIComponent(phone)}`)
+              : { coupons: [] };
+            setData({ customer, coupons: couponData?.coupons || [] });
+            saveLineBindingCache({
+              lineUserId: lineUserId || customer.lineUserId,
+              customer,
+              storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+            });
+          }}
+        />
       ) : !data?.customer ? (
         <Card>尚未找到綁定資料，請回到 LINE 留下電話。</Card>
       ) : coupons.length ? (
@@ -120,7 +215,7 @@ export default function LineCouponPage() {
           </Card>
         ))
       ) : (
-        <Card>目前沒有優惠券。</Card>
+        <Card>目前沒有可使用的優惠券</Card>
       )}
 
       <button onClick={closeLine} style={{ width: "100%", marginTop: 20, padding: 18, border: 0, borderRadius: 22, background: "#06c755", color: "#fff", fontSize: 20, fontWeight: 900 }}>

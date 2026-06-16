@@ -61,6 +61,7 @@ function App() {
       <Route path="/repair-request" element={<LineRepairRequestPage />} />
       <Route path="/line-repair-request" element={<LineRepairRequestPage />} />
       <Route path="/coupon-center" element={<LineCouponPage />} />
+      <Route path="/line-coupon" element={<LineCouponPage />} />
       <Route path="/google-review" element={<LineGoogleReviewPage />} />
       <Route path="/progress" element={<LineProgressPage />} />
       <Route path="/line-progress" element={<LineProgressPage />} />

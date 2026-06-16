@@ -109,6 +109,24 @@ function parseSnapshot(value) {
   }
 }
 
+function formatCompletedAt(value) {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  return date.toLocaleString("zh-TW", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
 function getDeliveryItems(content) {
   return Array.isArray(content?.deliveryCheckItems) && content.deliveryCheckItems.length
     ? content.deliveryCheckItems
@@ -299,6 +317,9 @@ function PurchaseConfirmPublicPage() {
         const response = await apiRequest(`/purchase-confirmations/public/${token}${storeQuery}`);
         const snapshot = parseSnapshot(response.htmlSnapshot);
         setData(response);
+        if (response.completed) {
+          setPdfUrl(response.pdfUrl || "");
+        }
         setForm({
           buyerName: sessionStorage.getItem("lineProfileName") || response.buyerName || response.customerName || "",
           buyerPhone: response.buyerPhone || response.customerPhone || "",
@@ -511,6 +532,27 @@ function PurchaseConfirmPublicPage() {
           {pdfUrl ? (
             <a className="primary-button" href={pdfUrl} target="_blank" rel="noreferrer">
               {"下載 PDF"}
+            </a>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  if (!isManual && data?.completed) {
+    return (
+      <div className="public-page">
+        <div className="public-card">
+          <h1>{"已完成交付確認"}</h1>
+          {storeContext?.isExplicitStore ? <p>{`門市：${storeContext.storeName}`}</p> : null}
+          <p>{"您已完成本車輛交付確認，無需重複提交。"}</p>
+          {data.orderNo ? <p>{`訂單：${data.orderNo}`}</p> : null}
+          {data.completedAt || data.submittedAt ? (
+            <p>{`完成時間：${formatCompletedAt(data.completedAt || data.submittedAt)}`}</p>
+          ) : null}
+          {(pdfUrl || data.pdfUrl) ? (
+            <a className="primary-button" href={pdfUrl || data.pdfUrl} target="_blank" rel="noreferrer">
+              {"查看/下載 PDF"}
             </a>
           ) : null}
         </div>
