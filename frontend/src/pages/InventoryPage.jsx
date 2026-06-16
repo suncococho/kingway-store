@@ -57,6 +57,23 @@ function getStockLabel(stock, reorderLevel) {
   return "有庫存";
 }
 
+function normalizeInventoryImageUrl(item) {
+  const value = String(item?.imagePath || item?.image_url || item?.imageUrl || "").trim();
+  if (!value) {
+    return "";
+  }
+  if (value.startsWith("files/products/")) {
+    return `/${value}`;
+  }
+  if (value.startsWith("storage/products/")) {
+    return `/files/products/${value.slice("storage/products/".length)}`;
+  }
+  if (value.startsWith("products/")) {
+    return `/files/${value}`;
+  }
+  return value;
+}
+
 function InventoryPage() {
   const location = useLocation();
   const movements = useFetchList("/inventory/movements");
@@ -68,6 +85,7 @@ function InventoryPage() {
     qty: "",
     note: ""
   });
+  const [movementProductKeyword, setMovementProductKeyword] = useState("");
   const [supplierForm, setSupplierForm] = useState({
     requestType: "PURCHASE_ORDER",
     supplierName: "",
@@ -110,6 +128,7 @@ function InventoryPage() {
     () =>
       products.items.map((item) => ({
         ...item,
+        inventoryImageUrl: normalizeInventoryImageUrl(item),
         categoryLabel: item.categoryLabel || getCategoryLabel(item.category),
         stockTone: getStockTone(item.stock, item.reorderLevel),
         stockLabel: getStockLabel(item.stock, item.reorderLevel)
@@ -154,6 +173,15 @@ function InventoryPage() {
   const selectedProduct = products.items.find((item) => String(item.id) === String(form.productId));
   const detailProduct = inventoryRows.find((item) => item.id === detailProductId) || null;
   const featureError = movements.error || supplierRequests.error;
+  const movementProductOptions = useMemo(() => {
+    const keyword = movementProductKeyword.trim().toLowerCase();
+    const sourceRows = keyword
+      ? inventoryRows.filter((item) =>
+          `${item.name} ${item.sku} ${item.categoryLabel} ${item.location || ""}`.toLowerCase().includes(keyword)
+        )
+      : inventoryRows;
+    return sourceRows.slice(0, 8);
+  }, [inventoryRows, movementProductKeyword]);
 
   const sectionItems = [
     { key: "OVERVIEW", label: "庫存總覽" },
@@ -170,13 +198,14 @@ function InventoryPage() {
       label: "商品",
       render: (row) => (
         <div className="product-identity">
-          <ProductImage src={row.imageUrl} alt={row.name} />
+          <ProductImage src={row.inventoryImageUrl} alt={row.name} />
           <div className="identity-copy">
             <div className="identity-title">{row.name}</div>
             <div className="identity-subtitle">{row.categoryLabel}</div>
           </div>
         </div>
-      )
+      ),
+      mobileHidden: true
     },
     { key: "sku", label: "SKU" },
     {
@@ -207,6 +236,18 @@ function InventoryPage() {
     }));
   }
 
+  function handleMovementProductSearch(value) {
+    setMovementProductKeyword(value);
+    if (form.productId) {
+      setForm((current) => ({ ...current, productId: "" }));
+    }
+  }
+
+  function selectMovementProduct(product) {
+    setForm((current) => ({ ...current, productId: String(product.id) }));
+    setMovementProductKeyword(`${product.name} ${product.sku}`);
+  }
+
   function handleSupplierChange(event) {
     const { name, value } = event.target;
     setSupplierForm((current) => ({ ...current, [name]: value }));
@@ -231,6 +272,7 @@ function InventoryPage() {
         qty: "",
         note: ""
       });
+      setMovementProductKeyword("");
       movements.refetch();
       products.refetch();
       alert("庫存已更新");
@@ -647,7 +689,7 @@ function InventoryPage() {
               emptyText="目前沒有符合條件的庫存資料。"
               cardTitle={(row) => (
                 <div className="product-identity">
-                  <ProductImage src={row.imageUrl} alt={row.name} />
+                  <ProductImage src={row.inventoryImageUrl} alt={row.name} />
                   <div className="identity-copy">
                     <div className="identity-title">{row.name}</div>
                     <div className="identity-subtitle">{row.categoryLabel}</div>
@@ -732,24 +774,41 @@ function InventoryPage() {
                     <span>商品</span>
 
                     <input
-                      list="inventory-product-list"
-                      name="productId"
-                      value={form.productId}
-                      onChange={handleChange}
+                      type="text"
+                      value={movementProductKeyword}
+                      onChange={(event) => handleMovementProductSearch(event.target.value)}
                       placeholder="搜尋商品名稱 / SKU"
-                      required
+                      required={!form.productId}
                     />
-
-                    <datalist id="inventory-product-list">
-                      {products.items.map((product) => (
-                        <option
-                          key={product.id}
-                          value={product.id}
-                          label={`${product.name} (${product.sku}) 庫存=${product.stock}`}
-                        />
-                      ))}
-                    </datalist>
+                    <input type="hidden" name="productId" value={form.productId} required />
                   </label>
+                  <div className="product-picker-list">
+                    {selectedProduct ? (
+                      <div className="inventory-summary-card">
+                        <div className="product-identity">
+                          <ProductImage src={normalizeInventoryImageUrl(selectedProduct)} alt={selectedProduct.name} />
+                          <div className="identity-copy">
+                            <div className="identity-title">{selectedProduct.name}</div>
+                            <div className="identity-subtitle">SKU：{selectedProduct.sku} / 目前庫存：{selectedProduct.stock}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                    {!selectedProduct ? movementProductOptions.map((product) => (
+                      <button
+                        key={product.id}
+                        type="button"
+                        className="secondary-button product-picker-option"
+                        onClick={() => selectMovementProduct(product)}
+                      >
+                        <span>{product.name}</span>
+                        <span className="muted-text">SKU：{product.sku} / 庫存：{product.stock}</span>
+                      </button>
+                    )) : null}
+                    {!selectedProduct && movementProductKeyword && !movementProductOptions.length ? (
+                      <div className="empty-state">找不到符合條件的商品。</div>
+                    ) : null}
+                  </div>
                   <label className="form-field">
                     <span>異動類型</span>
                     <select name="type" value={form.type} onChange={handleChange}>
@@ -770,13 +829,6 @@ function InventoryPage() {
                     儲存異動
                   </button>
                 </form>
-
-                {selectedProduct ? (
-                  <div className="inventory-summary-card">
-                    <div className="inventory-summary-value">{selectedProduct.name}</div>
-                    <div className="muted-text">SKU：{selectedProduct.sku} / 目前庫存：{selectedProduct.stock}</div>
-                  </div>
-                ) : null}
               </div>
 
               <div className="admin-subpanel">
@@ -923,7 +975,7 @@ function InventoryPage() {
         {detailProduct ? (
           <div className="admin-detail-layout">
             <div className="admin-detail-media">
-              <ProductImage src={detailProduct.imageUrl} alt={detailProduct.name} className="admin-detail-image" />
+              <ProductImage src={detailProduct.inventoryImageUrl} alt={detailProduct.name} className="admin-detail-image" />
             </div>
             <div className="field-grid">
               <div className="field-item">
