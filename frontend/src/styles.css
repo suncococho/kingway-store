@@ -1581,6 +1581,37 @@ textarea:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 12px;
+  user-select: none;
+  -webkit-user-select: none;
+  overscroll-behavior: contain;
+  touch-action: none;
+}
+
+.signature-hint {
+  margin: 0;
+  color: #526071;
+  font-weight: 700;
+}
+
+.signature-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.signature-actions button {
+  min-height: 44px;
+}
+
+.signature-status {
+  color: #8a4b00;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.signature-status.confirmed {
+  color: #0f7a45;
 }
 
 .page-content input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
@@ -1635,11 +1666,23 @@ textarea:focus-visible,
 
 .signature-pad {
   width: 100%;
-  max-width: 500px;
+  height: 320px;
+  min-height: 300px;
   border: 1px solid #d6ddea;
   border-radius: 16px;
   background: #ffffff;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  overscroll-behavior: contain;
+  display: block;
+}
+
+@media (max-width: 640px) {
+  .signature-pad {
+    height: 320px;
+    min-height: 280px;
+  }
 }
 
 .cart-list,
