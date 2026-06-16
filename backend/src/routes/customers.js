@@ -7,6 +7,7 @@ const { logWorkflowEvent } = require("../services/lineWorkflowService");
 
 const router = express.Router();
 const DUPLICATE_PHONE_MESSAGE = "此電話號碼已存在，請勿重複建立客戶";
+const CUSTOMER_DELETED_MESSAGE = "客戶已刪除";
 
 function normalizeCustomerType(value, lineUserId, phone) {
   const normalized = String(value || "").trim().toUpperCase();
@@ -57,6 +58,17 @@ async function findDuplicateCustomerByPhone(storeId, phone, excludeCustomerId = 
 
 function sendDuplicatePhoneResponse(res) {
   return res.status(409).json({ message: DUPLICATE_PHONE_MESSAGE });
+}
+
+function requireCustomerDeletePermission(req, res, next) {
+  const storeRole = String(req.storeRole || req.user?.storeRole || "").trim().toLowerCase();
+  const legacyRole = String(req.user?.role || "").trim().toUpperCase();
+
+  if (["owner", "admin"].includes(storeRole) || legacyRole === "ADMIN") {
+    return next();
+  }
+
+  return res.status(403).json({ message: "權限不足，無法刪除客戶" });
 }
 
 function buildPurchaseConfirmationPdfUrl(token) {
@@ -595,28 +607,51 @@ router.post("/:id/follow-up", authorize(["ADMIN", "MANAGER", "CASHIER"]), async 
 });
 
 
-router.delete("/:id", authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
+router.delete("/:id", authorize(["ADMIN", "MANAGER"]), requireCustomerDeletePermission, async (req, res, next) => {
   try {
-    const { adminPin } = req.body || {};
+    const customerId = Number(req.params.id);
+    const storeId = req.storeId;
 
-    if (String(adminPin || "") !== "1144") {
-      return res.status(403).json({ message: "管理員 PIN 錯誤" });
+    if (!Number.isInteger(customerId) || customerId <= 0) {
+      return res.status(400).json({ message: "客戶 ID 不正確" });
     }
 
-    await pool.query(
+    const [[customer]] = await pool.query(
       `
-        UPDATE customers
-        SET name = CONCAT('[已刪除] ', COALESCE(name, '')),
-            phone = NULL,
-            line_user_id = NULL,
-            crm_stage = 'deleted',
-            updated_at = NOW()
+        SELECT id, crm_stage AS crmStage
+        FROM customers
         WHERE id = ?
+          AND store_id = ?
+        LIMIT 1
       `,
-      [req.params.id]
+      [customerId, storeId]
     );
 
-    return res.json({ success: true, message: "客戶已隱藏，歷史訂單與維修紀錄已保留" });
+    if (!customer) {
+      return res.status(404).json({ message: "找不到客戶" });
+    }
+
+    if (customer.crmStage !== "deleted") {
+      await pool.query(
+        `
+          UPDATE customers
+          SET phone = NULL,
+              line_user_id = NULL,
+              crm_stage = 'deleted',
+              updated_at = NOW()
+          WHERE id = ?
+            AND store_id = ?
+        `,
+        [customerId, storeId]
+      );
+    }
+
+    return res.json({
+      ok: true,
+      customerId,
+      deleted: true,
+      message: CUSTOMER_DELETED_MESSAGE
+    });
   } catch (error) {
     return next(error);
   }

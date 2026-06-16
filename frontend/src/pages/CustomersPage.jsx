@@ -17,6 +17,7 @@ const FOLLOW_UP_ACTIONS = [
   { key: "手動發送", label: "手動發送", tone: "dark" }
 ];
 const DUPLICATE_PHONE_MESSAGE = "此電話號碼已存在，請勿重複建立客戶";
+const DELETE_CUSTOMER_CONFIRM_MESSAGE = "確定要刪除此客戶嗎？相關訂單與維修紀錄將保留。";
 
 function FollowUpButtonGroup({ customer, onSelect, activeAction }) {
   return (
@@ -315,24 +316,9 @@ function CustomersPage() {
           <button
             type="button"
             className="danger-button"
-            onClick={async () => {
-              const pin = window.prompt("請輸入管理員 PIN");
-              if (!pin) return;
-              if (!window.confirm("確認刪除此客戶？")) return;
-
-              try {
-                await apiRequest(`/customers/${row.id}`, {
-                  method: "DELETE",
-                  body: JSON.stringify({ adminPin: pin })
-                });
-                alert("客戶已刪除");
-                refetch();
-              } catch (error) {
-                alert(error.message || "刪除失敗");
-              }
-            }}
+            onClick={() => deleteCustomer(row)}
           >
-            刪除
+            刪除客戶
           </button>
         </div>
       ),
@@ -380,39 +366,7 @@ function CustomersPage() {
 
   const couponColumns = [
     { key: "code", label: "券碼" },
-    {
-      key: "customerName",
-      label: "客戶",
-      render: (row) => (
-        <div className="status-stack">
-          <span>{row.customerName || "-"}</span>
-          <button
-            type="button"
-            className="danger-button"
-            onClick={async () => {
-              const pin = window.prompt("請輸入管理員 PIN");
-              if (!pin) return;
-
-              if (!window.confirm("確認刪除此客戶？")) return;
-
-              try {
-                await apiRequest(`/customers/${row.id}`, {
-                  method: "DELETE",
-                  body: JSON.stringify({ adminPin: pin })
-                });
-
-                alert("客戶已刪除");
-                window.location.reload();
-              } catch (error) {
-                alert(error.message);
-              }
-            }}
-          >
-            刪除
-          </button>
-        </div>
-      )
-    },
+    { key: "customerName", label: "客戶" },
     { key: "couponTypeLabel", label: "類型" },
     { key: "statusLabel", label: "狀態" },
     { key: "amount", label: "金額", render: (row) => `NT$${Number(row.amount || 0).toFixed(0)}` },
@@ -539,6 +493,29 @@ function CustomersPage() {
       alert("追蹤已建立");
     } catch (error) {
       alert(error.message);
+    }
+  }
+
+  async function deleteCustomer(customer) {
+    if (!customer?.id) {
+      return;
+    }
+    if (!window.confirm(DELETE_CUSTOMER_CONFIRM_MESSAGE)) {
+      return;
+    }
+
+    try {
+      await apiRequest(`/customers/${customer.id}`, {
+        method: "DELETE"
+      });
+      alert("客戶已刪除");
+      if (detail?.customer?.id === customer.id) {
+        setDetail(null);
+        setDetailFormError("");
+      }
+      refetch();
+    } catch (error) {
+      alert(error.message || "刪除失敗");
     }
   }
 
@@ -808,6 +785,14 @@ function CustomersPage() {
                       </button>
                     </div>
                   </div>
+                  <div className="field-item">
+                    <div className="field-label">刪除客戶</div>
+                    <div className="field-value">
+                      <button type="button" className="danger-button" onClick={() => deleteCustomer(row)}>
+                        刪除客戶
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             />
@@ -1070,6 +1055,9 @@ function CustomersPage() {
                 </label>
                 <button type="submit" className="primary-button inline-submit">
                   儲存客戶
+                </button>
+                <button type="button" className="danger-button inline-submit" onClick={() => deleteCustomer(detail.customer)}>
+                  刪除客戶
                 </button>
               </form>
             </section>
