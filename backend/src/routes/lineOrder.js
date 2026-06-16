@@ -296,7 +296,7 @@ router.post("/create", async (req, res, next) => {
       }
 
       const [productRows] = await tx.query(
-        `SELECT id, sku, name, price, stock
+        `SELECT id, sku, name, category, price, stock
          FROM products
          WHERE id = ?
            AND store_id = ?
@@ -382,13 +382,14 @@ router.post("/create", async (req, res, next) => {
         `INSERT INTO order_items
          (store_id, order_id, product_id, sku_snapshot, product_name_snapshot,
           product_category_snapshot, quantity, unit_price, line_total)
-         VALUES (?, ?, ?, ?, ?, 'EB', 1, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         [
           storeId,
           orderResult.insertId,
           product.id,
           product.sku,
           product.name,
+          product.category,
           unitPrice,
           unitPrice
         ]

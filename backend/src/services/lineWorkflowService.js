@@ -483,6 +483,66 @@ async function bindPhoneAndIssueNewFriendCoupon(lineUserId, phone, displayName =
   });
 }
 
+async function getPurchaseConfirmationEligibility(orderId, connection = pool, options = {}) {
+  const storeContext = await resolveLineWorkflowStoreContext({
+    storeId: options.storeId,
+    connection,
+    reason: "purchase_confirmation_eligibility"
+  });
+  const storeId = storeContext.storeId;
+  const [rows] = await connection.query(
+    `
+      SELECT
+        o.id AS orderId,
+        o.store_id AS storeId,
+        o.status AS orderStatus,
+        o.deleted_at AS deletedAt,
+        o.final_payment_status AS finalPaymentStatus,
+        o.unpaid_balance AS unpaidBalance,
+        EXISTS (
+          SELECT 1
+          FROM order_items oi
+          LEFT JOIN products p ON p.id = oi.product_id
+            AND (? IS NULL OR p.store_id = ?)
+          WHERE oi.order_id = o.id
+            AND (? IS NULL OR oi.store_id = ?)
+            AND (
+              oi.product_category_snapshot IN ('EB', 'EBIKE')
+              OR p.category IN ('EB', 'EBIKE')
+            )
+        ) AS hasEbike
+      FROM orders o
+      WHERE o.id = ?
+        AND (? IS NULL OR o.store_id = ?)
+      LIMIT 1
+    `,
+    [storeId, storeId, storeId, storeId, orderId, storeId, storeId]
+  );
+
+  const order = rows[0];
+  if (!order) {
+    return { ok: false, reason: "not_found", message: "找不到訂單" };
+  }
+
+  const orderStatus = String(order.orderStatus || "").trim().toUpperCase();
+  if (order.deletedAt || ["CANCELED", "CANCELLED", "DELETED", "VOID"].includes(orderStatus)) {
+    return { ok: false, reason: "canceled", message: "此訂單已取消，無法產生購買確認書" };
+  }
+
+  const finalPaymentStatus = String(order.finalPaymentStatus || "").trim().toUpperCase();
+  const unpaidBalance = Number(order.unpaidBalance || 0);
+  const isPaid = finalPaymentStatus === "PAID" || order.finalPaymentStatus === "已完款" || unpaidBalance <= 0;
+  if (!isPaid) {
+    return { ok: false, reason: "unpaid", message: "尚未完款，無法產生購買確認書" };
+  }
+
+  if (!order.hasEbike) {
+    return { ok: false, reason: "no_ebike", message: "此訂單沒有電動自行車商品，無法產生購買確認書" };
+  }
+
+  return { ok: true, order };
+}
+
 async function createPurchaseConfirmationForOrder(orderId, connection = pool, options = {}) {
   const storeContext = await resolveLineWorkflowStoreContext({
     storeId: options.storeId,
@@ -490,6 +550,11 @@ async function createPurchaseConfirmationForOrder(orderId, connection = pool, op
     reason: "purchase_confirmation_order_helper"
   });
   const storeId = storeContext.storeId;
+  const eligibility = await getPurchaseConfirmationEligibility(orderId, connection, { storeId });
+  if (!eligibility.ok) {
+    return null;
+  }
+
   const normalizedCustomerPhone = sqlNormalizedPhone("c.phone");
   const [rows] = await connection.query(
     `
@@ -502,12 +567,6 @@ async function createPurchaseConfirmationForOrder(orderId, connection = pool, op
         COALESCE(o.customer_name, c.name) AS customerName,
         c.line_user_id AS orderLineUserId,
         COALESCE(o.customer_type, c.customer_type, 'LINE') AS customerType,
-        EXISTS (
-          SELECT 1 FROM order_items oi
-          WHERE oi.order_id = o.id
-            AND (? IS NULL OR oi.store_id = ?)
-            AND oi.product_category_snapshot IN ('EB', 'EBIKE')
-        ) AS hasEbike,
         o.status AS orderStatus,
         o.final_payment_status AS finalPaymentStatus,
         o.purchase_confirmation_sent_at AS purchaseConfirmationSentAt
@@ -518,11 +577,11 @@ async function createPurchaseConfirmationForOrder(orderId, connection = pool, op
         AND (? IS NULL OR o.store_id = ?)
       LIMIT 1
     `,
-    [storeId, storeId, storeId, storeId, orderId, storeId, storeId]
+    [storeId, storeId, orderId, storeId, storeId]
   );
 
   const order = rows[0];
-  if (!order || !order.hasEbike || order.orderStatus !== "COMPLETED" || order.finalPaymentStatus !== "PAID") {
+  if (!order) {
     return null;
   }
 
@@ -4875,6 +4934,7 @@ module.exports = {
   createPurchaseConfirmationForOrder,
   createRepairReservationFromSession,
   createUriAction,
+  getPurchaseConfirmationEligibility,
   resolveLineWorkflowStoreContext,
   findOrCreateLineCustomer,
   handleCustomerMessageEvent,

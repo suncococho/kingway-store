@@ -15,6 +15,7 @@ const {
   createUriAction,
   backfillApprovedRepairOrders,
   createPurchaseConfirmationForOrder,
+  getPurchaseConfirmationEligibility,
   logWorkflowEvent,
   sendToGroups,
   sendToGroupsWithResult
@@ -1281,10 +1282,15 @@ router.post("/:id/purchase-confirmation", requireOrderManagementFeature, async (
   try {
     const orderId = Number(req.params.id);
     const storeId = req.storeId;
+    const eligibility = await getPurchaseConfirmationEligibility(orderId, pool, { storeId });
+    if (!eligibility.ok) {
+      throw createError(eligibility.message, eligibility.reason === "not_found" ? 404 : 400);
+    }
+
     const confirmation = await createPurchaseConfirmationForOrder(orderId, pool, { storeId });
 
     if (!confirmation) {
-      throw createError("只有已完款的電動自行車訂單可以產生購買確認書", 400);
+      throw createError("找不到可用的購買確認書連結", 400);
     }
 
     const sent = await pushPurchaseConfirmationLineMessage(confirmation, { force: true, storeId });

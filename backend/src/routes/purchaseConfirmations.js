@@ -27,6 +27,7 @@ const {
   createPostbackAction,
   createUriAction,
   createPurchaseConfirmationForOrder,
+  getPurchaseConfirmationEligibility,
   logWorkflowEvent,
   sendToGroups
 } = require("../services/lineWorkflowService");
@@ -900,6 +901,11 @@ router.post("/line/latest-order", optionalStaffStoreContext, resolvePublicStoreC
       return res.status(404).json({ message: "尚未找到可建立購買確認書的訂單。" });
     }
 
+    const eligibility = await getPurchaseConfirmationEligibility(order.id, pool, { storeId });
+    if (!eligibility.ok) {
+      return res.status(eligibility.reason === "not_found" ? 404 : 400).json({ message: eligibility.message });
+    }
+
     await createPurchaseConfirmationForOrder(order.id, pool, { storeId });
 
     let [[tokenRow]] = await pool.query(
@@ -1226,8 +1232,13 @@ router.post("/generate-link", async (req, res, next) => {
         INNER JOIN products p ON p.id = oi.product_id AND p.store_id = ?
         WHERE c.id = ?
           AND o.store_id = ?
-          AND o.status = 'COMPLETED'
-          AND o.final_payment_status = 'PAID'
+          AND o.deleted_at IS NULL
+          AND o.status NOT IN ('CANCELED', 'CANCELLED', 'DELETED', 'VOID')
+          AND (
+            o.final_payment_status = 'PAID'
+            OR o.final_payment_status = '已完款'
+            OR COALESCE(o.unpaid_balance, 0) <= 0
+          )
           AND (oi.product_category_snapshot IN ('EB', 'EBIKE') OR p.category IN ('EB', 'EBIKE'))
         GROUP BY o.id, o.order_no, c.id, c.name, c.phone, c.line_user_id
         ORDER BY o.created_at DESC, o.id DESC
@@ -1240,6 +1251,11 @@ router.post("/generate-link", async (req, res, next) => {
     if (!order) {
       throw createError("找不到已完款的電動自行車訂單", 404);
     }
+    const eligibility = await getPurchaseConfirmationEligibility(order.orderId, pool, { storeId });
+    if (!eligibility.ok) {
+      throw createError(eligibility.message, eligibility.reason === "not_found" ? 404 : 400);
+    }
+
     const confirmation = await createPurchaseConfirmationForOrder(order.orderId, pool, { storeId });
     if (!confirmation) {
       throw createError("找不到可用的購買確認書連結", 404);

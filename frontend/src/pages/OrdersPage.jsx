@@ -49,6 +49,30 @@ function isRepairRelatedOrder(row) {
   );
 }
 
+function normalizeOrderDetailItems(detail) {
+  const rawItems =
+    Array.isArray(detail?.items) ? detail.items :
+    Array.isArray(detail?.orderItems) ? detail.orderItems :
+    Array.isArray(detail?.order_items) ? detail.order_items :
+    [];
+
+  return rawItems.map((item) => ({
+    id: item.id || `${item.productId || item.product_id || item.sku || item.productName}-${item.quantity}`,
+    productId: item.productId || item.product_id || null,
+    sku: item.sku || item.sku_snapshot || "-",
+    productName: item.productName || item.product_name || item.product_name_snapshot || item.name || "商品",
+    productCategory: item.productCategory || item.product_category || item.product_category_snapshot || "",
+    quantity: Number(item.quantity || item.qty || 0),
+    unitPrice: Number(item.unitPrice ?? item.unit_price ?? item.price ?? 0),
+    lineTotal: Number(item.lineTotal ?? item.line_total ?? item.total ?? 0)
+  }));
+}
+
+function isEbikeCategory(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return normalized === "EB" || normalized === "EBIKE";
+}
+
 function OrdersPage() {
   const { items, loading, error, refetch } = useFetchList("/orders");
   const navigate = useNavigate();
@@ -304,10 +328,17 @@ function OrdersPage() {
       return;
     }
     const phone = detail.customerPhone || detail.customerPhoneSnapshot || detailForm.customerPhone;
-    if (!phone || detail.finalPaymentStatus !== "PAID") {
+    const status = String(detail.status || "").trim().toUpperCase();
+    const items = normalizeOrderDetailItems(detail);
+    const isPaid = detail.finalPaymentStatus === "PAID" || detail.finalPaymentStatus === "已完款" || Number(detail.unpaidBalance || 0) <= 0;
+    if (!phone || ["CANCELED", "CANCELLED", "DELETED", "VOID"].includes(status) || !isPaid || !items.some((item) => isEbikeCategory(item.productCategory))) {
       setWarningModal({
         title: "請先完成上一個步驟",
-        message: !phone ? "請先確認客戶電話，再發送購買確認書。" : "請先完成付款，再發送購買確認書。"
+        message:
+          !phone ? "請先確認客戶電話，再發送購買確認書。" :
+          ["CANCELED", "CANCELLED", "DELETED", "VOID"].includes(status) ? "此訂單已取消，無法產生購買確認書" :
+          !isPaid ? "尚未完款，無法產生購買確認書" :
+          "此訂單沒有電動自行車商品，無法產生購買確認書"
       });
       return;
     }
@@ -353,7 +384,7 @@ function OrdersPage() {
     window.open(pdfUrl, "_blank", "noopener,noreferrer");
   }
 
-  function openDetail(row) {
+  async function openDetail(row) {
     setDetail(row);
     setSystemInfoOpen(false);
     setDetailForm({
@@ -366,6 +397,31 @@ function OrdersPage() {
       finalPaymentStatus: row.finalPaymentStatus || "PAID",
       notes: row.notes || ""
     });
+    try {
+      const loaded = await apiRequest(`/orders/${row.id}`);
+      const nextDetail = {
+        ...row,
+        ...loaded,
+        paymentMethodLabel: loaded.paymentMethodLabel || row.paymentMethodLabel || getPaymentMethodLabel(loaded.paymentMethod || row.paymentMethod),
+        statusLabel: loaded.statusLabel || row.statusLabel || getOrderStatusLabel(loaded.status || row.status),
+        finalPaymentStatusLabel: loaded.finalPaymentStatusLabel || row.finalPaymentStatusLabel || getFinalPaymentStatusLabel(loaded.finalPaymentStatus || row.finalPaymentStatus),
+        repairStatusLabel: loaded.repairStatusLabel || row.repairStatusLabel || getRepairStatusLabel(loaded.repairStatus || row.repairStatus),
+        orderKindLabel: row.orderKindLabel
+      };
+      setDetail(nextDetail);
+      setDetailForm({
+        customerName: nextDetail.customerName || nextDetail.customerNameSnapshot || "",
+        customerPhone: nextDetail.customerPhone || nextDetail.customerPhoneSnapshot || "",
+        paymentMethod: nextDetail.paymentMethod || "CASH",
+        isReservationOrder: Boolean(nextDetail.isReservationOrder),
+        depositAmount: String(nextDetail.depositAmount ?? ""),
+        unpaidBalance: String(nextDetail.unpaidBalance ?? ""),
+        finalPaymentStatus: nextDetail.finalPaymentStatus || "PAID",
+        notes: nextDetail.notes || ""
+      });
+    } catch (loadError) {
+      setToastMessage(loadError.message || "訂單明細載入失敗");
+    }
   }
 
   function openSearch(scope = "ALL") {
@@ -985,7 +1041,34 @@ if (!window.confirm(
             </section>
             <section className="stack-card">
               <div className="section-title">商品明細</div>
-              <div className="empty-state">此列表只顯示訂單摘要；商品明細請以訂單建立內容與收據紀錄為準。</div>
+              {normalizeOrderDetailItems(detail).length ? (
+                <div className="table-scroll">
+                  <table className="data-table compact-table">
+                    <thead>
+                      <tr>
+                        <th>商品名稱</th>
+                        <th>SKU</th>
+                        <th>數量</th>
+                        <th>單價</th>
+                        <th>金額</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {normalizeOrderDetailItems(detail).map((item) => (
+                        <tr key={item.id}>
+                          <td>{item.productName}</td>
+                          <td>{item.sku || "-"}</td>
+                          <td>{item.quantity}</td>
+                          <td>{formatAmount(item.unitPrice)}</td>
+                          <td>{formatAmount(item.lineTotal || item.unitPrice * item.quantity)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="empty-state">此訂單尚未建立商品明細，請先補登商品後再產生購買確認書。</div>
+              )}
             </section>
             <section className="stack-card">
               <div className="section-title">付款狀態</div>
