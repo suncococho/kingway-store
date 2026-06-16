@@ -1362,10 +1362,12 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
         `
           SELECT
             EXISTS (
-              SELECT 1 FROM order_items
+              SELECT 1 FROM order_items oi
+              INNER JOIN products p ON p.id = oi.product_id
+                AND p.store_id = ?
               WHERE order_id = ?
-                AND store_id = ?
-                AND product_category_snapshot IN ('EB', 'EBIKE')
+                AND oi.store_id = ?
+                AND p.requires_purchase_confirmation = 1
             ) AS isEbikeOrder,
             EXISTS (
               SELECT 1 FROM order_items
@@ -1379,7 +1381,7 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
             AND store_id = ?
           LIMIT 1
         `,
-        [orderId, storeId, orderId, storeId, orderId, storeId]
+        [storeId, orderId, storeId, orderId, storeId, orderId, storeId]
       );
 
       const orderType = typeRows[0] || {};

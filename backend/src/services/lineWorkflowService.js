@@ -502,15 +502,12 @@ async function getPurchaseConfirmationEligibility(orderId, connection = pool, op
         EXISTS (
           SELECT 1
           FROM order_items oi
-          LEFT JOIN products p ON p.id = oi.product_id
+          INNER JOIN products p ON p.id = oi.product_id
             AND (? IS NULL OR p.store_id = ?)
           WHERE oi.order_id = o.id
             AND (? IS NULL OR oi.store_id = ?)
-            AND (
-              oi.product_category_snapshot IN ('EB', 'EBIKE')
-              OR p.category IN ('EB', 'EBIKE')
-            )
-        ) AS hasEbike
+            AND p.requires_purchase_confirmation = 1
+        ) AS hasRequiredPurchaseConfirmationProduct
       FROM orders o
       WHERE o.id = ?
         AND (? IS NULL OR o.store_id = ?)
@@ -536,8 +533,8 @@ async function getPurchaseConfirmationEligibility(orderId, connection = pool, op
     return { ok: false, reason: "unpaid", message: "尚未完款，無法產生購買確認書" };
   }
 
-  if (!order.hasEbike) {
-    return { ok: false, reason: "no_ebike", message: "此訂單沒有電動自行車商品，無法產生購買確認書" };
+  if (!order.hasRequiredPurchaseConfirmationProduct) {
+    return { ok: false, reason: "no_required_product", message: "此訂單沒有需要購買確認書的商品" };
   }
 
   return { ok: true, order };
@@ -2564,9 +2561,11 @@ async function findPendingPurchaseConfirmationTokenForLineUser(lineUserId) {
         AND EXISTS (
           SELECT 1
           FROM order_items oi
+          INNER JOIN products p ON p.id = oi.product_id
+            AND p.store_id = o.store_id
           WHERE oi.order_id = o.id
             AND oi.store_id = o.store_id
-            AND oi.product_category_snapshot IN ('EB', 'EBIKE')
+            AND p.requires_purchase_confirmation = 1
         )
         AND (
           o.customer_id = ?

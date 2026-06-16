@@ -79,6 +79,7 @@ function ProductsPage() {
     imageUrl: "",
     costPrice: "",
     location: "",
+    requiresPurchaseConfirmation: false,
     description: ""
   });
   const [submitting, setSubmitting] = useState(false);
@@ -105,6 +106,7 @@ function ProductsPage() {
     costPrice: "",
     location: "",
     description: "",
+    requiresPurchaseConfirmation: false,
     isActive: true
   });
   const [searchMode, setSearchMode] = useState(false);
@@ -156,7 +158,8 @@ function ProductsPage() {
         categoryLabel: item.categoryLabel || getCategoryLabel(item.category),
         stockTone: getStockTone(item.stock, item.reorderLevel),
         stockLabel: getStockLabel(item.stock, item.reorderLevel),
-        statusLabel: item.isActive ? "上架中" : "未上架"
+        statusLabel: item.isActive ? "上架中" : "未上架",
+        requiresPurchaseConfirmation: Boolean(item.requiresPurchaseConfirmation ?? item.requires_purchase_confirmation)
       })),
     [items]
   );
@@ -280,6 +283,7 @@ function ProductsPage() {
       costPrice: String(detailProduct.costPrice ?? ""),
       location: detailProduct.location || "",
       description: detailProduct.description || "",
+      requiresPurchaseConfirmation: Boolean(detailProduct.requiresPurchaseConfirmation),
       isActive: Boolean(detailProduct.isActive)
     });
   }, [detailProduct]);
@@ -354,7 +358,7 @@ function ProductsPage() {
   }
 
   function handleChange(event) {
-    const { name, value } = event.target;
+    const { name, value, type, checked } = event.target;
     if (name === "imageUrl") {
       setImagePreviewUrl((current) => {
         revokePreviewUrl(current);
@@ -363,7 +367,7 @@ function ProductsPage() {
     }
     setForm((current) => ({
       ...current,
-      [name]: value
+      [name]: type === "checkbox" ? checked : value
     }));
   }
 
@@ -434,6 +438,7 @@ function ProductsPage() {
           imageUrl: form.imageUrl,
           costPrice: Number(form.costPrice || 0),
           location: form.location,
+          requiresPurchaseConfirmation: Boolean(form.requiresPurchaseConfirmation),
           description: form.description
         })
       });
@@ -449,6 +454,7 @@ function ProductsPage() {
         imageUrl: "",
         costPrice: "",
         location: "",
+        requiresPurchaseConfirmation: false,
         description: ""
       });
       setImagePreviewUrl((current) => {
@@ -501,6 +507,7 @@ function ProductsPage() {
           costPrice: Number(detailForm.costPrice || 0),
           location: detailForm.location,
           description: detailForm.description,
+          requiresPurchaseConfirmation: Boolean(detailForm.requiresPurchaseConfirmation),
           isActive: detailForm.isActive
         })
       });
@@ -924,6 +931,16 @@ function ProductsPage() {
       mobileHidden: true
     },
     {
+      key: "requiresPurchaseConfirmation",
+      label: "需要確認書",
+      render: (row) => (
+        <StatusBadge tone={row.requiresPurchaseConfirmation ? "warning" : "neutral"}>
+          {row.requiresPurchaseConfirmation ? "需要確認書" : "不需要"}
+        </StatusBadge>
+      ),
+      mobileHidden: true
+    },
+    {
       key: "actions",
       label: "操作",
       render: (row) => (
@@ -1011,6 +1028,11 @@ function ProductsPage() {
     { key: "row", label: "列" },
     { key: "sku", label: "SKU" },
     { key: "name", label: "商品名稱" },
+    {
+      key: "requiresPurchaseConfirmation",
+      label: "購買確認書",
+      render: (row) => <StatusBadge tone={row.requiresPurchaseConfirmation ? "warning" : "neutral"}>{row.requiresPurchaseConfirmation ? "需要" : "不需要"}</StatusBadge>
+    },
     {
       key: "action",
       label: "結果",
@@ -1104,6 +1126,7 @@ function ProductsPage() {
               <>
                 <StatusBadge tone={row.stockTone}>{row.stockLabel}</StatusBadge>
                 <StatusBadge tone={row.isActive ? "success" : "neutral"}>{row.statusLabel}</StatusBadge>
+                    <StatusBadge tone={row.requiresPurchaseConfirmation ? "warning" : "neutral"}>{row.requiresPurchaseConfirmation ? "需要確認書" : "不需要"}</StatusBadge>
               </>
             )}
             cardFooter={(row) => (
@@ -1313,6 +1336,7 @@ function ProductsPage() {
                   <>
                     <StatusBadge tone={row.stockTone}>{row.stockLabel}</StatusBadge>
                     <StatusBadge tone={row.isActive ? "success" : "neutral"}>{row.statusLabel}</StatusBadge>
+                    <StatusBadge tone={row.requiresPurchaseConfirmation ? "warning" : "neutral"}>{row.requiresPurchaseConfirmation ? "需要確認書" : "不需要"}</StatusBadge>
                   </>
                 )}
                 cardFooter={(row) => (
@@ -1356,6 +1380,18 @@ function ProductsPage() {
                         </option>
                       ))}
                     </select>
+                  </label>
+                  <label className="form-field">
+                    <span>需要購買確認書</span>
+                    <label className="checkbox-row">
+                      <input
+                        name="requiresPurchaseConfirmation"
+                        type="checkbox"
+                        checked={form.requiresPurchaseConfirmation}
+                        onChange={handleChange}
+                      />
+                      <span>電動自行車或需簽署交付確認書的商品請勾選</span>
+                    </label>
                   </label>
                 </div>
                 <div className="sop-summary-box">
@@ -1458,6 +1494,7 @@ function ProductsPage() {
                   <div><strong>庫存</strong><span>{form.stock || "0"}</span></div>
                   <div><strong>售價</strong><span>{formatCurrency(form.price)}</span></div>
                   <div><strong>圖片</strong><span>{form.imageUrl ? "已設定" : "未設定"}</span></div>
+                  <div><strong>購買確認書</strong><span>{form.requiresPurchaseConfirmation ? "需要確認書" : "不需要"}</span></div>
                 </div>
                 <label className="form-field form-field-wide">
                   <span>商品說明</span>
@@ -1673,6 +1710,14 @@ function ProductsPage() {
                       <StatusBadge tone={detailProduct.isActive ? "success" : "neutral"}>{detailProduct.statusLabel}</StatusBadge>
                     </div>
                   </article>
+                  <article className="admin-summary-card">
+                    <div className="admin-summary-label">購買確認書</div>
+                    <div className="admin-summary-value admin-summary-value-small">
+                      <StatusBadge tone={detailProduct.requiresPurchaseConfirmation ? "warning" : "neutral"}>
+                        {detailProduct.requiresPurchaseConfirmation ? "需要確認書" : "不需要"}
+                      </StatusBadge>
+                    </div>
+                  </article>
                 </div>
               </div>
             </section>
@@ -1737,6 +1782,17 @@ function ProductsPage() {
                     <option value="1">上架中</option>
                     <option value="0">未上架</option>
                   </select>
+                </label>
+                <label className="form-field">
+                  <span>需要購買確認書</span>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={detailForm.requiresPurchaseConfirmation}
+                      onChange={(event) => setDetailForm((current) => ({ ...current, requiresPurchaseConfirmation: event.target.checked }))}
+                    />
+                    <span>電動自行車或需簽署交付確認書的商品請勾選</span>
+                  </label>
                 </label>
                 <label className="form-field form-field-wide">
                   <span>商品說明</span>

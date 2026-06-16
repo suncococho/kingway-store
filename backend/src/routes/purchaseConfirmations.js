@@ -433,13 +433,15 @@ async function findManualPurchaseConfirmationMatch(phone, storeId) {
         COALESCE(c.name, o.customer_name) AS customerName,
         COALESCE(c.phone, o.customer_phone) AS customerPhone,
         o.store_id AS storeId,
-        MAX(CASE WHEN oi.product_category_snapshot = 'EB' THEN 1 ELSE 0 END) AS hasEbike,
+        MAX(CASE WHEN p.requires_purchase_confirmation = 1 THEN 1 ELSE 0 END) AS hasRequiredPurchaseConfirmationProduct,
         MAX(CASE WHEN oi.product_category_snapshot IS NOT NULL THEN 1 ELSE 0 END) AS hasCategoryData
       FROM orders o
       LEFT JOIN customers c ON c.id = o.customer_id
         AND c.store_id = o.store_id
       LEFT JOIN order_items oi ON oi.order_id = o.id
         AND oi.store_id = o.store_id
+      LEFT JOIN products p ON p.id = oi.product_id
+        AND p.store_id = o.store_id
       WHERE o.store_id = ?
         AND (
           (${normalizedCustomerPhone}) = ?
@@ -448,7 +450,7 @@ async function findManualPurchaseConfirmationMatch(phone, storeId) {
       GROUP BY o.id, o.order_no, o.customer_id, c.id, c.name, c.phone, o.customer_name, o.customer_phone, o.store_id, o.created_at
       ORDER BY
         CASE
-          WHEN MAX(CASE WHEN oi.product_category_snapshot = 'EB' THEN 1 ELSE 0 END) = 1 THEN 0
+          WHEN MAX(CASE WHEN p.requires_purchase_confirmation = 1 THEN 1 ELSE 0 END) = 1 THEN 0
           WHEN MAX(CASE WHEN oi.product_category_snapshot IS NOT NULL THEN 1 ELSE 0 END) = 1 THEN 1
           ELSE 2
         END,
@@ -1320,7 +1322,7 @@ router.post("/generate-link", async (req, res, next) => {
             OR o.final_payment_status = '已完款'
             OR COALESCE(o.unpaid_balance, 0) <= 0
           )
-          AND (oi.product_category_snapshot IN ('EB', 'EBIKE') OR p.category IN ('EB', 'EBIKE'))
+          AND p.requires_purchase_confirmation = 1
         GROUP BY o.id, o.order_no, c.id, c.name, c.phone, c.line_user_id
         ORDER BY o.created_at DESC, o.id DESC
         LIMIT 1
@@ -1330,7 +1332,7 @@ router.post("/generate-link", async (req, res, next) => {
 
     const order = rows[0];
     if (!order) {
-      throw createError("找不到已完款的電動自行車訂單", 404);
+      throw createError("找不到已完款且需要購買確認書的訂單", 404);
     }
     const eligibility = await getPurchaseConfirmationEligibility(order.orderId, pool, { storeId });
     if (!eligibility.ok) {

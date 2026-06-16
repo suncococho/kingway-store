@@ -27,6 +27,7 @@ const PRODUCT_IMPORT_COLUMNS = [
   "stock",
   "reorderLevel",
   "isActive",
+  "requiresPurchaseConfirmation",
   "description",
   "location",
   "inputterName",
@@ -217,7 +218,9 @@ function mapProductRow(row) {
     imagePath: normalizeEditableImagePath(row.imageUrl),
     imageUrl: normalizeImageUrl(row.imageUrl, row.id),
     category,
-    categoryLabel: row.categoryName || mapCategoryLabel(category)
+    categoryLabel: row.categoryName || mapCategoryLabel(category),
+    requiresPurchaseConfirmation: Boolean(Number(row.requiresPurchaseConfirmation ?? row.requires_purchase_confirmation ?? 0)),
+    requires_purchase_confirmation: Number(row.requiresPurchaseConfirmation ?? row.requires_purchase_confirmation ?? 0) ? 1 : 0
   };
 }
 
@@ -255,6 +258,7 @@ function buildProductExportRows(rawRows) {
       stock: Number(row.stock || 0),
       reorderLevel: Number(row.reorderLevel || 0),
       isActive: normalizeExportBoolean(row.isActive),
+      requiresPurchaseConfirmation: normalizeExportBoolean(row.requiresPurchaseConfirmation) ? "是" : "否",
       description: row.description || "",
       location: row.location || "",
       inputterName: row.inputterName || "",
@@ -345,6 +349,37 @@ function parseImportBooleanAsNumber(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function parseOptionalImportBooleanAsNumber(value) {
+  const normalized = normalizeImportString(value).trim().toLowerCase();
+  if (!normalized) {
+    return { ok: true, value: 0 };
+  }
+  if (["1", "true", "yes", "是", "啟用", "on"].includes(normalized)) {
+    return { ok: true, value: 1 };
+  }
+  if (["0", "false", "no", "否", "停用", "off"].includes(normalized)) {
+    return { ok: true, value: 0 };
+  }
+  return { ok: false, value: 0 };
+}
+
+function parseRequestBooleanAsNumber(value, defaultValue = 0) {
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+  if (typeof value === "boolean") {
+    return value ? 1 : 0;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "是", "on"].includes(normalized)) {
+    return 1;
+  }
+  if (["0", "false", "no", "否", "off"].includes(normalized)) {
+    return 0;
+  }
+  return Number(value) ? 1 : 0;
+}
+
 function isSkippableProductImportRow(rowData) {
   const values = Object.values(rowData).map((value) => String(value || "").trim());
   const joined = values.join(" ");
@@ -402,6 +437,8 @@ async function readProductImportRows(buffer) {
       headerMap.set(column, "reorderLevel");
     } else if (["isactive", "active"].includes(normalized)) {
       headerMap.set(column, "isActive");
+    } else if (["requirespurchaseconfirmation", "requiresconfirmation", "needspurchaseconfirmation"].includes(normalized)) {
+      headerMap.set(column, "requiresPurchaseConfirmation");
     } else if (["description"].includes(normalized)) {
       headerMap.set(column, "description");
     } else if (["location"].includes(normalized)) {
@@ -517,6 +554,7 @@ async function analyzeProductImportRows(storeId, buffer) {
     const stock = parseImportNumberOrDefault(data.stock, 0);
     const reorderLevel = parseImportNumberOrDefault(data.reorderLevel, 0);
     const isActive = parseImportBooleanAsNumber(data.isActive);
+    const requiresPurchaseConfirmation = parseOptionalImportBooleanAsNumber(data.requiresPurchaseConfirmation);
     const costPrice = Number.isFinite(parseImportNumber(data.costPrice)) ? parseImportNumber(data.costPrice) : 0;
     const categoryByCodeMatch = categoryCode ? categoryByCode.get(categoryCode) : null;
     const categoryByNameMatch = categoryName ? categoryByName.get(categoryName.toLowerCase()) : null;
@@ -543,6 +581,11 @@ async function analyzeProductImportRows(storeId, buffer) {
 
     if (Number.isNaN(reorderLevel)) {
       normalizeImportError(result, rowNumber, sku, "reorderLevel 欄位必須是數字", name);
+      continue;
+    }
+
+    if (!requiresPurchaseConfirmation.ok) {
+      normalizeImportError(result, rowNumber, sku, "requiresPurchaseConfirmation 僅可填 YES、NO、TRUE、FALSE、1、0、是、否", name);
       continue;
     }
 
@@ -573,6 +616,7 @@ async function analyzeProductImportRows(storeId, buffer) {
       stock,
       reorderLevel,
       isActive,
+      requiresPurchaseConfirmation: requiresPurchaseConfirmation.value,
       costPrice,
       categoryId: Number.isFinite(Number(resolvedCategory?.id)) ? Number(resolvedCategory.id) : null,
       categoryCode: resolvedCategory?.code || categoryCode || "",
@@ -596,7 +640,8 @@ async function analyzeProductImportRows(storeId, buffer) {
       sku: rowPayload.sku,
       name: rowPayload.name,
       action: rowPayload.action,
-      message: rowPayload.message
+      message: rowPayload.message,
+      requiresPurchaseConfirmation: Boolean(rowPayload.requiresPurchaseConfirmation)
     });
   }
 
@@ -651,6 +696,8 @@ async function runProductImportApply(storeId, buffer, req) {
   const connection = await pool.getConnection();
   try {
     const hasCategorySchema = await hasProductCategorySchema(connection);
+    const productColumns = await getTableColumns(connection, "products");
+    const hasRequiresPurchaseConfirmation = hasColumn(productColumns, "requires_purchase_confirmation");
     await connection.beginTransaction();
 
     let createdCount = 0;
@@ -681,6 +728,7 @@ async function runProductImportApply(storeId, buffer, req) {
           "stock = ?",
           "reorder_level = ?",
           "is_active = ?",
+          ...(hasRequiresPurchaseConfirmation ? ["requires_purchase_confirmation = ?"] : []),
           "description = ?",
           "cost_price = ?",
           "location = ?",
@@ -695,6 +743,7 @@ async function runProductImportApply(storeId, buffer, req) {
           Number(row.stock),
           Number(row.reorderLevel),
           row.isActive,
+          ...(hasRequiresPurchaseConfirmation ? [row.requiresPurchaseConfirmation] : []),
           row.description,
           row.costPrice,
           row.location,
@@ -758,6 +807,11 @@ async function runProductImportApply(storeId, buffer, req) {
       if (hasCategorySchema) {
         columns.splice(3, 0, "category_id");
         values.splice(3, 0, row.categoryId ?? null);
+      }
+      if (hasRequiresPurchaseConfirmation) {
+        const descriptionIndex = columns.indexOf("description");
+        columns.splice(descriptionIndex, 0, "requires_purchase_confirmation");
+        values.splice(descriptionIndex, 0, row.requiresPurchaseConfirmation);
       }
 
       const [insertResult] = await connection.query(
@@ -991,6 +1045,7 @@ router.get("/", async (req, res, next) => {
         ${selectColumn(productColumns, "products", "stock", "stock", "0")},
         ${selectColumn(productColumns, "products", "reorder_level", "reorderLevel", "0")},
         ${selectColumn(productColumns, "products", "is_active", "isActive", "1")},
+        ${selectColumn(productColumns, "products", "requires_purchase_confirmation", "requiresPurchaseConfirmation", "0")},
         ${selectColumn(productColumns, "products", "created_at", "createdAt")},
         ${selectColumn(productColumns, "products", "updated_at", "updatedAt")}
       FROM products
@@ -1041,6 +1096,7 @@ router.get("/export", async (req, res, next) => {
           ${selectColumn(productColumns, "products", "stock", "stock", "0")},
           ${selectColumn(productColumns, "products", "reorder_level", "reorderLevel", "0")},
           ${selectColumn(productColumns, "products", "is_active", "isActive", "1")},
+          ${selectColumn(productColumns, "products", "requires_purchase_confirmation", "requiresPurchaseConfirmation", "0")},
           ${selectColumn(productColumns, "products", "description", "description")},
           ${selectColumn(productColumns, "products", "location", "location")},
           ${selectColumn(productColumns, "products", "inputter_name", "inputterName")},
@@ -1067,6 +1123,7 @@ router.get("/export", async (req, res, next) => {
       { header: "stock", key: "stock", width: 10 },
       { header: "reorderLevel", key: "reorderLevel", width: 14 },
       { header: "isActive", key: "isActive", width: 12 },
+      { header: "requiresPurchaseConfirmation", key: "requiresPurchaseConfirmation", width: 28 },
       { header: "description", key: "description", width: 36 },
       { header: "location", key: "location", width: 16 },
       { header: "inputterName", key: "inputterName", width: 18 },
@@ -1136,6 +1193,7 @@ router.get("/import-template", async (req, res, next) => {
       { header: "price", key: "price", width: 12 },
       { header: "stock", key: "stock", width: 10 },
       { header: "reorderLevel", key: "reorderLevel", width: 14 },
+      { header: "requiresPurchaseConfirmation", key: "requiresPurchaseConfirmation", width: 28 },
       { header: "description", key: "description", width: 36 }
     ];
     sheet.getRow(1).font = { bold: true };
@@ -1151,6 +1209,7 @@ router.get("/import-template", async (req, res, next) => {
         price: 25800,
         stock: 12,
         reorderLevel: 0,
+        requiresPurchaseConfirmation: "YES",
         description: "示例：電動自行車主款，可直接上架"
       },
       {
@@ -1160,6 +1219,7 @@ router.get("/import-template", async (req, res, next) => {
         price: 1250,
         stock: 30,
         reorderLevel: 5,
+        requiresPurchaseConfirmation: "NO",
         description: "示例：配件類商品，建議啟用快速補貨管理"
       },
       {
@@ -1169,6 +1229,7 @@ router.get("/import-template", async (req, res, next) => {
         price: 980,
         stock: 18,
         reorderLevel: 3,
+        requiresPurchaseConfirmation: "NO",
         description: "示例：耗材類，請維持庫存更新"
       }
     ];
@@ -1198,6 +1259,7 @@ router.get("/import-template", async (req, res, next) => {
       { header: "price", key: "price", width: 12 },
       { header: "stock", key: "stock", width: 10 },
       { header: "reorderLevel", key: "reorderLevel", width: 14 },
+      { header: "requiresPurchaseConfirmation", key: "requiresPurchaseConfirmation", width: 28 },
       { header: "description", key: "description", width: 36 }
     ];
     exampleSheet.getRow(1).font = { bold: true };
@@ -1217,6 +1279,7 @@ router.get("/import-template", async (req, res, next) => {
       { item: "必填欄位", content: "sku（商品編號）、name（商品名稱）為必填。" },
       { item: "分類欄位", content: "categoryCode 請參考「門市分類清單」。不可使用不存在的代碼。" },
       { item: "數字欄位", content: "price、stock、reorderLevel 請填數字。price 可空白，系統會視為 0；stock 可空白，系統會視為 0；reorderLevel 可空白，系統會視為 0。可輸入 25800 或 25,800，請勿輸入 NT$。" },
+      { item: "購買確認書", content: "requiresPurchaseConfirmation 空白視為 NO。需要購買確認書的商品請填 YES，例如電動自行車。允許 YES / NO / TRUE / FALSE / 1 / 0 / 是 / 否。" },
       { item: "選填欄位", content: "description 為選填備註。" },
       { item: "常見錯誤", content: "常見欄位錯誤包含：售價/庫存/安全庫存非數字、欄位名稱拼字錯誤、欄位位移或刪除。\n遇到錯誤會在預覽中顯示失敗列與原因。" },
       { item: "SKU 重複說明", content: "同一檔案內若有重複 SKU，第二筆會被視為錯誤並略過。\n請先修正後再重新預覽上傳。" },
@@ -1415,13 +1478,14 @@ router.post("/", async (req, res, next) => {
       return res.status(500).json({ message: "products.store_id 欄位不存在，請先更新資料表結構" });
     }
 
-    const { sku, name, category, categoryId, price, stock, reorderLevel, isActive, description, imageUrl, costPrice, location, inputterName, source } = req.body;
+    const { sku, name, category, categoryId, price, stock, reorderLevel, isActive, requiresPurchaseConfirmation, requires_purchase_confirmation, description, imageUrl, costPrice, location, inputterName, source } = req.body;
 
     if (!sku || !name || price === undefined || stock === undefined) {
       return res.status(400).json({ message: "SKU、商品名稱、售價與庫存為必填欄位" });
     }
 
     const productColumns = await getTableColumns(pool, "products");
+    const hasRequiresPurchaseConfirmation = hasColumn(productColumns, "requires_purchase_confirmation");
     const storeId = getRequestStoreId(req);
     const hasCategorySchema = await hasProductCategorySchema(pool);
 
@@ -1437,6 +1501,10 @@ router.post("/", async (req, res, next) => {
     if (hasCategorySchema) {
       insertColumns.push("category_id");
       insertValues.push(resolvedProductCategory.categoryId);
+    }
+    if (hasRequiresPurchaseConfirmation) {
+      insertColumns.push("requires_purchase_confirmation");
+      insertValues.push(parseRequestBooleanAsNumber(requiresPurchaseConfirmation ?? requires_purchase_confirmation, 0));
     }
     insertColumns.push("price", "stock", "reorder_level", "is_active", "description", "image_url", "cost_price", "location", "inputter_name", "source", "store_id");
     insertValues.push(
@@ -1473,6 +1541,7 @@ router.post("/", async (req, res, next) => {
       stock,
       reorderLevel: reorderLevel || 0,
       isActive: isActive === undefined ? true : Boolean(isActive),
+      requiresPurchaseConfirmation: Boolean(parseRequestBooleanAsNumber(requiresPurchaseConfirmation ?? requires_purchase_confirmation, 0)),
       description: description || null,
       imagePath: normalizeEditableImagePath(imageUrl),
       imageUrl: normalizeImageUrl(imageUrl, result.insertId),
@@ -1504,11 +1573,13 @@ router.patch("/:id", async (req, res, next) => {
 async function updateProduct(req, res, next) {
   try {
     const id = Number(req.params.id);
-    const { sku, name, category, categoryId, price, stock, reorderLevel, isActive, description, imageUrl, costPrice, location, inputterName, source } = req.body;
+    const { sku, name, category, categoryId, price, stock, reorderLevel, isActive, requiresPurchaseConfirmation, requires_purchase_confirmation, description, imageUrl, costPrice, location, inputterName, source } = req.body;
     const normalizedSku = sku !== undefined && sku !== null && sku !== "" ? normalizeProductSku(sku) : null;
 
     const storeId = getRequestStoreId(req);
     const hasCategorySchema = await hasProductCategorySchema(pool);
+    const productColumns = await getTableColumns(pool, "products");
+    const hasRequiresPurchaseConfirmation = hasColumn(productColumns, "requires_purchase_confirmation");
     let resolvedProductCategory = null;
     const hasCategoryInput =
       Object.prototype.hasOwnProperty.call(req.body || {}, "categoryId") ||
@@ -1533,6 +1604,13 @@ async function updateProduct(req, res, next) {
 
     const categoryIdAssignment = hasCategorySchema ? "category_id = COALESCE(?, category_id)," : "";
     const categoryIdValue = hasCategorySchema && resolvedProductCategory ? resolvedProductCategory.categoryId : null;
+    const hasRequiresPurchaseConfirmationInput =
+      Object.prototype.hasOwnProperty.call(req.body || {}, "requiresPurchaseConfirmation") ||
+      Object.prototype.hasOwnProperty.call(req.body || {}, "requires_purchase_confirmation");
+    const requiresPurchaseConfirmationAssignment = hasRequiresPurchaseConfirmation ? "requires_purchase_confirmation = COALESCE(?, requires_purchase_confirmation)," : "";
+    const requiresPurchaseConfirmationValue = hasRequiresPurchaseConfirmationInput
+      ? parseRequestBooleanAsNumber(requiresPurchaseConfirmation ?? requires_purchase_confirmation, 0)
+      : null;
     await pool.query(
       `
         UPDATE products
@@ -1545,6 +1623,7 @@ async function updateProduct(req, res, next) {
           stock = COALESCE(?, stock),
           reorder_level = COALESCE(?, reorder_level),
           is_active = COALESCE(?, is_active),
+          ${requiresPurchaseConfirmationAssignment}
           description = COALESCE(?, description),
           image_url = COALESCE(?, image_url),
           cost_price = COALESCE(?, cost_price),
@@ -1563,6 +1642,7 @@ async function updateProduct(req, res, next) {
         stock === undefined ? null : stock,
         reorderLevel === undefined ? null : reorderLevel,
         isActive === undefined ? null : Number(Boolean(isActive)),
+        ...(hasRequiresPurchaseConfirmation ? [requiresPurchaseConfirmationValue] : []),
         description === undefined ? null : description,
         imageUrl === undefined ? null : imageUrl,
         costPrice === undefined ? null : Number(costPrice || 0),
@@ -1596,6 +1676,7 @@ async function updateProduct(req, res, next) {
           products.stock,
           products.reorder_level AS reorderLevel,
           products.is_active AS isActive,
+          ${hasRequiresPurchaseConfirmation ? "products.requires_purchase_confirmation AS requiresPurchaseConfirmation," : "0 AS requiresPurchaseConfirmation,"}
           products.created_at AS createdAt,
           products.updated_at AS updatedAt
         FROM products
