@@ -19,6 +19,42 @@ function formatAmount(value) {
   return `NT$${Number(value || 0).toFixed(0)}`;
 }
 
+function getDisplayFinalAmount(order) {
+  const candidates = [
+    order?.finalAmount,
+    order?.final_amount,
+    order?.finalChargedAmount,
+    order?.final_charged_amount,
+    order?.finalChargeAmount,
+    order?.final_charge_amount,
+    order?.repairFinalAmount,
+    order?.repair_final_amount,
+    order?.receivableAmount,
+    order?.receivable_amount,
+    order?.payableAmount,
+    order?.payable_amount,
+    order?.totalAmount,
+    order?.total_amount
+  ];
+
+  for (const value of candidates) {
+    if (value !== undefined && value !== null && value !== "") {
+      const amount = Number(value);
+      return Number.isFinite(amount) ? Math.max(amount, 0) : 0;
+    }
+  }
+
+  return 0;
+}
+
+function formatOrderFinalAmount(order) {
+  return formatAmount(getDisplayFinalAmount(order));
+}
+
+function getOrderCardDescription(row) {
+  return `${row.customerName || row.customerNameSnapshot || "-"} / ${row.customerPhone || row.customerPhoneSnapshot || "未留電話"}`;
+}
+
 function normalizeCustomerType(value) {
   const normalized = String(value || "").trim().toUpperCase();
   if (normalized === "OFFLINE_WITH_PHONE" || normalized === "OFFLINE_NO_PHONE") {
@@ -748,7 +784,7 @@ if (!window.confirm(
       mobileHidden: true
     },
     { key: "businessDateLabel", label: "日期", mobileHidden: true },
-    { key: "totalAmount", label: "總額", render: (row) => formatAmount(row.totalAmount), mobileHidden: true },
+    { key: "finalAmount", label: "最終金額", render: (row) => formatOrderFinalAmount(row), mobileHidden: true },
     {
       key: "statusLabel",
       label: "訂單狀態",
@@ -876,7 +912,7 @@ if (!window.confirm(
             })}
             emptyText="目前沒有符合條件的訂單。"
             cardTitle={(row) => row.orderNo}
-            cardDescription={(row) => `${row.customerName || row.customerNameSnapshot || "-"} / ${row.customerPhone || row.customerPhoneSnapshot || "未留電話"} / ${formatAmount(row.totalAmount)}`}
+            cardDescription={(row) => `${getOrderCardDescription(row)} / 最終金額 ${formatOrderFinalAmount(row)}`}
             cardBadges={(row) => (
               <>
                 <StatusBadge tone={isRepairRelatedOrder(row) ? "info" : row.isReservationOrder ? "warning" : "neutral"}>{row.typeLabel}</StatusBadge>
@@ -900,7 +936,7 @@ if (!window.confirm(
               rows={filteredRows}
               emptyText="目前沒有維修相關訂單。"
               cardTitle={(row) => row.orderNo}
-              cardDescription={(row) => `${row.customerName || row.customerNameSnapshot || "-"} / ${row.customerPhone || row.customerPhoneSnapshot || "未留電話"} / ${formatAmount(row.totalAmount)}`}
+              cardDescription={getOrderCardDescription}
               cardBadges={(row) => (
                 <>
                   <StatusBadge tone={isRepairRelatedOrder(row) ? "info" : "neutral"}>{row.typeLabel}</StatusBadge>
@@ -911,7 +947,7 @@ if (!window.confirm(
               cardFooter={(row) => (
                 <div className="compact-card-footer">
                   <div className="compact-card-meta">
-                    <strong>{formatAmount(row.totalAmount)}</strong>
+                    <strong>{`最終金額 ${formatOrderFinalAmount(row)}`}</strong>
                     <span>{row.repairId ? `REP-${row.repairId}` : row.repairOrderId ? `維修工單 #${row.repairOrderId}` : row.orderNo || "-"}</span>
                   </div>
                   {columns.find((column) => column.key === "actions").render(row)}
@@ -988,7 +1024,7 @@ if (!window.confirm(
                       rows={group.rows}
                       emptyText="目前沒有符合條件的訂單。"
                       cardTitle={(row) => row.orderNo}
-                      cardDescription={(row) => `${row.customerName || row.customerNameSnapshot || "-"} / ${row.customerPhone || row.customerPhoneSnapshot || "未留電話"} / ${formatAmount(row.totalAmount)}`}
+                      cardDescription={getOrderCardDescription}
                       cardBadges={(row) => (
                         <>
                           <StatusBadge tone={isRepairRelatedOrder(row) ? "info" : row.isReservationOrder ? "warning" : "neutral"}>{row.typeLabel}</StatusBadge>
@@ -999,7 +1035,7 @@ if (!window.confirm(
                       cardFooter={(row) => (
                         <div className="compact-card-footer">
                           <div className="compact-card-meta">
-                            <strong>{formatAmount(row.totalAmount)}</strong>
+                            <strong>{`最終金額 ${formatOrderFinalAmount(row)}`}</strong>
                             <span>{row.repairId ? `REP-${row.repairId}` : row.customerPhone || row.customerPhoneSnapshot || "未留電話"}</span>
                           </div>
                           {columns.find((column) => column.key === "actions").render(row)}
@@ -1028,7 +1064,7 @@ if (!window.confirm(
                 <div className="field-item"><div className="field-label">日期</div><div className="field-value">{detail.businessDateLabel || formatTaipeiDate(detail.businessDate)}</div></div>
                 <div className="field-item"><div className="field-label">訂單類型</div><div className="field-value">{detail.orderKindLabel}</div></div>
                 <div className="field-item"><div className="field-label">維修狀態</div><div className="field-value">{detail.repairStatusLabel || detail.repairStatus || "-"}</div></div>
-                <div className="field-item"><div className="field-label">總額</div><div className="field-value">{formatAmount(detail.totalAmount)}</div></div>
+                <div className="field-item"><div className="field-label">最終金額</div><div className="field-value">{formatOrderFinalAmount(detail)}</div></div>
               </div>
             </section>
             <section className="stack-card">
