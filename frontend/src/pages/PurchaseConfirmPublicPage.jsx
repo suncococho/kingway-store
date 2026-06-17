@@ -87,6 +87,11 @@ const LEGACY_STORE_CONTEXT = {
   storeName: "KINGWAY 台南",
   isExplicitStore: false
 };
+const SIGNATURE_MAX_WIDTH = 900;
+const SIGNATURE_MAX_HEIGHT = 360;
+const SIGNATURE_JPEG_QUALITY = 0.75;
+const SIGNATURE_MAX_DATA_URL_LENGTH = 600000;
+const SIGNATURE_TOO_LARGE_MESSAGE = "簽名資料過大，請清除簽名後重新簽名，或重新整理頁面後再試一次。";
 
 function buildResolvedStoreContext(response, requestedStoreCode) {
   return {
@@ -142,6 +147,56 @@ function getExplanationItems(content) {
 function getVehicleOptions(content) {
   const types = content?.vehicleTypes || DEFAULT_CONTENT.vehicleTypes;
   return [types.road, types.offroad].filter(Boolean);
+}
+
+function loadImageDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("簽名圖片讀取失敗，請清除簽名後重新簽名。"));
+    image.src = dataUrl;
+  });
+}
+
+async function compressSignatureDataUrl(signatureData) {
+  const normalizedSignatureData = String(signatureData || "").trim();
+  if (!normalizedSignatureData) {
+    return "";
+  }
+
+  if (typeof document === "undefined") {
+    return normalizedSignatureData;
+  }
+
+  const image = await loadImageDataUrl(normalizedSignatureData);
+  const sourceWidth = image.naturalWidth || image.width || SIGNATURE_MAX_WIDTH;
+  const sourceHeight = image.naturalHeight || image.height || SIGNATURE_MAX_HEIGHT;
+  const scale = Math.min(
+    1,
+    SIGNATURE_MAX_WIDTH / Math.max(sourceWidth, 1),
+    SIGNATURE_MAX_HEIGHT / Math.max(sourceHeight, 1)
+  );
+  const targetWidth = Math.max(Math.round(sourceWidth * scale), 1);
+  const targetHeight = Math.max(Math.round(sourceHeight * scale), 1);
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return normalizedSignatureData;
+  }
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, targetWidth, targetHeight);
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+  const compressedDataUrl = canvas.toDataURL("image/jpeg", SIGNATURE_JPEG_QUALITY);
+  if (compressedDataUrl.length > SIGNATURE_MAX_DATA_URL_LENGTH) {
+    throw new Error(SIGNATURE_TOO_LARGE_MESSAGE);
+  }
+
+  return compressedDataUrl;
 }
 
 function TermsContent({ content, vehicleType }) {
@@ -396,6 +451,7 @@ function PurchaseConfirmPublicPage() {
 
     setSubmitting(true);
     try {
+      const compressedSignatureData = await compressSignatureDataUrl(form.signatureData);
       const zhPayload = {
         姓名: form.buyerName.trim(),
         身份證後四碼: form.buyerIdNumber.trim(),
@@ -413,16 +469,23 @@ function PurchaseConfirmPublicPage() {
         法規說明: form.staffExplanations.includes("臺灣電動自行車相關法規及速度限制") ? "✓" : "✗",
         安全事項: form.staffExplanations.includes("騎乘安全注意事項") ? "✓" : "✗",
         最終確認: form.finalConfirmationAccepted ? "✓" : "✗",
-        簽名圖片: form.signatureData
+        簽名圖片: compressedSignatureData
       };
 
       const payload = isManual
         ? zhPayload
         : {
-            ...form,
+            buyerName: form.buyerName.trim(),
+            buyerPhone: form.buyerPhone.trim(),
+            buyerIdNumber: form.buyerIdNumber.trim(),
+            vehicleType: form.vehicleType,
+            deliveryChecks: form.deliveryChecks,
+            staffExplanations: form.staffExplanations,
+            termsAccepted: form.termsAccepted,
+            finalConfirmationAccepted: form.finalConfirmationAccepted,
+            signatureData: compressedSignatureData,
             idLast4: form.buyerIdNumber.trim(),
-            vehicleTypeLabel: content.vehicleTypes?.[form.vehicleType]?.label || "",
-            ...zhPayload
+            vehicleTypeLabel: content.vehicleTypes?.[form.vehicleType]?.label || ""
           };
 
       const publicPath = !isManual && storeContext?.isExplicitStore

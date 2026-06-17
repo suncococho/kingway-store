@@ -45,6 +45,7 @@ const { logWorkflowEvent } = require("./services/lineWorkflowService");
 const { buildOrderDetailLink, notifyPaymentInquiryCreated } = require("./services/staffLineNotify");
 
 const app = express();
+const JSON_BODY_LIMIT = "5mb";
 const customerStatusStaffAuth = [
   authenticate,
   requireStoreScope(),
@@ -55,11 +56,13 @@ const telegramWebhookRoutes = require("./routes/telegramWebhook");
 app.use(cors());
 app.use(
   express.json({
+    limit: JSON_BODY_LIMIT,
     verify: (req, res, buf) => {
       req.rawBody = buf.toString("utf8");
     }
   })
 );
+app.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
 
 
 
@@ -589,6 +592,16 @@ cron.schedule(
 app.use((req, res, next) => {
   const error = new Error("Not Found");
   error.statusCode = 404;
+  return next(error);
+});
+
+app.use((error, req, res, next) => {
+  if (error?.type === "entity.too.large" || error?.status === 413 || error?.statusCode === 413) {
+    return res.status(413).json({
+      message: "簽名資料過大，請清除簽名後重新簽名，或重新整理頁面後再試一次。"
+    });
+  }
+
   return next(error);
 });
 
