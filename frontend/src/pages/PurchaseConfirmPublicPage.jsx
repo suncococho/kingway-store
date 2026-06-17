@@ -149,6 +149,32 @@ function getVehicleOptions(content) {
   return [types.road, types.offroad].filter(Boolean);
 }
 
+function keepPurchaseConfirmPath({ isManual, token, storeCode }) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const currentPath = window.location.pathname || "";
+  const currentSearch = window.location.search || "";
+  const safeStoreQuery = storeCode ? `?store=${encodeURIComponent(storeCode)}` : "";
+  const fallbackPath = isManual
+    ? "/purchase-confirm"
+    : `/purchase-confirm/${encodeURIComponent(token || "")}${safeStoreQuery || currentSearch}`;
+  const nextPath = currentPath.startsWith("/purchase-confirm")
+    ? `${currentPath}${currentSearch}`
+    : fallbackPath;
+
+  window.history.replaceState(window.history.state, "", nextPath);
+}
+
+function scrollToPageTop() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+}
+
 function loadImageDataUrl(dataUrl) {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -504,6 +530,7 @@ function PurchaseConfirmPublicPage() {
       }
       setPdfUrl(response.pdfUrl || "");
       if (isManual) {
+        keepPurchaseConfirmPath({ isManual: true });
         const matchedText = response.matchStatus === "matched_order"
           ? "已對應到系統訂單。"
           : response.matchStatus === "matched_customer"
@@ -514,9 +541,16 @@ function PurchaseConfirmPublicPage() {
           message: matchedText,
           pdfUrl: response.pdfUrl || ""
         });
+        scrollToPageTop();
         setForm(EMPTY_FORM);
       } else {
+        keepPurchaseConfirmPath({
+          isManual: false,
+          token,
+          storeCode: storeContext?.isExplicitStore ? storeContext.storeCode : ""
+        });
         setSubmitted(true);
+        scrollToPageTop();
       }
     } catch (error) {
       alert(error.message);
