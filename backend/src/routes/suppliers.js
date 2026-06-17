@@ -227,6 +227,429 @@ async function notifySupplierRequestLine({ requestId, requestType, supplierName,
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]), requireStoreFeature("suppliers_enabled"));
 const requireStoreAdminRole = requireStoreRole(["owner", "admin"]);
 
+function normalizeSupplierPayload(body = {}) {
+  return {
+    name: String(body.name || "").trim(),
+    contactName: String(body.contactName || body.contact_name || "").trim(),
+    phone: String(body.phone || "").trim(),
+    lineContact: String(body.lineContact || body.line_contact || "").trim(),
+    email: String(body.email || "").trim(),
+    address: String(body.address || "").trim(),
+    taxId: String(body.taxId || body.tax_id || "").trim(),
+    note: String(body.note || "").trim(),
+    status: String(body.status || "ACTIVE").trim().toUpperCase() === "INACTIVE" ? "INACTIVE" : "ACTIVE"
+  };
+}
+
+function normalizeSupplierPricePayload(body = {}) {
+  const defaultUnitCost = Number(body.defaultUnitCost ?? body.default_unit_cost ?? 0);
+  const lastUnitCost = Number(body.lastUnitCost ?? body.last_unit_cost ?? defaultUnitCost);
+  return {
+    productId: Number(body.productId || body.product_id || 0),
+    supplierSku: String(body.supplierSku || body.supplier_sku || "").trim(),
+    defaultUnitCost: Number.isFinite(defaultUnitCost) && defaultUnitCost >= 0 ? defaultUnitCost : 0,
+    lastUnitCost: Number.isFinite(lastUnitCost) && lastUnitCost >= 0 ? lastUnitCost : 0,
+    note: String(body.note || "").trim(),
+    isActive: body.isActive === false || body.is_active === 0 || body.is_active === false ? 0 : 1
+  };
+}
+
+async function fetchSupplierById(id, storeId, connection = pool) {
+  const [rows] = await connection.query(
+    `
+      SELECT
+        id,
+        store_id AS storeId,
+        name,
+        contact_name AS contactName,
+        phone,
+        line_contact AS lineContact,
+        email,
+        address,
+        tax_id AS taxId,
+        note,
+        status,
+        is_active AS isActive,
+        deleted_at AS deletedAt,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM suppliers
+      WHERE id = ?
+        AND store_id = ?
+      LIMIT 1
+    `,
+    [id, storeId]
+  );
+  return rows[0] || null;
+}
+
+async function assertSupplierExists(id, storeId, connection = pool) {
+  const supplier = await fetchSupplierById(id, storeId, connection);
+  if (!supplier) {
+    const error = new Error("找不到供應商");
+    error.statusCode = 404;
+    throw error;
+  }
+  return supplier;
+}
+
+async function assertProductInStore(productId, storeId, connection = pool) {
+  const [rows] = await connection.query(
+    `
+      SELECT id, sku, name, category, cost_price AS costPrice
+      FROM products
+      WHERE id = ?
+        AND store_id = ?
+        AND deleted_at IS NULL
+      LIMIT 1
+    `,
+    [productId, storeId]
+  );
+  if (!rows[0]) {
+    const error = new Error("找不到同門市商品");
+    error.statusCode = 404;
+    throw error;
+  }
+  return rows[0];
+}
+
+router.get("/", async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const includeInactive = String(req.query.includeInactive || "").toLowerCase() === "true";
+    const whereInactive = includeInactive ? "" : "AND is_active = 1 AND deleted_at IS NULL";
+    const [rows] = await pool.query(
+      `
+        SELECT
+          id,
+          store_id AS storeId,
+          name,
+          contact_name AS contactName,
+          phone,
+          line_contact AS lineContact,
+          email,
+          address,
+          tax_id AS taxId,
+          note,
+          status,
+          is_active AS isActive,
+          deleted_at AS deletedAt,
+          created_at AS createdAt,
+          updated_at AS updatedAt
+        FROM suppliers
+        WHERE store_id = ?
+          ${whereInactive}
+        ORDER BY is_active DESC, name ASC
+      `,
+      [storeId]
+    );
+    return res.json(rows);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/", requireStoreAdminRole, async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const payload = normalizeSupplierPayload(req.body);
+    if (!payload.name) {
+      return res.status(400).json({ message: "請輸入供應商名稱" });
+    }
+
+    const [result] = await pool.query(
+      `
+        INSERT INTO suppliers (
+          store_id,
+          name,
+          contact_name,
+          phone,
+          line_contact,
+          email,
+          address,
+          tax_id,
+          note,
+          status,
+          is_active
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        storeId,
+        payload.name,
+        payload.contactName || null,
+        payload.phone || null,
+        payload.lineContact || null,
+        payload.email || null,
+        payload.address || null,
+        payload.taxId || null,
+        payload.note || null,
+        payload.status,
+        payload.status === "ACTIVE" ? 1 : 0
+      ]
+    );
+
+    const supplier = await fetchSupplierById(result.insertId, storeId);
+    return res.status(201).json(supplier);
+  } catch (error) {
+    if (error?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ message: "同門市已有相同供應商名稱" });
+    }
+    return next(error);
+  }
+});
+
+router.patch("/:id", requireStoreAdminRole, async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const supplierId = Number(req.params.id);
+    const payload = normalizeSupplierPayload(req.body);
+    if (!supplierId) {
+      return res.status(400).json({ message: "請提供有效供應商" });
+    }
+    if (!payload.name) {
+      return res.status(400).json({ message: "請輸入供應商名稱" });
+    }
+
+    await assertSupplierExists(supplierId, storeId);
+    await pool.query(
+      `
+        UPDATE suppliers
+        SET
+          name = ?,
+          contact_name = ?,
+          phone = ?,
+          line_contact = ?,
+          email = ?,
+          address = ?,
+          tax_id = ?,
+          note = ?,
+          status = ?,
+          is_active = ?,
+          deleted_at = CASE WHEN ? = 'ACTIVE' THEN NULL ELSE deleted_at END
+        WHERE id = ?
+          AND store_id = ?
+      `,
+      [
+        payload.name,
+        payload.contactName || null,
+        payload.phone || null,
+        payload.lineContact || null,
+        payload.email || null,
+        payload.address || null,
+        payload.taxId || null,
+        payload.note || null,
+        payload.status,
+        payload.status === "ACTIVE" ? 1 : 0,
+        payload.status,
+        supplierId,
+        storeId
+      ]
+    );
+
+    return res.json(await fetchSupplierById(supplierId, storeId));
+  } catch (error) {
+    if (error?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ message: "同門市已有相同供應商名稱" });
+    }
+    return next(error);
+  }
+});
+
+router.delete("/:id", requireStoreAdminRole, async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const supplierId = Number(req.params.id);
+    if (!supplierId) {
+      return res.status(400).json({ message: "請提供有效供應商" });
+    }
+
+    await assertSupplierExists(supplierId, storeId);
+    await pool.query(
+      `
+        UPDATE suppliers
+        SET status = 'INACTIVE',
+            is_active = 0,
+            deleted_at = COALESCE(deleted_at, NOW()),
+            deleted_by = ?
+        WHERE id = ?
+          AND store_id = ?
+      `,
+      [req.user?.id || null, supplierId, storeId]
+    );
+
+    return res.json(await fetchSupplierById(supplierId, storeId));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/:id/product-prices", async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const supplierId = Number(req.params.id);
+    await assertSupplierExists(supplierId, storeId);
+
+    const [rows] = await pool.query(
+      `
+        SELECT
+          spp.id,
+          spp.store_id AS storeId,
+          spp.supplier_id AS supplierId,
+          spp.product_id AS productId,
+          spp.supplier_sku AS supplierSku,
+          spp.default_unit_cost AS defaultUnitCost,
+          spp.last_unit_cost AS lastUnitCost,
+          spp.note,
+          spp.is_active AS isActive,
+          spp.created_at AS createdAt,
+          spp.updated_at AS updatedAt,
+          p.sku,
+          p.name AS productName,
+          p.category,
+          p.cost_price AS costPrice,
+          p.price,
+          p.stock
+        FROM supplier_product_prices spp
+        INNER JOIN products p ON p.id = spp.product_id
+          AND p.store_id = spp.store_id
+        WHERE spp.store_id = ?
+          AND spp.supplier_id = ?
+        ORDER BY spp.is_active DESC, p.sku ASC
+      `,
+      [storeId, supplierId]
+    );
+
+    return res.json(rows);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/:id/product-prices", requireStoreAdminRole, async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const supplierId = Number(req.params.id);
+    const payload = normalizeSupplierPricePayload(req.body);
+    if (!payload.productId) {
+      return res.status(400).json({ message: "請選擇商品" });
+    }
+
+    await assertSupplierExists(supplierId, storeId);
+    await assertProductInStore(payload.productId, storeId);
+    const [result] = await pool.query(
+      `
+        INSERT INTO supplier_product_prices (
+          store_id,
+          supplier_id,
+          product_id,
+          supplier_sku,
+          default_unit_cost,
+          last_unit_cost,
+          note,
+          is_active
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        storeId,
+        supplierId,
+        payload.productId,
+        payload.supplierSku || null,
+        payload.defaultUnitCost,
+        payload.lastUnitCost,
+        payload.note || null,
+        payload.isActive
+      ]
+    );
+
+    return res.status(201).json({ id: result.insertId });
+  } catch (error) {
+    if (error?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ message: "此供應商已有該商品供應價" });
+    }
+    return next(error);
+  }
+});
+
+router.patch("/:id/product-prices/:priceId", requireStoreAdminRole, async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const supplierId = Number(req.params.id);
+    const priceId = Number(req.params.priceId);
+    const payload = normalizeSupplierPricePayload(req.body);
+
+    await assertSupplierExists(supplierId, storeId);
+    const [rows] = await pool.query(
+      `
+        SELECT id, product_id AS productId
+        FROM supplier_product_prices
+        WHERE id = ?
+          AND supplier_id = ?
+          AND store_id = ?
+        LIMIT 1
+      `,
+      [priceId, supplierId, storeId]
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ message: "找不到商品供應價" });
+    }
+
+    await pool.query(
+      `
+        UPDATE supplier_product_prices
+        SET supplier_sku = ?,
+            default_unit_cost = ?,
+            last_unit_cost = ?,
+            note = ?,
+            is_active = ?
+        WHERE id = ?
+          AND supplier_id = ?
+          AND store_id = ?
+      `,
+      [
+        payload.supplierSku || null,
+        payload.defaultUnitCost,
+        payload.lastUnitCost,
+        payload.note || null,
+        payload.isActive,
+        priceId,
+        supplierId,
+        storeId
+      ]
+    );
+
+    return res.json({ id: priceId });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.delete("/:id/product-prices/:priceId", requireStoreAdminRole, async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const supplierId = Number(req.params.id);
+    const priceId = Number(req.params.priceId);
+    await assertSupplierExists(supplierId, storeId);
+    const [result] = await pool.query(
+      `
+        UPDATE supplier_product_prices
+        SET is_active = 0
+        WHERE id = ?
+          AND supplier_id = ?
+          AND store_id = ?
+      `,
+      [priceId, supplierId, storeId]
+    );
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "找不到商品供應價" });
+    }
+    return res.json({ id: priceId, isActive: 0 });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/requests", async (req, res, next) => {
   try {
     const storeId = req.storeId;
