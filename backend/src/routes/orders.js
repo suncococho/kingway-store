@@ -1537,6 +1537,7 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
 
 
 async function createKingwayAutoPurchaseOrderOnHandover(orderId, storeId, staffId = 1) {
+  const autoNote = `AUTO_FROM_HANDOVER_ORDER:${orderId}｜交車確認自動發注`;
   const [orderRows] = await pool.query(
     `
       SELECT id
@@ -1559,10 +1560,10 @@ async function createKingwayAutoPurchaseOrderOnHandover(orderId, storeId, staffI
       WHERE store_id = ?
         AND request_type = 'PURCHASE_ORDER'
         AND supplier_name = 'KINGWAY'
-        AND note LIKE ?
+        AND note = ?
       LIMIT 1
     `,
-    [storeId, `%AUTO_FROM_HANDOVER_ORDER:${orderId}%`]
+    [storeId, autoNote]
   );
 
   if (existing) return null;
@@ -1591,7 +1592,7 @@ async function createKingwayAutoPurchaseOrderOnHandover(orderId, storeId, staffI
       VALUES
         (?, 'PURCHASE_ORDER', 'PENDING_SUPPLIER', 'KINGWAY', ?, ?)
     `,
-    [storeId, `AUTO_FROM_HANDOVER_ORDER:${orderId}｜交車確認自動發注`, staffId || 1]
+    [storeId, autoNote, staffId || 1]
   );
 
   const requestId = requestResult.insertId;
