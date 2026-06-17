@@ -3882,6 +3882,42 @@ button:hover {
   margin-bottom: 10px;
 }
 
+.line-warranty-terms {
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #f9fafb;
+  padding: 16px;
+  margin: 18px 0;
+  color: #111827;
+  font-size: 15px;
+  line-height: 1.7;
+  font-weight: 500;
+}
+
+.line-warranty-terms h3 {
+  margin: 14px 0 6px;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.line-warranty-terms p {
+  margin: 0 0 10px;
+}
+
+.line-warranty-terms ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+
+.line-warranty-terms li {
+  margin-bottom: 6px;
+}
+
+.line-warranty-terms .checklist-item {
+  margin-top: 14px;
+  background: #fff;
+}
+
 .line-customer-menu {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

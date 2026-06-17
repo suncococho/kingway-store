@@ -43,7 +43,7 @@ const DEFAULT_CONTENT = {
     ...item,
     description:
       item.id === "explain-usage" ? "店員已說明自行車的正確使用方法與注意事項" :
-      item.id === "explain-warranty" ? "店員已說明產品保固範圍與期限（1年）" :
+      item.id === "explain-warranty" ? "店員已清楚說明本產品一年保固僅限正常使用下之非人為製造缺陷；消耗品、外觀磨耗、人為損壞、泡水、摔車、碰撞、超載、擅自改裝、解除限速、違反法規使用、非保固檢修費、運送費用及逾期保管費均不屬於免費保固範圍。" :
       item.id === "explain-maintenance" ? "店員已說明日常維護與保養方法" :
       item.id === "explain-laws" ? "店員已說明臺灣電動自行車相關法規及速度限制" :
       "店員已說明騎乘安全注意事項"
@@ -664,6 +664,7 @@ function PurchaseConfirmPublicPage() {
         <div className="page-section">
           <h2>{"5. 店員說明確認"}</h2>
           <p className="muted-text">{content.staffExplanationNotice}</p>
+          <p className="muted-text">保固範圍 - 店員已清楚說明：一年保固並不等於所有損壞均免費維修。</p>
           <div className="checklist-list">
             {explanationItems.map((item) => (
               <label key={item.value} className="checklist-item" htmlFor={`explanation-${item.value}`}>

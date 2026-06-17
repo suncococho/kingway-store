@@ -26,6 +26,8 @@ const resolvePublicStoreContext = createPublicStoreContextMiddleware({
 
 const REPAIR_RESERVATION_FLOW = "repair_reservation";
 const REPAIR_RESERVATION_DUPLICATE_WINDOW_MS = 10 * 1000;
+const REPAIR_WARRANTY_TERMS_VERSION = "KINGWAY_REPAIR_WARRANTY_V2026_06";
+const REPAIR_WARRANTY_TERMS_ERROR_MESSAGE = "請先確認保固維修範圍說明";
 const recentRepairReservationRequests = new Map();
 
 function getReservationDay(date) {
@@ -204,6 +206,8 @@ router.post("/create", async (req, res, next) => {
     const issueDescription = String(req.body.issueDescription || "").trim();
     const reservationDate = req.body.reservationDate || dayjs().format("YYYY-MM-DD");
     const reservationTime = String(req.body.reservationTime || "13:00").trim();
+    const warrantyTermsAccepted = req.body.warrantyTermsAccepted === true || req.body.repairWarrantyAccepted === true;
+    const warrantyTermsAcceptedAt = new Date().toISOString();
 
     if (!lineUserId) {
       return res.status(400).json({ message: "缺少 LINE 使用者資料" });
@@ -211,6 +215,10 @@ router.post("/create", async (req, res, next) => {
 
     if (!bikeModel || !issueDescription) {
       return res.status(400).json({ message: "請填寫完整維修資訊" });
+    }
+
+    if (!warrantyTermsAccepted) {
+      return res.status(400).json({ message: REPAIR_WARRANTY_TERMS_ERROR_MESSAGE });
     }
 
     const storeContext = await resolveLineRepairStoreContext(req, lineUserId, "line_repair_page_create");
@@ -251,7 +259,10 @@ router.post("/create", async (req, res, next) => {
             bikeModel,
             issueDescription,
             storeId: resolvedStoreId,
-            storeCode: storeContext.storeCode || null
+            storeCode: storeContext.storeCode || null,
+            warrantyTermsAccepted: true,
+            warrantyTermsVersion: REPAIR_WARRANTY_TERMS_VERSION,
+            warrantyTermsAcceptedAt
           })
         ]
       );
@@ -278,6 +289,22 @@ router.post("/create", async (req, res, next) => {
           repairId: result.repairId
         });
       }
+
+      await pool.query(
+        `
+          INSERT INTO repair_logs (repair_order_id, action, note)
+          VALUES (?, 'warranty_terms_accepted', ?)
+        `,
+        [
+          result.repairId,
+          JSON.stringify({
+            warrantyTermsAccepted: true,
+            warrantyTermsVersion: REPAIR_WARRANTY_TERMS_VERSION,
+            warrantyTermsAcceptedAt,
+            source: "line_repair_page"
+          })
+        ]
+      );
 
       try {
         const lineNotificationResult = await notifyRepairReservationCreated({

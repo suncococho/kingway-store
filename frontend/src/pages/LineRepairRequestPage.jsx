@@ -19,6 +19,29 @@ const LEGACY_STORE_CONTEXT = {
   isExplicitStore: false
 };
 
+const REPAIR_WARRANTY_VERSION = "KINGWAY_REPAIR_WARRANTY_V2026_06";
+const REPAIR_WARRANTY_ERROR_MESSAGE = "請先確認保固維修範圍說明";
+
+const WARRANTY_APPLIES_ITEMS = [
+  "交車日起一年內，於正常使用情況下發生之非人為製造缺陷。",
+  "電控系統、控制器、馬達本體等主要零件於正常使用下發生之製造性故障。",
+  "經本公司或授權技師檢查後，確認非因人為、外力、泡水、改裝或不當使用所造成之故障。"
+];
+
+const WARRANTY_EXCLUDED_ITEMS = [
+  "消耗品磨耗：輪胎、內胎、煞車皮、煞車碟盤、鍊條、飛輪、腳踏板、握把套、座墊、燈泡、保險絲、土除、鑰匙等。",
+  "外觀損耗：刮傷、掉漆、氧化、貼紙磨損、塑膠件破損等。",
+  "非電控系統與車體結構件因外力、使用磨耗、摔車、碰撞、鏽蝕、變形或非製造缺陷造成之損壞。",
+  "人為損壞：摔車、碰撞、撞擊、泡水、進水、超載、不當搬運、不當保管、錯誤充電。",
+  "擅自改裝：解除速限、改裝控制器、馬達、電池、線路或其他電子控制裝置。",
+  "違反法規或非正常用途使用：超速、違規道路使用、競速、越野、載人、營業租賃或其他非一般正常使用。",
+  "電池容量自然衰退、正常耗損或因使用習慣造成之性能下降。",
+  "火災、地震、泡水、天災或其他不可歸責於本公司之因素造成之損壞。",
+  "非本公司或非授權人員維修、拆修、改裝造成之故障。",
+  "因正常騎乘、磨耗、機械摩擦所產生，且經檢查非品質瑕疵之異音。",
+  "車輛送修、搬運、拖吊、到府收送或運送費用，除本公司另有書面同意外，均由購買者自行負擔。"
+];
+
 function buildCustomerOaName(response, fallbackStoreName) {
   const configured = String(response?.lineSettings?.customerOaName || "").trim();
   if (configured) {
@@ -63,7 +86,8 @@ function LineRepairRequestPage() {
   const [form, setForm] = useState({
     bikeModel: "",
     reservationDate: "",
-    issueDescription: ""
+    issueDescription: "",
+    repairWarrantyAccepted: false
   });
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
@@ -240,6 +264,13 @@ function LineRepairRequestPage() {
       return;
     }
 
+    if (!form.repairWarrantyAccepted) {
+      setError(REPAIR_WARRANTY_ERROR_MESSAGE);
+      setSubmitting(false);
+      submitLockRef.current = false;
+      return;
+    }
+
     try {
       const storeQuery = storeContext.isExplicitStore
         ? `?store=${encodeURIComponent(storeContext.storeCode)}`
@@ -252,6 +283,9 @@ function LineRepairRequestPage() {
           bikeModel: form.bikeModel,
           reservationDate: form.reservationDate || null,
           issueDescription: form.issueDescription,
+          warrantyTermsAccepted: true,
+          repairWarrantyAccepted: true,
+          warrantyTermsVersion: REPAIR_WARRANTY_VERSION,
           storeCode: storeContext.isExplicitStore ? storeContext.storeCode : undefined
         })
       });
@@ -376,7 +410,48 @@ function LineRepairRequestPage() {
           <textarea rows="5" value={form.issueDescription} onChange={(e) => update("issueDescription", e.target.value)} placeholder="請描述故障情況，例如無法啟動、煞車異音、電池問題、控制器問題等" disabled={submitting} />
         </label>
 
-        <button className="line-customer-close" type="submit" disabled={submitting}>
+        <div className="line-warranty-terms">
+          <div className="line-customer-summary-title">保固維修範圍確認</div>
+          <p>請於送修前詳閱以下保固維修說明。本公司一年保固僅限正常使用下之非人為製造缺陷，並非所有故障或損壞皆屬免費保固。</p>
+
+          <h3>保固可能適用之情形：</h3>
+          <ol>
+            {WARRANTY_APPLIES_ITEMS.map((item) => <li key={item}>{item}</li>)}
+          </ol>
+
+          <h3>不屬於免費保固範圍之情形：</h3>
+          <ol>
+            {WARRANTY_EXCLUDED_ITEMS.map((item) => <li key={item}>{item}</li>)}
+          </ol>
+
+          <h3>非保固檢修費：</h3>
+          <p>非保固範圍之車輛，無論是否維修，檢修費用為 NT$400 元。</p>
+
+          <h3>進口商品或零件：</h3>
+          <p>進口商品或進口零件維修，因材料需進口，維修完成日期無法事先保證，將於確認後另行通知。</p>
+
+          <h3>報價與取車期限：</h3>
+          <p>維修報價後，顧客應於 7 日內確認是否維修。若選擇不維修，請於 7 日內取車。逾期未取車者，本公司得安排配送，運費到付；如無法配送或顧客未取車，將收取 NT$80 元／日之保管費。</p>
+
+          <h3>維修完成後取車期限：</h3>
+          <p>維修完成後，本公司將通知顧客取車。顧客應於通知後 7 日內取車；逾期未取車者，將收取 NT$80 元／日之保管費。</p>
+
+          <h3>提醒：</h3>
+          <p>經檢查後若不屬於保固範圍，本公司將提供維修報價；顧客同意後才會進行維修。顧客不得以購買未滿一年為由，要求所有維修均免費處理。</p>
+
+          <label className="checklist-item" htmlFor="repair-warranty-accepted">
+            <input
+              id="repair-warranty-accepted"
+              type="checkbox"
+              checked={form.repairWarrantyAccepted}
+              onChange={(e) => update("repairWarrantyAccepted", e.target.checked)}
+              disabled={submitting}
+            />
+            <span>我已閱讀並了解上述保固維修範圍、非保固檢修費、報價確認期限及逾期保管費規定，並同意是否屬於保固須以本公司檢查判定為準；若不屬於保固範圍，維修費用、檢修費、運送費及保管費由本人自行負擔。</span>
+          </label>
+        </div>
+
+        <button className="line-customer-close" type="submit" disabled={submitting || !form.repairWarrantyAccepted}>
           {submitting ? "預約送出中..." : "送出維修預約"}
         </button>
           </form>
