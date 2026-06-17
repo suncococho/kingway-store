@@ -27,6 +27,9 @@ const ALLOWED_STORE_STATUSES = new Set(["active", "inactive", "suspended"]);
 const IMPERSONATION_TTL_SECONDS = 2 * 60 * 60;
 const IMPERSONATION_TTL_TEXT = "2 小時";
 const OWNER_PASSWORD_MIN_LENGTH = 8;
+const COMPANY_STATUS = new Set(["ACTIVE", "INACTIVE"]);
+const COMPANY_STORE_RELATIONSHIPS = new Set(["HEADQUARTERS", "WAREHOUSE", "DIRECT_STORE", "FRANCHISE_STORE"]);
+const COMPANY_MEMBER_ROLES = new Set(["company_owner", "hq_admin", "finance", "inventory_manager", "viewer"]);
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : value === undefined || value === null ? "" : String(value).trim();
@@ -61,6 +64,156 @@ function n(value, fallback = 0) {
 function t(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
   return String(value);
+}
+
+function normalizeCompanyCode(value) {
+  const code = t(value).trim().toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9_-]{1,78}[A-Z0-9]$/.test(code)) {
+    const error = new Error("公司代碼格式不正確");
+    error.statusCode = 400;
+    throw error;
+  }
+  return code;
+}
+
+function normalizeCompanyName(value) {
+  const name = t(value).trim();
+  if (!name) {
+    const error = new Error("請輸入公司名稱");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (name.length > 150) {
+    const error = new Error("公司名稱過長");
+    error.statusCode = 400;
+    throw error;
+  }
+  return name;
+}
+
+function normalizeCompanyStatus(value) {
+  const status = t(value, "ACTIVE").trim().toUpperCase();
+  return COMPANY_STATUS.has(status) ? status : "ACTIVE";
+}
+
+function normalizeCompanyStoreRelationship(value) {
+  const relationship = t(value, "FRANCHISE_STORE").trim().toUpperCase();
+  return COMPANY_STORE_RELATIONSHIPS.has(relationship) ? relationship : "FRANCHISE_STORE";
+}
+
+function normalizeCompanyMemberRole(value) {
+  const role = t(value, "viewer").trim();
+  return COMPANY_MEMBER_ROLES.has(role) ? role : "viewer";
+}
+
+function buildCompanyResponse(row, stores = [], members = []) {
+  return {
+    id: n(row.id),
+    code: t(row.code),
+    name: t(row.name),
+    status: t(row.status, "ACTIVE"),
+    note: t(row.note),
+    storeCount: n(row.storeCount, stores.length),
+    memberCount: n(row.memberCount, members.length),
+    createdAt: row.createdAt || row.created_at || null,
+    updatedAt: row.updatedAt || row.updated_at || null,
+    stores,
+    members
+  };
+}
+
+async function getCompany(companyId) {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        c.id,
+        c.code,
+        c.name,
+        c.status,
+        c.note,
+        c.created_at AS createdAt,
+        c.updated_at AS updatedAt,
+        CAST((SELECT COUNT(*) FROM company_stores cs WHERE cs.company_id = c.id AND cs.status = 'ACTIVE') AS UNSIGNED) AS storeCount,
+        CAST((SELECT COUNT(*) FROM company_memberships cm WHERE cm.company_id = c.id AND cm.status = 'ACTIVE') AS UNSIGNED) AS memberCount
+      FROM companies c
+      WHERE c.id = ?
+      LIMIT 1
+    `,
+    [companyId]
+  );
+  return rows[0] || null;
+}
+
+async function getCompanyStores(companyId) {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        cs.id,
+        cs.company_id AS companyId,
+        cs.store_id AS storeId,
+        cs.relationship_type AS relationshipType,
+        cs.status,
+        s.code AS storeCode,
+        s.name AS storeName,
+        s.status AS storeStatus,
+        s.plan AS storePlan
+      FROM company_stores cs
+      INNER JOIN stores s ON s.id = cs.store_id
+      WHERE cs.company_id = ?
+      ORDER BY cs.status ASC, FIELD(cs.relationship_type, 'HEADQUARTERS', 'WAREHOUSE', 'DIRECT_STORE', 'FRANCHISE_STORE'), s.id ASC
+    `,
+    [companyId]
+  );
+  return rows.map((row) => ({
+    id: n(row.id),
+    companyId: n(row.companyId),
+    storeId: n(row.storeId),
+    relationshipType: t(row.relationshipType),
+    status: t(row.status),
+    storeCode: t(row.storeCode),
+    storeName: t(row.storeName),
+    storeStatus: t(row.storeStatus),
+    storePlan: t(row.storePlan)
+  }));
+}
+
+async function getCompanyMembers(companyId) {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        cm.id,
+        cm.company_id AS companyId,
+        cm.staff_user_id AS staffUserId,
+        cm.role,
+        cm.status,
+        su.username,
+        su.display_name AS displayName,
+        su.role AS staffRole
+      FROM company_memberships cm
+      INNER JOIN staff_users su ON su.id = cm.staff_user_id
+      WHERE cm.company_id = ?
+      ORDER BY cm.status ASC, FIELD(cm.role, 'company_owner', 'hq_admin', 'finance', 'inventory_manager', 'viewer'), su.username ASC
+    `,
+    [companyId]
+  );
+  return rows.map((row) => ({
+    id: n(row.id),
+    companyId: n(row.companyId),
+    staffUserId: n(row.staffUserId),
+    role: t(row.role),
+    status: t(row.status),
+    username: t(row.username),
+    displayName: t(row.displayName),
+    staffRole: t(row.staffRole)
+  }));
+}
+
+async function buildCompanyDetail(companyId) {
+  const company = await getCompany(companyId);
+  if (!company) return null;
+  const stores = await getCompanyStores(companyId);
+  const members = await getCompanyMembers(companyId);
+  return buildCompanyResponse(company, stores, members);
 }
 
 function getSchemaGuardStatus() {
@@ -600,6 +753,293 @@ async function applyStoreFeaturePresetHandler(req, res, next) {
 
 router.use(authenticatePlatformAdmin);
 router.use(requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN", "SUPPORT"]));
+
+router.get("/companies", async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `
+        SELECT
+          c.id,
+          c.code,
+          c.name,
+          c.status,
+          c.note,
+          c.created_at AS createdAt,
+          c.updated_at AS updatedAt,
+          CAST((SELECT COUNT(*) FROM company_stores cs WHERE cs.company_id = c.id AND cs.status = 'ACTIVE') AS UNSIGNED) AS storeCount,
+          CAST((SELECT COUNT(*) FROM company_memberships cm WHERE cm.company_id = c.id AND cm.status = 'ACTIVE') AS UNSIGNED) AS memberCount
+        FROM companies c
+        ORDER BY c.id ASC
+      `
+    );
+
+    const companies = [];
+    for (const row of rows) {
+      const companyId = n(row.id);
+      companies.push(buildCompanyResponse(row, await getCompanyStores(companyId), await getCompanyMembers(companyId)));
+    }
+
+    return res.json({ ok: true, companies });
+  } catch (error) {
+    console.error("[saasAdmin/companies:get] failed", error);
+    return next(error);
+  }
+});
+
+router.post("/companies", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
+  try {
+    const code = normalizeCompanyCode(req.body?.code);
+    const name = normalizeCompanyName(req.body?.name);
+    const status = normalizeCompanyStatus(req.body?.status);
+    const note = t(req.body?.note).trim() || null;
+
+    const [result] = await pool.query(
+      `
+        INSERT INTO companies (code, name, status, note)
+        VALUES (?, ?, ?, ?)
+      `,
+      [code, name, status, note]
+    );
+
+    const company = await buildCompanyDetail(result.insertId);
+    await recordPlatformAudit(req, {
+      action: "company.create",
+      targetType: "company",
+      targetId: result.insertId,
+      before: null,
+      after: company
+    });
+    return res.status(201).json({ ok: true, company });
+  } catch (error) {
+    if (error?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ message: "公司代碼已存在" });
+    }
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
+    console.error("[saasAdmin/companies:create] failed", error);
+    return next(error);
+  }
+});
+
+router.patch("/companies/:id", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
+  try {
+    const companyId = n(req.params.id, 0);
+    const before = await buildCompanyDetail(companyId);
+    if (!before) {
+      return res.status(404).json({ message: "找不到公司" });
+    }
+
+    const updates = [];
+    const values = [];
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "code")) {
+      updates.push("code = ?");
+      values.push(normalizeCompanyCode(req.body.code));
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "name")) {
+      updates.push("name = ?");
+      values.push(normalizeCompanyName(req.body.name));
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "status")) {
+      updates.push("status = ?");
+      values.push(normalizeCompanyStatus(req.body.status));
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "note")) {
+      updates.push("note = ?");
+      values.push(t(req.body.note).trim() || null);
+    }
+
+    if (updates.length) {
+      values.push(companyId);
+      await pool.query(`UPDATE companies SET ${updates.join(", ")} WHERE id = ?`, values);
+    }
+
+    const company = await buildCompanyDetail(companyId);
+    if (updates.length) {
+      await recordPlatformAudit(req, {
+        action: "company.update",
+        targetType: "company",
+        targetId: companyId,
+        before,
+        after: company
+      });
+    }
+    return res.json({ ok: true, company });
+  } catch (error) {
+    if (error?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ message: "公司代碼已存在" });
+    }
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
+    console.error("[saasAdmin/companies:patch] failed", error);
+    return next(error);
+  }
+});
+
+router.post("/companies/:id/stores", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
+  try {
+    const companyId = n(req.params.id, 0);
+    const storeId = n(req.body?.storeId || req.body?.store_id, 0);
+    if (!companyId || !storeId) {
+      return res.status(400).json({ message: "請提供公司與門市" });
+    }
+    const company = await getCompany(companyId);
+    if (!company) {
+      return res.status(404).json({ message: "找不到公司" });
+    }
+    const store = await getStore(storeId);
+    if (!store) {
+      return res.status(404).json({ message: "找不到門市" });
+    }
+
+    const relationship = normalizeCompanyStoreRelationship(req.body?.relationshipType || req.body?.relationship_type);
+    const status = normalizeCompanyStatus(req.body?.status);
+    const before = await buildCompanyDetail(companyId);
+    await pool.query(
+      `
+        INSERT INTO company_stores (company_id, store_id, relationship_type, status)
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE relationship_type = VALUES(relationship_type), status = VALUES(status)
+      `,
+      [companyId, storeId, relationship, status]
+    );
+
+    const after = await buildCompanyDetail(companyId);
+    await recordPlatformAudit(req, {
+      action: "company.store.upsert",
+      targetType: "company",
+      targetId: companyId,
+      before,
+      after
+    });
+    return res.status(201).json({ ok: true, company: after });
+  } catch (error) {
+    console.error("[saasAdmin/companies:storeUpsert] failed", error);
+    return next(error);
+  }
+});
+
+router.patch("/companies/:id/stores/:storeId", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
+  try {
+    const companyId = n(req.params.id, 0);
+    const storeId = n(req.params.storeId, 0);
+    const before = await buildCompanyDetail(companyId);
+    if (!before) {
+      return res.status(404).json({ message: "找不到公司" });
+    }
+
+    const relationship = normalizeCompanyStoreRelationship(req.body?.relationshipType || req.body?.relationship_type);
+    const status = normalizeCompanyStatus(req.body?.status);
+    const [result] = await pool.query(
+      `
+        UPDATE company_stores
+        SET relationship_type = ?, status = ?
+        WHERE company_id = ?
+          AND store_id = ?
+      `,
+      [relationship, status, companyId, storeId]
+    );
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "找不到公司門市關聯" });
+    }
+
+    const after = await buildCompanyDetail(companyId);
+    await recordPlatformAudit(req, {
+      action: "company.store.update",
+      targetType: "company",
+      targetId: companyId,
+      before,
+      after
+    });
+    return res.json({ ok: true, company: after });
+  } catch (error) {
+    console.error("[saasAdmin/companies:storePatch] failed", error);
+    return next(error);
+  }
+});
+
+router.post("/companies/:id/members", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
+  try {
+    const companyId = n(req.params.id, 0);
+    const staffUserId = n(req.body?.staffUserId || req.body?.staff_user_id, 0);
+    if (!companyId || !staffUserId) {
+      return res.status(400).json({ message: "請提供公司與人員" });
+    }
+    const company = await getCompany(companyId);
+    if (!company) {
+      return res.status(404).json({ message: "找不到公司" });
+    }
+    const [staffRows] = await pool.query("SELECT id FROM staff_users WHERE id = ? AND is_active = 1 LIMIT 1", [staffUserId]);
+    if (!staffRows[0]) {
+      return res.status(404).json({ message: "找不到啟用中的人員" });
+    }
+
+    const role = normalizeCompanyMemberRole(req.body?.role);
+    const status = normalizeCompanyStatus(req.body?.status);
+    const before = await buildCompanyDetail(companyId);
+    await pool.query(
+      `
+        INSERT INTO company_memberships (company_id, staff_user_id, role, status)
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE role = VALUES(role), status = VALUES(status)
+      `,
+      [companyId, staffUserId, role, status]
+    );
+
+    const after = await buildCompanyDetail(companyId);
+    await recordPlatformAudit(req, {
+      action: "company.member.upsert",
+      targetType: "company",
+      targetId: companyId,
+      before,
+      after
+    });
+    return res.status(201).json({ ok: true, company: after });
+  } catch (error) {
+    console.error("[saasAdmin/companies:memberUpsert] failed", error);
+    return next(error);
+  }
+});
+
+router.patch("/companies/:id/members/:membershipId", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
+  try {
+    const companyId = n(req.params.id, 0);
+    const membershipId = n(req.params.membershipId, 0);
+    const before = await buildCompanyDetail(companyId);
+    if (!before) {
+      return res.status(404).json({ message: "找不到公司" });
+    }
+
+    const role = normalizeCompanyMemberRole(req.body?.role);
+    const status = normalizeCompanyStatus(req.body?.status);
+    const [result] = await pool.query(
+      `
+        UPDATE company_memberships
+        SET role = ?, status = ?
+        WHERE id = ?
+          AND company_id = ?
+      `,
+      [role, status, membershipId, companyId]
+    );
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "找不到公司權限人員" });
+    }
+
+    const after = await buildCompanyDetail(companyId);
+    await recordPlatformAudit(req, {
+      action: "company.member.update",
+      targetType: "company",
+      targetId: companyId,
+      before,
+      after
+    });
+    return res.json({ ok: true, company: after });
+  } catch (error) {
+    console.error("[saasAdmin/companies:memberPatch] failed", error);
+    return next(error);
+  }
+});
 
 router.get("/audit-logs", async (req, res, next) => {
   try {

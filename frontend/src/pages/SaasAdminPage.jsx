@@ -1005,6 +1005,15 @@ function SaasAdminPage() {
     <div>
       <PageHeader title="SaaS 平台管理中心" description="平台層級檢視所有租戶店家、SchemaGuard 狀態與各店家模組入口；KINGWAY 台南是 store_id=1 租戶。" />
 
+      <section className="admin-panel">
+        <AdminSectionHeader
+          eyebrow="Franchise"
+          title="公司 / 品牌管理"
+          description="管理 franchise company、所屬門市與總部權限；出貨、入庫與結算留待下一階段。"
+          actions={<Link to="/platform-admin/companies" className="primary-button">管理公司 / 品牌</Link>}
+        />
+      </section>
+
       <div className="admin-summary-grid dashboard-summary-grid">
         {summaryCards.map((card) => (
           <article key={card.label} className="admin-summary-card">

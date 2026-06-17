@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { clearAuth, getStoredStoreName, getStoredUser } from "../lib/auth";
+import { apiRequest } from "../lib/api";
 import { useStoreFeatures } from "../hooks/useStoreFeatures";
 import { getMobileMenuSectionsForUser, isMenuItemActive } from "../lib/mobileNavigation";
 
@@ -10,13 +11,42 @@ function Sidebar() {
   const user = getStoredUser();
   const currentStoreName = getStoredStoreName();
   const { features } = useStoreFeatures();
+  const [companyAccess, setCompanyAccess] = useState({ loaded: false, enabled: false });
   const mobileMenuSections = getMobileMenuSectionsForUser(user, features)
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => item.to !== "/saas-admin")
     }))
     .filter((group) => group.items.length > 0);
+  if (companyAccess.enabled) {
+    mobileMenuSections.splice(2, 0, {
+      heading: "總部",
+      items: [
+        { to: "/headquarters", label: "總部管理", description: "公司資料、所屬門市與總部功能" }
+      ]
+    });
+  }
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    async function loadCompanyAccess() {
+      try {
+        const response = await apiRequest("/company/me");
+        if (active) {
+          setCompanyAccess({ loaded: true, enabled: Boolean(response.franchiseEnabled) });
+        }
+      } catch (_error) {
+        if (active) {
+          setCompanyAccess({ loaded: true, enabled: false });
+        }
+      }
+    }
+    loadCompanyAccess();
+    return () => {
+      active = false;
+    };
+  }, [user?.id, user?.storeId]);
 
   function handleLogout() {
     clearAuth();

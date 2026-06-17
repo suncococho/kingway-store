@@ -8,6 +8,7 @@ import StoreSignupPage from "./pages/StoreSignupPage";
 import PlatformLoginPage, { PlatformAdminPage } from "./pages/PlatformLoginPage";
 import SaasAdminPage from "./pages/SaasAdminPage";
 import SaasStoreFeaturesPage from "./pages/SaasStoreFeaturesPage";
+import PlatformCompaniesPage from "./pages/PlatformCompaniesPage";
 import DashboardPage from "./pages/DashboardPage";
 import CustomerStatusPage from "./pages/CustomerStatusPage";
 import CustomersPage from "./pages/CustomersPage";
@@ -42,6 +43,7 @@ import LineSupportPage from "./pages/LineSupportPage";
 import LineCouponPage from "./pages/LineCouponPage";
 import LineProgressPage from "./pages/LineProgressPage";
 import TrashPage from "./pages/TrashPage";
+import HeadquartersPage from "./pages/HeadquartersPage";
 
 function App() {
   const token = getStoredToken();
@@ -75,8 +77,10 @@ function App() {
       <Route path="/products/new" element={<Navigate to="/products?section=CREATE" replace state={{ mode: "up" }} />} />
       <Route path="/platform-admin/login" element={<PlatformLoginPage />} />
       <Route path="/platform-admin" element={<PlatformAdminPage />} />
+      <Route path="/platform-admin/companies" element={<PlatformCompaniesPage />} />
       <Route path="/platform-admin/stores/:id/features" element={<SaasStoreFeaturesPage />} />
       <Route path="/saas-admin" element={<SaasAdminPage />} />
+      <Route path="/saas-admin/companies" element={<PlatformCompaniesPage />} />
       <Route path="/saas-admin/stores/:id/features" element={<SaasStoreFeaturesPage />} />
       <Route path="/saas-admin/*" element={<Navigate to="/platform-admin" replace />} />
       <Route path="/login" element={<LoginPage />} />
@@ -108,6 +112,7 @@ function App() {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/more" element={<MorePage />} />
         <Route path="/trash" element={<TrashPage />} />
+        <Route path="/headquarters" element={<HeadquartersPage />} />
       </Route>
       <Route
         path="*"
