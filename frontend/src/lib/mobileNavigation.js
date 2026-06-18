@@ -33,6 +33,7 @@ export const mobileMenuSections = [
     items: [
       { to: "/products", label: "商品管理", description: "商品、SKU、圖片與批次操作" },
       { to: "/inventory", label: "庫存管理", description: "異動、警戒值與供應商流程" },
+      { to: "/inbound-transfers", label: "門市入庫確認", description: "確認總部出貨到店的實收數量" },
       { to: "/suppliers", label: "供應商管理", description: "供應商資料、商品供應價、發注與退貨" },
       { to: "/coupons", label: "優惠券", description: "發券、審核與使用狀態" },
       { to: "/purchase-confirmations", label: "購買確認書", description: "簽名與 PDF 管理" },

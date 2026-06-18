@@ -44,6 +44,7 @@ import LineCouponPage from "./pages/LineCouponPage";
 import LineProgressPage from "./pages/LineProgressPage";
 import TrashPage from "./pages/TrashPage";
 import HeadquartersPage from "./pages/HeadquartersPage";
+import InboundTransfersPage from "./pages/InboundTransfersPage";
 
 function App() {
   const token = getStoredToken();
@@ -113,6 +114,7 @@ function App() {
         <Route path="/more" element={<MorePage />} />
         <Route path="/trash" element={<TrashPage />} />
         <Route path="/headquarters" element={<HeadquartersPage />} />
+        <Route path="/inbound-transfers" element={<InboundTransfersPage />} />
       </Route>
       <Route
         path="*"
