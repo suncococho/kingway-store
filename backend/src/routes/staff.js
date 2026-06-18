@@ -3,9 +3,19 @@ const { pool } = require("../db");
 const { authenticate, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { requireStoreFeature } = require("../middleware/storeFeature");
 const { hashPassword } = require("../utils/passwords");
+const {
+  STAFF_ROLES,
+  MENU_CATALOG,
+  isOwnerStoreRole,
+  isSupportedStaffRole,
+  normalizeRolePermissionPayload,
+  normalizeUserPermissionPayload,
+  loadRolePermissionsForManagement,
+  loadUserOverridesForManagement
+} = require("../services/menuPermissionService");
 
 const router = express.Router();
-const STAFF_ROLES = new Set(["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"]);
+const STAFF_ROLE_SET = new Set(["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"]);
 const MANAGED_STORE_ROLES = new Set(["admin", "staff"]);
 
 router.use(authenticate, requireStoreScope(), requireStoreFeature("staff_management_enabled"));
@@ -23,7 +33,7 @@ function normalizeText(value) {
 
 function normalizeStaffRole(value) {
   const role = normalizeText(value).toUpperCase();
-  if (!STAFF_ROLES.has(role)) {
+  if (!STAFF_ROLE_SET.has(role)) {
     const error = new Error("員工工作角色不正確");
     error.statusCode = 400;
     throw error;
@@ -122,6 +132,145 @@ router.get("/", async (req, res, next) => {
     return res.json(rows.map(mapStaffRow));
   } catch (error) {
     return next(error);
+  }
+});
+
+router.get("/permissions", requireStaffManagementStoreRole, async (req, res, next) => {
+  try {
+    const storeId = getRequestStoreId(req);
+    const [staffRows] = await pool.query(
+      `
+        SELECT
+          su.id,
+          su.username,
+          su.display_name AS displayName,
+          su.role,
+          sm.role AS storeRole,
+          sm.status AS membershipStatus,
+          su.is_active AS isActive
+        FROM staff_users su
+        INNER JOIN store_memberships sm
+          ON sm.staff_user_id = su.id
+         AND sm.store_id = ?
+         AND sm.status IN ('active', 'disabled')
+        ORDER BY FIELD(sm.role, 'owner', 'admin', 'staff'), su.id ASC
+      `,
+      [storeId]
+    );
+
+    const rolePermissions = await loadRolePermissionsForManagement(pool, storeId);
+    const userOverrides = await loadUserOverridesForManagement(pool, storeId);
+
+    return res.json({
+      storeId,
+      roles: STAFF_ROLES,
+      catalog: MENU_CATALOG,
+      rolePermissions,
+      userOverrides,
+      staff: staffRows.map((row) => ({
+        id: Number(row.id),
+        username: row.username,
+        displayName: row.displayName,
+        role: row.role,
+        storeRole: row.storeRole,
+        membershipStatus: row.membershipStatus,
+        isOwner: isOwnerStoreRole(row.storeRole),
+        isActive: Boolean(row.isActive)
+      }))
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.put("/roles/:role/menu-permissions", requireStaffManagementStoreRole, async (req, res, next) => {
+  const connection = await pool.getConnection();
+  try {
+    const storeId = getRequestStoreId(req);
+    const role = normalizeStaffRole(req.params.role);
+    if (!isSupportedStaffRole(role)) {
+      return res.status(400).json({ message: "員工工作角色不正確" });
+    }
+
+    const permissions = normalizeRolePermissionPayload(req.body?.permissions);
+    await connection.beginTransaction();
+    for (const item of permissions) {
+      await connection.query(
+        `
+          INSERT INTO store_role_menu_permissions (store_id, role, menu_key, can_view, can_access)
+          VALUES (?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            can_view = VALUES(can_view),
+            can_access = VALUES(can_access)
+        `,
+        [storeId, role, item.menuKey, Number(item.canView), Number(item.canAccess)]
+      );
+    }
+    await connection.commit();
+
+    const rolePermissions = await loadRolePermissionsForManagement(pool, storeId);
+    return res.json({
+      role,
+      permissions: rolePermissions[role]
+    });
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch (_) {}
+    return next(error);
+  } finally {
+    connection.release();
+  }
+});
+
+router.put("/:staffUserId/menu-permissions", requireStaffManagementStoreRole, async (req, res, next) => {
+  const connection = await pool.getConnection();
+  try {
+    const storeId = getRequestStoreId(req);
+    const staffUserId = Number(req.params.staffUserId);
+    if (!Number.isSafeInteger(staffUserId) || staffUserId <= 0) {
+      return res.status(404).json({ message: "找不到員工" });
+    }
+
+    await connection.beginTransaction();
+    const current = await findStoreStaff(connection, storeId, staffUserId, true);
+    if (!current) {
+      await connection.rollback();
+      return res.status(404).json({ message: "找不到員工" });
+    }
+
+    if (isOwnerStoreRole(current.storeRole)) {
+      await connection.rollback();
+      return res.status(409).json({ message: "owner 權限不可被覆寫" });
+    }
+
+    const permissions = normalizeUserPermissionPayload(req.body?.permissions);
+    for (const item of permissions) {
+      await connection.query(
+        `
+          INSERT INTO store_user_menu_permissions (store_id, staff_user_id, menu_key, can_view, can_access)
+          VALUES (?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            can_view = VALUES(can_view),
+            can_access = VALUES(can_access)
+        `,
+        [storeId, staffUserId, item.menuKey, item.canView, item.canAccess]
+      );
+    }
+    await connection.commit();
+
+    const userOverrides = await loadUserOverridesForManagement(pool, storeId);
+    return res.json({
+      staffUserId,
+      overrides: userOverrides[staffUserId] || {}
+    });
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch (_) {}
+    return next(error);
+  } finally {
+    connection.release();
   }
 });
 

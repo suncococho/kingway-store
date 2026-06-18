@@ -3,10 +3,15 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import { getImpersonationSession, stopImpersonationSession } from "../lib/auth";
 import { platformRequest } from "../lib/platformAuth";
+import { getStoredUser } from "../lib/auth";
+import { useMenuPermissions } from "../hooks/useMenuPermissions";
+import { canAccessPath, getMenuKeyForPath } from "../lib/menuPermissions";
 
 function ProtectedLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const user = getStoredUser();
+  const { permissions: menuPermissions, loading: menuPermissionsLoading } = useMenuPermissions(user);
   const impersonationSession = useMemo(() => getImpersonationSession(), [location.pathname, location.search]);
 
   async function handleEndImpersonation() {
@@ -40,6 +45,9 @@ function ProtectedLayout() {
   const isPosFullscreen =
     location.pathname === "/pos" &&
     new URLSearchParams(location.search).get("fullscreen") === "1";
+  const guardedMenuKey = getMenuKeyForPath(location.pathname);
+  const isCheckingMenuPermission = Boolean(guardedMenuKey && menuPermissionsLoading);
+  const hasMenuAccess = canAccessPath(location.pathname, menuPermissions, user);
 
   return (
     <div className={`app-shell ${isPosFullscreen ? "app-shell-pos-fullscreen" : ""}`}>
@@ -61,7 +69,20 @@ function ProtectedLayout() {
             </button>
           </div>
         ) : null}
-        <Outlet />
+        {isCheckingMenuPermission ? (
+          <section className="content-card section-panel">
+            <div className="empty-state">權限確認中...</div>
+          </section>
+        ) : !hasMenuAccess ? (
+          <section className="content-card section-panel">
+            <div className="empty-state">
+              <h2>權限不足</h2>
+              <p>您沒有權限使用此功能</p>
+            </div>
+          </section>
+        ) : (
+          <Outlet />
+        )}
       </main>
     </div>
   );

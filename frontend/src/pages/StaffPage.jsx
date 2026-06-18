@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { useFetchList } from "../hooks/useFetchList";
 import { apiRequest } from "../lib/api";
+import { MENU_CATALOG, ROLE_LABELS, STAFF_ROLES } from "../lib/menuPermissions";
 
 const ROLE_OPTIONS = [
   { value: "ADMIN", label: "管理員" },
@@ -40,9 +41,58 @@ function getStoreRoleLabel(role) {
   return map[role] || role || "-";
 }
 
+function clonePermissionMap(permissions = {}) {
+  return MENU_CATALOG.reduce((map, item) => {
+    const value = permissions[item.key] || {};
+    map[item.key] = {
+      canView: Boolean(value.canView),
+      canAccess: Boolean(value.canAccess)
+    };
+    return map;
+  }, {});
+}
+
+function cloneOverrideMap(permissions = {}) {
+  return MENU_CATALOG.reduce((map, item) => {
+    const value = permissions[item.key] || {};
+    map[item.key] = {
+      canView: value.canView === undefined ? null : value.canView,
+      canAccess: value.canAccess === undefined ? null : value.canAccess
+    };
+    return map;
+  }, {});
+}
+
+function serializeRolePermissions(permissions = {}) {
+  return MENU_CATALOG.map((item) => ({
+    menuKey: item.key,
+    canView: Boolean(permissions[item.key]?.canView),
+    canAccess: Boolean(permissions[item.key]?.canAccess)
+  }));
+}
+
+function serializeUserPermissions(permissions = {}) {
+  return MENU_CATALOG.map((item) => ({
+    menuKey: item.key,
+    canView: permissions[item.key]?.canView ?? null,
+    canAccess: permissions[item.key]?.canAccess ?? null
+  }));
+}
+
+function overrideSelectValue(value) {
+  if (value === null || value === undefined) return "inherit";
+  return value ? "allow" : "deny";
+}
+
+function selectValueToOverride(value) {
+  if (value === "inherit") return null;
+  return value === "allow";
+}
+
 function StaffPage() {
   const staff = useFetchList("/staff");
   const kpi = useFetchList("/kpi");
+  const [activeTab, setActiveTab] = useState("STAFF");
   const [selectedStaffId, setSelectedStaffId] = useState(null);
   const [staffForm, setStaffForm] = useState({
     username: "",
@@ -63,6 +113,14 @@ function StaffPage() {
     refId: "",
     score: "1"
   });
+  const [permissionData, setPermissionData] = useState(null);
+  const [permissionLoading, setPermissionLoading] = useState(false);
+  const [permissionError, setPermissionError] = useState("");
+  const [permissionSuccess, setPermissionSuccess] = useState("");
+  const [selectedPermissionRole, setSelectedPermissionRole] = useState("CASHIER");
+  const [rolePermissionDraft, setRolePermissionDraft] = useState(() => clonePermissionMap());
+  const [selectedPermissionStaffId, setSelectedPermissionStaffId] = useState("");
+  const [userPermissionDraft, setUserPermissionDraft] = useState(() => cloneOverrideMap());
 
   const rows = useMemo(
     () =>
@@ -95,6 +153,33 @@ function StaffPage() {
     { label: "KPI 有紀錄", value: kpiRows.filter((item) => item.logCount > 0).length }
   ];
 
+  const permissionStaff = useMemo(
+    () => (permissionData?.staff || []).find((item) => String(item.id) === String(selectedPermissionStaffId)) || null,
+    [permissionData, selectedPermissionStaffId]
+  );
+
+  useEffect(() => {
+    if (activeTab !== "PERMISSIONS" || permissionData) {
+      return;
+    }
+    loadPermissionData();
+  }, [activeTab, permissionData]);
+
+  useEffect(() => {
+    if (!permissionData) {
+      return;
+    }
+    setRolePermissionDraft(clonePermissionMap(permissionData.rolePermissions?.[selectedPermissionRole]));
+  }, [permissionData, selectedPermissionRole]);
+
+  useEffect(() => {
+    if (!permissionData || !selectedPermissionStaffId) {
+      setUserPermissionDraft(cloneOverrideMap());
+      return;
+    }
+    setUserPermissionDraft(cloneOverrideMap(permissionData.userOverrides?.[selectedPermissionStaffId]));
+  }, [permissionData, selectedPermissionStaffId]);
+
   function handleStaffChange(event) {
     const { name, value, type, checked } = event.target;
     setStaffForm((current) => ({
@@ -109,6 +194,85 @@ function StaffPage() {
       ...current,
       [name]: value
     }));
+  }
+
+  async function loadPermissionData() {
+    setPermissionLoading(true);
+    setPermissionError("");
+    try {
+      const data = await apiRequest("/staff/permissions");
+      setPermissionData(data);
+      if (!selectedPermissionStaffId && Array.isArray(data.staff) && data.staff.length) {
+        const firstEditable = data.staff.find((item) => !item.isOwner) || data.staff[0];
+        setSelectedPermissionStaffId(String(firstEditable.id));
+      }
+    } catch (error) {
+      setPermissionError(error.message || "權限資料讀取失敗");
+    } finally {
+      setPermissionLoading(false);
+    }
+  }
+
+  function updateRolePermission(menuKey, field, value) {
+    setRolePermissionDraft((current) => ({
+      ...current,
+      [menuKey]: {
+        ...(current[menuKey] || {}),
+        [field]: value
+      }
+    }));
+  }
+
+  function updateUserPermission(menuKey, field, value) {
+    setUserPermissionDraft((current) => ({
+      ...current,
+      [menuKey]: {
+        ...(current[menuKey] || {}),
+        [field]: selectValueToOverride(value)
+      }
+    }));
+  }
+
+  async function saveRolePermissions(event) {
+    event.preventDefault();
+    setPermissionLoading(true);
+    setPermissionError("");
+    setPermissionSuccess("");
+    try {
+      await apiRequest(`/staff/roles/${selectedPermissionRole}/menu-permissions`, {
+        method: "PUT",
+        body: JSON.stringify({ permissions: serializeRolePermissions(rolePermissionDraft) })
+      });
+      await loadPermissionData();
+      setPermissionSuccess("角色權限已儲存");
+    } catch (error) {
+      setPermissionError(error.message || "角色權限儲存失敗");
+    } finally {
+      setPermissionLoading(false);
+    }
+  }
+
+  async function saveUserPermissions(event) {
+    event.preventDefault();
+    if (!selectedPermissionStaffId || permissionStaff?.isOwner) {
+      setPermissionError("owner 權限不可被覆寫");
+      return;
+    }
+    setPermissionLoading(true);
+    setPermissionError("");
+    setPermissionSuccess("");
+    try {
+      await apiRequest(`/staff/${selectedPermissionStaffId}/menu-permissions`, {
+        method: "PUT",
+        body: JSON.stringify({ permissions: serializeUserPermissions(userPermissionDraft) })
+      });
+      await loadPermissionData();
+      setPermissionSuccess("員工個別權限已儲存");
+    } catch (error) {
+      setPermissionError(error.message || "員工個別權限儲存失敗");
+    } finally {
+      setPermissionLoading(false);
+    }
   }
 
   function startEditStaff(row) {
@@ -223,6 +387,8 @@ function StaffPage() {
       {staff.error || kpi.error ? <div className="empty-state">{staff.error || kpi.error}</div> : null}
       {staffError ? <div className="error-banner">{staffError}</div> : null}
       {staffSuccess ? <div className="success-banner">{staffSuccess}</div> : null}
+      {permissionError ? <div className="error-banner">{permissionError}</div> : null}
+      {permissionSuccess ? <div className="success-banner">{permissionSuccess}</div> : null}
 
       <div className="admin-summary-grid">
         {summaryCards.map((card) => (
@@ -233,6 +399,26 @@ function StaffPage() {
         ))}
       </div>
 
+      <div className="section-tabs-wrap">
+        <div className="section-tabs" role="tablist" aria-label="員工管理分頁">
+          {[
+            { key: "STAFF", label: "員工列表" },
+            { key: "KPI", label: "KPI" },
+            { key: "PERMISSIONS", label: "權限管理" }
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              className={`section-tab ${activeTab === tab.key ? "section-tab-active" : ""}`}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeTab === "STAFF" ? (
       <div className="admin-split-grid">
         <section className="admin-panel">
           <AdminSectionHeader
@@ -371,7 +557,10 @@ function StaffPage() {
           </form>
         </section>
       </div>
+      ) : null}
 
+      {activeTab === "KPI" ? (
+      <>
       <section className="admin-panel">
         <AdminSectionHeader
           eyebrow="手動 KPI"
@@ -428,6 +617,191 @@ function StaffPage() {
           cardBadges={(row) => <StatusBadge tone="info">紀錄 {row.logCount}</StatusBadge>}
         />
       </section>
+      </>
+      ) : null}
+
+      {activeTab === "PERMISSIONS" ? (
+        <div className="admin-split-grid">
+          <section className="admin-panel">
+            <AdminSectionHeader
+              eyebrow="角色權限"
+              title="角色預設選單權限"
+              description="設定各工作角色可看到與可使用的功能。owner 不受此設定限制。"
+              actions={
+                <button type="button" className="secondary-button" onClick={loadPermissionData} disabled={permissionLoading}>
+                  重新整理
+                </button>
+              }
+            />
+            <form onSubmit={saveRolePermissions}>
+              <label className="form-field">
+                <span>角色</span>
+                <select value={selectedPermissionRole} onChange={(event) => setSelectedPermissionRole(event.target.value)}>
+                  {STAFF_ROLES.map((role) => (
+                    <option key={role} value={role}>{ROLE_LABELS[role] || role}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="table-wrapper desktop-only">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>功能</th>
+                      <th>顯示選單</th>
+                      <th>允許使用</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {MENU_CATALOG.map((item) => (
+                      <tr key={item.key}>
+                        <td>{item.label}</td>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(rolePermissionDraft[item.key]?.canView)}
+                            onChange={(event) => updateRolePermission(item.key, "canView", event.target.checked)}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(rolePermissionDraft[item.key]?.canAccess)}
+                            onChange={(event) => updateRolePermission(item.key, "canAccess", event.target.checked)}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="data-card-list mobile-only">
+                {MENU_CATALOG.map((item) => (
+                  <article key={item.key} className="data-card">
+                    <div className="data-card-title">{item.label}</div>
+                    <label className="checklist-item">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(rolePermissionDraft[item.key]?.canView)}
+                        onChange={(event) => updateRolePermission(item.key, "canView", event.target.checked)}
+                      />
+                      <span>顯示選單</span>
+                    </label>
+                    <label className="checklist-item">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(rolePermissionDraft[item.key]?.canAccess)}
+                        onChange={(event) => updateRolePermission(item.key, "canAccess", event.target.checked)}
+                      />
+                      <span>允許使用</span>
+                    </label>
+                  </article>
+                ))}
+              </div>
+              <button type="submit" className="primary-button inline-submit" disabled={permissionLoading}>
+                {permissionLoading ? "儲存中..." : "儲存角色權限"}
+              </button>
+            </form>
+          </section>
+
+          <section className="admin-panel">
+            <AdminSectionHeader
+              eyebrow="員工個別權限"
+              title="員工 override"
+              description="可針對單一員工覆寫角色預設。選擇繼承時會使用角色權限。"
+            />
+            <form onSubmit={saveUserPermissions}>
+              <label className="form-field">
+                <span>員工</span>
+                <select value={selectedPermissionStaffId} onChange={(event) => setSelectedPermissionStaffId(event.target.value)}>
+                  <option value="">請選擇員工</option>
+                  {(permissionData?.staff || []).map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.displayName || item.username}（{item.isOwner ? "Owner" : `${ROLE_LABELS[item.role] || item.role} / ${getStoreRoleLabel(item.storeRole)}`}）
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {permissionStaff?.isOwner ? (
+                <div className="empty-state">owner 永遠擁有全部權限，不能被隱藏或覆寫。</div>
+              ) : null}
+              <div className="table-wrapper desktop-only">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>功能</th>
+                      <th>顯示選單</th>
+                      <th>允許使用</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {MENU_CATALOG.map((item) => (
+                      <tr key={item.key}>
+                        <td>{item.label}</td>
+                        <td>
+                          <select
+                            value={overrideSelectValue(userPermissionDraft[item.key]?.canView)}
+                            onChange={(event) => updateUserPermission(item.key, "canView", event.target.value)}
+                            disabled={!selectedPermissionStaffId || permissionStaff?.isOwner}
+                          >
+                            <option value="inherit">繼承角色設定</option>
+                            <option value="allow">允許</option>
+                            <option value="deny">禁用</option>
+                          </select>
+                        </td>
+                        <td>
+                          <select
+                            value={overrideSelectValue(userPermissionDraft[item.key]?.canAccess)}
+                            onChange={(event) => updateUserPermission(item.key, "canAccess", event.target.value)}
+                            disabled={!selectedPermissionStaffId || permissionStaff?.isOwner}
+                          >
+                            <option value="inherit">繼承角色設定</option>
+                            <option value="allow">允許</option>
+                            <option value="deny">禁用</option>
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="data-card-list mobile-only">
+                {MENU_CATALOG.map((item) => (
+                  <article key={item.key} className="data-card">
+                    <div className="data-card-title">{item.label}</div>
+                    <label className="form-field">
+                      <span>顯示選單</span>
+                      <select
+                        value={overrideSelectValue(userPermissionDraft[item.key]?.canView)}
+                        onChange={(event) => updateUserPermission(item.key, "canView", event.target.value)}
+                        disabled={!selectedPermissionStaffId || permissionStaff?.isOwner}
+                      >
+                        <option value="inherit">繼承角色設定</option>
+                        <option value="allow">允許</option>
+                        <option value="deny">禁用</option>
+                      </select>
+                    </label>
+                    <label className="form-field">
+                      <span>允許使用</span>
+                      <select
+                        value={overrideSelectValue(userPermissionDraft[item.key]?.canAccess)}
+                        onChange={(event) => updateUserPermission(item.key, "canAccess", event.target.value)}
+                        disabled={!selectedPermissionStaffId || permissionStaff?.isOwner}
+                      >
+                        <option value="inherit">繼承角色設定</option>
+                        <option value="allow">允許</option>
+                        <option value="deny">禁用</option>
+                      </select>
+                    </label>
+                  </article>
+                ))}
+              </div>
+              <button type="submit" className="primary-button inline-submit" disabled={permissionLoading || !selectedPermissionStaffId || permissionStaff?.isOwner}>
+                {permissionLoading ? "儲存中..." : "儲存權限"}
+              </button>
+            </form>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

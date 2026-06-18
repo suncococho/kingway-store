@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { clearAuth, getStoredStoreName, getStoredUser } from "../lib/auth";
 import { apiRequest } from "../lib/api";
 import { useStoreFeatures } from "../hooks/useStoreFeatures";
+import { useMenuPermissions } from "../hooks/useMenuPermissions";
 import { getMobileMenuSectionsForUser, isMenuItemActive } from "../lib/mobileNavigation";
 
 function Sidebar() {
@@ -11,8 +12,9 @@ function Sidebar() {
   const user = getStoredUser();
   const currentStoreName = getStoredStoreName();
   const { features } = useStoreFeatures();
+  const { permissions: menuPermissions } = useMenuPermissions(user);
   const [companyAccess, setCompanyAccess] = useState({ loaded: false, enabled: false });
-  const mobileMenuSections = getMobileMenuSectionsForUser(user, features)
+  const mobileMenuSections = getMobileMenuSectionsForUser(user, features, menuPermissions)
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => item.to !== "/saas-admin")

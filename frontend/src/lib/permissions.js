@@ -43,11 +43,5 @@ export function canAccessProtectedRoute(user, pathname) {
 }
 
 export function filterMenuItemsForUser(items, user) {
-  const visibleItems = items.filter((item) => !item.adminOnly || isAdminUser(user));
-
-  if (!isStaffLimitedUser(user)) {
-    return visibleItems;
-  }
-
-  return visibleItems.filter((item) => item.to && canAccessProtectedRoute(user, item.to.split("?")[0]));
+  return items.filter((item) => !item.adminOnly || isAdminUser(user));
 }
