@@ -91,6 +91,7 @@ function LineRepairRequestPage() {
   });
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  const [submitResult, setSubmitResult] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const submitLockRef = useRef(false);
   const [lineContextFailureReason, setLineContextFailureReason] = useState("");
@@ -275,7 +276,7 @@ function LineRepairRequestPage() {
       const storeQuery = storeContext.isExplicitStore
         ? `?store=${encodeURIComponent(storeContext.storeCode)}`
         : "";
-      await apiRequest(`/line-repair/create${storeQuery}`, {
+      const data = await apiRequest(`/line-repair/create${storeQuery}`, {
         method: "POST",
         body: JSON.stringify({
           lineUserId,
@@ -290,6 +291,7 @@ function LineRepairRequestPage() {
         })
       });
 
+      setSubmitResult(data || {});
       setDone(true);
     } catch (err) {
       setError(err.message || "送出失敗");
@@ -318,7 +320,12 @@ function LineRepairRequestPage() {
         <section className="line-customer-hero">
           <div className="line-customer-brand">KINGWAY</div>
           <h1>維修預約已送出</h1>
-          <p>門市收到後會確認內容，並透過 LINE 或電話與您聯繫。</p>
+          <p>
+            {submitResult?.duplicate || submitResult?.reusedExisting
+              ? "維修預約已建立，請勿重複送出。"
+              : "門市收到後會確認內容，並透過 LINE 或電話與您聯繫。"}
+            {submitResult?.repairId ? ` 維修單號：${submitResult.repairId}` : ""}
+          </p>
         </section>
         <button className="line-customer-close" onClick={() => liff.isInClient() ? liff.closeWindow() : window.location.href = "/line-customer"}>
           關閉
@@ -390,7 +397,7 @@ function LineRepairRequestPage() {
           {submitting ? (
             <section className="line-customer-summary">
               <div className="line-customer-summary-title">正在送出維修預約，請不要重複點擊</div>
-              <div>請稍候，我們正在建立您的預約</div>
+              <div>送出中，請稍候...</div>
             </section>
           ) : null}
 
@@ -452,7 +459,7 @@ function LineRepairRequestPage() {
         </div>
 
         <button className="line-customer-close" type="submit" disabled={submitting || !form.repairWarrantyAccepted}>
-          {submitting ? "預約送出中..." : "送出維修預約"}
+          {submitting ? "送出中，請稍候..." : "送出維修預約"}
         </button>
           </form>
         </>

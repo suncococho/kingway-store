@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import liff from "@line/liff";
 import { apiRequest } from "../lib/api";
 import { resolveLineContext } from "../lib/lineContext";
@@ -43,6 +43,7 @@ function LineOrderPage() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+  const submitLockRef = useRef(false);
   const [lineContextFailureReason, setLineContextFailureReason] = useState("");
   const [lineInClient, setLineInClient] = useState(false);
 
@@ -206,11 +207,21 @@ function LineOrderPage() {
   }
 
   async function submitOrder() {
-    setError("");
-    setResult(null);
+    if (submitLockRef.current || result) {
+      return;
+    }
 
-    if (!selected) return setError("請選擇車款");
-    if (!isBound) return setError("請先完成電話綁定");
+    submitLockRef.current = true;
+    setError("");
+
+    if (!selected) {
+      submitLockRef.current = false;
+      return setError("請選擇車款");
+    }
+    if (!isBound) {
+      submitLockRef.current = false;
+      return setError("請先完成電話綁定");
+    }
 
     try {
       setSubmitting(true);
@@ -237,6 +248,7 @@ function LineOrderPage() {
       setSelected("");
     } catch (e) {
       setError(e.message || "建立訂單失敗");
+      submitLockRef.current = false;
     } finally {
       setSubmitting(false);
     }
@@ -312,7 +324,7 @@ function LineOrderPage() {
 
             {error ? <div className="line-order-alert error">{error}</div> : null}
           </div>
-        ) : (
+        ) : result ? null : (
           <>
             <div className="line-order-form">
               <div className="line-order-alert">
@@ -328,8 +340,13 @@ function LineOrderPage() {
                   <button
                     key={p.id}
                     type="button"
-                    onClick={() => setSelected(String(p.id))}
+                    onClick={() => {
+                      if (!submitting && !result) {
+                        setSelected(String(p.id));
+                      }
+                    }}
                     className={`line-product-card ${active ? "active" : ""}`}
+                    disabled={submitting || Boolean(result)}
                   >
                     <div className="line-product-thumb">
                       {p.imageUrl ? (
@@ -357,9 +374,9 @@ function LineOrderPage() {
                 type="button"
                 onClick={submitOrder}
                 className="line-order-submit"
-                disabled={submitting}
+                disabled={submitting || Boolean(result)}
               >
-                {submitting ? "送出中..." : "送出預約訂單"}
+                {submitting ? "送出中，請稍候..." : "送出預約訂單"}
               </button>
 
               {error ? <div className="line-order-alert error">{error}</div> : null}
@@ -371,6 +388,8 @@ function LineOrderPage() {
           <div className="line-order-form">
             <h2 style={{ marginTop: 0 }}>預約訂單已建立</h2>
             <p style={{ lineHeight: 1.7 }}>
+              {result.duplicate || result.reusedExisting ? "預約已建立，請勿重複送出。" : "您的預約訂單已建立。"}
+              <br />
               訂單編號：{result.orderNo || result.orderId}
               <br />
               門市人員將確認車款、庫存與付款方式後與您聯繫。

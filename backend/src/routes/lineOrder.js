@@ -1,4 +1,5 @@
 const express = require("express");
+const crypto = require("crypto");
 const dayjs = require("dayjs");
 const { pool, withTransaction } = require("../db");
 const { BOT_NOTIFY, sendTelegramMessage } = require("../services/telegramService");
@@ -12,6 +13,7 @@ const {
 } = require("../utils/publicStoreResolver");
 
 const router = express.Router();
+const LINE_ORDER_DUPLICATE_WINDOW_MINUTES = 10;
 const resolvePublicStoreContext = createPublicStoreContextMiddleware({
   db: pool,
   allowQueryStoreCode: true,
@@ -75,6 +77,103 @@ function isPlaceholderCustomerName(value) {
 function getDisplayNameOrFallback(profileName, fallbackName = "LINE 客戶") {
   const normalizedProfile = normalizeText(profileName);
   return normalizedProfile || normalizeText(fallbackName) || "LINE 客戶";
+}
+
+function buildMysqlLockName(prefix, parts) {
+  const hash = crypto
+    .createHash("sha256")
+    .update(parts.map((part) => normalizeText(part)).join("|"))
+    .digest("hex")
+    .slice(0, 40);
+  return `${prefix}:${hash}`;
+}
+
+async function withMysqlRequestLock(lockName, handler) {
+  const connection = await pool.getConnection();
+  let locked = false;
+
+  try {
+    const [[lockResult]] = await connection.query("SELECT GET_LOCK(?, 0) AS acquired", [lockName]);
+    locked = Number(lockResult?.acquired || 0) === 1;
+    if (!locked) {
+      const error = new Error("請勿重複送出，系統正在處理您的請求");
+      error.statusCode = 409;
+      throw error;
+    }
+
+    return await handler();
+  } finally {
+    if (locked) {
+      try {
+        await connection.query("SELECT RELEASE_LOCK(?)", [lockName]);
+      } catch (releaseError) {
+        console.warn("[line-order] release mysql lock failed", {
+          lockName,
+          message: releaseError.message
+        });
+      }
+    }
+    connection.release();
+  }
+}
+
+async function findRecentDuplicateLineOrder(tx, { storeId, customerId, lineUserId, phone, productId }) {
+  const identityConditions = [];
+  const identityParams = [];
+  const normalizedLineUserId = normalizeText(lineUserId);
+  const normalizedPhone = normalizeText(phone);
+
+  if (normalizedLineUserId) {
+    identityConditions.push("c.line_user_id = ?");
+    identityParams.push(normalizedLineUserId);
+  }
+
+  if (normalizedPhone) {
+    identityConditions.push("COALESCE(o.customer_phone, c.phone) = ?");
+    identityParams.push(normalizedPhone);
+  }
+
+  if (Number.isSafeInteger(Number(customerId)) && Number(customerId) > 0) {
+    identityConditions.push("o.customer_id = ?");
+    identityParams.push(Number(customerId));
+  }
+
+  if (!identityConditions.length) {
+    return null;
+  }
+
+  const [rows] = await tx.query(
+    `
+      SELECT
+        o.id AS orderId,
+        o.order_no AS orderNo,
+        o.total_amount AS totalAmount,
+        o.customer_id AS customerId,
+        o.customer_name AS customerName,
+        COALESCE(o.customer_phone, c.phone) AS customerPhone,
+        c.line_user_id AS lineUserId
+      FROM orders o
+      INNER JOIN order_items oi ON oi.order_id = o.id AND oi.store_id = o.store_id
+      LEFT JOIN customers c ON c.id = o.customer_id AND c.store_id = o.store_id
+      WHERE o.store_id = ?
+        AND o.deleted_at IS NULL
+        AND UPPER(COALESCE(o.status, '')) NOT IN ('CANCELED', 'CANCELLED', 'DELETED', 'VOID')
+        AND (o.source = 'line_order' OR o.order_no LIKE 'LINE-%' OR o.customer_type = 'LINE')
+        AND o.created_at >= DATE_SUB(NOW(), INTERVAL ? MINUTE)
+        AND oi.product_id = ?
+        AND (${identityConditions.join(" OR ")})
+      ORDER BY o.id DESC
+      LIMIT 1
+    `,
+    [
+      storeId,
+      LINE_ORDER_DUPLICATE_WINDOW_MINUTES,
+      productId,
+      ...identityParams
+    ]
+  );
+
+  return rows[0] || null;
 }
 
 router.use(resolvePublicStoreContext);
@@ -237,8 +336,10 @@ router.post("/create", async (req, res, next) => {
     }
 
     const effectiveLineUserId = lineUserId || `WEB-GUEST-${Date.now()}`;
+    const lockIdentity = normalizeText(lineUserId) || normalizeText(phone) || effectiveLineUserId;
+    const lockName = buildMysqlLockName("line_order", [storeId, lockIdentity]);
 
-    const result = await withTransaction(async (tx) => {
+    const result = await withMysqlRequestLock(lockName, () => withTransaction(async (tx) => {
       const [customerRows] = await tx.query(
         `SELECT id, name, phone, line_user_id AS lineUserId
          FROM customers
@@ -310,6 +411,33 @@ router.post("/create", async (req, res, next) => {
       if (!product) {
         console.error("[line-order] product not found", { productId });
         return { error: true, message: "找不到可購買的電動自行車商品" };
+      }
+
+      const duplicateOrder = await findRecentDuplicateLineOrder(tx, {
+        storeId,
+        customerId: customer.id,
+        lineUserId: customer.lineUserId || effectiveLineUserId,
+        phone: customer.phone || phone,
+        productId: product.id
+      });
+
+      if (duplicateOrder) {
+        return {
+          ok: true,
+          reusedExisting: true,
+          duplicate: true,
+          message: "預約已建立，請勿重複送出。",
+          orderId: duplicateOrder.orderId,
+          orderNo: duplicateOrder.orderNo,
+          customer: {
+            id: duplicateOrder.customerId || customer.id,
+            name: duplicateOrder.customerName || customer.name || name || "LINE 客戶",
+            phone: duplicateOrder.customerPhone || customer.phone || phone,
+            lineUserId: duplicateOrder.lineUserId || customer.lineUserId || effectiveLineUserId
+          },
+          product,
+          totalAmount: duplicateOrder.totalAmount
+        };
       }
 
       let [couponRows] = await tx.query(
@@ -405,11 +533,11 @@ router.post("/create", async (req, res, next) => {
         discount,
         totalAmount
       };
-    });
+    }));
 
     const responsePayload = result;
 
-    if (responsePayload?.ok) {
+    if (responsePayload?.ok && !responsePayload.reusedExisting) {
       setImmediate(async () => {
         try {
           await sendTelegramMessage(
@@ -438,7 +566,7 @@ router.post("/create", async (req, res, next) => {
       });
     }
 
-    if (responsePayload?.ok) {
+    if (responsePayload?.ok && !responsePayload.reusedExisting) {
       setImmediate(async () => {
         try {
           const lineOrderNotificationResult = await notifyOrderReservationCreated({
@@ -490,7 +618,7 @@ router.post("/create", async (req, res, next) => {
       });
     }
 
-    if (responsePayload?.ok) {
+    if (responsePayload?.ok && !responsePayload.reusedExisting) {
       setImmediate(async () => {
         try {
           const { sendLineMessage } = require("../utils/line");

@@ -1,4 +1,5 @@
 const express = require("express");
+const crypto = require("crypto");
 const dayjs = require("dayjs");
 const { pool } = require("../db");
 const config = require("../config");
@@ -26,6 +27,7 @@ const resolvePublicStoreContext = createPublicStoreContextMiddleware({
 
 const REPAIR_RESERVATION_FLOW = "repair_reservation";
 const REPAIR_RESERVATION_DUPLICATE_WINDOW_MS = 10 * 1000;
+const REPAIR_RESERVATION_DB_DUPLICATE_WINDOW_MINUTES = 10;
 const REPAIR_WARRANTY_TERMS_VERSION = "KINGWAY_REPAIR_WARRANTY_V2026_06";
 const REPAIR_WARRANTY_TERMS_ERROR_MESSAGE = "請先確認保固維修範圍說明";
 const recentRepairReservationRequests = new Map();
@@ -95,6 +97,92 @@ async function resolveLineRepairStoreContext(req, lineUserId, reason) {
 
 function normalizeText(value) {
   return String(value || "").trim();
+}
+
+function buildMysqlLockName(prefix, parts) {
+  const hash = crypto
+    .createHash("sha256")
+    .update(parts.map((part) => normalizeText(part)).join("|"))
+    .digest("hex")
+    .slice(0, 40);
+  return `${prefix}:${hash}`;
+}
+
+async function withMysqlRequestLock(lockName, handler) {
+  const connection = await pool.getConnection();
+  let locked = false;
+
+  try {
+    const [[lockResult]] = await connection.query("SELECT GET_LOCK(?, 0) AS acquired", [lockName]);
+    locked = Number(lockResult?.acquired || 0) === 1;
+    if (!locked) {
+      const error = new Error("請勿重複送出，系統正在處理您的請求");
+      error.statusCode = 409;
+      throw error;
+    }
+
+    return await handler();
+  } finally {
+    if (locked) {
+      try {
+        await connection.query("SELECT RELEASE_LOCK(?)", [lockName]);
+      } catch (releaseError) {
+        console.warn("[line-repair] release mysql lock failed", {
+          lockName,
+          message: releaseError.message
+        });
+      }
+    }
+    connection.release();
+  }
+}
+
+async function findRecentDuplicateRepairReservation({
+  storeId,
+  lineUserId,
+  bikeModel,
+  issueDescription
+}) {
+  const normalizedLineUserId = normalizeText(lineUserId);
+  if (!normalizedLineUserId) {
+    return null;
+  }
+
+  const [rows] = await pool.query(
+    `
+      SELECT
+        ro.id AS repairId,
+        ro.status,
+        ro.bike_model AS bikeModel,
+        ro.issue_description AS issueDescription,
+        ro.reservation_date AS reservationDate,
+        ro.reservation_time AS reservationTime,
+        c.name AS customerName,
+        c.phone AS customerPhone,
+        c.line_user_id AS lineUserId
+      FROM repair_orders ro
+      LEFT JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
+      WHERE ro.store_id = ?
+        AND ro.deleted_at IS NULL
+        AND COALESCE(ro.status, '') <> 'canceled'
+        AND (ro.source = 'LINE' OR ro.customer_type = 'LINE')
+        AND ro.created_at >= DATE_SUB(NOW(), INTERVAL ? MINUTE)
+        AND c.line_user_id = ?
+        AND LOWER(TRIM(COALESCE(ro.bike_model, ''))) = LOWER(TRIM(?))
+        AND LOWER(TRIM(COALESCE(ro.issue_description, ''))) = LOWER(TRIM(?))
+      ORDER BY ro.id DESC
+      LIMIT 1
+    `,
+    [
+      storeId,
+      REPAIR_RESERVATION_DB_DUPLICATE_WINDOW_MINUTES,
+      normalizedLineUserId,
+      normalizeText(bikeModel),
+      normalizeText(issueDescription)
+    ]
+  );
+
+  return rows[0] || null;
 }
 
 function buildRepairReservationRequestKey({ storeId, lineUserId, bikeModel, issueDescription, reservationDate, reservationTime }) {
@@ -240,54 +328,80 @@ router.post("/create", async (req, res, next) => {
       return res.status(409).json({ message: "維修預約正在建立中，請不要重複送出。" });
     }
 
+    const lockName = buildMysqlLockName("line_repair", [resolvedStoreId, lineUserId]);
+
     try {
-      await pool.query(
-        `
-          INSERT INTO line_chat_sessions (line_user_id, flow_type, step_key, payload)
-          VALUES (?, ?, 'confirm', ?)
-          ON DUPLICATE KEY UPDATE
-            step_key = VALUES(step_key),
-            payload = VALUES(payload),
-            updated_at = CURRENT_TIMESTAMP
-        `,
-        [
+      const responsePayload = await withMysqlRequestLock(lockName, async () => {
+        const duplicateReservation = await findRecentDuplicateRepairReservation({
+          storeId: resolvedStoreId,
           lineUserId,
-          REPAIR_RESERVATION_FLOW,
-          JSON.stringify({
-            reservationDate,
-            reservationTime,
-            bikeModel,
-            issueDescription,
-            storeId: resolvedStoreId,
-            storeCode: storeContext.storeCode || null,
-            warrantyTermsAccepted: true,
-            warrantyTermsVersion: REPAIR_WARRANTY_TERMS_VERSION,
-            warrantyTermsAcceptedAt
-          })
-        ]
-      );
+          bikeModel,
+          issueDescription
+        });
 
-      const result = await createRepairReservationFromSession(lineUserId, {
-        storeId: resolvedStoreId,
-        displayName
-      });
+        if (duplicateReservation) {
+          releaseRepairReservationRequestLock(requestKey);
+          return {
+            ok: true,
+            reusedExisting: true,
+            duplicate: true,
+            message: "維修預約已建立，請勿重複送出。",
+            repairId: duplicateReservation.repairId,
+            reservationDay: getReservationDay(duplicateReservation.reservationDate || reservationDate)
+          };
+        }
 
-      if (result?.phoneRequired) {
-        releaseRepairReservationRequestLock(requestKey);
-        return res.status(400).json({ message: "請先回 LINE 對話輸入手機號碼完成綁定。" });
-      }
+        await pool.query(
+          `
+            INSERT INTO line_chat_sessions (line_user_id, flow_type, step_key, payload)
+            VALUES (?, ?, 'confirm', ?)
+            ON DUPLICATE KEY UPDATE
+              step_key = VALUES(step_key),
+              payload = VALUES(payload),
+              updated_at = CURRENT_TIMESTAMP
+          `,
+          [
+            lineUserId,
+            REPAIR_RESERVATION_FLOW,
+            JSON.stringify({
+              reservationDate,
+              reservationTime,
+              bikeModel,
+              issueDescription,
+              storeId: resolvedStoreId,
+              storeCode: storeContext.storeCode || null,
+              warrantyTermsAccepted: true,
+              warrantyTermsVersion: REPAIR_WARRANTY_TERMS_VERSION,
+              warrantyTermsAcceptedAt
+            })
+          ]
+        );
 
-      if (!result) {
-        releaseRepairReservationRequestLock(requestKey);
-        return res.status(500).json({ message: "維修預約建立失敗" });
-      }
+        const result = await createRepairReservationFromSession(lineUserId, {
+          storeId: resolvedStoreId,
+          displayName
+        });
+
+        if (result?.phoneRequired) {
+          releaseRepairReservationRequestLock(requestKey);
+          throw Object.assign(new Error("請先回 LINE 對話輸入手機號碼完成綁定。"), { statusCode: 400 });
+        }
+
+        if (!result) {
+          releaseRepairReservationRequestLock(requestKey);
+          throw Object.assign(new Error("維修預約建立失敗"), { statusCode: 500 });
+        }
 
       if (result.duplicate) {
-        keepRepairReservationRequestLockTemporarily(requestKey);
-        return res.status(409).json({
-          message: `已有相同時段的維修預約，工單 #${result.repairId}`,
-          repairId: result.repairId
-        });
+        releaseRepairReservationRequestLock(requestKey);
+        return {
+          ok: true,
+          reusedExisting: true,
+          duplicate: true,
+          message: "維修預約已建立，請勿重複送出。",
+          repairId: result.repairId,
+          reservationDay: getReservationDay(reservationDate)
+        };
       }
 
       await pool.query(
@@ -373,12 +487,15 @@ router.post("/create", async (req, res, next) => {
         }
       }
 
-      keepRepairReservationRequestLockTemporarily(requestKey);
-      return res.json({
+      releaseRepairReservationRequestLock(requestKey);
+      return {
         ok: true,
         repairId: result.repairId,
         reservationDay: getReservationDay(reservationDate)
+      };
       });
+
+      return res.json(responsePayload);
     } catch (createError) {
       releaseRepairReservationRequestLock(requestKey);
       throw createError;
