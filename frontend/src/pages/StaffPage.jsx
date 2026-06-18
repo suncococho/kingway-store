@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
+import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
 import { useFetchList } from "../hooks/useFetchList";
 import { apiRequest } from "../lib/api";
+import { getStoredUser } from "../lib/auth";
 import { MENU_CATALOG, ROLE_LABELS, STAFF_ROLES } from "../lib/menuPermissions";
 
 const ROLE_OPTIONS = [
@@ -89,7 +91,15 @@ function selectValueToOverride(value) {
   return value === "allow";
 }
 
+function canManagePermissionUi(user) {
+  const storeRole = String(user?.storeRole || user?.store_role || "").trim().toLowerCase();
+  const staffRole = String(user?.role || "").trim().toUpperCase();
+  return storeRole === "owner" || storeRole === "admin" || staffRole === "ADMIN";
+}
+
 function StaffPage() {
+  const currentUser = getStoredUser();
+  const canManagePermissions = canManagePermissionUi(currentUser);
   const staff = useFetchList("/staff");
   const kpi = useFetchList("/kpi");
   const [activeTab, setActiveTab] = useState("STAFF");
@@ -152,6 +162,11 @@ function StaffPage() {
     { label: "LINE 已綁定", value: rows.filter((item) => item.lineUserId).length },
     { label: "KPI 有紀錄", value: kpiRows.filter((item) => item.logCount > 0).length }
   ];
+  const tabs = [
+    { key: "STAFF", label: "員工列表" },
+    { key: "KPI", label: "KPI" },
+    ...(canManagePermissions ? [{ key: "PERMISSIONS", label: "權限管理" }] : [])
+  ];
 
   const permissionStaff = useMemo(
     () => (permissionData?.staff || []).find((item) => String(item.id) === String(selectedPermissionStaffId)) || null,
@@ -164,6 +179,12 @@ function StaffPage() {
     }
     loadPermissionData();
   }, [activeTab, permissionData]);
+
+  useEffect(() => {
+    if (activeTab === "PERMISSIONS" && !canManagePermissions) {
+      setActiveTab("STAFF");
+    }
+  }, [activeTab, canManagePermissions]);
 
   useEffect(() => {
     if (!permissionData) {
@@ -207,7 +228,7 @@ function StaffPage() {
         setSelectedPermissionStaffId(String(firstEditable.id));
       }
     } catch (error) {
-      setPermissionError(error.message || "權限資料讀取失敗");
+      setPermissionError(canManagePermissions ? "權限資料載入失敗，請重新整理" : error.message || "權限資料讀取失敗");
     } finally {
       setPermissionLoading(false);
     }
@@ -399,24 +420,7 @@ function StaffPage() {
         ))}
       </div>
 
-      <div className="section-tabs-wrap">
-        <div className="section-tabs" role="tablist" aria-label="員工管理分頁">
-          {[
-            { key: "STAFF", label: "員工列表" },
-            { key: "KPI", label: "KPI" },
-            { key: "PERMISSIONS", label: "權限管理" }
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              className={`section-tab ${activeTab === tab.key ? "section-tab-active" : ""}`}
-              onClick={() => setActiveTab(tab.key)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <SectionTabs items={tabs} value={activeTab} onChange={setActiveTab} label="員工管理分頁" />
 
       {activeTab === "STAFF" ? (
       <div className="admin-split-grid">
