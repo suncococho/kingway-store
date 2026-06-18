@@ -17,6 +17,7 @@ const {
   REPAIR_CONFIRMATION_PDF_PUBLIC_PREFIX,
   writeRepairConfirmationPdf
 } = require("../services/pdfService");
+const repairConfirmationService = require("../services/repairConfirmationService");
 const repairConfirmationContent = require("../content/repairConfirmationContent.json");
 
 const router = express.Router();
@@ -412,16 +413,22 @@ router.use(
 router.get("/repairs/:repairOrderId", async (req, res, next) => {
   try {
     const repairOrderId = Number(req.params.repairOrderId);
-    const repair = await fetchRepairForConfirmation(repairOrderId, req.storeId);
+    const repair = await repairConfirmationService.fetchRepairForConfirmation(repairOrderId, req.storeId);
     if (!repair) {
       throw createError("找不到維修工單", 404);
     }
-    const confirmation = await fetchConfirmationByRepair(repairOrderId, req.storeId);
+    const confirmation = await repairConfirmationService.fetchConfirmationByRepair(repairOrderId, req.storeId);
+    const blockReason = repairConfirmationService.getRepairConfirmationBlockReason(repair);
     return res.json({
       repairOrderId,
-      canSend: isRepairCompleted(repair),
+      canSend: !blockReason,
+      blockReason,
       status: confirmation?.status || "NOT_SENT",
-      confirmation: mapConfirmation(confirmation)
+      confirmation: confirmation ? {
+        ...mapConfirmation(confirmation),
+        link: repairConfirmationService.buildRepairConfirmationLink(confirmation.token),
+        pdfUrl: confirmation.pdfPath ? repairConfirmationService.buildRepairConfirmationPdfUrl(confirmation.token) : confirmation.pdfUrl
+      } : null
     });
   } catch (error) {
     return next(error);
@@ -431,148 +438,31 @@ router.get("/repairs/:repairOrderId", async (req, res, next) => {
 router.post("/repairs/:repairOrderId/send", async (req, res, next) => {
   try {
     const repairOrderId = Number(req.params.repairOrderId);
-    let createdOrExisting = null;
-    let repairForLine = null;
-
-    const confirmation = await withTransaction(async (connection) => {
-      const repair = await fetchRepairForConfirmation(repairOrderId, req.storeId, connection, { forUpdate: true });
-      if (!repair) {
-        throw createError("找不到維修工單", 404);
+    const result = await repairConfirmationService.createOrReuseRepairConfirmationForCompletedRepair(
+      repairOrderId,
+      req.storeId,
+      req.user?.id || null,
+      {
+        forceSend: true,
+        source: "manual",
+        purpose: "repair_confirmation_manual_send"
       }
-      if (!isRepairCompleted(repair)) {
-        throw createError("維修完成後可發送確認書", 400);
-      }
-      repairForLine = repair;
+    );
 
-      const existing = await fetchConfirmationByRepair(repairOrderId, req.storeId, connection, { forUpdate: true });
-      if (existing?.status === "COMPLETED") {
-        return existing;
-      }
-      if (existing?.status === "PENDING") {
-        await connection.query(
-          "UPDATE repair_confirmations SET sent_at = NOW() WHERE id = ?",
-          [existing.id]
-        );
-        await connection.query(
-          `
-            INSERT INTO repair_logs (repair_order_id, action, note)
-            VALUES (?, 'repair_confirmation_sent', ?)
-          `,
-          [repairOrderId, "已重新發送維修完成確認書連結"]
-        );
-        return { ...existing, sentAt: new Date() };
-      }
-
-      const token = crypto.randomBytes(32).toString("hex");
-      const repairSummary = getRepairSummary(repair);
-      const amountTotal = getAmountTotal(repair);
-      const paymentStatus = getPaymentStatus(repair);
-      const [insertResult] = await connection.query(
-        `
-          INSERT INTO repair_confirmations (
-            store_id,
-            repair_order_id,
-            customer_id,
-            token,
-            status,
-            customer_name_snapshot,
-            customer_phone_snapshot,
-            vehicle_model_snapshot,
-            issue_snapshot,
-            repair_summary_snapshot,
-            amount_total_snapshot,
-            payment_status_snapshot,
-            terms_version,
-            sent_at,
-            created_by_staff_id
-          )
-          VALUES (?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
-        `,
-        [
-          req.storeId,
-          repairOrderId,
-          repair.customerId,
-          token,
-          repair.customerName,
-          repair.customerPhone,
-          repair.bikeModel,
-          repair.issueDescription,
-          repairSummary,
-          amountTotal,
-          paymentStatus,
-          repairConfirmationContent.termsVersion,
-          req.user?.id || null
-        ]
-      );
-
-      await connection.query(
-        `
-          INSERT INTO repair_logs (repair_order_id, action, note)
-          VALUES (?, 'repair_confirmation_sent', ?)
-        `,
-        [repairOrderId, "已發送維修完成確認書連結"]
-      );
-
-      return {
-        id: insertResult.insertId,
-        storeId: req.storeId,
-        repairOrderId,
-        customerId: repair.customerId,
-        token,
-        status: "PENDING",
-        customerNameSnapshot: repair.customerName,
-        customerPhoneSnapshot: repair.customerPhone,
-        vehicleModelSnapshot: repair.bikeModel,
-        issueSnapshot: repair.issueDescription,
-        repairSummarySnapshot: repairSummary,
-        amountTotalSnapshot: amountTotal,
-        paymentStatusSnapshot: paymentStatus,
-        termsVersion: repairConfirmationContent.termsVersion,
-        sentAt: new Date()
-      };
-    });
-
-    createdOrExisting = mapConfirmation(confirmation);
-
-    let lineDelivered = false;
-    let lineError = null;
-    if (confirmation.status !== "COMPLETED" && repairForLine?.lineUserId) {
-      try {
-        const credentials = await resolveStoreLineCredentials({
-          storeId: req.storeId,
-          purpose: "repair_confirmation_send"
-        });
-        await sendLineMessage(config, repairForLine.lineUserId, [
-          createButtonMessage(
-            "維修完成確認書",
-            "您好，您的車輛維修已完成。請點選下方連結確認本次維修內容並完成簽名。",
-            [createUriAction("簽署維修確認書", createdOrExisting.link)]
-          )
-        ], {
-          channelAccessToken: credentials.channelAccessToken,
-          allowConfigFallback: true,
-          context: {
-            storeId: req.storeId,
-            storeCode: credentials.storeCode,
-            purpose: "repair_confirmation_send"
-          }
-        });
-        lineDelivered = true;
-      } catch (sendError) {
-        lineError = sendError.safeDetails || sendError.message || "LINE 發送失敗";
-      }
+    if (!result.ok) {
+      throw createError(result.reason || "目前無法發送維修完成確認書", 400);
     }
 
     return res.json({
-      confirmation: createdOrExisting,
-      status: confirmation.status,
-      link: createdOrExisting?.link || null,
-      lineDelivered,
-      lineError,
+      confirmation: result.confirmation,
+      status: result.confirmation?.status || "NOT_SENT",
+      link: result.confirmation?.link || null,
+      lineDelivered: Boolean(result.lineDelivered),
+      lineError: result.lineError || null,
       message:
-        confirmation.status === "COMPLETED"
+        result.confirmation?.status === "COMPLETED"
           ? "此維修確認書已完成簽署"
-          : lineDelivered
+          : result.lineDelivered
             ? "已發送維修完成確認書"
             : "已產生維修完成確認書連結"
     });

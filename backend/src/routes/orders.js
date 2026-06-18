@@ -28,6 +28,7 @@ const {
 } = require("../utils/displayLabels");
 const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
 const { sendOrderCreationNotification } = require("../services/telegramService");
+const { createOrReuseRepairConfirmationForPaidOrder } = require("../services/repairConfirmationService");
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -1118,6 +1119,9 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
       ]
     );
 
+    let repairConfirmation = null;
+    let repairConfirmationWarning = null;
+
     if (!wasPaid && nextFinalPaymentStatus === "PAID") {
       const [repairCheckRows] = await pool.query(
         `
@@ -1132,7 +1136,26 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
         [orderId, storeId]
       );
 
-      if (!repairCheckRows[0]?.isRepairOrder) {
+      if (repairCheckRows[0]?.isRepairOrder) {
+        try {
+          const confirmationResult = await createOrReuseRepairConfirmationForPaidOrder(
+            orderId,
+            storeId,
+            req.user?.id || null,
+            {
+              source: "payment_completed",
+              purpose: "repair_confirmation_auto_after_payment_complete"
+            }
+          );
+          if (confirmationResult.ok) {
+            repairConfirmation = confirmationResult.confirmation || null;
+          } else if (confirmationResult.reason !== "維修完成後可發送確認書") {
+            repairConfirmationWarning = confirmationResult.reason || "維修完成確認書尚未自動建立";
+          }
+        } catch (confirmationError) {
+          repairConfirmationWarning = confirmationError.message || "維修完成確認書自動建立失敗";
+        }
+      } else {
         const confirmation = await createPurchaseConfirmationForOrder(orderId, pool, { storeId });
         await pushPurchaseConfirmationLineMessage(confirmation, { storeId });
       }
@@ -1175,7 +1198,11 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
       [orderId, storeId]
     );
 
-    return res.json(updated[0]);
+    return res.json({
+      ...updated[0],
+      repairConfirmation,
+      repairConfirmationWarning
+    });
   } catch (error) {
     return next(error);
   }
@@ -1430,11 +1457,16 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
         customerType: normalizeCustomerType(order.customerType),
         unpaidBalance: nextBalance,
         finalPaymentStatus: nextStatus,
+        isRepairOrder: Boolean(orderType.isRepairOrder),
         becamePaid:
           nextBalance === 0 &&
           Boolean(orderType.isEbikeOrder) &&
           !Boolean(orderType.isRepairOrder) &&
-          !orderType.purchaseConfirmationSentAt
+          !orderType.purchaseConfirmationSentAt,
+        becameRepairPaid:
+          nextBalance === 0 &&
+          Number(order.unpaidBalance || 0) > 0 &&
+          Boolean(orderType.isRepairOrder)
       };
     });
 
@@ -1507,6 +1539,29 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
       }
     }
 
+    let repairConfirmation = null;
+    let repairConfirmationWarning = null;
+    if (result.becameRepairPaid) {
+      try {
+        const confirmationResult = await createOrReuseRepairConfirmationForPaidOrder(
+          orderId,
+          storeId,
+          req.user?.id || null,
+          {
+            source: "collect_balance",
+            purpose: "repair_confirmation_auto_after_collect_balance"
+          }
+        );
+        if (confirmationResult.ok) {
+          repairConfirmation = confirmationResult.confirmation || null;
+        } else if (confirmationResult.reason !== "維修完成後可發送確認書") {
+          repairConfirmationWarning = confirmationResult.reason || "維修完成確認書尚未自動建立";
+        }
+      } catch (confirmationError) {
+        repairConfirmationWarning = confirmationError.message || "維修完成確認書自動建立失敗";
+      }
+    }
+
     if (isLineCustomerType(result.customerType)) {
       await sendToGroupsWithResult(["admin", "staff"], [
         {
@@ -1528,6 +1583,8 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
 
     return res.json({
       ...result,
+      repairConfirmation,
+      repairConfirmationWarning,
       finalPaymentStatusLabel: mapFinalPaymentStatusLabel(result.finalPaymentStatus)
     });
   } catch (error) {

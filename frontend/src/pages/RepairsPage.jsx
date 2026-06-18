@@ -230,6 +230,40 @@ function RepairsPage() {
     });
   }
 
+  async function sendRepairConfirmation(row) {
+    if (!row?.id || row.repairSource !== "REPAIR_ORDER") {
+      return;
+    }
+    await runWithProcessing(async () => {
+      const response = await apiRequest(`/repair-confirmations/repairs/${row.id}/send`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      repairs.refetch();
+      if (response?.lineError) {
+        window.alert(`${response.message || "已產生維修完成確認書連結"}\nLINE 發送失敗：${response.lineError}\n連結：${response.link || ""}`);
+      } else {
+        window.alert(response?.message || "已發送維修完成確認書");
+      }
+    }, { id: `repair-confirmation-send-${row.id}`, label: "維修確認書處理中..." }).catch((error) => {
+      window.alert(error.message || row.repairConfirmationBlockReason || "維修確認書處理失敗");
+    });
+  }
+
+  async function copyRepairConfirmationLink(row) {
+    const link = row?.repairConfirmationLink;
+    if (!link) {
+      window.alert(row?.repairConfirmationBlockReason || "目前沒有可複製的確認書連結");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      window.alert("已複製連結");
+    } catch {
+      window.prompt("請複製維修確認書連結", link);
+    }
+  }
+
   const rows = useMemo(
     () =>
       repairs.items.map((item) => ({
@@ -243,6 +277,10 @@ function RepairsPage() {
         surveyLabel: item.surveyId ? "已填問卷" : "未填問卷",
         repairConfirmationStatus: item.repairConfirmationStatus || "NOT_SENT",
         repairConfirmationLabel: getRepairConfirmationStatusLabel(item.repairConfirmationStatus),
+        repairConfirmationLink: item.repairConfirmationLink || "",
+        repairConfirmationPdfUrl: item.repairConfirmationPdfUrl || "",
+        canSendRepairConfirmation: Boolean(item.canSendRepairConfirmation),
+        repairConfirmationBlockReason: item.repairConfirmationBlockReason || "",
         customerType: normalizeCustomerType(item.customerType || (item.lineUserId ? "LINE" : item.customerPhone ? "OFFLINE_WITH_PHONE" : "OFFLINE_NO_PHONE")),
         detailPath: item.repairSource === "REPAIR_ORDER" ? `/repairs/${item.id}` : null,
         statusTone: getRepairStatusTone(item.status),
@@ -523,6 +561,26 @@ function RepairsPage() {
               下一步
             </button>
           ) : null}
+          {row.repairConfirmationStatus === "COMPLETED" && row.repairConfirmationPdfUrl ? (
+            <a className="secondary-button" href={row.repairConfirmationPdfUrl} target="_blank" rel="noreferrer">
+              查看PDF
+            </a>
+          ) : null}
+          {row.repairConfirmationStatus === "PENDING" && row.repairConfirmationLink ? (
+            <>
+              <button type="button" className="secondary-button" onClick={() => sendRepairConfirmation(row)} disabled={isProcessing}>
+                {pendingAction?.id === `repair-confirmation-send-${row.id}` ? "處理中..." : "再次發送"}
+              </button>
+              <button type="button" className="secondary-button" onClick={() => copyRepairConfirmationLink(row)}>
+                複製連結
+              </button>
+            </>
+          ) : null}
+          {row.repairConfirmationStatus === "NOT_SENT" && row.canSendRepairConfirmation ? (
+            <button type="button" className="secondary-button" onClick={() => sendRepairConfirmation(row)} disabled={isProcessing}>
+              {pendingAction?.id === `repair-confirmation-send-${row.id}` ? "處理中..." : "發送確認書"}
+            </button>
+          ) : null}
         </div>
       ),
       mobileHidden: true
@@ -734,6 +792,21 @@ function RepairsPage() {
                 <div className="compact-card-actions">
                   <StatusBadge tone={getEstimateTone(row)}>{row.estimateStatusLabel}</StatusBadge>
                   {row.detailPath ? <Link className="secondary-button compact-detail-button" to={row.detailPath}>查看</Link> : null}
+                  {row.repairConfirmationStatus === "COMPLETED" && row.repairConfirmationPdfUrl ? (
+                    <a className="secondary-button compact-detail-button" href={row.repairConfirmationPdfUrl} target="_blank" rel="noreferrer">
+                      查看PDF
+                    </a>
+                  ) : null}
+                  {row.repairConfirmationStatus === "PENDING" && row.repairConfirmationLink ? (
+                    <button type="button" className="secondary-button compact-detail-button" onClick={() => copyRepairConfirmationLink(row)}>
+                      複製連結
+                    </button>
+                  ) : null}
+                  {row.repairConfirmationStatus === "NOT_SENT" && row.canSendRepairConfirmation ? (
+                    <button type="button" className="secondary-button compact-detail-button" onClick={() => sendRepairConfirmation(row)} disabled={isProcessing}>
+                      發送確認書
+                    </button>
+                  ) : null}
                 </div>
               </div>
             )}

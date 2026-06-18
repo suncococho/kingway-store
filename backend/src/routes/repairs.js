@@ -25,6 +25,12 @@ const {
   sendToGroups,
   sendToGroupsWithResult
 } = require("../services/lineWorkflowService");
+const {
+  buildRepairConfirmationLink,
+  buildRepairConfirmationPdfUrl,
+  createOrReuseRepairConfirmationForCompletedRepair,
+  getRepairConfirmationBlockReason
+} = require("../services/repairConfirmationService");
 
 const router = express.Router();
 const REPAIR_ALLOWED_ROLES = ["ADMIN", "MANAGER", "STAFF", "CASHIER", "REPAIR", "USER", "EMPLOYEE"];
@@ -173,7 +179,11 @@ router.get("/",  async (req, res, next) => {
           ${selectColumn(repairColumns, "ro", "storage_fee", "storageFee", "0")},
           ${selectColumn(repairColumns, "ro", "completed_at", "completedAt")},
           ${selectColumn(repairColumns, "ro", "picked_up_at", "pickedUpAt")},
+          ${selectColumn(repairColumns, "ro", "order_id", "orderIdForConfirmation", "NULL")},
+          linked_o.final_payment_status AS repairFinalPaymentStatus,
+          linked_o.unpaid_balance AS repairUnpaidBalance,
           rc.id AS repairConfirmationId,
+          rc.token AS repairConfirmationToken,
           rc.status AS repairConfirmationStatus,
           rc.sent_at AS repairConfirmationSentAt,
           rc.submitted_at AS repairConfirmationSubmittedAt,
@@ -181,6 +191,7 @@ router.get("/",  async (req, res, next) => {
           ${selectColumn(repairColumns, "ro", "created_at", "createdAt")}
         FROM repair_orders ro
         INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ?
+        LEFT JOIN orders linked_o ON linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id
         LEFT JOIN repair_confirmations rc ON rc.repair_order_id = ro.id AND rc.store_id = ro.store_id
         WHERE ro.deleted_at IS NULL
         ORDER BY ro.id DESC
@@ -239,10 +250,23 @@ router.get("/",  async (req, res, next) => {
       .sort((a, b) => Number(b.id) - Number(a.id))
       .map((row) => {
         const normalizedStatus = normalizeRepairLifecycleStatus(row);
+        const repairConfirmationBlockReason = getRepairConfirmationBlockReason({
+          ...row,
+          status: normalizedStatus,
+          orderId: row.orderIdForConfirmation || row.orderId || null,
+          finalPaymentStatus: row.repairFinalPaymentStatus,
+          unpaidBalance: row.repairUnpaidBalance,
+          completedAt: row.completedAt,
+          pickedUpAt: row.pickedUpAt
+        });
         return {
           ...row,
           rawStatus: row.status,
           status: normalizedStatus,
+          repairConfirmationLink: row.repairConfirmationToken ? buildRepairConfirmationLink(row.repairConfirmationToken) : null,
+          repairConfirmationPdfUrl: row.repairConfirmationToken && row.repairConfirmationPdfPath ? buildRepairConfirmationPdfUrl(row.repairConfirmationToken) : null,
+          canSendRepairConfirmation: !repairConfirmationBlockReason,
+          repairConfirmationBlockReason,
           repairSourceLabel: row.repairSource === "ORDER" ? "訂單維修" : "維修工單",
           sourceLabel: getRepairSourceLabel(row.source, row.customerType),
           reservationStatusLabel: mapReservationStatusLabel(row.reservationStatus),
@@ -830,11 +854,34 @@ router.post("/:id/offline-complete", async (req, res, next) => {
 
     await connection.commit();
 
+    let repairConfirmation = null;
+    let repairConfirmationWarning = null;
+    try {
+      const confirmationResult = await createOrReuseRepairConfirmationForCompletedRepair(
+        req.params.id,
+        storeId,
+        req.user?.id || null,
+        {
+          source: "offline_complete",
+          purpose: "repair_confirmation_auto_after_offline_complete"
+        }
+      );
+      if (confirmationResult.ok) {
+        repairConfirmation = confirmationResult.confirmation || null;
+      } else if (confirmationResult.reason !== "完成付款後自動發送維修確認書") {
+        repairConfirmationWarning = confirmationResult.reason || "維修完成確認書尚未自動建立";
+      }
+    } catch (confirmationError) {
+      repairConfirmationWarning = confirmationError.message || "維修完成確認書自動建立失敗";
+    }
+
     res.json({
       success: true,
       id: Number(req.params.id),
       status: "completed_waiting_pickup",
-      estimateAmount: amount
+      estimateAmount: amount,
+      repairConfirmation,
+      repairConfirmationWarning
     });
   } catch (error) {
     await connection.rollback();
@@ -1069,7 +1116,32 @@ router.post("/:id/complete",  async (req, res, next) => {
     }
     await logWorkflowEvent("repair_completed", "REPAIR_ORDER", req.params.id, null, req.user.id);
 
-    return res.json({ message: "已標記為完修待取車" });
+    let repairConfirmation = null;
+    let repairConfirmationWarning = null;
+    try {
+      const confirmationResult = await createOrReuseRepairConfirmationForCompletedRepair(
+        req.params.id,
+        storeId,
+        req.user?.id || null,
+        {
+          source: "repair_completed",
+          purpose: "repair_confirmation_auto_after_repair_complete"
+        }
+      );
+      if (confirmationResult.ok) {
+        repairConfirmation = confirmationResult.confirmation || null;
+      } else if (confirmationResult.reason !== "完成付款後自動發送維修確認書") {
+        repairConfirmationWarning = confirmationResult.reason || "維修完成確認書尚未自動建立";
+      }
+    } catch (confirmationError) {
+      repairConfirmationWarning = confirmationError.message || "維修完成確認書自動建立失敗";
+    }
+
+    return res.json({
+      message: "已標記為完修待取車",
+      repairConfirmation,
+      repairConfirmationWarning
+    });
   } catch (error) {
     return next(error);
   }

@@ -544,9 +544,12 @@ function RepairDetailPage() {
       warnPreviousStep("完成通知取車");
       return;
     }
+    const confirmationStatus = repairConfirmation?.status || repairConfirmation?.confirmation?.status || "NOT_SENT";
     requestAction({
       title: "已取車",
-      message: "確認客戶已取車嗎？",
+      message: confirmationStatus === "COMPLETED"
+        ? "確認客戶已取車嗎？"
+        : "顧客尚未完成維修確認簽名，是否仍要完成取車？",
       confirmText: "已取車",
       action: () => callAction(`/repairs/${id}/pickup`)
     });
@@ -694,15 +697,23 @@ function RepairDetailPage() {
                   : null;
   const repairConfirmationStatus = repairConfirmation?.status || repairConfirmation?.confirmation?.status || "NOT_SENT";
   const repairConfirmationData = repairConfirmation?.confirmation || null;
-  const canSendRepairConfirmation = isFinalizedRepair || repairStatusValue === "completed_waiting_pickup" || repairStatusValue === "picked_up" || hasCompletedAt;
+  const repairConfirmationBlockReason = repairConfirmation?.blockReason || "";
+  const canSendRepairConfirmation = Boolean(repairConfirmation?.canSend);
+  const repairConfirmationDescription =
+    repairConfirmationStatus === "COMPLETED"
+      ? "顧客已完成簽署，可查看 PDF。"
+      : repairConfirmationStatus === "PENDING"
+        ? "待顧客現場確認車輛狀態後完成簽名。"
+        : repairConfirmationBlockReason || "系統將在維修完成且付款完成後自動發送維修確認書。";
   const repairConfirmationPanel = (
     <section className="content-card">
       <div className="section-header">
         <div>
           <h2>維修完成確認書</h2>
-          <p className="muted-text">
-            {canSendRepairConfirmation ? "發送顧客 LINE 簽署連結，完成後可查看 PDF。" : "維修完成後可發送確認書"}
-          </p>
+          <p className="muted-text">{repairConfirmationDescription}</p>
+          {repairConfirmationStatus === "PENDING" && !detail.lineUserId ? (
+            <p className="muted-text">顧客未綁定 LINE，請複製連結或現場提供給顧客簽署。</p>
+          ) : null}
         </div>
         <StatusBadge tone={getRepairConfirmationTone(repairConfirmationStatus)}>
           {repairConfirmationLoading ? "讀取中" : getRepairConfirmationStatusLabel(repairConfirmationStatus)}
@@ -722,7 +733,7 @@ function RepairDetailPage() {
             onClick={sendRepairConfirmation}
             disabled={!canSendRepairConfirmation || repairConfirmationLoading}
           >
-            {canSendRepairConfirmation ? (repairConfirmationStatus === "PENDING" ? "再次發送維修確認書" : "發送維修確認書") : "維修完成後可發送確認書"}
+            {canSendRepairConfirmation ? (repairConfirmationStatus === "PENDING" ? "再次發送維修確認書" : "發送維修確認書") : (repairConfirmationBlockReason || "維修完成後可發送確認書")}
           </button>
         )}
         {repairConfirmationStatus === "PENDING" && repairConfirmationData?.link ? (
