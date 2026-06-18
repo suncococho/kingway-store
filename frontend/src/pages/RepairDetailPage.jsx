@@ -171,6 +171,22 @@ function getRepairActionErrorMessage(error) {
   return error?.message || "操作失敗";
 }
 
+function getRepairConfirmationStatusLabel(status) {
+  const normalized = String(status || "NOT_SENT").trim();
+  if (normalized === "PENDING") return "待顧客簽署";
+  if (normalized === "COMPLETED") return "已完成簽署";
+  if (normalized === "CANCELED") return "已取消";
+  return "未發送";
+}
+
+function getRepairConfirmationTone(status) {
+  const normalized = String(status || "NOT_SENT").trim();
+  if (normalized === "COMPLETED") return "success";
+  if (normalized === "PENDING") return "warning";
+  if (normalized === "CANCELED") return "danger";
+  return "neutral";
+}
+
 function RepairDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -190,13 +206,28 @@ function RepairDetailPage() {
   const [confirmModal, setConfirmModal] = useState(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [systemInfoOpen, setSystemInfoOpen] = useState(false);
+  const [repairConfirmation, setRepairConfirmation] = useState(null);
+  const [repairConfirmationLoading, setRepairConfirmationLoading] = useState(false);
 
   async function loadDetail() {
     try {
       const data = await apiRequest(`/repairs/${id}`);
       setDetail(data);
+      loadRepairConfirmation();
     } catch (error) {
       alert(getRepairActionErrorMessage(error));
+    }
+  }
+
+  async function loadRepairConfirmation() {
+    setRepairConfirmationLoading(true);
+    try {
+      const data = await apiRequest(`/repair-confirmations/repairs/${id}`);
+      setRepairConfirmation(data);
+    } catch {
+      setRepairConfirmation(null);
+    } finally {
+      setRepairConfirmationLoading(false);
     }
   }
 
@@ -247,6 +278,7 @@ function RepairDetailPage() {
         body: JSON.stringify(body)
       });
       loadDetail();
+      loadRepairConfirmation();
     } catch (error) {
       alert(getRepairActionErrorMessage(error));
     }
@@ -520,6 +552,37 @@ function RepairDetailPage() {
     });
   }
 
+  async function sendRepairConfirmation() {
+    try {
+      const response = await apiRequest(`/repair-confirmations/repairs/${id}/send`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      await loadRepairConfirmation();
+      if (response?.lineError) {
+        alert(`${response.message || "已產生維修完成確認書連結"}\nLINE 發送失敗：${response.lineError}\n連結：${response.link || ""}`);
+      } else {
+        alert(response?.message || "已發送維修完成確認書");
+      }
+    } catch (error) {
+      alert(getRepairActionErrorMessage(error));
+    }
+  }
+
+  async function copyRepairConfirmationLink() {
+    const link = repairConfirmation?.confirmation?.link;
+    if (!link) {
+      alert("目前沒有可複製的確認書連結");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      alert("已複製連結");
+    } catch {
+      window.prompt("請複製維修確認書連結", link);
+    }
+  }
+
   const summaryBadges = useMemo(
     () =>
       detail
@@ -626,9 +689,55 @@ function RepairDetailPage() {
                 : null
               : detail.status === "repairing"
                 ? { label: "完成通知取車", action: requestCompleteRepair, tone: "blue" }
-                : detail.status === "completed_waiting_pickup"
+              : detail.status === "completed_waiting_pickup"
                 ? { label: "已取車", action: requestPickup, tone: "green" }
                   : null;
+  const repairConfirmationStatus = repairConfirmation?.status || repairConfirmation?.confirmation?.status || "NOT_SENT";
+  const repairConfirmationData = repairConfirmation?.confirmation || null;
+  const canSendRepairConfirmation = isFinalizedRepair || repairStatusValue === "completed_waiting_pickup" || repairStatusValue === "picked_up" || hasCompletedAt;
+  const repairConfirmationPanel = (
+    <section className="content-card">
+      <div className="section-header">
+        <div>
+          <h2>維修完成確認書</h2>
+          <p className="muted-text">
+            {canSendRepairConfirmation ? "發送顧客 LINE 簽署連結，完成後可查看 PDF。" : "維修完成後可發送確認書"}
+          </p>
+        </div>
+        <StatusBadge tone={getRepairConfirmationTone(repairConfirmationStatus)}>
+          {repairConfirmationLoading ? "讀取中" : getRepairConfirmationStatusLabel(repairConfirmationStatus)}
+        </StatusBadge>
+      </div>
+      <div className="action-row sop-primary-action">
+        {repairConfirmationStatus === "COMPLETED" ? (
+          repairConfirmationData?.pdfUrl ? (
+            <a className="primary-button inline-submit" href={repairConfirmationData.pdfUrl} target="_blank" rel="noreferrer">
+              查看PDF
+            </a>
+          ) : null
+        ) : (
+          <button
+            type="button"
+            className="primary-button inline-submit"
+            onClick={sendRepairConfirmation}
+            disabled={!canSendRepairConfirmation || repairConfirmationLoading}
+          >
+            {canSendRepairConfirmation ? (repairConfirmationStatus === "PENDING" ? "再次發送維修確認書" : "發送維修確認書") : "維修完成後可發送確認書"}
+          </button>
+        )}
+        {repairConfirmationStatus === "PENDING" && repairConfirmationData?.link ? (
+          <button type="button" className="secondary-button" onClick={copyRepairConfirmationLink}>
+            複製連結
+          </button>
+        ) : null}
+        {repairConfirmationStatus === "COMPLETED" && repairConfirmationData?.link ? (
+          <button type="button" className="secondary-button" onClick={copyRepairConfirmationLink}>
+            複製連結
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
 
   if (isFinalizedRepair) {
     return (
@@ -685,6 +794,8 @@ function RepairDetailPage() {
             </button>
           </div>
         </section>
+
+        {repairConfirmationPanel}
 
         {detailsOpen ? (
           <section className="content-card">
@@ -806,6 +917,8 @@ function RepairDetailPage() {
           ))}
         </div>
       </section>
+
+      {repairConfirmationPanel}
 
       <div className="page-grid">
         <div className="page-grid-main">

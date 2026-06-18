@@ -68,6 +68,22 @@ function getRepairStatusTone(status) {
   return "neutral";
 }
 
+function getRepairConfirmationStatusLabel(status) {
+  const normalized = String(status || "NOT_SENT").trim();
+  if (normalized === "PENDING") return "待顧客簽署";
+  if (normalized === "COMPLETED") return "已完成簽署";
+  if (normalized === "CANCELED") return "已取消";
+  return "未發送";
+}
+
+function getRepairConfirmationTone(status) {
+  const normalized = String(status || "NOT_SENT").trim();
+  if (normalized === "COMPLETED") return "success";
+  if (normalized === "PENDING") return "warning";
+  if (normalized === "CANCELED") return "danger";
+  return "neutral";
+}
+
 function normalizeCustomerType(value) {
   const normalized = String(value || "").trim().toUpperCase();
   if (normalized === "OFFLINE_WITH_PHONE" || normalized === "OFFLINE_NO_PHONE") {
@@ -225,6 +241,8 @@ function RepairsPage() {
         estimateStatusLabel: item.customerEstimateResponseLabel || getEstimateStatusLabel(item),
         completionNoticeLabel: item.completedAt ? "已通知" : "未通知",
         surveyLabel: item.surveyId ? "已填問卷" : "未填問卷",
+        repairConfirmationStatus: item.repairConfirmationStatus || "NOT_SENT",
+        repairConfirmationLabel: getRepairConfirmationStatusLabel(item.repairConfirmationStatus),
         customerType: normalizeCustomerType(item.customerType || (item.lineUserId ? "LINE" : item.customerPhone ? "OFFLINE_WITH_PHONE" : "OFFLINE_NO_PHONE")),
         detailPath: item.repairSource === "REPAIR_ORDER" ? `/repairs/${item.id}` : null,
         statusTone: getRepairStatusTone(item.status),
@@ -470,6 +488,7 @@ function RepairsPage() {
           <StatusBadge tone={row.statusTone}>{row.repairStatusLabel}</StatusBadge>
           <StatusBadge tone={row.completedAt ? "success" : "neutral"}>{row.completionNoticeLabel}</StatusBadge>
           <StatusBadge tone={row.surveyId ? "info" : "neutral"}>{row.surveyLabel}</StatusBadge>
+          <StatusBadge tone={getRepairConfirmationTone(row.repairConfirmationStatus)}>{row.repairConfirmationLabel}</StatusBadge>
         </div>
       ),
       mobileHidden: true
@@ -703,6 +722,7 @@ function RepairsPage() {
                 <StatusBadge tone={row.statusTone}>{row.repairStatusLabel}</StatusBadge>
                 <StatusBadge tone={row.completedAt ? "success" : "neutral"}>{row.completionNoticeLabel}</StatusBadge>
                 <StatusBadge tone={row.surveyId ? "info" : "neutral"}>{row.surveyLabel}</StatusBadge>
+                <StatusBadge tone={getRepairConfirmationTone(row.repairConfirmationStatus)}>{row.repairConfirmationLabel}</StatusBadge>
               </>
             )}
             cardFooter={(row) => (

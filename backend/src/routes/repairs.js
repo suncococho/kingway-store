@@ -173,9 +173,15 @@ router.get("/",  async (req, res, next) => {
           ${selectColumn(repairColumns, "ro", "storage_fee", "storageFee", "0")},
           ${selectColumn(repairColumns, "ro", "completed_at", "completedAt")},
           ${selectColumn(repairColumns, "ro", "picked_up_at", "pickedUpAt")},
+          rc.id AS repairConfirmationId,
+          rc.status AS repairConfirmationStatus,
+          rc.sent_at AS repairConfirmationSentAt,
+          rc.submitted_at AS repairConfirmationSubmittedAt,
+          rc.pdf_path AS repairConfirmationPdfPath,
           ${selectColumn(repairColumns, "ro", "created_at", "createdAt")}
         FROM repair_orders ro
         INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ?
+        LEFT JOIN repair_confirmations rc ON rc.repair_order_id = ro.id AND rc.store_id = ro.store_id
         WHERE ro.deleted_at IS NULL
         ORDER BY ro.id DESC
       `;

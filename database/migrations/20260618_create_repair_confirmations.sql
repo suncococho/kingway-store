@@ -1,0 +1,33 @@
+CREATE TABLE repair_confirmations (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  store_id BIGINT UNSIGNED NOT NULL,
+  repair_order_id BIGINT UNSIGNED NOT NULL,
+  customer_id BIGINT UNSIGNED NULL,
+  token VARCHAR(120) NOT NULL,
+  status ENUM('PENDING','COMPLETED','CANCELED') NOT NULL DEFAULT 'PENDING',
+  customer_name_snapshot VARCHAR(120) NULL,
+  customer_phone_snapshot VARCHAR(40) NULL,
+  vehicle_model_snapshot VARCHAR(160) NULL,
+  issue_snapshot TEXT NULL,
+  repair_summary_snapshot TEXT NULL,
+  amount_total_snapshot DECIMAL(12,2) NOT NULL DEFAULT 0,
+  payment_status_snapshot VARCHAR(60) NULL,
+  terms_version VARCHAR(80) NOT NULL DEFAULT 'KINGWAY_REPAIR_COMPLETION_V2026_06',
+  confirmation_payload_json LONGTEXT NULL,
+  signature_image_path VARCHAR(255) NULL,
+  pdf_path VARCHAR(255) NULL,
+  pdf_url VARCHAR(255) NULL,
+  sent_at DATETIME NULL,
+  submitted_at DATETIME NULL,
+  created_by_staff_id BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_repair_confirmations_store_repair (store_id, repair_order_id),
+  UNIQUE KEY uk_repair_confirmations_token (token),
+  KEY idx_repair_confirmations_store_status (store_id, status),
+  KEY idx_repair_confirmations_repair (repair_order_id),
+  CONSTRAINT fk_repair_confirmations_store
+    FOREIGN KEY (store_id) REFERENCES stores(id),
+  CONSTRAINT fk_repair_confirmations_repair
+    FOREIGN KEY (repair_order_id) REFERENCES repair_orders(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

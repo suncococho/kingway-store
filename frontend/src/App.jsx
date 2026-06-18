@@ -33,6 +33,7 @@ import SettingsPage from "./pages/SettingsPage";
 import StoreSettingsPage from "./pages/StoreSettingsPage";
 import StoreLineSettingsPage from "./pages/StoreLineSettingsPage";
 import PurchaseConfirmPublicPage from "./pages/PurchaseConfirmPublicPage";
+import RepairConfirmPublicPage from "./pages/RepairConfirmPublicPage";
 import SurveyPublicPage from "./pages/SurveyPublicPage";
 import LineEntryPage from "./pages/LineEntryPage";
 import LineGoogleReviewPage from "./pages/LineGoogleReviewPage";
@@ -58,6 +59,7 @@ function App() {
       <Route path="/purchase-confirm/manual" element={<PurchaseConfirmPublicPage />} />
       <Route path="/purchase-confirm" element={<PurchaseConfirmPublicPage />} />
       <Route path="/purchase-confirm/:token" element={<PurchaseConfirmPublicPage />} />
+      <Route path="/repair-confirm/:token" element={<RepairConfirmPublicPage />} />
       <Route path="/surveys/:token" element={<SurveyPublicPage />} />
       <Route path="/line-order" element={<LineOrderPage />} />
       <Route path="/line-customer" element={<LineCustomerPage />} />
