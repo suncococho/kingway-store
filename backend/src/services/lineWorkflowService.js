@@ -5104,6 +5104,7 @@ module.exports = {
   createQuickReplyText,
   createPurchaseConfirmationForOrder,
   createRepairReservationFromSession,
+  applyRepairEstimateCustomerResponse,
   createUriAction,
   getPurchaseConfirmationEligibility,
   resolveLineWorkflowStoreContext,

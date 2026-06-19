@@ -9,6 +9,7 @@ const {
   getStoreCodeFromRequest
 } = require("../utils/publicStoreResolver");
 const {
+  applyRepairEstimateCustomerResponse,
   createRepairReservationFromSession,
   logWorkflowEvent,
   resolveLineWorkflowStoreContext
@@ -285,6 +286,108 @@ router.get("/customer", async (req, res, next) => {
     return next(error);
   }
 });
+
+async function handleLineProgressQuoteResponse(req, res, next, approved) {
+  try {
+    const repairId = Number(req.params.repairId);
+    const lineUserId = String(req.body?.lineUserId || req.query?.lineUserId || "").trim();
+
+    if (!Number.isSafeInteger(repairId) || repairId <= 0) {
+      return res.status(400).json({ message: "維修單編號不正確" });
+    }
+    if (!lineUserId) {
+      return res.status(400).json({ message: "缺少 LINE 使用者資料" });
+    }
+
+    const storeContext = await resolveLineRepairStoreContext(req, lineUserId, "line_progress_quote_response");
+    if (!storeContext.ok) {
+      return res.status(storeContext.status).json({ message: storeContext.message });
+    }
+
+    const [rows] = await pool.query(
+      `
+        SELECT
+          ro.id,
+          ro.store_id AS storeId,
+          ro.customer_id AS customerId,
+          ro.status,
+          ro.estimate_amount AS estimateAmount,
+          ro.customer_estimate_response AS customerEstimateResponse,
+          ro.quote_status AS quoteStatus,
+          c.line_user_id AS lineUserId
+        FROM repair_orders ro
+        INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
+        WHERE ro.id = ?
+          AND ro.store_id = ?
+          AND c.line_user_id = ?
+          AND ro.deleted_at IS NULL
+        LIMIT 1
+      `,
+      [repairId, storeContext.storeId, lineUserId]
+    );
+
+    const repair = rows[0] || null;
+    if (!repair) {
+      return res.status(404).json({ message: "找不到您的維修單" });
+    }
+
+    const alreadyApproved = repair.customerEstimateResponse === "approved" || repair.quoteStatus === "approved";
+    const alreadyRejected = repair.customerEstimateResponse === "rejected" || repair.quoteStatus === "rejected";
+    const hasPendingQuote =
+      repair.customerEstimateResponse === "pending" &&
+      (
+        repair.quoteStatus === "sent" ||
+        repair.status === "estimate_pending_approval" ||
+        Number(repair.estimateAmount || 0) > 0
+      );
+    if ((approved && alreadyApproved) || (!approved && alreadyRejected)) {
+      return res.json({
+        ok: true,
+        alreadyProcessed: true,
+        quoteStatus: approved ? "APPROVED" : "REJECTED",
+        message: approved ? "您已同意維修報價" : "您已拒絕維修報價"
+      });
+    }
+    if ((approved && alreadyRejected) || (!approved && alreadyApproved)) {
+      return res.status(409).json({ message: "此維修報價已完成回覆，請聯繫門市協助調整。" });
+    }
+    if (!hasPendingQuote) {
+      return res.status(400).json({ message: "尚未產生可確認的維修報價" });
+    }
+
+    const result = await applyRepairEstimateCustomerResponse(repairId, approved, null, pool, "line_progress", {
+      storeId: storeContext.storeId
+    });
+
+    await pool.query(
+      `
+        INSERT INTO repair_logs (repair_order_id, action, note)
+        VALUES (?, ?, ?)
+      `,
+      [
+        repairId,
+        approved ? "quote_approved_by_customer_from_progress" : "quote_rejected_by_customer_from_progress",
+        JSON.stringify({
+          source: "LINE_CUSTOMER",
+          lineUserMatched: true,
+          alreadyProcessed: Boolean(result?.alreadyProcessed)
+        })
+      ]
+    );
+
+    return res.json({
+      ok: true,
+      alreadyProcessed: Boolean(result?.alreadyProcessed),
+      quoteStatus: approved ? "APPROVED" : "REJECTED",
+      message: approved ? "已同意維修報價，門市將接續安排維修。" : "已收到您的回覆，門市人員會再與您聯繫。"
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+router.post("/:repairId/quote/approve", (req, res, next) => handleLineProgressQuoteResponse(req, res, next, true));
+router.post("/:repairId/quote/reject", (req, res, next) => handleLineProgressQuoteResponse(req, res, next, false));
 
 router.post("/create", async (req, res, next) => {
   try {

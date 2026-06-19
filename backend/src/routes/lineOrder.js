@@ -79,6 +79,39 @@ function getDisplayNameOrFallback(profileName, fallbackName = "LINE 客戶") {
   return normalizedProfile || normalizeText(fallbackName) || "LINE 客戶";
 }
 
+function buildRepairQuoteConfirmationLink(repairId) {
+  return `${config.frontendBaseUrl}/line-progress?tab=repair&repairId=${encodeURIComponent(repairId)}`;
+}
+
+function buildRepairConfirmationLink(token) {
+  return `${config.frontendBaseUrl}/repair-confirm/${encodeURIComponent(token)}`;
+}
+
+function buildRepairConfirmationPdfUrl(token) {
+  return `${config.frontendBaseUrl}/api/repair-confirmations/public/${encodeURIComponent(token)}/pdf`;
+}
+
+function mapLineProgressQuoteStatus(row) {
+  const response = String(row?.customerEstimateResponse || "").trim();
+  const quoteStatus = String(row?.quoteStatus || "").trim();
+  const status = String(row?.status || "").trim();
+  const amount = Number(row?.estimateAmount || 0);
+
+  if (response === "approved" || quoteStatus === "approved") return "APPROVED";
+  if (response === "rejected" || quoteStatus === "rejected" || status === "estimate_rejected") return "REJECTED";
+  if (row?.quoteConfirmationFailedAt) return "FAILED";
+  if (response === "pending" && (quoteStatus === "sent" || status === "estimate_pending_approval" || row?.estimateSentAt || amount > 0)) return "PENDING";
+  return "NONE";
+}
+
+function mapLineProgressRepairConfirmationStatus(row) {
+  const status = String(row?.repairConfirmationStatus || "").trim().toUpperCase();
+  if (status === "PENDING" || status === "COMPLETED" || status === "CANCELED") {
+    return status;
+  }
+  return "NONE";
+}
+
 function buildMysqlLockName(prefix, parts) {
   const hash = crypto
     .createHash("sha256")
@@ -271,27 +304,98 @@ router.get("/customer", async (req, res, next) => {
 
     const [repairs] = await pool.query(
       `SELECT
-         id,
-         bike_model AS bikeModel,
-         issue_description AS issueDescription,
-         status,
-         reservation_date AS reservationDate,
-         estimate_amount AS estimateAmount,
-         inspection_fee AS inspectionFee,
-         parts_fee AS partsFee,
-         labor_fee AS laborFee,
-         storage_fee AS storageFee,
-         completed_at AS completedAt,
-         picked_up_at AS pickedUpAt
-       FROM repair_orders
-       WHERE customer_id = ?
-         AND store_id = ?
-       ORDER BY id DESC
+         ro.id,
+         ro.bike_model AS bikeModel,
+         ro.issue_description AS issueDescription,
+         ro.status,
+         ro.reservation_date AS reservationDate,
+         ro.estimate_amount AS estimateAmount,
+         ro.estimate_details AS estimateDescription,
+         ro.quote_notes AS estimateNote,
+         ro.quote_status AS quoteStatusRaw,
+         ro.customer_estimate_response AS customerEstimateResponse,
+         ro.customer_estimate_responded_at AS customerEstimateRespondedAt,
+         ro.estimate_sent_at AS estimateSentAt,
+         ro.inspection_fee AS inspectionFee,
+         ro.parts_fee AS partsFee,
+         ro.labor_fee AS laborFee,
+         ro.storage_fee AS storageFee,
+         ro.completed_at AS completedAt,
+         ro.picked_up_at AS pickedUpAt,
+         qcs.created_at AS quoteConfirmationSentAt,
+         qcf.created_at AS quoteConfirmationFailedAt,
+         qca.created_at AS quoteApprovedAt,
+         qcr.created_at AS quoteRejectedAt,
+         qca.note AS quoteApprovedNote,
+         qcr.note AS quoteRejectedNote,
+         rc.status AS repairConfirmationStatusRaw,
+         rc.token AS repairConfirmationToken,
+         rc.sent_at AS repairConfirmationSentAt,
+         rc.submitted_at AS repairConfirmationSubmittedAt,
+         rc.pdf_path AS repairConfirmationPdfPath
+       FROM repair_orders ro
+       LEFT JOIN (
+         SELECT repair_order_id, MAX(created_at) AS created_at
+         FROM repair_logs
+         WHERE action = 'quote_confirmation_sent'
+         GROUP BY repair_order_id
+       ) qcs ON qcs.repair_order_id = ro.id
+       LEFT JOIN (
+         SELECT repair_order_id, MAX(created_at) AS created_at
+         FROM repair_logs
+         WHERE action = 'quote_confirmation_send_failed'
+         GROUP BY repair_order_id
+       ) qcf ON qcf.repair_order_id = ro.id
+       LEFT JOIN (
+         SELECT repair_order_id, MAX(created_at) AS created_at, MAX(note) AS note
+         FROM repair_logs
+         WHERE action IN ('quote_approved_by_customer_from_progress', 'customer_estimate_approved')
+         GROUP BY repair_order_id
+       ) qca ON qca.repair_order_id = ro.id
+       LEFT JOIN (
+         SELECT repair_order_id, MAX(created_at) AS created_at, MAX(note) AS note
+         FROM repair_logs
+         WHERE action IN ('quote_rejected_by_customer_from_progress', 'customer_estimate_rejected')
+         GROUP BY repair_order_id
+       ) qcr ON qcr.repair_order_id = ro.id
+       LEFT JOIN repair_confirmations rc ON rc.repair_order_id = ro.id AND rc.store_id = ro.store_id
+       WHERE ro.customer_id = ?
+         AND ro.store_id = ?
+         AND ro.deleted_at IS NULL
+       ORDER BY ro.id DESC
        LIMIT 20`,
       [customer.id, storeId]
     );
 
-    return res.json({ customer, orders, repairs });
+    const mappedRepairs = repairs.map((repair) => {
+      const quoteStatus = mapLineProgressQuoteStatus(repair);
+      const repairConfirmationStatus = mapLineProgressRepairConfirmationStatus(repair);
+      const quoteConfirmationLink = buildRepairQuoteConfirmationLink(repair.id);
+      const quoteApprovalSource =
+        String(repair.quoteApprovedNote || repair.quoteRejectedNote || "").includes("LINE_CUSTOMER")
+          ? "LINE_CUSTOMER"
+          : repair.quoteApprovedAt || repair.quoteRejectedAt
+            ? "UNKNOWN"
+            : null;
+
+      return {
+        ...repair,
+        quoteStatus,
+        quoteConfirmationStatus: repair.quoteConfirmationSentAt ? "SENT" : repair.quoteConfirmationFailedAt ? "FAILED" : "NOT_SENT",
+        quoteConfirmationWarning: repair.quoteConfirmationFailedAt ? "LINE 報價通知發送失敗，但您仍可在此確認報價。" : "",
+        quoteConfirmationLink,
+        quoteApprovedAt: repair.customerEstimateResponse === "approved" ? repair.customerEstimateRespondedAt || repair.quoteApprovedAt : null,
+        quoteRejectedAt: repair.customerEstimateResponse === "rejected" ? repair.customerEstimateRespondedAt || repair.quoteRejectedAt : null,
+        quoteApprovalSource,
+        repairConfirmationStatus,
+        repairConfirmationLink: repairConfirmationStatus === "PENDING" && repair.repairConfirmationToken ? buildRepairConfirmationLink(repair.repairConfirmationToken) : null,
+        repairConfirmationPdfUrl: repairConfirmationStatus === "COMPLETED" && repair.repairConfirmationToken && repair.repairConfirmationPdfPath
+          ? buildRepairConfirmationPdfUrl(repair.repairConfirmationToken)
+          : null
+      };
+    });
+
+    return res.json({ customer, orders, repairs: mappedRepairs });
   } catch (error) {
     return next(error);
   }

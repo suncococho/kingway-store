@@ -88,6 +88,66 @@ function RepairSteps({ status }) {
   );
 }
 
+function getQuoteStatus(repair) {
+  const value = String(repair?.quoteStatus || "").trim().toUpperCase();
+  if (["PENDING", "APPROVED", "REJECTED", "FAILED", "NONE"].includes(value)) {
+    return value;
+  }
+  const response = String(repair?.customerEstimateResponse || "").trim();
+  if (response === "approved") return "APPROVED";
+  if (response === "rejected") return "REJECTED";
+  if (repair?.status === "estimate_pending_approval" || Number(repair?.estimateAmount || 0) > 0) return "PENDING";
+  return "NONE";
+}
+
+function getRepairConfirmationStatus(repair) {
+  const value = String(repair?.repairConfirmationStatus || "NONE").trim().toUpperCase();
+  return ["PENDING", "COMPLETED", "CANCELED"].includes(value) ? value : "NONE";
+}
+
+function ActionButton({ children, onClick, disabled, tone = "primary" }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        width: "100%",
+        padding: 14,
+        border: 0,
+        borderRadius: 16,
+        background: disabled ? "#94a3b8" : tone === "danger" ? "#dc2626" : "#16a34a",
+        color: "#fff",
+        fontSize: 16,
+        fontWeight: 900,
+        marginTop: 10
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function NoticeBlock({ children, tone = "info" }) {
+  const colors = tone === "danger"
+    ? { background: "#fef2f2", border: "#fecaca", color: "#991b1b" }
+    : tone === "success"
+      ? { background: "#f0fdf4", border: "#bbf7d0", color: "#166534" }
+      : { background: "#f8fafc", border: "#dbeafe", color: "#0f172a" };
+  return (
+    <div style={{
+      marginTop: 12,
+      padding: 14,
+      borderRadius: 18,
+      background: colors.background,
+      border: `1px solid ${colors.border}`,
+      color: colors.color
+    }}>
+      {children}
+    </div>
+  );
+}
+
 
 export default function LineProgressPage() {
   const location = useLocation();
@@ -105,6 +165,8 @@ export default function LineProgressPage() {
     profileUserId: "",
     recoveredLineUserId: ""
   });
+  const [quoteSubmitting, setQuoteSubmitting] = useState({});
+  const [quoteMessage, setQuoteMessage] = useState({});
 
   useEffect(() => {
     async function init() {
@@ -191,6 +253,53 @@ export default function LineProgressPage() {
     } catch (e) {}
     window.location.href = "https://line.me/R/";
   };
+
+  async function respondQuote(repair, approved) {
+    if (!repair?.id || !lineUserId) {
+      setQuoteMessage((current) => ({
+        ...current,
+        [repair?.id || "unknown"]: "請先完成 LINE 身分確認後再回覆報價。"
+      }));
+      return;
+    }
+
+    setQuoteSubmitting((current) => ({ ...current, [repair.id]: true }));
+    setQuoteMessage((current) => ({ ...current, [repair.id]: "" }));
+
+    try {
+      const response = await apiRequest(`/line-repair/${repair.id}/quote/${approved ? "approve" : "reject"}`, {
+        method: "POST",
+        body: JSON.stringify({
+          lineUserId,
+          storeCode: DEFAULT_LINE_BINDING_STORE_CODE
+        })
+      });
+
+      setData((current) => ({
+        ...(current || {}),
+        repairs: (current?.repairs || []).map((item) => (
+          String(item.id) === String(repair.id)
+            ? {
+                ...item,
+                quoteStatus: response?.quoteStatus || (approved ? "APPROVED" : "REJECTED"),
+                customerEstimateResponse: approved ? "approved" : "rejected"
+              }
+            : item
+        ))
+      }));
+      setQuoteMessage((current) => ({
+        ...current,
+        [repair.id]: response?.message || (approved ? "已同意維修報價" : "已拒絕維修報價")
+      }));
+    } catch (error) {
+      setQuoteMessage((current) => ({
+        ...current,
+        [repair.id]: error.message || "報價回覆失敗，請稍後再試或聯繫門市。"
+      }));
+    } finally {
+      setQuoteSubmitting((current) => ({ ...current, [repair.id]: false }));
+    }
+  }
 
   const orders = data?.orders || [];
   const repairs = data?.repairs || [];
@@ -318,6 +427,14 @@ export default function LineProgressPage() {
                         <RepairSteps status={r.status} />
                         <Row label="維修狀態" value={formatRepairStatus(r.status)} />
                         <Row label="報價" value={money(r.estimateAmount)} />
+                        <QuoteConfirmationBlock
+                          repair={r}
+                          submitting={Boolean(quoteSubmitting[r.id])}
+                          message={quoteMessage[r.id]}
+                          onApprove={() => respondQuote(r, true)}
+                          onReject={() => respondQuote(r, false)}
+                        />
+                        <RepairConfirmationBlock repair={r} />
                       </Card>
                     )) : <Card>目前沒有維修紀錄。</Card>}
                   </>
@@ -332,6 +449,118 @@ export default function LineProgressPage() {
         返回 LINE
       </button>
     </div>
+  );
+}
+
+function QuoteConfirmationBlock({ repair, submitting, message, onApprove, onReject }) {
+  const status = getQuoteStatus(repair);
+  const amount = Number(repair?.estimateAmount || 0);
+  const showPendingActions = status === "PENDING" || status === "FAILED";
+
+  if (status === "NONE" && amount <= 0) {
+    return (
+      <NoticeBlock>
+        <strong>維修報價確認</strong>
+        <div style={{ marginTop: 6 }}>尚未產生維修報價</div>
+      </NoticeBlock>
+    );
+  }
+
+  return (
+    <NoticeBlock tone={status === "FAILED" ? "danger" : status === "APPROVED" ? "success" : "info"}>
+      <strong>維修報價確認</strong>
+      {status === "FAILED" ? (
+        <div style={{ marginTop: 6 }}>LINE 報價通知發送失敗，但您仍可在此確認報價。</div>
+      ) : null}
+      {showPendingActions ? (
+        <>
+          <div style={{ marginTop: 8 }}>報價金額：<strong>{money(amount)}</strong></div>
+          {repair?.estimateNote || repair?.estimateDescription ? (
+            <div style={{ marginTop: 6, color: "#475569" }}>{repair.estimateNote || repair.estimateDescription}</div>
+          ) : null}
+          <div style={{ marginTop: 6 }}>請確認本次維修報價，並選擇是否同意維修。</div>
+          <ActionButton onClick={onApprove} disabled={submitting}>
+            {submitting ? "處理中..." : "同意維修報價"}
+          </ActionButton>
+          <ActionButton onClick={onReject} disabled={submitting} tone="danger">
+            暫不維修 / 拒絕報價
+          </ActionButton>
+        </>
+      ) : null}
+      {status === "APPROVED" ? <div style={{ marginTop: 8 }}>已同意維修報價</div> : null}
+      {status === "REJECTED" ? <div style={{ marginTop: 8 }}>已拒絕維修報價 / 暫不維修</div> : null}
+      {message ? <div style={{ marginTop: 8, fontWeight: 800 }}>{message}</div> : null}
+    </NoticeBlock>
+  );
+}
+
+function RepairConfirmationBlock({ repair }) {
+  const status = getRepairConfirmationStatus(repair);
+
+  if (status === "NONE") {
+    return (
+      <NoticeBlock>
+        <strong>維修完成確認書</strong>
+        <div style={{ marginTop: 6 }}>維修完成後將顯示維修確認書</div>
+      </NoticeBlock>
+    );
+  }
+
+  if (status === "PENDING") {
+    return (
+      <NoticeBlock>
+        <strong>維修完成確認書</strong>
+        <div style={{ marginTop: 6 }}>請確認本次維修內容與車輛狀態，確認無誤後完成簽名。</div>
+        {repair.repairConfirmationLink ? (
+          <a href={repair.repairConfirmationLink} style={{
+            display: "block",
+            marginTop: 12,
+            padding: 14,
+            borderRadius: 16,
+            background: "#16a34a",
+            color: "#fff",
+            textDecoration: "none",
+            textAlign: "center",
+            fontSize: 16,
+            fontWeight: 900
+          }}>
+            簽署維修確認書
+          </a>
+        ) : null}
+      </NoticeBlock>
+    );
+  }
+
+  if (status === "COMPLETED") {
+    return (
+      <NoticeBlock tone="success">
+        <strong>維修完成確認書</strong>
+        <div style={{ marginTop: 6 }}>已完成維修確認</div>
+        {repair.repairConfirmationPdfUrl ? (
+          <a href={repair.repairConfirmationPdfUrl} target="_blank" rel="noreferrer" style={{
+            display: "block",
+            marginTop: 12,
+            padding: 14,
+            borderRadius: 16,
+            background: "#16a34a",
+            color: "#fff",
+            textDecoration: "none",
+            textAlign: "center",
+            fontSize: 16,
+            fontWeight: 900
+          }}>
+            查看維修確認書 PDF
+          </a>
+        ) : null}
+      </NoticeBlock>
+    );
+  }
+
+  return (
+    <NoticeBlock tone="danger">
+      <strong>維修完成確認書</strong>
+      <div style={{ marginTop: 6 }}>維修確認書已取消</div>
+    </NoticeBlock>
   );
 }
 
