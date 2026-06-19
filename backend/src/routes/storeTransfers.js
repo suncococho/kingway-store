@@ -250,6 +250,27 @@ async function insertItems(connection, transferId, companyId, fromStoreId, toSto
 
 router.use(authenticate);
 
+async function resolveTransferCompanyForStores(staffUserId, fromStoreId, toStoreId) {
+  const [rows] = await pool.query(
+    `
+      SELECT csh.company_id AS companyId, cm.role
+      FROM company_stores csh
+      INNER JOIN company_stores cst ON cst.company_id = csh.company_id
+      INNER JOIN company_memberships cm ON cm.company_id = csh.company_id
+      WHERE csh.store_id = ?
+        AND cst.store_id = ?
+        AND csh.status = 'ACTIVE'
+        AND cst.status = 'ACTIVE'
+        AND cm.staff_user_id = ?
+        AND cm.status = 'ACTIVE'
+      ORDER BY csh.company_id ASC
+      LIMIT 1
+    `,
+    [fromStoreId, toStoreId, staffUserId]
+  );
+  return rows[0] || null;
+}
+
 function buildTransferListFilters(query = {}) {
   const params = [];
   const filters = [];
@@ -460,11 +481,16 @@ router.post("/company/:companyId", requireCompanyRole(HQ_WRITE_ROLES), async (re
 
 router.post("/", async (req, res, next) => {
   try {
-    const companyId = Number(req.body.companyId || 0);
+    let companyId = Number(req.body.companyId || 0);
+    let membership = null;
     if (!companyId) {
-      return res.status(400).json({ message: "請提供有效公司" });
+      const fromStoreId = Number(req.body.fromStoreId || 0);
+      const toStoreId = Number(req.body.toStoreId || 0);
+      membership = await resolveTransferCompanyForStores(req.user.id, fromStoreId, toStoreId);
+      companyId = Number(membership?.companyId || 0);
     }
-    const membership = await loadCompanyMembership(req.user.id, companyId);
+    if (!companyId) return res.status(400).json({ message: "請提供有效公司" });
+    membership = membership || await loadCompanyMembership(req.user.id, companyId);
     if (!membership || !HQ_WRITE_ROLES.includes(membership.role)) {
       return res.status(403).json({ message: "總部管理權限不足" });
     }
@@ -561,7 +587,7 @@ async function shipTransfer(req, res, next, companyId, transferId) {
           [
             transfer.from_store_id,
             item.from_product_id,
-            -Math.abs(Number(item.quantity_shipped || 0)),
+            Math.abs(Number(item.quantity_shipped || 0)),
             transferId,
             req.user.id,
             `本部出貨 / 門市調撥出庫 ${transfer.transfer_no} -> ${toStore?.name || transfer.to_store_id}`
@@ -772,16 +798,14 @@ router.post("/:transferId/receive", requireStoreScope(), async (req, res, next) 
         totalShipped += shipped;
       }
 
-      if (!changed) {
-        throw createError("沒有新的入庫數量", 400);
-      }
-
       const discrepancyConfirmed = Boolean(req.body.discrepancyConfirmed);
       const nextStatus = totalReceived >= totalShipped ? "RECEIVED" : (discrepancyConfirmed ? "DISCREPANCY" : "PARTIALLY_RECEIVED");
-      await connection.query(
-        "UPDATE store_transfers SET status = ?, received_at = IF(? = 'RECEIVED', NOW(), received_at), received_by_staff_id = ?, note = COALESCE(?, note) WHERE id = ?",
-        [nextStatus, nextStatus, req.user.id, req.body.note || null, transferId]
-      );
+      if (changed || nextStatus !== lockedTransfer.status) {
+        await connection.query(
+          "UPDATE store_transfers SET status = ?, received_at = IF(? = 'RECEIVED', NOW(), received_at), received_by_staff_id = ?, note = COALESCE(?, note) WHERE id = ?",
+          [nextStatus, nextStatus, req.user.id, req.body.note || null, transferId]
+        );
+      }
     });
 
     const updated = await loadTransfer(transferId);
