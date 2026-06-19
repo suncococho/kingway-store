@@ -273,14 +273,19 @@ function RepairDetailPage() {
 
   async function callAction(path, body = {}) {
     try {
-      await apiRequest(path, {
+      const response = await apiRequest(path, {
         method: "POST",
         body: JSON.stringify(body)
       });
       loadDetail();
       loadRepairConfirmation();
+      if (response?.quoteConfirmationWarning) {
+        window.alert(`${response.quoteConfirmationWarning}\n${response.quoteConfirmationLink || ""}`);
+      }
+      return response;
     } catch (error) {
       alert(getRepairActionErrorMessage(error));
+      return null;
     }
   }
 
@@ -310,6 +315,26 @@ function RepairDetailPage() {
       loadDetail();
     } catch (error) {
       alert(getRepairActionErrorMessage(error));
+    }
+  }
+
+  async function sendQuoteConfirmation() {
+    const response = await callAction(`/repairs/${id}/send-quote-confirmation`);
+    if (response?.quoteConfirmationWarning) {
+      return;
+    }
+    if (response?.message) {
+      window.alert(response.message);
+    }
+  }
+
+  async function copyQuoteConfirmationLink() {
+    const link = detail?.quoteConfirmationLink || `/line-progress?tab=repair&repairId=${encodeURIComponent(id)}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      window.alert("已複製報價確認連結");
+    } catch {
+      window.prompt("請複製報價確認連結", link);
     }
   }
 
@@ -699,6 +724,19 @@ function RepairDetailPage() {
   const repairConfirmationData = repairConfirmation?.confirmation || null;
   const repairConfirmationBlockReason = repairConfirmation?.blockReason || "";
   const canSendRepairConfirmation = Boolean(repairConfirmation?.canSend);
+  const quoteConfirmationStatus = detail?.quoteConfirmationStatus || "NOT_SENT";
+  const quoteConfirmationLabel =
+    quoteConfirmationStatus === "SENT"
+      ? "已發送"
+      : quoteConfirmationStatus === "FAILED"
+        ? "發送失敗"
+        : "未發送";
+  const quoteConfirmationTone =
+    quoteConfirmationStatus === "SENT"
+      ? "success"
+      : quoteConfirmationStatus === "FAILED"
+        ? "danger"
+        : "neutral";
   const repairConfirmationDescription =
     repairConfirmationStatus === "COMPLETED"
       ? "顧客已完成簽署，可查看 PDF。"
@@ -1171,24 +1209,45 @@ function RepairDetailPage() {
                   <div className="field-label">送出時間</div>
                   <div className="field-value">{formatTaipeiDateTime(detail.estimate_sent_at)}</div>
                 </div>
+                <div className="field-item">
+                  <div className="field-label">報價確認通知</div>
+                  <div className="field-value">
+                    <StatusBadge tone={quoteConfirmationTone}>{quoteConfirmationLabel}</StatusBadge>
+                  </div>
+                </div>
+                <div className="field-item">
+                  <div className="field-label">通知時間</div>
+                  <div className="field-value">{formatTaipeiDateTime(detail.quoteConfirmationSentAt || detail.quoteConfirmationFailedAt)}</div>
+                </div>
               </div>
               {(detail.customer_estimate_response === "pending" || detail.status === "estimate_pending_approval") ? (
-                <div className="action-row" style={{ marginTop: 12 }}>
-                  <button type="button" className="secondary-button" onClick={() => respondEstimate(true)}>
-                    客戶同意報價
-                  </button>
-                  <button type="button" className="secondary-button" onClick={() => respondEstimate(false)}>
-                    客戶拒絕報價
-                  </button>
+                <>
+                  {detail.quoteConfirmationWarning ? (
+                    <p className="muted-text">{detail.quoteConfirmationWarning}</p>
+                  ) : null}
+                  <div className="action-row" style={{ marginTop: 12 }}>
+                    <button type="button" className="secondary-button" onClick={sendQuoteConfirmation}>
+                      再次發送報價確認
+                    </button>
+                    <button type="button" className="secondary-button" onClick={copyQuoteConfirmationLink}>
+                      複製確認連結
+                    </button>
+                    <button type="button" className="secondary-button" onClick={() => respondEstimate(true)}>
+                      客戶同意報價
+                    </button>
+                    <button type="button" className="secondary-button" onClick={() => respondEstimate(false)}>
+                      客戶拒絕報價
+                    </button>
 
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={offlineCompleteRepair}
-                  >
-                    現場已完成維修登錄
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={offlineCompleteRepair}
+                    >
+                      現場已完成維修登錄
+                    </button>
+                  </div>
+                </>
               ) : null}
             </section>
             ) : null}

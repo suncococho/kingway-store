@@ -258,10 +258,17 @@ export default function LineProgressPage() {
           {(() => {
             const query = new URLSearchParams(location.search);
             const tab = query.get("tab");
+            const focusRepairId = query.get("repairId");
             const showOrders = tab !== "repair";
             const showRepairs = tab !== "order";
             const visibleOrders = showOrders ? orders.slice(0, 10) : [];
-            const visibleRepairs = showRepairs ? repairs.slice(0, 10) : [];
+            const orderedRepairs = focusRepairId
+              ? [
+                  ...repairs.filter((repair) => String(repair.id) === String(focusRepairId)),
+                  ...repairs.filter((repair) => String(repair.id) !== String(focusRepairId))
+                ]
+              : repairs;
+            const visibleRepairs = showRepairs ? orderedRepairs.slice(0, 10) : [];
 
             return (
               <>

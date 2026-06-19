@@ -84,6 +84,20 @@ function getRepairConfirmationTone(status) {
   return "neutral";
 }
 
+function getQuoteConfirmationStatusLabel(status) {
+  const normalized = String(status || "NOT_SENT").trim();
+  if (normalized === "SENT") return "報價通知已發送";
+  if (normalized === "FAILED") return "報價通知失敗";
+  return "報價通知未發送";
+}
+
+function getQuoteConfirmationTone(status) {
+  const normalized = String(status || "NOT_SENT").trim();
+  if (normalized === "SENT") return "success";
+  if (normalized === "FAILED") return "danger";
+  return "neutral";
+}
+
 function normalizeCustomerType(value) {
   const normalized = String(value || "").trim().toUpperCase();
   if (normalized === "OFFLINE_WITH_PHONE" || normalized === "OFFLINE_NO_PHONE") {
@@ -264,6 +278,40 @@ function RepairsPage() {
     }
   }
 
+  async function sendQuoteConfirmation(row) {
+    if (!row?.id || row.repairSource !== "REPAIR_ORDER") {
+      return;
+    }
+    await runWithProcessing(async () => {
+      const response = await apiRequest(`/repairs/${row.id}/send-quote-confirmation`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      repairs.refetch();
+      if (response?.quoteConfirmationWarning) {
+        window.alert(`${response.quoteConfirmationWarning}\n${response.quoteConfirmationLink || row.quoteConfirmationLink || ""}`);
+      } else {
+        window.alert(response?.message || "已發送報價確認通知");
+      }
+    }, { id: `repair-quote-confirmation-send-${row.id}`, label: "報價確認通知處理中..." }).catch((error) => {
+      window.alert(error.message || "報價確認通知處理失敗");
+    });
+  }
+
+  async function copyQuoteConfirmationLink(row) {
+    const link = row?.quoteConfirmationLink;
+    if (!link) {
+      window.alert("目前沒有可複製的報價確認連結");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      window.alert("已複製報價確認連結");
+    } catch {
+      window.prompt("請複製報價確認連結", link);
+    }
+  }
+
   const rows = useMemo(
     () =>
       repairs.items.map((item) => ({
@@ -281,6 +329,10 @@ function RepairsPage() {
         repairConfirmationPdfUrl: item.repairConfirmationPdfUrl || "",
         canSendRepairConfirmation: Boolean(item.canSendRepairConfirmation),
         repairConfirmationBlockReason: item.repairConfirmationBlockReason || "",
+        quoteConfirmationStatus: item.quoteConfirmationStatus || "NOT_SENT",
+        quoteConfirmationLabel: getQuoteConfirmationStatusLabel(item.quoteConfirmationStatus),
+        quoteConfirmationLink: item.quoteConfirmationLink || "",
+        quoteConfirmationWarning: item.quoteConfirmationWarning || "",
         customerType: normalizeCustomerType(item.customerType || (item.lineUserId ? "LINE" : item.customerPhone ? "OFFLINE_WITH_PHONE" : "OFFLINE_NO_PHONE")),
         detailPath: item.repairSource === "REPAIR_ORDER" ? `/repairs/${item.id}` : null,
         statusTone: getRepairStatusTone(item.status),
@@ -526,6 +578,7 @@ function RepairsPage() {
           <StatusBadge tone={row.statusTone}>{row.repairStatusLabel}</StatusBadge>
           <StatusBadge tone={row.completedAt ? "success" : "neutral"}>{row.completionNoticeLabel}</StatusBadge>
           <StatusBadge tone={row.surveyId ? "info" : "neutral"}>{row.surveyLabel}</StatusBadge>
+          <StatusBadge tone={getQuoteConfirmationTone(row.quoteConfirmationStatus)}>{row.quoteConfirmationLabel}</StatusBadge>
           <StatusBadge tone={getRepairConfirmationTone(row.repairConfirmationStatus)}>{row.repairConfirmationLabel}</StatusBadge>
         </div>
       ),
@@ -560,6 +613,16 @@ function RepairsPage() {
             <button type="button" className="secondary-button" onClick={() => showStepWarning("建立維修單")}>
               下一步
             </button>
+          ) : null}
+          {isEstimatedReservation(row) && row.customerEstimateResponse === "pending" ? (
+            <>
+              <button type="button" className="secondary-button" onClick={() => sendQuoteConfirmation(row)} disabled={isProcessing}>
+                {pendingAction?.id === `repair-quote-confirmation-send-${row.id}` ? "處理中..." : "再次發送報價確認"}
+              </button>
+              <button type="button" className="secondary-button" onClick={() => copyQuoteConfirmationLink(row)}>
+                複製報價連結
+              </button>
+            </>
           ) : null}
           {row.repairConfirmationStatus === "COMPLETED" && row.repairConfirmationPdfUrl ? (
             <a className="secondary-button" href={row.repairConfirmationPdfUrl} target="_blank" rel="noreferrer">
@@ -791,7 +854,13 @@ function RepairsPage() {
                 </div>
                 <div className="compact-card-actions">
                   <StatusBadge tone={getEstimateTone(row)}>{row.estimateStatusLabel}</StatusBadge>
+                  <StatusBadge tone={getQuoteConfirmationTone(row.quoteConfirmationStatus)}>{row.quoteConfirmationLabel}</StatusBadge>
                   {row.detailPath ? <Link className="secondary-button compact-detail-button" to={row.detailPath}>查看</Link> : null}
+                  {isEstimatedReservation(row) && row.customerEstimateResponse === "pending" ? (
+                    <button type="button" className="secondary-button compact-detail-button" onClick={() => copyQuoteConfirmationLink(row)}>
+                      複製報價連結
+                    </button>
+                  ) : null}
                   {row.repairConfirmationStatus === "COMPLETED" && row.repairConfirmationPdfUrl ? (
                     <a className="secondary-button compact-detail-button" href={row.repairConfirmationPdfUrl} target="_blank" rel="noreferrer">
                       查看PDF

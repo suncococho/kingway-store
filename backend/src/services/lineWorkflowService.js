@@ -1006,18 +1006,20 @@ function buildRepairEstimateDraftPromptMessages(payload, repairInfo = null, erro
 function buildRepairEstimateCustomerMessages(repairInfo, payload) {
   const items = Array.isArray(payload.items) ? payload.items : [];
   const inspectionFee = Number(payload.inspectionFee || 0);
+  const quoteUrl = payload.quoteUrl || buildRepairQuoteConfirmationUrl(repairInfo?.id);
   const lines = [
-    "您好，門市已送出維修估價。",
-    repairInfo?.id ? `工單：#${repairInfo.id}` : null,
+    "您好，您的車輛維修報價已完成。",
+    repairInfo?.id ? `維修單號：#${repairInfo.id}` : null,
+    repairInfo?.bikeModel ? `車款：${repairInfo.bikeModel}` : null,
     items.length > 0 ? "品項：" : null,
     ...items.map((item, index) =>
       `${index + 1}. ${item.sku ? `${item.name} (${item.sku})` : item.name} x${Number(item.quantity || 0)} ${formatCurrency(Number(item.unitPrice || 0))} = ${formatCurrency(Number(item.total || 0))}`
     ),
     `檢查費：${formatCurrency(inspectionFee)}`,
     `工資：${formatCurrency(payload.laborFee || 0)}`,
-    `總額：${formatCurrency(payload.totalAmount || 0)}`,
+    `報價金額：${formatCurrency(payload.totalAmount || 0)}`,
     payload.notes ? `備註：${payload.notes}` : null,
-    "請選擇是否同意這份報價。"
+    "請點選下方連結確認報價內容，並選擇是否同意維修。"
   ].filter(Boolean);
 
   return withCustomerQuickReply([
@@ -1027,8 +1029,9 @@ function buildRepairEstimateCustomerMessages(repairInfo, payload) {
     },
     createButtonMessage(
       "維修報價確認",
-      `總額 ${formatCurrency(payload.totalAmount || 0)}\n請選擇是否同意本次維修報價。`,
+      `總額 ${formatCurrency(payload.totalAmount || 0)}\n請確認本次維修報價。`,
       [
+        createUriAction("確認維修報價", quoteUrl),
         createPostbackAction("同意報價", "repair_estimate_approve", repairInfo.id),
         createPostbackAction("拒絕報價", "repair_estimate_reject", repairInfo.id)
       ]
@@ -1070,6 +1073,8 @@ async function getRepairOrderForQuotation(repairId, connection = pool, storeId =
         ro.estimate_sent_at AS estimateSentAt,
         ro.completed_at AS completedAt,
         ro.picked_up_at AS pickedUpAt,
+        ro.bike_model AS bikeModel,
+        ro.issue_description AS issueDescription,
         ro.estimate_amount AS estimateAmount,
         ro.estimate_details AS estimateDetails,
         ${hasColumn(repairColumns, "inspection_fee") ? "ro.inspection_fee" : "0"} AS inspectionFee,
@@ -1137,6 +1142,14 @@ async function getAuthorizedStaffGroupBySource(event, connection = pool) {
 
 function buildPublicUrl(pathname) {
   return `${config.frontendBaseUrl}${pathname}`;
+}
+
+function buildRepairQuoteConfirmationUrl(repairId) {
+  const params = new URLSearchParams({
+    tab: "repair",
+    repairId: String(repairId)
+  });
+  return buildPublicUrl(`/line-progress?${params.toString()}`);
 }
 
 function buildStaffPageUrl(pathname, query = "") {
@@ -4063,6 +4076,168 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
   return result;
 }
 
+function buildRepairQuoteSignature(repairInfo) {
+  return crypto
+    .createHash("sha256")
+    .update([
+      Number(repairInfo?.estimateAmount || 0).toFixed(2),
+      String(repairInfo?.estimateDetails || "").trim(),
+      String(repairInfo?.quoteNotes || "").trim()
+    ].join("|"))
+    .digest("hex")
+    .slice(0, 24);
+}
+
+function buildRepairQuoteNotificationLogPayload(repairInfo, options = {}) {
+  const link = options.link || buildRepairQuoteConfirmationUrl(repairInfo.id);
+  return {
+    estimateAmount: Number(repairInfo.estimateAmount || 0),
+    status: repairInfo.status || null,
+    quoteStatus: repairInfo.quoteStatus || null,
+    customerEstimateResponse: repairInfo.customerEstimateResponse || null,
+    quoteSignature: buildRepairQuoteSignature(repairInfo),
+    lineUserStatus: repairInfo.lineUserId ? "HAS_LINE_USER" : "NO_LINE_USER",
+    link,
+    source: options.source || null
+  };
+}
+
+function parseRepairQuoteNotificationLog(note) {
+  try {
+    const parsed = JSON.parse(String(note || ""));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function parseRepairQuoteItemsJson(value) {
+  try {
+    const parsed = JSON.parse(String(value || "[]"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+async function findLatestRepairQuoteSentLog(repairId, connection = pool) {
+  const [rows] = await connection.query(
+    `
+      SELECT id, note, created_at AS createdAt
+      FROM repair_logs
+      WHERE repair_order_id = ?
+        AND action = 'quote_confirmation_sent'
+      ORDER BY id DESC
+      LIMIT 1
+    `,
+    [repairId]
+  );
+  return rows[0] || null;
+}
+
+async function insertRepairQuoteNotificationLog(connection, repairId, action, payload) {
+  await connection.query(
+    `
+      INSERT INTO repair_logs (repair_order_id, action, note)
+      VALUES (?, ?, ?)
+    `,
+    [repairId, action, JSON.stringify(payload)]
+  );
+}
+
+async function sendRepairQuoteConfirmationIfNeeded(repairId, storeId, staffId = null, options = {}) {
+  const scopedStoreId = requireScopedStoreId(storeId, "維修報價確認通知門市範圍");
+  const repairInfo = await getRepairOrderForQuotation(repairId, options.connection || pool, scopedStoreId);
+  if (!repairInfo) {
+    throw createError("找不到維修工單", 404);
+  }
+
+  const link = buildRepairQuoteConfirmationUrl(repairInfo.id);
+  const payload = buildRepairQuoteNotificationLogPayload(repairInfo, {
+    link,
+    source: options.source || "web_admin"
+  });
+  const latestSentLog = await findLatestRepairQuoteSentLog(repairInfo.id, options.connection || pool);
+  const latestSentPayload = parseRepairQuoteNotificationLog(latestSentLog?.note);
+  const isSameQuoteAlreadySent =
+    latestSentPayload?.quoteSignature &&
+    latestSentPayload.quoteSignature === payload.quoteSignature;
+
+  if (isSameQuoteAlreadySent && !options.forceSend) {
+    await insertRepairQuoteNotificationLog(options.connection || pool, repairInfo.id, "quote_confirmation_reused", {
+      ...payload,
+      reusedSentLogId: latestSentLog.id
+    });
+    return {
+      ok: true,
+      reused: true,
+      sent: false,
+      link,
+      message: "已發送過相同報價確認通知，沿用既有連結"
+    };
+  }
+
+  if (!repairInfo.lineUserId) {
+    const warning = "顧客未綁定 LINE，請複製連結提供給顧客確認報價";
+    await insertRepairQuoteNotificationLog(options.connection || pool, repairInfo.id, "quote_confirmation_send_failed", {
+      ...payload,
+      reason: "NO_LINE_USER"
+    });
+    return {
+      ok: false,
+      sent: false,
+      link,
+      warning
+    };
+  }
+
+  if (!config.line.channelAccessToken) {
+    const warning = "LINE channel token 未設定，請複製連結提供給顧客確認報價";
+    await insertRepairQuoteNotificationLog(options.connection || pool, repairInfo.id, "quote_confirmation_send_failed", {
+      ...payload,
+      reason: "NO_LINE_TOKEN"
+    });
+    return {
+      ok: false,
+      sent: false,
+      link,
+      warning
+    };
+  }
+
+  try {
+    await sendLineMessage(config, repairInfo.lineUserId, buildRepairEstimateCustomerMessages(repairInfo, {
+      items: parseRepairQuoteItemsJson(repairInfo.quoteItemsJson),
+      inspectionFee: repairInfo.inspectionFee || 0,
+      laborFee: repairInfo.laborFee || 0,
+      totalAmount: repairInfo.estimateAmount || 0,
+      notes: repairInfo.quoteNotes || "",
+      quoteUrl: link
+    }));
+    await insertRepairQuoteNotificationLog(options.connection || pool, repairInfo.id, "quote_confirmation_sent", payload);
+    return {
+      ok: true,
+      sent: true,
+      link,
+      message: "已發送報價確認通知"
+    };
+  } catch (error) {
+    const warning = "LINE 報價確認通知發送失敗，請複製連結提供給顧客確認報價";
+    await insertRepairQuoteNotificationLog(options.connection || pool, repairInfo.id, "quote_confirmation_send_failed", {
+      ...payload,
+      reason: "LINE_PUSH_FAILED",
+      error: error.message || "LINE_PUSH_FAILED"
+    });
+    return {
+      ok: false,
+      sent: false,
+      link,
+      warning,
+      lineError: error.message || "LINE_PUSH_FAILED"
+    };
+  }
+}
+
 async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = null, source = "web_admin", connection = pool, options = {}) {
   const storeContext = await resolveLineWorkflowStoreContext({
     storeId: options.storeId,
@@ -4175,15 +4350,10 @@ async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = 
     [repairId, `報價已送出，待客戶確認（${source}）`]
   );
 
-  if (repairInfo.lineUserId && config.line.channelAccessToken) {
-    await sendLineMessage(config, repairInfo.lineUserId, buildRepairEstimateCustomerMessages(repairInfo, {
-      items,
-      inspectionFee,
-      laborFee,
-      totalAmount,
-      notes
-    }));
-  }
+  const quoteConfirmation = await sendRepairQuoteConfirmationIfNeeded(repairId, scopedStoreId, staffId, {
+    source,
+    connection
+  });
 
   await sendToGroups(["repair", "admin"], [
     {
@@ -4221,7 +4391,8 @@ async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = 
     partsFee,
     laborFee,
     totalAmount,
-    details
+    details,
+    quoteConfirmation
   };
 }
 
@@ -4923,6 +5094,7 @@ module.exports = {
   buildGroupApprovalMessage,
   buildMapNavigationUrl,
   buildPublicUrl,
+  buildRepairQuoteConfirmationUrl,
   buildWelcomeMessages,
   createButtonMessage,
   createConfirmTemplate,
@@ -4947,6 +5119,7 @@ module.exports = {
   replyToLine,
   runWithLineAccessTokenOptions,
   resolveGroupTargets,
+  sendRepairQuoteConfirmationIfNeeded,
   sendRepairEstimateQuotation,
   sendToGroups,
   sendToGroupsWithResult

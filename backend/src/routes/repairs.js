@@ -20,8 +20,10 @@ const {
   createConfirmTemplate,
   createPostbackAction,
   buildGroupApprovalMessage,
+  buildRepairQuoteConfirmationUrl,
   logWorkflowEvent,
   sendRepairEstimateQuotation,
+  sendRepairQuoteConfirmationIfNeeded,
   sendToGroups,
   sendToGroupsWithResult
 } = require("../services/lineWorkflowService");
@@ -188,11 +190,25 @@ router.get("/",  async (req, res, next) => {
           rc.sent_at AS repairConfirmationSentAt,
           rc.submitted_at AS repairConfirmationSubmittedAt,
           rc.pdf_path AS repairConfirmationPdfPath,
+          qcs.created_at AS quoteConfirmationSentAt,
+          qcf.created_at AS quoteConfirmationFailedAt,
           ${selectColumn(repairColumns, "ro", "created_at", "createdAt")}
         FROM repair_orders ro
         INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ?
         LEFT JOIN orders linked_o ON linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id
         LEFT JOIN repair_confirmations rc ON rc.repair_order_id = ro.id AND rc.store_id = ro.store_id
+        LEFT JOIN (
+          SELECT repair_order_id, MAX(created_at) AS created_at
+          FROM repair_logs
+          WHERE action = 'quote_confirmation_sent'
+          GROUP BY repair_order_id
+        ) qcs ON qcs.repair_order_id = ro.id
+        LEFT JOIN (
+          SELECT repair_order_id, MAX(created_at) AS created_at
+          FROM repair_logs
+          WHERE action = 'quote_confirmation_send_failed'
+          GROUP BY repair_order_id
+        ) qcf ON qcf.repair_order_id = ro.id
         WHERE ro.deleted_at IS NULL
         ORDER BY ro.id DESC
       `;
@@ -267,6 +283,11 @@ router.get("/",  async (req, res, next) => {
           repairConfirmationPdfUrl: row.repairConfirmationToken && row.repairConfirmationPdfPath ? buildRepairConfirmationPdfUrl(row.repairConfirmationToken) : null,
           canSendRepairConfirmation: !repairConfirmationBlockReason,
           repairConfirmationBlockReason,
+          quoteConfirmationLink: row.repairSource === "REPAIR_ORDER" ? buildRepairQuoteConfirmationUrl(row.id) : null,
+          quoteConfirmationStatus: row.quoteConfirmationSentAt ? "SENT" : row.quoteConfirmationFailedAt ? "FAILED" : "NOT_SENT",
+          quoteConfirmationSentAt: row.quoteConfirmationSentAt || null,
+          quoteConfirmationFailedAt: row.quoteConfirmationFailedAt || null,
+          quoteConfirmationWarning: !row.lineUserId ? "顧客未綁定 LINE，請複製連結提供給顧客確認報價" : "",
           repairSourceLabel: row.repairSource === "ORDER" ? "訂單維修" : "維修工單",
           sourceLabel: getRepairSourceLabel(row.source, row.customerType),
           reservationStatusLabel: mapReservationStatusLabel(row.reservationStatus),
@@ -525,11 +546,19 @@ router.get("/:id",  async (req, res, next) => {
       reservationStatus: rows[0].reservation_status,
       status: rows[0].status
     });
+    const latestQuoteSentLog = logs.find((log) => log.action === "quote_confirmation_sent");
+    const latestQuoteFailedLog = logs.find((log) => log.action === "quote_confirmation_send_failed");
+    const quoteConfirmationStatus = latestQuoteSentLog ? "SENT" : latestQuoteFailedLog ? "FAILED" : "NOT_SENT";
 
     return res.json({
       ...rows[0],
       raw_status: rows[0].status,
       status: normalizedStatus,
+      quoteConfirmationLink: buildRepairQuoteConfirmationUrl(rows[0].id),
+      quoteConfirmationStatus,
+      quoteConfirmationSentAt: latestQuoteSentLog?.createdAt || null,
+      quoteConfirmationFailedAt: latestQuoteFailedLog?.createdAt || null,
+      quoteConfirmationWarning: !rows[0].lineUserId ? "顧客未綁定 LINE，請複製連結提供給顧客確認報價" : "",
       reservationStatusLabel: mapReservationStatusLabel(rows[0].reservation_status),
       repairStatusLabel: mapRepairStatusLabel(normalizedStatus),
       storageFee: calculateStorageFee(rows[0].completed_at, rows[0].picked_up_at),
@@ -760,7 +789,29 @@ router.post("/:id/estimate",  async (req, res, next) => {
     return res.json({
       message: "已送出報價審核",
       quoteStatus: "sent",
-      totalAmount: result?.totalAmount || Number(totalAmount || estimateAmount || 0)
+      totalAmount: result?.totalAmount || Number(totalAmount || estimateAmount || 0),
+      quoteConfirmation: result?.quoteConfirmation || null,
+      quoteConfirmationWarning: result?.quoteConfirmation?.warning || null,
+      quoteConfirmationLink: result?.quoteConfirmation?.link || buildRepairQuoteConfirmationUrl(req.params.id)
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/:id/send-quote-confirmation", async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    await assertRepairBelongsToStore(req.params.id, storeId);
+    const result = await sendRepairQuoteConfirmationIfNeeded(req.params.id, storeId, req.user.id, {
+      forceSend: true,
+      source: "manual_resend"
+    });
+    return res.json({
+      message: result.sent ? "已發送報價確認通知" : result.warning || result.message || "已產生報價確認連結",
+      quoteConfirmation: result,
+      quoteConfirmationWarning: result.warning || null,
+      quoteConfirmationLink: result.link || buildRepairQuoteConfirmationUrl(req.params.id)
     });
   } catch (error) {
     return next(error);
