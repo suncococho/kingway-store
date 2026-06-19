@@ -64,6 +64,63 @@ const CUSTOMER_MENU_ITEMS = [
   }
 ];
 
+function PendingActionsPanel({ actions }) {
+  if (!actions?.length) {
+    return null;
+  }
+
+  return (
+    <section
+      className="line-customer-summary"
+      style={{
+        border: "1px solid #fde68a",
+        background: "#fffbeb",
+        boxShadow: "0 14px 32px rgba(180, 83, 9, 0.14)"
+      }}
+    >
+      <div className="line-customer-summary-title">待確認事項</div>
+      <div style={{ color: "#92400e", fontWeight: 800, marginBottom: 12 }}>
+        您有需要確認或簽署的項目
+      </div>
+      <div style={{ display: "grid", gap: 12 }}>
+        {actions.map((action, index) => (
+          <div
+            key={`${action.type}-${action.refId || index}`}
+            style={{
+              padding: 14,
+              borderRadius: 16,
+              background: "#fff",
+              border: "1px solid #fcd34d"
+            }}
+          >
+            <div style={{ fontWeight: 900, fontSize: 17, color: "#78350f" }}>{action.title}</div>
+            <div style={{ marginTop: 6, color: "#64748b", lineHeight: 1.5 }}>{action.description}</div>
+            <a
+              href={action.url}
+              style={{
+                display: "block",
+                width: "100%",
+                boxSizing: "border-box",
+                marginTop: 12,
+                padding: "14px 16px",
+                borderRadius: 16,
+                background: action.type === "REPAIR_QUOTE" ? "#16a34a" : "#0ea5e9",
+                color: "#fff",
+                textAlign: "center",
+                textDecoration: "none",
+                fontSize: 16,
+                fontWeight: 900
+              }}
+            >
+              {action.buttonLabel || (action.type === "REPAIR_QUOTE" ? "立即確認" : "前往簽署")}
+            </a>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function LineCustomerPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -176,6 +233,7 @@ export default function LineCustomerPage() {
 
   const latestOrder = data?.orders?.[0];
   const latestRepair = data?.repairs?.[0];
+  const pendingActions = data?.pendingActions || [];
 
   return (
     <div className="line-customer-page">
@@ -245,6 +303,10 @@ export default function LineCustomerPage() {
           尚未找到綁定資料。請先完成 LINE 電話綁定或聯繫門市協助。
         </section>
       )}
+
+      {data?.customer?.phone ? (
+        <PendingActionsPanel actions={pendingActions} />
+      ) : null}
 
       {data?.customer?.phone ? (
         <section

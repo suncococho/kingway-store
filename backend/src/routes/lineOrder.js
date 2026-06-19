@@ -91,6 +91,10 @@ function buildRepairConfirmationPdfUrl(token) {
   return `${config.frontendBaseUrl}/api/repair-confirmations/public/${encodeURIComponent(token)}/pdf`;
 }
 
+function buildPurchaseConfirmationLink(token) {
+  return `/purchase-confirm/${encodeURIComponent(token)}`;
+}
+
 function mapLineProgressQuoteStatus(row) {
   const response = String(row?.customerEstimateResponse || "").trim();
   const quoteStatus = String(row?.quoteStatus || "").trim();
@@ -110,6 +114,53 @@ function mapLineProgressRepairConfirmationStatus(row) {
     return status;
   }
   return "NONE";
+}
+
+function buildLineCustomerPendingActions({ repairs = [], purchaseConfirmations = [] }) {
+  const actions = [];
+
+  repairs.forEach((repair) => {
+    if (repair.quoteStatus === "PENDING" || repair.quoteStatus === "FAILED") {
+      actions.push({
+        type: "REPAIR_QUOTE",
+        title: repair.quoteStatus === "FAILED" ? "維修報價通知失敗，請確認報價" : "維修報價待確認",
+        description: `維修單 #${repair.id}，報價 NT$ ${Number(repair.estimateAmount || 0).toLocaleString()}`,
+        url: `/line-progress?tab=repair&repairId=${encodeURIComponent(repair.id)}`,
+        priority: "HIGH",
+        buttonLabel: "立即確認",
+        refId: repair.id
+      });
+    }
+
+    if (repair.repairConfirmationStatus === "PENDING" && repair.repairConfirmationLink) {
+      actions.push({
+        type: "REPAIR_CONFIRMATION",
+        title: "維修完成確認書待簽署",
+        description: `維修單 #${repair.id}`,
+        url: repair.repairConfirmationLink,
+        priority: "HIGH",
+        buttonLabel: "前往簽署",
+        refId: repair.id
+      });
+    }
+  });
+
+  purchaseConfirmations.forEach((confirmation) => {
+    if (!confirmation.token) {
+      return;
+    }
+    actions.push({
+      type: "PURCHASE_CONFIRMATION",
+      title: "購買確認書待簽署",
+      description: confirmation.orderNo ? `訂單 ${confirmation.orderNo}` : `確認書 #${confirmation.id}`,
+      url: buildPurchaseConfirmationLink(confirmation.token),
+      priority: "HIGH",
+      buttonLabel: "前往簽署",
+      refId: confirmation.orderId || confirmation.id
+    });
+  });
+
+  return actions.slice(0, 10);
 }
 
 function buildMysqlLockName(prefix, parts) {
@@ -398,7 +449,38 @@ router.get("/customer", async (req, res, next) => {
       };
     });
 
-    return res.json({ customer, orders, repairs: mappedRepairs });
+    const [pendingPurchaseConfirmations] = await pool.query(
+      `
+        SELECT
+          pc.id,
+          pc.order_id AS orderId,
+          pc.customer_id AS customerId,
+          pc.token,
+          pc.status,
+          pc.created_at AS createdAt,
+          o.order_no AS orderNo
+        FROM purchase_confirmations pc
+        LEFT JOIN orders o ON o.id = pc.order_id AND o.store_id = pc.store_id
+        WHERE pc.store_id = ?
+          AND pc.status = 'PENDING'
+          AND pc.token IS NOT NULL
+          AND (
+            pc.customer_id = ?
+            OR o.customer_id = ?
+            OR o.customer_phone = ?
+          )
+        ORDER BY pc.id DESC
+        LIMIT 10
+      `,
+      [storeId, customer.id, customer.id, customer.phone]
+    );
+
+    const pendingActions = buildLineCustomerPendingActions({
+      repairs: mappedRepairs,
+      purchaseConfirmations: pendingPurchaseConfirmations
+    });
+
+    return res.json({ customer, orders, repairs: mappedRepairs, pendingActions });
   } catch (error) {
     return next(error);
   }
