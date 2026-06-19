@@ -208,6 +208,7 @@ function RepairDetailPage() {
   const [systemInfoOpen, setSystemInfoOpen] = useState(false);
   const [repairConfirmation, setRepairConfirmation] = useState(null);
   const [repairConfirmationLoading, setRepairConfirmationLoading] = useState(false);
+  const [quoteConfirmationNotice, setQuoteConfirmationNotice] = useState(null);
 
   async function loadDetail() {
     try {
@@ -280,7 +281,11 @@ function RepairDetailPage() {
       loadDetail();
       loadRepairConfirmation();
       if (response?.quoteConfirmationWarning) {
-        window.alert(`${response.quoteConfirmationWarning}\n${response.quoteConfirmationLink || ""}`);
+        setQuoteConfirmationNotice({
+          warning: response.quoteConfirmationWarning,
+          link: response.quoteConfirmationLink || response.quoteConfirmation?.link || `/line-progress?tab=repair&repairId=${encodeURIComponent(id)}`,
+          status: response.quoteConfirmationStatus || response.quoteConfirmation?.quoteConfirmationStatus || "FAILED"
+        });
       }
       return response;
     } catch (error) {
@@ -324,12 +329,13 @@ function RepairDetailPage() {
       return;
     }
     if (response?.message) {
+      setQuoteConfirmationNotice(null);
       window.alert(response.message);
     }
   }
 
   async function copyQuoteConfirmationLink() {
-    const link = detail?.quoteConfirmationLink || `/line-progress?tab=repair&repairId=${encodeURIComponent(id)}`;
+    const link = quoteConfirmationNotice?.link || detail?.quoteConfirmationLink || `/line-progress?tab=repair&repairId=${encodeURIComponent(id)}`;
     try {
       await navigator.clipboard.writeText(link);
       window.alert("已複製報價確認連結");
@@ -724,7 +730,7 @@ function RepairDetailPage() {
   const repairConfirmationData = repairConfirmation?.confirmation || null;
   const repairConfirmationBlockReason = repairConfirmation?.blockReason || "";
   const canSendRepairConfirmation = Boolean(repairConfirmation?.canSend);
-  const quoteConfirmationStatus = detail?.quoteConfirmationStatus || "NOT_SENT";
+  const quoteConfirmationStatus = quoteConfirmationNotice?.status || detail?.quoteConfirmationStatus || "NOT_SENT";
   const quoteConfirmationLabel =
     quoteConfirmationStatus === "SENT"
       ? "已發送"
@@ -1222,8 +1228,15 @@ function RepairDetailPage() {
               </div>
               {(detail.customer_estimate_response === "pending" || detail.status === "estimate_pending_approval") ? (
                 <>
-                  {detail.quoteConfirmationWarning ? (
-                    <p className="muted-text">{detail.quoteConfirmationWarning}</p>
+                  {quoteConfirmationNotice?.warning || detail.quoteConfirmationWarning ? (
+                    <div className="error-banner">
+                      {quoteConfirmationNotice?.warning || detail.quoteConfirmationWarning}
+                      <div style={{ marginTop: 8 }}>
+                        <button type="button" className="secondary-button" onClick={copyQuoteConfirmationLink}>
+                          複製報價連結
+                        </button>
+                      </div>
+                    </div>
                   ) : null}
                   <div className="action-row" style={{ marginTop: 12 }}>
                     <button type="button" className="secondary-button" onClick={sendQuoteConfirmation}>

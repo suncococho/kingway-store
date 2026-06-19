@@ -786,13 +786,23 @@ router.post("/:id/estimate",  async (req, res, next) => {
       pool,
       { storeId }
     );
+    const quoteConfirmation = result?.quoteConfirmation || null;
+    const quoteConfirmationStatus = quoteConfirmation?.sent ? "SENT" : quoteConfirmation?.warning ? "FAILED" : null;
     return res.json({
       message: "已送出報價審核",
       quoteStatus: "sent",
       totalAmount: result?.totalAmount || Number(totalAmount || estimateAmount || 0),
-      quoteConfirmation: result?.quoteConfirmation || null,
-      quoteConfirmationWarning: result?.quoteConfirmation?.warning || null,
-      quoteConfirmationLink: result?.quoteConfirmation?.link || buildRepairQuoteConfirmationUrl(req.params.id)
+      quoteConfirmation: quoteConfirmation
+        ? {
+            ...quoteConfirmation,
+            quoteConfirmationStatus,
+            lineSent: Boolean(quoteConfirmation.sent)
+          }
+        : null,
+      quoteConfirmationStatus,
+      quoteConfirmationWarning: quoteConfirmation?.warning || null,
+      quoteConfirmationLink: quoteConfirmation?.link || buildRepairQuoteConfirmationUrl(req.params.id),
+      lineSent: Boolean(quoteConfirmation?.sent)
     });
   } catch (error) {
     return next(error);
@@ -807,11 +817,18 @@ router.post("/:id/send-quote-confirmation", async (req, res, next) => {
       forceSend: true,
       source: "manual_resend"
     });
+    const quoteConfirmationStatus = result.sent ? "SENT" : result.warning ? "FAILED" : "NOT_SENT";
     return res.json({
       message: result.sent ? "已發送報價確認通知" : result.warning || result.message || "已產生報價確認連結",
-      quoteConfirmation: result,
+      quoteConfirmation: {
+        ...result,
+        quoteConfirmationStatus,
+        lineSent: Boolean(result.sent)
+      },
+      quoteConfirmationStatus,
       quoteConfirmationWarning: result.warning || null,
-      quoteConfirmationLink: result.link || buildRepairQuoteConfirmationUrl(req.params.id)
+      quoteConfirmationLink: result.link || buildRepairQuoteConfirmationUrl(req.params.id),
+      lineSent: Boolean(result.sent)
     });
   } catch (error) {
     return next(error);

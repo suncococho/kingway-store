@@ -98,6 +98,14 @@ function getQuoteConfirmationTone(status) {
   return "neutral";
 }
 
+function getQuoteConfirmationWarningText(response) {
+  return response?.quoteConfirmationWarning || response?.quoteConfirmation?.warning || "";
+}
+
+function getQuoteConfirmationLink(response, fallback = "") {
+  return response?.quoteConfirmationLink || response?.quoteConfirmation?.link || fallback || "";
+}
+
 function normalizeCustomerType(value) {
   const normalized = String(value || "").trim().toUpperCase();
   if (normalized === "OFFLINE_WITH_PHONE" || normalized === "OFFLINE_NO_PHONE") {
@@ -179,6 +187,7 @@ function RepairsPage() {
     reservationTime: "14:00"
   });
   const [warningModal, setWarningModal] = useState(null);
+  const [quoteConfirmationNotices, setQuoteConfirmationNotices] = useState({});
   const [repairCreateStep, setRepairCreateStep] = useState(1);
   const [repairSubmitting, setRepairSubmitting] = useState(false);
   const { isProcessing, pendingAction, runWithProcessing } = useProcessingGuard();
@@ -282,20 +291,39 @@ function RepairsPage() {
     if (!row?.id || row.repairSource !== "REPAIR_ORDER") {
       return;
     }
-    await runWithProcessing(async () => {
-      const response = await apiRequest(`/repairs/${row.id}/send-quote-confirmation`, {
+    try {
+      const response = await runWithProcessing(async () => apiRequest(`/repairs/${row.id}/send-quote-confirmation`, {
         method: "POST",
         body: JSON.stringify({})
-      });
-      repairs.refetch();
-      if (response?.quoteConfirmationWarning) {
-        window.alert(`${response.quoteConfirmationWarning}\n${response.quoteConfirmationLink || row.quoteConfirmationLink || ""}`);
+      }), { id: `repair-quote-confirmation-send-${row.id}`, label: "報價確認通知處理中..." });
+
+      if (!response) {
+        return;
+      }
+
+      const warning = getQuoteConfirmationWarningText(response);
+      const link = getQuoteConfirmationLink(response, row.quoteConfirmationLink);
+      if (warning) {
+        setQuoteConfirmationNotices((current) => ({
+          ...current,
+          [row.id]: {
+            warning,
+            link,
+            status: response.quoteConfirmationStatus || response.quoteConfirmation?.quoteConfirmationStatus || "FAILED"
+          }
+        }));
       } else {
+        setQuoteConfirmationNotices((current) => {
+          const next = { ...current };
+          delete next[row.id];
+          return next;
+        });
         window.alert(response?.message || "已發送報價確認通知");
       }
-    }, { id: `repair-quote-confirmation-send-${row.id}`, label: "報價確認通知處理中..." }).catch((error) => {
+      repairs.refetch();
+    } catch (error) {
       window.alert(error.message || "報價確認通知處理失敗");
-    });
+    }
   }
 
   async function copyQuoteConfirmationLink(row) {
@@ -329,10 +357,10 @@ function RepairsPage() {
         repairConfirmationPdfUrl: item.repairConfirmationPdfUrl || "",
         canSendRepairConfirmation: Boolean(item.canSendRepairConfirmation),
         repairConfirmationBlockReason: item.repairConfirmationBlockReason || "",
-        quoteConfirmationStatus: item.quoteConfirmationStatus || "NOT_SENT",
-        quoteConfirmationLabel: getQuoteConfirmationStatusLabel(item.quoteConfirmationStatus),
-        quoteConfirmationLink: item.quoteConfirmationLink || "",
-        quoteConfirmationWarning: item.quoteConfirmationWarning || "",
+        quoteConfirmationStatus: quoteConfirmationNotices[item.id]?.status || item.quoteConfirmationStatus || "NOT_SENT",
+        quoteConfirmationLabel: getQuoteConfirmationStatusLabel(quoteConfirmationNotices[item.id]?.status || item.quoteConfirmationStatus),
+        quoteConfirmationLink: quoteConfirmationNotices[item.id]?.link || item.quoteConfirmationLink || "",
+        quoteConfirmationWarning: quoteConfirmationNotices[item.id]?.warning || item.quoteConfirmationWarning || "",
         customerType: normalizeCustomerType(item.customerType || (item.lineUserId ? "LINE" : item.customerPhone ? "OFFLINE_WITH_PHONE" : "OFFLINE_NO_PHONE")),
         detailPath: item.repairSource === "REPAIR_ORDER" ? `/repairs/${item.id}` : null,
         statusTone: getRepairStatusTone(item.status),
@@ -622,6 +650,18 @@ function RepairsPage() {
               <button type="button" className="secondary-button" onClick={() => copyQuoteConfirmationLink(row)}>
                 複製報價連結
               </button>
+              {row.quoteConfirmationWarning ? (
+                <div className="error-banner" style={{ flexBasis: "100%" }}>
+                  {row.quoteConfirmationWarning}
+                  {row.quoteConfirmationLink ? (
+                    <div>
+                      <button type="button" className="secondary-button" onClick={() => copyQuoteConfirmationLink(row)}>
+                        複製報價連結
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </>
           ) : null}
           {row.repairConfirmationStatus === "COMPLETED" && row.repairConfirmationPdfUrl ? (
@@ -857,9 +897,14 @@ function RepairsPage() {
                   <StatusBadge tone={getQuoteConfirmationTone(row.quoteConfirmationStatus)}>{row.quoteConfirmationLabel}</StatusBadge>
                   {row.detailPath ? <Link className="secondary-button compact-detail-button" to={row.detailPath}>查看</Link> : null}
                   {isEstimatedReservation(row) && row.customerEstimateResponse === "pending" ? (
-                    <button type="button" className="secondary-button compact-detail-button" onClick={() => copyQuoteConfirmationLink(row)}>
-                      複製報價連結
-                    </button>
+                    <>
+                      <button type="button" className="secondary-button compact-detail-button" onClick={() => copyQuoteConfirmationLink(row)}>
+                        複製報價連結
+                      </button>
+                      {row.quoteConfirmationWarning ? (
+                        <div className="error-banner">{row.quoteConfirmationWarning}</div>
+                      ) : null}
+                    </>
                   ) : null}
                   {row.repairConfirmationStatus === "COMPLETED" && row.repairConfirmationPdfUrl ? (
                     <a className="secondary-button compact-detail-button" href={row.repairConfirmationPdfUrl} target="_blank" rel="noreferrer">
