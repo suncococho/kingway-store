@@ -13,6 +13,7 @@ const MENU_CATALOG = [
   { key: "coupons", label: "優惠券" },
   { key: "line", label: "LINE 管理" },
   { key: "settings", label: "系統設定" },
+  { key: "store_transfers", label: "門市調撥", preparedOnly: true },
   { key: "inbound_transfers", label: "門市入庫確認", preparedOnly: true }
 ];
 
@@ -34,6 +35,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     coupons: allow(),
     line: allow(),
     settings: allow(),
+    store_transfers: allow(),
     inbound_transfers: allow()
   },
   CASHIER: {
@@ -57,6 +59,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     products: allow(),
     inventory: allow(),
     suppliers: allow(),
+    store_transfers: allow(),
     inbound_transfers: allow()
   }
 };

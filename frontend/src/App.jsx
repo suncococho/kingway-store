@@ -32,6 +32,7 @@ import MorePage from "./pages/MorePage";
 import SettingsPage from "./pages/SettingsPage";
 import StoreSettingsPage from "./pages/StoreSettingsPage";
 import StoreLineSettingsPage from "./pages/StoreLineSettingsPage";
+import StoreTransfersPage from "./pages/StoreTransfersPage";
 import PurchaseConfirmPublicPage from "./pages/PurchaseConfirmPublicPage";
 import RepairConfirmPublicPage from "./pages/RepairConfirmPublicPage";
 import SurveyPublicPage from "./pages/SurveyPublicPage";
@@ -115,6 +116,7 @@ function App() {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/more" element={<MorePage />} />
         <Route path="/trash" element={<TrashPage />} />
+        <Route path="/store-transfers" element={<StoreTransfersPage />} />
         <Route path="/headquarters" element={<HeadquartersPage />} />
         <Route path="/inbound-transfers" element={<InboundTransfersPage />} />
       </Route>

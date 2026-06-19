@@ -40,7 +40,8 @@ const EMPTY_TRANSFER_FORM = {
   selectedProductId: "",
   quantity: 1,
   unitCost: 0,
-  note: ""
+  note: "",
+  items: []
 };
 
 function HeadquartersPage() {
@@ -173,7 +174,8 @@ function HeadquartersPage() {
     const { name, value } = event.target;
     setTransferForm((current) => ({
       ...current,
-      [name]: name === "quantity" ? Number(value) : value
+      [name]: name === "quantity" ? Number(value) : value,
+      ...(name === "fromStoreId" || name === "toStoreId" ? { items: [], selectedProductId: "" } : {})
     }));
   }
 
@@ -185,14 +187,52 @@ function HeadquartersPage() {
     }));
   }
 
-  async function createTransfer(event) {
-    event.preventDefault();
+  function addTransferItem() {
     if (!selectedCandidate) {
       alert("請先選擇可對應收貨門市 SKU 的商品");
       return;
     }
     if (!selectedCandidate.mapped) {
       alert("門市商品未建立，請先於收貨門市建立相同 SKU 商品");
+      return;
+    }
+    const quantity = Number(transferForm.quantity || 0);
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+      alert("請輸入正確出貨數量");
+      return;
+    }
+    setTransferForm((current) => {
+      const existingIndex = current.items.findIndex((item) => String(item.fromProductId) === String(selectedCandidate.fromProductId));
+      const nextItem = {
+        fromProductId: Number(selectedCandidate.fromProductId),
+        sku: selectedCandidate.sku,
+        name: selectedCandidate.name,
+        quantity,
+        unitCost: Number(current.unitCost || selectedCandidate.unitCost || 0)
+      };
+      const items = existingIndex >= 0
+        ? current.items.map((item, index) => index === existingIndex ? nextItem : item)
+        : [...current.items, nextItem];
+      return {
+        ...current,
+        items,
+        selectedProductId: "",
+        quantity: 1
+      };
+    });
+  }
+
+  function removeTransferItem(fromProductId) {
+    setTransferForm((current) => ({
+      ...current,
+      items: current.items.filter((item) => String(item.fromProductId) !== String(fromProductId))
+    }));
+  }
+
+  async function createTransfer(event) {
+    event.preventDefault();
+    if (!transferForm.items.length) {
+      alert("請先加入出貨商品");
       return;
     }
     try {
@@ -202,11 +242,11 @@ function HeadquartersPage() {
           fromStoreId: Number(transferForm.fromStoreId),
           toStoreId: Number(transferForm.toStoreId),
           note: transferForm.note || null,
-          items: [{
-            fromProductId: Number(selectedCandidate.fromProductId),
-            quantity: Number(transferForm.quantity || 0),
-            unitCost: Number(transferForm.unitCost || 0)
-          }]
+          items: transferForm.items.map((item) => ({
+            fromProductId: Number(item.fromProductId),
+            quantity: Number(item.quantity || 0),
+            unitCost: Number(item.unitCost || 0)
+          }))
         }),
         processingMessage: "建立出貨單中"
       });
@@ -300,7 +340,7 @@ function HeadquartersPage() {
                 <label className="form-field"><span>收貨門市</span><select name="toStoreId" value={transferForm.toStoreId} onChange={updateTransferForm}>{toStores.map((store) => <option key={store.storeId} value={store.storeId}>{store.storeName}</option>)}</select></label>
                 <label className="form-field"><span>商品搜尋</span><input name="productQuery" value={transferForm.productQuery} onChange={updateTransferForm} placeholder="SKU / 商品名稱" /></label>
                 <label className="form-field"><span>數量</span><input name="quantity" type="number" min="1" value={transferForm.quantity} onChange={updateTransferForm} /></label>
-                <label className="form-field"><span>Unit cost</span><input name="unitCost" type="number" min="0" step="1" value={transferForm.unitCost} onChange={updateTransferForm} /></label>
+                <label className="form-field"><span>單位成本</span><input name="unitCost" type="number" min="0" step="1" value={transferForm.unitCost} onChange={updateTransferForm} /></label>
                 <label className="form-field form-field-wide"><span>備註</span><input name="note" value={transferForm.note} onChange={updateTransferForm} /></label>
                 <div className="form-field-wide stack-list">
                   {candidates.slice(0, 8).map((product) => (
@@ -309,7 +349,21 @@ function HeadquartersPage() {
                     </button>
                   ))}
                 </div>
-                <div className="action-row form-field-wide"><button type="submit" className="primary-button">建立 DRAFT</button></div>
+                <div className="action-row form-field-wide">
+                  <button type="button" className="secondary-button" onClick={addTransferItem}>加入出貨商品</button>
+                  <button type="submit" className="primary-button">建立草稿</button>
+                </div>
+                {transferForm.items.length ? (
+                  <div className="form-field-wide stack-list">
+                    {transferForm.items.map((item) => (
+                      <div className="field-item" key={item.fromProductId}>
+                        <div className="field-label">{item.sku} / {item.name}</div>
+                        <div className="field-value">出貨 {item.quantity} / 單位成本 NT$ {item.unitCost}</div>
+                        <button type="button" className="secondary-button" onClick={() => removeTransferItem(item.fromProductId)}>移除</button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </form>
             ) : <div className="empty-state">此帳號只有總部出貨查詢權限。</div>}
           </section>

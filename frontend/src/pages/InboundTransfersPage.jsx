@@ -49,7 +49,7 @@ function InboundTransfersPage() {
       const response = await apiRequest(`/store-transfers/company/${row.companyId}/${row.id}`);
       const transfer = response.transfer;
       setSelectedTransfer(transfer);
-      setReceiveForm(Object.fromEntries((transfer.items || []).map((item) => [item.id, 0])));
+      setReceiveForm(Object.fromEntries((transfer.items || []).map((item) => [item.id, Number(item.quantityReceived || 0)])));
       setNote("");
       setDiscrepancyConfirmed(false);
     } catch (requestError) {
@@ -68,10 +68,10 @@ function InboundTransfersPage() {
     event.preventDefault();
     if (!selectedTransfer) return;
     const items = (selectedTransfer.items || [])
-      .map((item) => ({ itemId: item.id, receiveQuantity: Number(receiveForm[item.id] || 0) }))
-      .filter((item) => item.receiveQuantity > 0);
-    if (!items.length) {
-      alert("請輸入本次入庫數量");
+      .map((item) => ({ itemId: item.id, quantityReceived: Number(receiveForm[item.id] || 0) }));
+    const hasIncrease = (selectedTransfer.items || []).some((item) => Number(receiveForm[item.id] || 0) > Number(item.quantityReceived || 0));
+    if (!hasIncrease) {
+      alert("請輸入新的累計入庫數量");
       return;
     }
 
@@ -82,7 +82,7 @@ function InboundTransfersPage() {
         processingMessage: "入庫確認中"
       });
       setSelectedTransfer(response.transfer);
-      setReceiveForm(Object.fromEntries((response.transfer.items || []).map((item) => [item.id, 0])));
+      setReceiveForm(Object.fromEntries((response.transfer.items || []).map((item) => [item.id, Number(item.quantityReceived || 0)])));
       await loadInbound();
     } catch (requestError) {
       alert(requestError.message || "入庫確認失敗");
@@ -112,12 +112,13 @@ function InboundTransfersPage() {
           <form onSubmit={confirmReceive}>
             <div className="stack-list">
               {(selectedTransfer.items || []).map((item) => {
-                const remaining = Math.max(Number(item.quantityShipped || 0) - Number(item.quantityReceived || 0), 0);
+                const currentReceived = Number(item.quantityReceived || 0);
+                const remaining = Math.max(Number(item.quantityShipped || 0) - currentReceived, 0);
                 return (
                   <div className="field-item" key={item.id}>
                     <div className="field-label">{item.sku} / {item.productName}</div>
                     <div className="field-value">出貨 {item.quantityShipped} / 已入庫 {item.quantityReceived} / 尚待 {remaining}</div>
-                    <input type="number" min="0" max={remaining} value={receiveForm[item.id] || 0} onChange={(event) => updateReceiveQuantity(item.id, event.target.value)} />
+                    <input type="number" min={currentReceived} max={item.quantityShipped} value={receiveForm[item.id] ?? currentReceived} onChange={(event) => updateReceiveQuantity(item.id, event.target.value)} />
                   </div>
                 );
               })}

@@ -41,6 +41,7 @@ function mapTransfer(row) {
     fromStoreName: row.fromStoreName || "",
     toStoreName: row.toStoreName || "",
     createdByName: row.createdByName || "",
+    shippedByName: row.shippedByName || "",
     receivedByName: row.receivedByName || "",
     itemSummary: row.itemSummary || "",
     createdAt: row.createdAt || null,
@@ -151,6 +152,7 @@ async function loadTransfer(transferId, connection = pool) {
         fs.name AS fromStoreName,
         ts.name AS toStoreName,
         cb.display_name AS createdByName,
+        sb.display_name AS shippedByName,
         rb.display_name AS receivedByName,
         st.created_at AS createdAt,
         st.updated_at AS updatedAt
@@ -158,6 +160,7 @@ async function loadTransfer(transferId, connection = pool) {
       INNER JOIN stores fs ON fs.id = st.from_store_id
       INNER JOIN stores ts ON ts.id = st.to_store_id
       LEFT JOIN staff_users cb ON cb.id = st.created_by_staff_id
+      LEFT JOIN staff_users sb ON sb.id = st.shipped_by_staff_id
       LEFT JOIN staff_users rb ON rb.id = st.received_by_staff_id
       WHERE st.id = ?
       LIMIT 1
@@ -247,6 +250,137 @@ async function insertItems(connection, transferId, companyId, fromStoreId, toSto
 
 router.use(authenticate);
 
+function buildTransferListFilters(query = {}) {
+  const params = [];
+  const filters = [];
+
+  if (query.status) {
+    filters.push("st.status = ?");
+    params.push(String(query.status).trim().toUpperCase());
+  }
+  if (query.fromStoreId) {
+    filters.push("st.from_store_id = ?");
+    params.push(Number(query.fromStoreId));
+  }
+  if (query.toStoreId) {
+    filters.push("st.to_store_id = ?");
+    params.push(Number(query.toStoreId));
+  }
+  if (query.dateFrom) {
+    filters.push("DATE(st.created_at) >= ?");
+    params.push(String(query.dateFrom).slice(0, 10));
+  }
+  if (query.dateTo) {
+    filters.push("DATE(st.created_at) <= ?");
+    params.push(String(query.dateTo).slice(0, 10));
+  }
+
+  return { filters, params };
+}
+
+async function queryTransferList(whereSql, params, query = {}) {
+  const extra = buildTransferListFilters(query);
+  const [rows] = await pool.query(
+    `
+      SELECT
+        st.id,
+        st.company_id AS companyId,
+        st.from_store_id AS fromStoreId,
+        st.to_store_id AS toStoreId,
+        st.transfer_no AS transferNo,
+        st.status,
+        st.shipped_at AS shippedAt,
+        st.received_at AS receivedAt,
+        st.note,
+        fs.name AS fromStoreName,
+        ts.name AS toStoreName,
+        cb.display_name AS createdByName,
+        sb.display_name AS shippedByName,
+        rb.display_name AS receivedByName,
+        GROUP_CONCAT(CONCAT(sti.sku_snapshot, ' x', sti.quantity_shipped, IF(sti.quantity_received > 0, CONCAT(' / 已入庫 ', sti.quantity_received), '')) ORDER BY sti.id SEPARATOR '；') AS itemSummary,
+        st.created_at AS createdAt,
+        st.updated_at AS updatedAt
+      FROM store_transfers st
+      INNER JOIN stores fs ON fs.id = st.from_store_id
+      INNER JOIN stores ts ON ts.id = st.to_store_id
+      LEFT JOIN staff_users cb ON cb.id = st.created_by_staff_id
+      LEFT JOIN staff_users sb ON sb.id = st.shipped_by_staff_id
+      LEFT JOIN staff_users rb ON rb.id = st.received_by_staff_id
+      LEFT JOIN store_transfer_items sti ON sti.transfer_id = st.id
+      WHERE ${whereSql}
+        ${extra.filters.length ? `AND ${extra.filters.join(" AND ")}` : ""}
+      GROUP BY
+        st.id,
+        st.company_id,
+        st.from_store_id,
+        st.to_store_id,
+        st.transfer_no,
+        st.status,
+        st.shipped_at,
+        st.received_at,
+        st.note,
+        fs.name,
+        ts.name,
+        cb.display_name,
+        sb.display_name,
+        rb.display_name,
+        st.created_at,
+        st.updated_at
+      ORDER BY st.id DESC
+      LIMIT 200
+    `,
+    [...params, ...extra.params]
+  );
+  return rows.map(mapTransfer);
+}
+
+router.get("/", async (req, res, next) => {
+  try {
+    const companyId = Number(req.query.companyId || 0);
+    if (companyId) {
+      const membership = await loadCompanyMembership(req.user.id, companyId);
+      if (!membership && !await hasStoreAdminAccess(req.user.id, Number(req.storeId || req.user.storeId || 0))) {
+        return res.status(403).json({ message: "沒有出貨單權限" });
+      }
+      const transfers = await queryTransferList(
+        membership ? "st.company_id = ?" : "st.company_id = ? AND st.to_store_id = ?",
+        membership ? [companyId] : [companyId, Number(req.storeId || req.user.storeId || 0)],
+        req.query
+      );
+      return res.json({ ok: true, transfers });
+    }
+
+    const [memberships] = await pool.query(
+      "SELECT company_id AS companyId FROM company_memberships WHERE staff_user_id = ? AND status = 'ACTIVE'",
+      [req.user.id]
+    );
+    const companyIds = memberships.map((row) => Number(row.companyId)).filter(Boolean);
+    const storeId = Number(req.storeId || req.user.storeId || 0);
+    if (!companyIds.length && !storeId) {
+      return res.json({ ok: true, transfers: [] });
+    }
+
+    const clauses = [];
+    const params = [];
+    if (companyIds.length) {
+      clauses.push(`st.company_id IN (${companyIds.map(() => "?").join(",")})`);
+      params.push(...companyIds);
+    }
+    if (storeId && await hasStoreAdminAccess(req.user.id, storeId)) {
+      clauses.push("st.to_store_id = ?");
+      params.push(storeId);
+    }
+    if (!clauses.length) {
+      return res.json({ ok: true, transfers: [] });
+    }
+
+    const transfers = await queryTransferList(`(${clauses.join(" OR ")})`, params, req.query);
+    return res.json({ ok: true, transfers });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/company/:companyId/products/transfer-candidates", requireCompanyRole(HQ_READ_ROLES), async (req, res, next) => {
   try {
     const companyId = Number(req.params.companyId);
@@ -288,62 +422,15 @@ router.get("/company/:companyId/products/transfer-candidates", requireCompanyRol
 
 router.get("/company/:companyId", requireCompanyRole(HQ_READ_ROLES), async (req, res, next) => {
   try {
-    const [rows] = await pool.query(
-      `
-        SELECT
-          st.id,
-          st.company_id AS companyId,
-          st.from_store_id AS fromStoreId,
-          st.to_store_id AS toStoreId,
-          st.transfer_no AS transferNo,
-          st.status,
-          st.shipped_at AS shippedAt,
-          st.received_at AS receivedAt,
-          st.note,
-          fs.name AS fromStoreName,
-          ts.name AS toStoreName,
-          cb.display_name AS createdByName,
-          rb.display_name AS receivedByName,
-          GROUP_CONCAT(CONCAT(sti.sku_snapshot, ' x', sti.quantity_shipped, IF(sti.quantity_received > 0, CONCAT(' / 已入庫 ', sti.quantity_received), '')) ORDER BY sti.id SEPARATOR '；') AS itemSummary,
-          st.created_at AS createdAt,
-          st.updated_at AS updatedAt
-        FROM store_transfers st
-        INNER JOIN stores fs ON fs.id = st.from_store_id
-        INNER JOIN stores ts ON ts.id = st.to_store_id
-        LEFT JOIN staff_users cb ON cb.id = st.created_by_staff_id
-        LEFT JOIN staff_users rb ON rb.id = st.received_by_staff_id
-        LEFT JOIN store_transfer_items sti ON sti.transfer_id = st.id
-        WHERE st.company_id = ?
-        GROUP BY
-          st.id,
-          st.company_id,
-          st.from_store_id,
-          st.to_store_id,
-          st.transfer_no,
-          st.status,
-          st.shipped_at,
-          st.received_at,
-          st.note,
-          fs.name,
-          ts.name,
-          cb.display_name,
-          rb.display_name,
-          st.created_at,
-          st.updated_at
-        ORDER BY st.id DESC
-        LIMIT 200
-      `,
-      [req.params.companyId]
-    );
-    return res.json({ ok: true, transfers: rows.map(mapTransfer) });
+    const transfers = await queryTransferList("st.company_id = ?", [Number(req.params.companyId)], req.query);
+    return res.json({ ok: true, transfers });
   } catch (error) {
     return next(error);
   }
 });
 
-router.post("/company/:companyId", requireCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
+async function createTransferDraft(req, res, next, companyId) {
   try {
-    const companyId = Number(req.params.companyId);
     const fromStoreId = Number(req.body.fromStoreId || 0);
     const toStoreId = Number(req.body.toStoreId || 0);
     const result = await withTransaction(async (connection) => {
@@ -362,6 +449,29 @@ router.post("/company/:companyId", requireCompanyRole(HQ_WRITE_ROLES), async (re
     const transfer = await loadTransfer(result);
     transfer.items = await loadTransferItems(result);
     return res.status(201).json({ ok: true, transfer });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+router.post("/company/:companyId", requireCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
+  return createTransferDraft(req, res, next, Number(req.params.companyId));
+});
+
+router.post("/", async (req, res, next) => {
+  try {
+    const companyId = Number(req.body.companyId || 0);
+    if (!companyId) {
+      return res.status(400).json({ message: "請提供有效公司" });
+    }
+    const membership = await loadCompanyMembership(req.user.id, companyId);
+    if (!membership || !HQ_WRITE_ROLES.includes(membership.role)) {
+      return res.status(403).json({ message: "總部管理權限不足" });
+    }
+    req.companyId = companyId;
+    req.companyRole = membership.role;
+    req.companyMembership = membership;
+    return createTransferDraft(req, res, next, companyId);
   } catch (error) {
     return next(error);
   }
@@ -409,10 +519,8 @@ router.patch("/company/:companyId/:transferId", requireCompanyRole(HQ_WRITE_ROLE
   }
 });
 
-router.post("/company/:companyId/:transferId/ship", requireCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
+async function shipTransfer(req, res, next, companyId, transferId) {
   try {
-    const companyId = Number(req.params.companyId);
-    const transferId = Number(req.params.transferId);
     await withTransaction(async (connection) => {
       const [transferRows] = await connection.query("SELECT * FROM store_transfers WHERE id = ? AND company_id = ? FOR UPDATE", [transferId, companyId]);
       const transfer = transferRows[0];
@@ -456,11 +564,11 @@ router.post("/company/:companyId/:transferId/ship", requireCompanyRole(HQ_WRITE_
             -Math.abs(Number(item.quantity_shipped || 0)),
             transferId,
             req.user.id,
-            `Store transfer ${transfer.transfer_no} to ${toStore?.name || transfer.to_store_id}`
+            `本部出貨 / 門市調撥出庫 ${transfer.transfer_no} -> ${toStore?.name || transfer.to_store_id}`
           ]
         );
       }
-      await connection.query("UPDATE store_transfers SET status = 'SHIPPED', shipped_at = NOW() WHERE id = ?", [transferId]);
+      await connection.query("UPDATE store_transfers SET status = 'SHIPPED', shipped_at = NOW(), shipped_by_staff_id = ? WHERE id = ?", [req.user.id, transferId]);
     });
     const transfer = await loadTransfer(transferId);
     transfer.items = await loadTransferItems(transferId);
@@ -468,18 +576,54 @@ router.post("/company/:companyId/:transferId/ship", requireCompanyRole(HQ_WRITE_
   } catch (error) {
     return next(error);
   }
+}
+
+router.post("/company/:companyId/:transferId/ship", requireCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
+  return shipTransfer(req, res, next, Number(req.params.companyId), Number(req.params.transferId));
 });
 
-router.post("/company/:companyId/:transferId/cancel", requireCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
+router.post("/:transferId/ship", async (req, res, next) => {
+  try {
+    const transfer = await loadTransfer(req.params.transferId);
+    if (!transfer) return res.status(404).json({ message: "找不到出貨單" });
+    const membership = await loadCompanyMembership(req.user.id, transfer.companyId);
+    if (!membership || !HQ_WRITE_ROLES.includes(membership.role)) {
+      return res.status(403).json({ message: "總部管理權限不足" });
+    }
+    return shipTransfer(req, res, next, transfer.companyId, transfer.id);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+async function cancelDraftTransfer(req, res, next, companyId, transferId) {
   try {
     const [result] = await pool.query(
       "UPDATE store_transfers SET status = 'CANCELED' WHERE id = ? AND company_id = ? AND status = 'DRAFT'",
-      [req.params.transferId, req.params.companyId]
+      [transferId, companyId]
     );
     if (!result.affectedRows) {
       return res.status(409).json({ message: "只有草稿可取消" });
     }
     return res.json({ ok: true });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+router.post("/company/:companyId/:transferId/cancel", requireCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
+  return cancelDraftTransfer(req, res, next, Number(req.params.companyId), Number(req.params.transferId));
+});
+
+router.post("/:transferId/cancel", async (req, res, next) => {
+  try {
+    const transfer = await loadTransfer(req.params.transferId);
+    if (!transfer) return res.status(404).json({ message: "找不到出貨單" });
+    const membership = await loadCompanyMembership(req.user.id, transfer.companyId);
+    if (!membership || !HQ_WRITE_ROLES.includes(membership.role)) {
+      return res.status(403).json({ message: "總部管理權限不足" });
+    }
+    return cancelDraftTransfer(req, res, next, transfer.companyId, transfer.id);
   } catch (error) {
     return next(error);
   }
@@ -529,6 +673,25 @@ router.get("/inbound", requireStoreScope(), requireStoreRole(["owner", "admin"])
       [req.storeId]
     );
     return res.json({ ok: true, transfers: rows.map(mapTransfer) });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/:transferId", async (req, res, next) => {
+  try {
+    const transfer = await loadTransfer(req.params.transferId);
+    if (!transfer) {
+      return res.status(404).json({ message: "找不到出貨單" });
+    }
+    const membership = await loadCompanyMembership(req.user.id, transfer.companyId);
+    const relatedStoreAdmin = [transfer.fromStoreId, transfer.toStoreId].includes(Number(req.storeId || req.user.storeId || 0)) &&
+      await hasStoreAdminAccess(req.user.id, Number(req.storeId || req.user.storeId || 0));
+    if (!membership && !relatedStoreAdmin) {
+      return res.status(403).json({ message: "沒有出貨單權限" });
+    }
+    transfer.items = await loadTransferItems(transfer.id);
+    return res.json({ ok: true, transfer });
   } catch (error) {
     return next(error);
   }
@@ -599,7 +762,7 @@ router.post("/:transferId/receive", requireStoreScope(), async (req, res, next) 
               delta,
               transferId,
               req.user.id,
-              `Store transfer ${lockedTransfer.transfer_no} received`
+              `門市入庫確認 / 門市調撥入庫 ${lockedTransfer.transfer_no}`
             ]
           );
           changed = true;

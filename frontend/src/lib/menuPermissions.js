@@ -11,6 +11,7 @@ export const MENU_CATALOG = [
   { key: "coupons", label: "優惠券" },
   { key: "line", label: "LINE 管理" },
   { key: "settings", label: "系統設定" },
+  { key: "store_transfers", label: "門市調撥", preparedOnly: true },
   { key: "inbound_transfers", label: "門市入庫確認", preparedOnly: true }
 ];
 
@@ -47,6 +48,7 @@ export const PATH_MENU_KEY_MAP = [
   { path: "/settings/store", key: "settings" },
   { path: "/settings", key: "settings" },
   { path: "/trash", key: "settings" },
+  { path: "/store-transfers", key: "store_transfers" },
   { path: "/inbound-transfers", key: "inbound_transfers" }
 ];
 
@@ -85,10 +87,10 @@ export function getFallbackMenuPermissions(user) {
   const map = allPermissions(false);
   const role = normalizeRole(user?.role);
   const enabledByRole = {
-    MANAGER: ["dashboard", "pos", "orders", "repairs", "customers", "products", "inventory", "suppliers", "staff", "coupons", "line", "settings", "inbound_transfers"],
+    MANAGER: ["dashboard", "pos", "orders", "repairs", "customers", "products", "inventory", "suppliers", "staff", "coupons", "line", "settings", "store_transfers", "inbound_transfers"],
     CASHIER: ["dashboard", "pos", "orders", "customers", "coupons"],
     REPAIR: ["dashboard", "orders", "repairs", "customers"],
-    INVENTORY: ["dashboard", "products", "inventory", "suppliers", "inbound_transfers"]
+    INVENTORY: ["dashboard", "products", "inventory", "suppliers", "store_transfers", "inbound_transfers"]
   };
 
   for (const key of enabledByRole[role] || ["dashboard"]) {
