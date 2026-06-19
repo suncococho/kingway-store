@@ -322,6 +322,8 @@ router.get("/customer", async (req, res, next) => {
          ro.storage_fee AS storageFee,
          ro.completed_at AS completedAt,
          ro.picked_up_at AS pickedUpAt,
+         o.status AS orderStatus,
+         o.final_payment_status AS finalPaymentStatus,
          qcs.created_at AS quoteConfirmationSentAt,
          qcf.created_at AS quoteConfirmationFailedAt,
          qca.created_at AS quoteApprovedAt,
@@ -334,6 +336,7 @@ router.get("/customer", async (req, res, next) => {
          rc.submitted_at AS repairConfirmationSubmittedAt,
          rc.pdf_path AS repairConfirmationPdfPath
        FROM repair_orders ro
+       LEFT JOIN orders o ON o.id = ro.order_id AND o.store_id = ro.store_id
        LEFT JOIN (
          SELECT repair_order_id, MAX(created_at) AS created_at
          FROM repair_logs

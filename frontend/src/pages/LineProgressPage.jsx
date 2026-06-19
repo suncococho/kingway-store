@@ -105,6 +105,16 @@ function getRepairConfirmationStatus(repair) {
   return ["PENDING", "COMPLETED", "CANCELED"].includes(value) ? value : "NONE";
 }
 
+function isRepairCompleted(repair) {
+  const status = String(repair?.status || "").trim();
+  return ["completed_waiting_pickup", "picked_up", "completed"].includes(status) || Boolean(repair?.completedAt || repair?.pickedUpAt);
+}
+
+function isRepairPaid(repair) {
+  const status = String(repair?.finalPaymentStatus || repair?.orderPaymentStatus || repair?.paymentStatus || "").trim().toUpperCase();
+  return ["PAID", "FULLY_PAID", "COMPLETED", "已付款", "已付清"].includes(status);
+}
+
 function ActionButton({ children, onClick, disabled, tone = "primary" }) {
   return (
     <button
@@ -453,9 +463,11 @@ export default function LineProgressPage() {
 }
 
 function QuoteConfirmationBlock({ repair, submitting, message, onApprove, onReject }) {
+  const [expanded, setExpanded] = useState(false);
   const status = getQuoteStatus(repair);
   const amount = Number(repair?.estimateAmount || 0);
   const showPendingActions = status === "PENDING" || status === "FAILED";
+  const showQuoteContent = expanded || showPendingActions;
 
   if (status === "NONE" && amount <= 0) {
     return (
@@ -472,23 +484,45 @@ function QuoteConfirmationBlock({ repair, submitting, message, onApprove, onReje
       {status === "FAILED" ? (
         <div style={{ marginTop: 6 }}>LINE 報價通知發送失敗，但您仍可在此確認報價。</div>
       ) : null}
-      {showPendingActions ? (
+      {showQuoteContent ? (
         <>
           <div style={{ marginTop: 8 }}>報價金額：<strong>{money(amount)}</strong></div>
           {repair?.estimateNote || repair?.estimateDescription ? (
             <div style={{ marginTop: 6, color: "#475569" }}>{repair.estimateNote || repair.estimateDescription}</div>
           ) : null}
-          <div style={{ marginTop: 6 }}>請確認本次維修報價，並選擇是否同意維修。</div>
-          <ActionButton onClick={onApprove} disabled={submitting}>
-            {submitting ? "處理中..." : "同意維修報價"}
-          </ActionButton>
-          <ActionButton onClick={onReject} disabled={submitting} tone="danger">
-            暫不維修 / 拒絕報價
-          </ActionButton>
         </>
       ) : null}
-      {status === "APPROVED" ? <div style={{ marginTop: 8 }}>已同意維修報價</div> : null}
-      {status === "REJECTED" ? <div style={{ marginTop: 8 }}>已拒絕維修報價 / 暫不維修</div> : null}
+      {showPendingActions ? (
+        <>
+          <div style={{ marginTop: 6 }}>請確認本次維修報價，並選擇是否同意維修。</div>
+          {!expanded ? (
+            <ActionButton onClick={() => setExpanded(true)} disabled={submitting}>
+              確認維修報價
+            </ActionButton>
+          ) : (
+            <>
+              <ActionButton onClick={onApprove} disabled={submitting}>
+                {submitting ? "處理中..." : "同意維修報價"}
+              </ActionButton>
+              <ActionButton onClick={onReject} disabled={submitting} tone="danger">
+                暫不維修
+              </ActionButton>
+            </>
+          )}
+        </>
+      ) : null}
+      {status === "APPROVED" ? (
+        <>
+          <div style={{ marginTop: 8 }}>已同意維修報價</div>
+          {!expanded ? <ActionButton onClick={() => setExpanded(true)}>查看報價內容</ActionButton> : null}
+        </>
+      ) : null}
+      {status === "REJECTED" ? (
+        <>
+          <div style={{ marginTop: 8 }}>已拒絕維修報價 / 暫不維修</div>
+          {!expanded ? <ActionButton onClick={() => setExpanded(true)}>查看報價內容</ActionButton> : null}
+        </>
+      ) : null}
       {message ? <div style={{ marginTop: 8, fontWeight: 800 }}>{message}</div> : null}
     </NoticeBlock>
   );
@@ -498,10 +532,18 @@ function RepairConfirmationBlock({ repair }) {
   const status = getRepairConfirmationStatus(repair);
 
   if (status === "NONE") {
+    const completedAndPaid = isRepairCompleted(repair) && isRepairPaid(repair);
     return (
       <NoticeBlock>
         <strong>維修完成確認書</strong>
-        <div style={{ marginTop: 6 }}>維修完成後將顯示維修確認書</div>
+        <div style={{ marginTop: 6 }}>
+          {completedAndPaid ? "維修確認書準備中，請洽門市人員。" : "維修完成後將顯示維修確認書"}
+        </div>
+        {completedAndPaid ? (
+          <ActionButton disabled>
+            尚未建立維修確認書
+          </ActionButton>
+        ) : null}
       </NoticeBlock>
     );
   }
