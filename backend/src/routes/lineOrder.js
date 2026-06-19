@@ -109,7 +109,7 @@ function mapLineProgressQuoteStatus(row) {
 }
 
 function mapLineProgressRepairConfirmationStatus(row) {
-  const status = String(row?.repairConfirmationStatus || "").trim().toUpperCase();
+  const status = String(row?.repairConfirmationStatus || row?.repairConfirmationStatusRaw || "").trim().toUpperCase();
   if (status === "PENDING" || status === "COMPLETED" || status === "CANCELED") {
     return status;
   }
@@ -385,7 +385,8 @@ router.get("/customer", async (req, res, next) => {
          rc.token AS repairConfirmationToken,
          rc.sent_at AS repairConfirmationSentAt,
          rc.submitted_at AS repairConfirmationSubmittedAt,
-         rc.pdf_path AS repairConfirmationPdfPath
+         rc.pdf_path AS repairConfirmationPdfPath,
+         rc.pdf_url AS repairConfirmationPdfUrlRaw
        FROM repair_orders ro
        LEFT JOIN orders o ON o.id = ro.order_id AND o.store_id = ro.store_id
        LEFT JOIN (
@@ -443,8 +444,10 @@ router.get("/customer", async (req, res, next) => {
         quoteApprovalSource,
         repairConfirmationStatus,
         repairConfirmationLink: repairConfirmationStatus === "PENDING" && repair.repairConfirmationToken ? buildRepairConfirmationLink(repair.repairConfirmationToken) : null,
-        repairConfirmationPdfUrl: repairConfirmationStatus === "COMPLETED" && repair.repairConfirmationToken && repair.repairConfirmationPdfPath
-          ? buildRepairConfirmationPdfUrl(repair.repairConfirmationToken)
+        repairConfirmationPdfUrl: repairConfirmationStatus === "COMPLETED" && repair.repairConfirmationToken
+          ? repair.repairConfirmationPdfPath
+            ? buildRepairConfirmationPdfUrl(repair.repairConfirmationToken)
+            : repair.repairConfirmationPdfUrlRaw || null
           : null
       };
     });
