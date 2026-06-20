@@ -8,6 +8,7 @@ const router = express.Router();
 const COMPANY_WRITE_ROLES = new Set(["company_owner", "hq_admin", "inventory_manager"]);
 const HQ_STORE_ROLES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
 const OPEN_RECEIVE_STATUSES = new Set(["ORDERED", "PARTIALLY_RECEIVED"]);
+const IDEMPOTENT_RECEIVE_STATUSES = new Set(["ORDERED", "PARTIALLY_RECEIVED", "RECEIVED"]);
 
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER", "INVENTORY"]), requireFeature("supplier_purchases"));
 const requireStoreAdminRole = requireStoreRole(["owner", "admin"]);
@@ -579,12 +580,43 @@ router.post("/:id/receive", requireStoreAdminRole, async (req, res, next) => {
       );
       const po = poRows[0];
       if (!po) throw createError("找不到供應商發注單", 404);
-      if (!OPEN_RECEIVE_STATUSES.has(po.status)) throw createError("此發注單目前不可入庫", 409);
 
       const inputItems = Array.isArray(req.body?.items) ? req.body.items : [];
       if (!inputItems.length) throw createError("請輸入入庫數量", 400);
       const inputById = new Map(inputItems.map((item) => [Number(item.itemId || item.id || item.purchaseOrderItemId), item]));
       const [items] = await connection.query("SELECT * FROM supplier_purchase_order_items WHERE purchase_order_id = ? FOR UPDATE", [id]);
+      if (!items.length) throw createError("找不到發注商品明細", 404);
+
+      let hasInputChange = false;
+      for (const item of items) {
+        const input = inputById.get(Number(item.id));
+        if (!input) continue;
+
+        const ordered = Number(item.quantity_ordered || 0);
+        const currentReceived = Number(item.quantity_received || 0);
+        const nextReceived = Number(input.quantityReceived ?? input.quantity_received ?? input.receivedQuantity ?? currentReceived);
+        if (!Number.isSafeInteger(nextReceived) || nextReceived < currentReceived || nextReceived > ordered) {
+          throw createError("入庫累計數量不正確", 400);
+        }
+        if (nextReceived > currentReceived) {
+          hasInputChange = true;
+        }
+      }
+
+      if (!hasInputChange) {
+        if (!IDEMPOTENT_RECEIVE_STATUSES.has(po.status)) {
+          throw createError("此發注單目前不可入庫", 409);
+        }
+        return { id, idempotent: true, noOp: true, message: "入庫數量未變更" };
+      }
+
+      if (!OPEN_RECEIVE_STATUSES.has(po.status)) {
+        if (po.status === "RECEIVED") {
+          throw createError("此發注單已完成入庫，無法增加入庫數量", 409);
+        }
+        throw createError("此發注單目前不可入庫", 409);
+      }
+
       let totalOrderedQty = 0;
       let totalReceivedQty = 0;
       let receiptAmount = 0;
@@ -681,6 +713,10 @@ router.post("/:id/receive", requireStoreAdminRole, async (req, res, next) => {
     purchaseOrder.items = await loadItems(result.id);
     purchaseOrder.receipts = await loadReceipts(result.id);
     purchaseOrder.idempotent = result.idempotent;
+    if (result.noOp) {
+      purchaseOrder.noOp = true;
+      purchaseOrder.message = result.message;
+    }
     return res.json(purchaseOrder);
   } catch (error) {
     return next(error);
