@@ -71,6 +71,14 @@ const FEATURE_PRESETS = {
     staff_management_enabled: 1
   }
 };
+const EXPLICIT_PLAN_VALUES = new Set(["free", "trial", "premium"]);
+const LEGACY_PREMIUM_LIKE_PLANS = new Set([
+  "single_store",
+  "legacy",
+  "legacy_active",
+  "lifetime",
+  "paid"
+]);
 
 function toDate(value) {
   if (!value) return null;
@@ -79,9 +87,22 @@ function toDate(value) {
 }
 
 function normalizePlan(value) {
-  const plan = String(value || "free").trim().toLowerCase();
-  if (plan === "premium" || plan === "trial" || plan === "free") return plan;
-  return "free";
+  const rawPlan = String(value || "").trim().toLowerCase();
+  if (EXPLICIT_PLAN_VALUES.has(rawPlan)) {
+    return {
+      rawPlan,
+      plan: rawPlan,
+      isLegacyPlan: false
+    };
+  }
+
+  const isKnownLegacyPlan = LEGACY_PREMIUM_LIKE_PLANS.has(rawPlan);
+  return {
+    rawPlan: rawPlan || "legacy_active",
+    plan: "premium",
+    isLegacyPlan: true,
+    isKnownLegacyPlan
+  };
 }
 
 function normalizePaymentStatus(value) {
@@ -91,7 +112,7 @@ function normalizePaymentStatus(value) {
 
 function computeEffectiveStatus(store) {
   const now = new Date();
-  const plan = normalizePlan(store?.plan);
+  const { plan } = normalizePlan(store?.plan);
   const status = String(store?.status || "active").trim().toLowerCase();
   const paymentStatus = normalizePaymentStatus(store?.payment_status || store?.paymentStatus);
   const trialEndsAt = toDate(store?.trial_ends_at || store?.trialEndsAt);
@@ -127,7 +148,8 @@ function canUseFeatureFromAccess(access, featureKey) {
 }
 
 function buildAccess(store, featureRow = null) {
-  const plan = normalizePlan(store?.plan);
+  const normalizedPlan = normalizePlan(store?.plan);
+  const { rawPlan, plan, isLegacyPlan } = normalizedPlan;
   const paymentStatus = normalizePaymentStatus(store?.payment_status || store?.paymentStatus);
   const effectiveStatus = computeEffectiveStatus(store);
   const advancedLockedByStatus = ["TRIAL_EXPIRED", "PAST_DUE", "SUSPENDED"].includes(effectiveStatus);
@@ -163,7 +185,9 @@ function buildAccess(store, featureRow = null) {
 
   return {
     storeId: Number(store?.id || store?.storeId || 0),
+    rawPlan,
     plan,
+    isLegacyPlan,
     status: String(store?.status || "active").trim().toLowerCase(),
     paymentStatus,
     trialEndsAt: store?.trial_ends_at || store?.trialEndsAt || null,
