@@ -20,11 +20,22 @@ const SUPPLIER_EMPTY_FORM = {
 const PRICE_EMPTY_FORM = {
   id: null,
   productId: "",
+  productSearch: "",
   supplierSku: "",
   defaultUnitCost: "",
   lastUnitCost: "",
   note: "",
   isActive: true
+};
+
+const PURCHASE_EMPTY_FORM = {
+  supplierId: "",
+  productId: "",
+  productSearch: "",
+  quantityOrdered: 1,
+  unitCost: "",
+  settlementMonth: new Date().toISOString().slice(0, 7),
+  note: ""
 };
 
 function toNumber(value) {
@@ -34,6 +45,10 @@ function toNumber(value) {
 function formatDate(value) {
   if (!value) return "-";
   return String(value).slice(0, 10);
+}
+
+function formatMoney(value) {
+  return `NT$ ${toNumber(value).toLocaleString()}`;
 }
 
 function normalizeRequestType(value) {
@@ -55,6 +70,27 @@ function getStatusLabel(status) {
     RECEIVED: "已完成",
     RETURN_CONFIRMED: "已退貨",
     REJECTED: "已拒絕"
+  };
+  return labels[status] || status || "-";
+}
+
+function getPurchaseStatusLabel(status) {
+  const labels = {
+    DRAFT: "草稿",
+    ORDERED: "已發注",
+    PARTIALLY_RECEIVED: "部分入庫",
+    RECEIVED: "已入庫",
+    CANCELED: "已取消",
+    CLOSED: "已結案"
+  };
+  return labels[status] || status || "-";
+}
+
+function getPaymentStatusLabel(status) {
+  const labels = {
+    UNPAID: "未付款",
+    PARTIALLY_PAID: "部分付款",
+    PAID: "已付款"
   };
   return labels[status] || status || "-";
 }
@@ -121,6 +157,8 @@ export default function SuppliersPage() {
   const [supplierScope, setSupplierScope] = useState("all");
   const [rows, setRows] = useState([]);
   const [monthly, setMonthly] = useState([]);
+  const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [purchaseMonthly, setPurchaseMonthly] = useState([]);
   const [products, setProducts] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [supplierPrices, setSupplierPrices] = useState([]);
@@ -128,6 +166,7 @@ export default function SuppliersPage() {
   const [editingSupplierId, setEditingSupplierId] = useState(null);
   const [supplierForm, setSupplierForm] = useState(SUPPLIER_EMPTY_FORM);
   const [priceForm, setPriceForm] = useState(PRICE_EMPTY_FORM);
+  const [purchaseForm, setPurchaseForm] = useState(PURCHASE_EMPTY_FORM);
   const [error, setError] = useState("");
   const [productSearch, setProductSearch] = useState("");
   const [filters, setFilters] = useState({
@@ -155,8 +194,14 @@ export default function SuppliersPage() {
         apiRequest("/products"),
         apiRequest(`/suppliers?includeInactive=true&scope=${encodeURIComponent(supplierScope)}`)
       ]);
+      const [nextPurchaseOrders, nextPurchaseMonthly] = await Promise.all([
+        apiRequest(`/supplier-purchases?scope=${encodeURIComponent(supplierScope)}`).catch(() => []),
+        apiRequest(`/supplier-purchases/monthly-summary?scope=${encodeURIComponent(supplierScope)}&month=${encodeURIComponent(purchaseForm.settlementMonth)}`).catch(() => [])
+      ]);
       setRows(nextRows);
       setMonthly(nextMonthly);
+      setPurchaseOrders(nextPurchaseOrders);
+      setPurchaseMonthly(nextPurchaseMonthly);
       setProducts(nextProducts);
       setSuppliers(nextSuppliers);
       if (selectedSupplierId && !nextSuppliers.some((supplier) => String(supplier.id) === String(selectedSupplierId))) {
@@ -198,7 +243,7 @@ export default function SuppliersPage() {
 
   useEffect(() => {
     load();
-  }, [supplierScope]);
+  }, [supplierScope, purchaseForm.settlementMonth]);
 
   useEffect(() => {
     loadSupplierPrices(selectedSupplierId);
@@ -362,8 +407,15 @@ export default function SuppliersPage() {
 
   const selectedProduct = products.find((product) => product.sku === form.sku);
   const selectedPriceProduct = products.find((product) => Number(product.id) === Number(priceForm.productId));
+  const selectedPurchaseProduct = products.find((product) => Number(product.id) === Number(purchaseForm.productId));
+  const selectedPurchaseSupplier = suppliers.find((supplier) => String(supplier.id) === String(purchaseForm.supplierId));
   const selectedSupplier = suppliers.find((supplier) => String(supplier.id) === String(selectedSupplierId));
   const canEditSelectedSupplier = selectedSupplier ? Boolean(selectedSupplier.canEdit) : false;
+  const purchaseProductOptions = products.filter((product) => {
+    const q = String(purchaseForm.productSearch || "").trim().toLowerCase();
+    if (!q) return false;
+    return String(product.sku || "").toLowerCase().includes(q) || String(product.name || "").toLowerCase().includes(q);
+  }).slice(0, 8);
 
   function resetSupplierForm() {
     setEditingSupplierId(null);
@@ -486,6 +538,72 @@ export default function SuppliersPage() {
     });
   }
 
+  async function createPurchaseOrder() {
+    if (!purchaseForm.supplierId || !purchaseForm.productId || Number(purchaseForm.quantityOrdered || 0) <= 0) {
+      alert("請選擇供應商、商品與數量");
+      return;
+    }
+    await runWithProcessing(async () => {
+      await apiRequest("/supplier-purchases", {
+        method: "POST",
+        body: JSON.stringify({
+          supplierId: Number(purchaseForm.supplierId),
+          settlementMonth: purchaseForm.settlementMonth,
+          note: purchaseForm.note,
+          items: [{
+            productId: Number(purchaseForm.productId),
+            quantityOrdered: Number(purchaseForm.quantityOrdered),
+            unitCost: purchaseForm.unitCost === "" ? undefined : Number(purchaseForm.unitCost)
+          }]
+        })
+      });
+      setPurchaseForm((current) => ({ ...PURCHASE_EMPTY_FORM, supplierId: current.supplierId, settlementMonth: current.settlementMonth }));
+      await load();
+      alert("供應商發注單已建立，尚未影響庫存");
+    }, { id: "supplier-po-create", label: "供應商發注單建立中..." }).catch((requestError) => {
+      alert(requestError.message || "建立失敗");
+    });
+  }
+
+  async function confirmPurchaseOrder(row) {
+    await runWithProcessing(async () => {
+      await apiRequest(`/supplier-purchases/${row.id}/order`, { method: "POST", body: JSON.stringify({}) });
+      await load();
+      alert("已確認發注，庫存未異動");
+    }, { id: `supplier-po-order-${row.id}`, label: "確認發注中..." }).catch((requestError) => {
+      alert(requestError.message || "確認失敗");
+    });
+  }
+
+  async function receivePurchaseOrder(row) {
+    await runWithProcessing(async () => {
+      const detail = await apiRequest(`/supplier-purchases/${row.id}`);
+      const items = [];
+      for (const item of detail.items || []) {
+        const value = prompt(`${item.sku} / ${item.productName}\n發注 ${item.quantityOrdered}，已入庫 ${item.quantityReceived}\n請輸入新的累計入庫數量`, String(item.quantityOrdered));
+        if (value === null) return;
+        items.push({ itemId: item.id, quantityReceived: Number(value) });
+      }
+      await apiRequest(`/supplier-purchases/${row.id}/receive`, { method: "POST", body: JSON.stringify({ items, note: "WEB ERP" }) });
+      await load();
+      alert("入庫確認完成");
+    }, { id: `supplier-po-receive-${row.id}`, label: "供應商入庫處理中..." }).catch((requestError) => {
+      alert(requestError.message || "入庫失敗");
+    });
+  }
+
+  async function markPurchasePaid(row) {
+    const value = prompt("請輸入累計付款金額", String(row.totalReceivedAmount || row.totalOrderAmount || 0));
+    if (value === null) return;
+    await runWithProcessing(async () => {
+      await apiRequest(`/supplier-purchases/${row.id}/mark-paid`, { method: "POST", body: JSON.stringify({ paidAmount: Number(value), note: "WEB ERP" }) });
+      await load();
+      alert("付款狀態已更新");
+    }, { id: `supplier-po-paid-${row.id}`, label: "付款狀態更新中..." }).catch((requestError) => {
+      alert(requestError.message || "付款更新失敗");
+    });
+  }
+
   async function receiveRequest(id) {
     const quantity = prompt("請輸入入庫數量", "1");
     if (!quantity) return;
@@ -597,6 +715,37 @@ export default function SuppliersPage() {
     }
   ];
 
+  const purchaseColumns = [
+    { key: "poNo", label: "發注單號" },
+    { key: "supplierName", label: "供應商" },
+    { key: "storeName", label: "入庫門市" },
+    { key: "status", label: "狀態", render: (row) => <StatusBadge tone={row.status === "RECEIVED" ? "success" : row.status === "PARTIALLY_RECEIVED" ? "warning" : row.status === "CANCELED" ? "danger" : "info"}>{getPurchaseStatusLabel(row.status)}</StatusBadge> },
+    { key: "paymentStatus", label: "付款", render: (row) => <StatusBadge tone={row.paymentStatus === "PAID" ? "success" : row.paymentStatus === "PARTIALLY_PAID" ? "warning" : "info"}>{getPaymentStatusLabel(row.paymentStatus)}</StatusBadge> },
+    { key: "totalOrderAmount", label: "發注金額", render: (row) => formatMoney(row.totalOrderAmount) },
+    { key: "totalReceivedAmount", label: "入庫金額", render: (row) => formatMoney(row.totalReceivedAmount) },
+    { key: "settlementMonth", label: "月結月份" },
+    {
+      key: "actions",
+      label: "操作",
+      render: (row) => (
+        <div className="action-row compact-actions">
+          {row.status === "DRAFT" ? <button type="button" className="secondary-button" onClick={() => confirmPurchaseOrder(row)} disabled={isProcessing}>確認發注</button> : null}
+          {row.canReceive ? <button type="button" className="primary-button" onClick={() => receivePurchaseOrder(row)} disabled={isProcessing}>入庫確認</button> : null}
+          {row.canPay ? <button type="button" className="secondary-button" onClick={() => markPurchasePaid(row)} disabled={isProcessing}>標記已付款</button> : null}
+        </div>
+      )
+    }
+  ];
+
+  const purchaseMonthlyColumns = [
+    { key: "supplierName", label: "供應商" },
+    { key: "poCount", label: "發注單數" },
+    { key: "receiptCount", label: "入庫次數" },
+    { key: "totalReceivedAmount", label: "月結應付", render: (row) => formatMoney(row.totalReceivedAmount) },
+    { key: "paidAmount", label: "已付款", render: (row) => formatMoney(row.paidAmount) },
+    { key: "unpaidAmount", label: "未付款", render: (row) => formatMoney(row.unpaidAmount) }
+  ];
+
   return (
     <div className="page-container suppliers-page">
       <div className="page-header">
@@ -612,7 +761,7 @@ export default function SuppliersPage() {
       <div className="settings-tabs">
         <button type="button" className={activeTab === "suppliers" ? "active" : ""} onClick={() => setActiveTab("suppliers")}>供應商資料</button>
         <button type="button" className={activeTab === "prices" ? "active" : ""} onClick={() => setActiveTab("prices")}>商品供應價</button>
-        <button type="button" className={activeTab === "requests" ? "active" : ""} onClick={() => setActiveTab("requests")}>發注 / 退貨 / 月結</button>
+        <button type="button" className={activeTab === "requests" ? "active" : ""} onClick={() => setActiveTab("requests")}>發注 / 入庫 / 月結</button>
       </div>
 
       {activeTab === "suppliers" ? (
@@ -672,6 +821,23 @@ export default function SuppliersPage() {
 
       {activeTab === "requests" ? (
         <>
+          <section className="content-card section-panel">
+            <div className="section-header"><div><h2>供應商發注</h2><p className="muted-text">建立草稿不影響庫存；確認入庫後才會增加商品庫存。</p></div></div>
+            <div className="grid-form compact-grid">
+              <label className="form-field"><span>供應商</span><select value={purchaseForm.supplierId} onChange={(event) => setPurchaseForm((current) => ({ ...current, supplierId: event.target.value }))}><option value="">請選擇供應商</option>{suppliers.filter((supplier) => supplier.isActive && supplier.canEdit).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name} / {supplier.scopeLabel || getScopeLabel(supplier.ownerType)}</option>)}</select></label>
+              <label className="form-field"><span>商品搜尋</span><input value={purchaseForm.productSearch} onChange={(event) => setPurchaseForm((current) => ({ ...current, productSearch: event.target.value, productId: "" }))} placeholder="輸入 SKU 或商品名稱" /></label>
+              <label className="form-field"><span>數量</span><input type="number" min="1" value={purchaseForm.quantityOrdered} onChange={(event) => setPurchaseForm((current) => ({ ...current, quantityOrdered: Number(event.target.value) }))} /></label>
+              <label className="form-field"><span>單價</span><input type="number" min="0" value={purchaseForm.unitCost} onChange={(event) => setPurchaseForm((current) => ({ ...current, unitCost: event.target.value }))} placeholder="空白則使用供應價" /></label>
+              <label className="form-field"><span>月結月份</span><input type="month" value={purchaseForm.settlementMonth} onChange={(event) => setPurchaseForm((current) => ({ ...current, settlementMonth: event.target.value }))} /></label>
+              <label className="form-field form-field-wide"><span>備註</span><input value={purchaseForm.note} onChange={(event) => setPurchaseForm((current) => ({ ...current, note: event.target.value }))} /></label>
+              {selectedPurchaseSupplier ? <div className="field-item form-field-wide"><div className="field-label">已選擇供應商</div><div className="field-value">{selectedPurchaseSupplier.name} / {selectedPurchaseSupplier.scopeLabel || getScopeLabel(selectedPurchaseSupplier.ownerType)}</div></div> : null}
+              {selectedPurchaseProduct ? <div className="field-item form-field-wide"><div className="field-label">已選擇商品</div><div className="field-value">{selectedPurchaseProduct.sku} / {selectedPurchaseProduct.name} / 庫存 {selectedPurchaseProduct.stock}</div></div> : null}
+              {purchaseProductOptions.length ? <div className="stack-list form-field-wide">{purchaseProductOptions.map((product) => <button type="button" key={product.id} className="secondary-button" onClick={() => setPurchaseForm((current) => ({ ...current, productId: product.id, productSearch: `${product.sku} ${product.name}` }))}>{product.sku} / {product.name} / 庫存 {product.stock} / 原價 {formatMoney(product.costPrice)}</button>)}</div> : null}
+              <button type="button" className="primary-button inline-submit" onClick={createPurchaseOrder} disabled={isProcessing || !purchaseForm.supplierId}>{pendingAction?.id === "supplier-po-create" ? "建立中..." : "建立發注單"}</button>
+            </div>
+          </section>
+          <section className="content-card section-panel"><div className="section-header"><div><h2>發注列表</h2><p className="muted-text">確認發注不影響庫存；供應商入庫時才會增加 stock 並寫入庫存異動。</p></div><StatusBadge tone="info">{purchaseOrders.length} 筆</StatusBadge></div><DataTable columns={purchaseColumns} rows={purchaseOrders} emptyText="目前沒有供應商發注單。" cardTitle={(row) => row.poNo} cardDescription={(row) => `${row.supplierName} / ${row.itemSummary || "-"}`} cardBadges={(row) => <StatusBadge tone={row.status === "RECEIVED" ? "success" : "info"}>{getPurchaseStatusLabel(row.status)}</StatusBadge>} /></section>
+          <section className="content-card section-panel"><div className="section-header"><div><h2>月結應付</h2><p className="muted-text">依入庫金額彙總供應商月結應付與未付款。</p></div></div><DataTable columns={purchaseMonthlyColumns} rows={purchaseMonthly} emptyText="目前沒有新發注月結資料。" cardTitle={(row) => row.supplierName} cardDescription={(row) => `應付 ${formatMoney(row.totalReceivedAmount)} / 未付 ${formatMoney(row.unpaidAmount)}`} /></section>
           <section className="content-card section-panel">
             <div className="section-header"><div><h2>篩選條件</h2><p className="muted-text">先縮小期間、供應商、商品與狀態，再查看摘要與交易。</p></div></div>
             <div className="grid-form compact-grid">
