@@ -49,6 +49,7 @@ export const PATH_MENU_KEY_MAP = [
   { path: "/settings", key: "settings" },
   { path: "/trash", key: "settings" },
   { path: "/store-transfers", key: "store_transfers" },
+  { path: "/company-store-settlements", key: "store_transfers" },
   { path: "/inbound-transfers", key: "inbound_transfers" }
 ];
 

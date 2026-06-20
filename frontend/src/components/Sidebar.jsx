@@ -24,7 +24,8 @@ function Sidebar() {
     mobileMenuSections.splice(2, 0, {
       heading: "總部",
       items: [
-        { to: "/headquarters", label: "總部管理", description: "公司資料、所屬門市與總部功能" }
+        { to: "/headquarters", label: "總部管理", description: "公司資料、所屬門市與總部功能" },
+        { to: "/company-store-settlements", label: "本部月結", description: "本部供貨應收與門市應付月結" }
       ]
     });
   }

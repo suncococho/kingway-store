@@ -36,6 +36,7 @@ export const mobileMenuSections = [
       { to: "/inventory", label: "庫存管理", description: "異動、警戒值與供應商流程", menuKey: "inventory" },
       { to: "/store-transfers", label: "門市調撥", description: "本部出貨與門市入庫確認", menuKey: "store_transfers" },
       { to: "/inbound-transfers", label: "門市入庫確認", description: "確認總部出貨到店的實收數量", menuKey: "inbound_transfers" },
+      { to: "/company-store-settlements", label: "本部月結", description: "本部供貨應收與門市應付月結", menuKey: "store_transfers" },
       { to: "/suppliers", label: "供應商管理", description: "供應商資料、商品供應價、發注與退貨", menuKey: "suppliers" },
       { to: "/coupons", label: "優惠券", description: "發券、審核與使用狀態", menuKey: "coupons" },
       { to: "/purchase-confirmations", label: "購買確認書", description: "簽名與 PDF 管理", menuKey: "orders" },

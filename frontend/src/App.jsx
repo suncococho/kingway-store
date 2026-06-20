@@ -47,6 +47,7 @@ import LineProgressPage from "./pages/LineProgressPage";
 import TrashPage from "./pages/TrashPage";
 import HeadquartersPage from "./pages/HeadquartersPage";
 import InboundTransfersPage from "./pages/InboundTransfersPage";
+import CompanyStoreSettlementsPage from "./pages/CompanyStoreSettlementsPage";
 
 function App() {
   const token = getStoredToken();
@@ -119,6 +120,7 @@ function App() {
         <Route path="/store-transfers" element={<StoreTransfersPage />} />
         <Route path="/headquarters" element={<HeadquartersPage />} />
         <Route path="/inbound-transfers" element={<InboundTransfersPage />} />
+        <Route path="/company-store-settlements" element={<CompanyStoreSettlementsPage />} />
       </Route>
       <Route
         path="*"
