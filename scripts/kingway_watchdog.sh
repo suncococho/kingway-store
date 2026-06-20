@@ -1,11 +1,13 @@
-#!/bin/sh
+#!/bin/bash
 
-set -u
+set -euo pipefail
 
 BASE_DIR="/volume1/docker/kingway-store"
 LOG_DIR="$BASE_DIR/logs"
 LOG_FILE="$LOG_DIR/kingway_watchdog.log"
 LOCK_DIR="/tmp/kingway_watchdog.lock"
+DEPLOY_LOCK_PATH="${KINGWAY_DEPLOY_LOCK_PATH:-/tmp/kingway_deploy.lock}"
+DEPLOY_LOCK_STALE_SECONDS="${KINGWAY_DEPLOY_LOCK_STALE_SECONDS:-1800}"
 WATCHDOG_ENV="$BASE_DIR/.env.watchdog"
 PROJECT_ENV="$BASE_DIR/.env"
 THRESHOLD_PERCENT=85
@@ -20,6 +22,70 @@ chmod 600 "$LOG_FILE" 2>/dev/null || true
 
 log() {
   printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S%z')" "$*" >> "$LOG_FILE"
+}
+
+read_lock_value() {
+  key="$1"
+  file="$2"
+
+  [ -r "$file" ] || return 1
+  awk -F= -v key="$key" '$1 == key { print substr($0, index($0, "=") + 1); exit }' "$file"
+}
+
+pid_is_alive() {
+  pid="$1"
+
+  case "$pid" in
+    ''|*[!0-9]*)
+      return 1
+      ;;
+  esac
+
+  kill -0 "$pid" 2>/dev/null
+}
+
+timestamp_epoch() {
+  value="$1"
+
+  [ -n "$value" ] || return 1
+  date -d "$value" +%s 2>/dev/null
+}
+
+deploy_lock_age_seconds() {
+  started_at="$(read_lock_value "started_at" "$DEPLOY_LOCK_PATH" 2>/dev/null || true)"
+  started_epoch="$(timestamp_epoch "$started_at" 2>/dev/null || true)"
+  now_epoch="$(date -u +%s)"
+
+  if [ -n "$started_epoch" ] && [ "$started_epoch" -le "$now_epoch" ]; then
+    printf '%s\n' "$((now_epoch - started_epoch))"
+    return 0
+  fi
+
+  # Future or unreadable timestamps are treated as active enough to skip once.
+  printf '%s\n' "-1"
+}
+
+deploy_lock_allows_recovery() {
+  [ -e "$DEPLOY_LOCK_PATH" ] || return 0
+
+  lock_pid="$(read_lock_value "pid" "$DEPLOY_LOCK_PATH" 2>/dev/null || true)"
+  lock_command="$(read_lock_value "command" "$DEPLOY_LOCK_PATH" 2>/dev/null || true)"
+
+  if pid_is_alive "$lock_pid"; then
+    log "[watchdog] deploy lock active, skip compose recovery pid=$lock_pid command=$lock_command"
+    return 1
+  fi
+
+  lock_age="$(deploy_lock_age_seconds)"
+  if [ "$lock_age" -ge "$DEPLOY_LOCK_STALE_SECONDS" ]; then
+    log "[watchdog] stale deploy lock detected pid=$lock_pid age_seconds=$lock_age command=$lock_command"
+    rm -f "$DEPLOY_LOCK_PATH" 2>/dev/null || true
+    log "[watchdog] stale deploy lock removed"
+    return 0
+  fi
+
+  log "[watchdog] deploy lock active, skip compose recovery pid=$lock_pid age_seconds=$lock_age command=$lock_command"
+  return 1
 }
 
 release_lock() {
@@ -198,11 +264,16 @@ compose_up() {
     return 1
   }
 
-  log "Running docker compose up -d"
-  if docker compose up -d >>"$LOG_FILE" 2>&1; then
-    log "docker compose up -d completed"
+  if [ "${KINGWAY_WATCHDOG_DRY_RUN:-0}" = "1" ]; then
+    log "[watchdog] dry-run: would run docker compose up -d --no-deps backend frontend"
+    return 0
+  fi
+
+  log "Running docker compose up -d --no-deps backend frontend"
+  if docker compose up -d --no-deps backend frontend >>"$LOG_FILE" 2>&1; then
+    log "docker compose up -d --no-deps backend frontend completed"
   else
-    log "docker compose up -d failed"
+    log "docker compose up -d --no-deps backend frontend failed"
     alert "KINGWAY Watchdog: docker compose up failed"
     return 1
   fi
@@ -273,12 +344,24 @@ main() {
 
   log "===== KINGWAY watchdog start ====="
 
-  if ensure_docker; then
-    compose_up || true
-    check_url "backend" "http://127.0.0.1:3000/health" "KINGWAY Watchdog: backend health failed" || true
-    check_url "frontend local" "http://127.0.0.1:5173/pos" "KINGWAY Watchdog: frontend 5173 failed" || true
-    check_url "frontend public" "https://pos.kingway.tw/pos" "KINGWAY Watchdog: public pos.kingway.tw failed" || true
+  recovery_allowed=1
+  if ! deploy_lock_allows_recovery; then
+    recovery_allowed=0
+    log "[watchdog] docker recovery skipped because deploy lock is active"
   fi
+
+  if [ "$recovery_allowed" -eq 1 ]; then
+    if [ "${KINGWAY_WATCHDOG_DRY_RUN:-0}" = "1" ]; then
+      log "[watchdog] dry-run: skip docker availability recovery"
+      compose_up || true
+    elif ensure_docker; then
+      compose_up || true
+    fi
+  fi
+
+  check_url "backend" "http://127.0.0.1:3000/health" "KINGWAY Watchdog: backend health failed" || true
+  check_url "frontend local" "http://127.0.0.1:5173/pos" "KINGWAY Watchdog: frontend 5173 failed" || true
+  check_url "frontend public" "https://pos.kingway.tw/pos" "KINGWAY Watchdog: public pos.kingway.tw failed" || true
 
   check_disk
   log "===== KINGWAY watchdog end ====="
