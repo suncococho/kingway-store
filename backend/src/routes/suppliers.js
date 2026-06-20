@@ -6,6 +6,7 @@ const { authenticate, authorize, requireStoreScope, requireStoreRole } = require
 const { requireStoreFeature } = require("../middleware/storeFeature");
 const { resolveStoreLineCredentials } = require("../services/storeLineSettingsService");
 const { sendLineMessage } = require("../utils/line");
+const { loadCompanyMembership } = require("../middleware/companyAuth");
 
 const router = express.Router();
 
@@ -226,6 +227,8 @@ async function notifySupplierRequestLine({ requestId, requestType, supplierName,
 
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]), requireStoreFeature("suppliers_enabled"));
 const requireStoreAdminRole = requireStoreRole(["owner", "admin"]);
+const COMPANY_SUPPLIER_WRITE_ROLES = new Set(["company_owner", "hq_admin", "inventory_manager"]);
+const SUPPLIER_OWNER_TYPES = new Set(["STORE", "COMPANY", "PLATFORM"]);
 
 function normalizeSupplierPayload(body = {}) {
   return {
@@ -254,43 +257,171 @@ function normalizeSupplierPricePayload(body = {}) {
   };
 }
 
-async function fetchSupplierById(id, storeId, connection = pool) {
+function normalizeOwnerType(value, fallback = "STORE") {
+  const normalized = String(value || fallback).trim().toUpperCase();
+  return SUPPLIER_OWNER_TYPES.has(normalized) ? normalized : fallback;
+}
+
+function isPlatformAdmin(req) {
+  return String(req.user?.role || "").trim().toUpperCase() === "PLATFORM_ADMIN";
+}
+
+async function resolveSupplierScopeContext(req, connection = pool) {
+  const storeId = Number(req.storeId || req.user?.storeId || 0);
+  const [companyRows] = await connection.query(
+    `
+      SELECT
+        cs.company_id AS companyId,
+        cs.store_id AS storeId,
+        cs.relationship_type AS relationshipType,
+        cm.role AS companyRole
+      FROM company_stores cs
+      LEFT JOIN company_memberships cm
+        ON cm.company_id = cs.company_id
+       AND cm.staff_user_id = ?
+       AND cm.status = 'ACTIVE'
+      WHERE cs.status = 'ACTIVE'
+        AND (
+          cs.store_id = ?
+          OR cm.id IS NOT NULL
+        )
+    `,
+    [req.user?.id || 0, storeId]
+  );
+  const companyIds = [...new Set(companyRows.map((row) => Number(row.companyId)).filter(Boolean))];
+  const writableCompanyIds = [...new Set(companyRows
+    .filter((row) => COMPANY_SUPPLIER_WRITE_ROLES.has(row.companyRole))
+    .map((row) => Number(row.companyId))
+    .filter(Boolean))];
+  const companyStoreIdsByCompany = {};
+  if (companyIds.length) {
+    const [storeRows] = await connection.query(
+      `
+        SELECT company_id AS companyId, store_id AS storeId
+        FROM company_stores
+        WHERE status = 'ACTIVE'
+          AND company_id IN (${companyIds.map(() => "?").join(",")})
+      `,
+      companyIds
+    );
+    for (const row of storeRows) {
+      const companyId = Number(row.companyId);
+      if (!companyStoreIdsByCompany[companyId]) {
+        companyStoreIdsByCompany[companyId] = [];
+      }
+      companyStoreIdsByCompany[companyId].push(Number(row.storeId));
+    }
+  }
+  return {
+    storeId,
+    companyIds,
+    writableCompanyIds,
+    companyStoreIdsByCompany,
+    platformAdmin: isPlatformAdmin(req)
+  };
+}
+
+function supplierOwnerSelectSql(alias = "s") {
+  return `
+    ${alias}.owner_type AS ownerType,
+    ${alias}.owner_store_id AS ownerStoreId,
+    ${alias}.owner_company_id AS ownerCompanyId,
+    ${alias}.visibility
+  `;
+}
+
+function mapSupplier(row, context) {
+  const ownerType = row.ownerType || "STORE";
+  const canEdit =
+    context.platformAdmin ||
+    (ownerType === "STORE" && Number(row.ownerStoreId || row.storeId) === Number(context.storeId)) ||
+    (ownerType === "COMPANY" && context.writableCompanyIds.includes(Number(row.ownerCompanyId)));
+  return {
+    ...row,
+    ownerType,
+    ownerStoreId: row.ownerStoreId === null || row.ownerStoreId === undefined ? null : Number(row.ownerStoreId),
+    ownerCompanyId: row.ownerCompanyId === null || row.ownerCompanyId === undefined ? null : Number(row.ownerCompanyId),
+    visibility: row.visibility || "PRIVATE",
+    scopeLabel: ownerType === "COMPANY" ? "公司" : ownerType === "PLATFORM" ? "平台" : "本店",
+    canEdit,
+    canDelete: canEdit
+  };
+}
+
+function buildSupplierAccessWhere(context, requestedScope = "all", includeAlias = true) {
+  const alias = includeAlias ? "s." : "";
+  const clauses = [];
+  const params = [];
+  const scope = String(requestedScope || "all").trim().toLowerCase();
+
+  if ((scope === "all" || scope === "store") && context.storeId) {
+    clauses.push(`(${alias}owner_type = 'STORE' AND ${alias}owner_store_id = ?)`);
+    params.push(context.storeId);
+  }
+  if ((scope === "all" || scope === "company") && context.companyIds.length) {
+    clauses.push(`(${alias}owner_type = 'COMPANY' AND ${alias}owner_company_id IN (${context.companyIds.map(() => "?").join(",")}))`);
+    params.push(...context.companyIds);
+  }
+  if ((scope === "all" || scope === "platform") && context.platformAdmin) {
+    clauses.push(`${alias}owner_type = 'PLATFORM'`);
+  }
+
+  if (!clauses.length) {
+    return { where: "1 = 0", params: [] };
+  }
+  return { where: `(${clauses.join(" OR ")})`, params };
+}
+
+async function fetchSupplierById(id, contextOrStoreId, connection = pool) {
+  const context = typeof contextOrStoreId === "object"
+    ? contextOrStoreId
+    : { storeId: Number(contextOrStoreId || 0), companyIds: [], writableCompanyIds: [], platformAdmin: false };
+  const access = buildSupplierAccessWhere(context, "all");
   const [rows] = await connection.query(
     `
       SELECT
-        id,
-        store_id AS storeId,
-        name,
-        contact_name AS contactName,
-        phone,
-        line_contact AS lineContact,
-        email,
-        address,
-        tax_id AS taxId,
-        note,
-        status,
-        is_active AS isActive,
-        deleted_at AS deletedAt,
-        created_at AS createdAt,
-        updated_at AS updatedAt
-      FROM suppliers
-      WHERE id = ?
-        AND store_id = ?
+        s.id,
+        s.store_id AS storeId,
+        ${supplierOwnerSelectSql("s")},
+        s.name,
+        s.contact_name AS contactName,
+        s.phone,
+        s.line_contact AS lineContact,
+        s.email,
+        s.address,
+        s.tax_id AS taxId,
+        s.note,
+        s.status,
+        s.is_active AS isActive,
+        s.deleted_at AS deletedAt,
+        s.created_at AS createdAt,
+        s.updated_at AS updatedAt
+      FROM suppliers s
+      WHERE s.id = ?
+        AND ${access.where}
       LIMIT 1
     `,
-    [id, storeId]
+    [id, ...access.params]
   );
-  return rows[0] || null;
+  return rows[0] ? mapSupplier(rows[0], context) : null;
 }
 
-async function assertSupplierExists(id, storeId, connection = pool) {
-  const supplier = await fetchSupplierById(id, storeId, connection);
+async function assertSupplierExists(id, context, connection = pool) {
+  const supplier = await fetchSupplierById(id, context, connection);
   if (!supplier) {
     const error = new Error("找不到供應商");
     error.statusCode = 404;
     throw error;
   }
   return supplier;
+}
+
+function assertSupplierWritable(supplier, context) {
+  if (!supplier?.canEdit) {
+    const error = new Error("沒有供應商管理權限");
+    error.statusCode = 403;
+    throw error;
+  }
 }
 
 async function assertProductInStore(productId, storeId, connection = pool) {
@@ -313,37 +444,87 @@ async function assertProductInStore(productId, storeId, connection = pool) {
   return rows[0];
 }
 
+async function assertProductAllowedForSupplier(productId, supplier, context, connection = pool) {
+  const [rows] = await connection.query(
+    `
+      SELECT id, store_id AS storeId, sku, name, category, cost_price AS costPrice
+      FROM products
+      WHERE id = ?
+        AND deleted_at IS NULL
+      LIMIT 1
+    `,
+    [productId]
+  );
+  const product = rows[0];
+  if (!product) {
+    const error = new Error("找不到商品");
+    error.statusCode = 404;
+    throw error;
+  }
+  if (supplier.ownerType === "STORE") {
+    if (Number(product.storeId) !== Number(supplier.ownerStoreId || supplier.storeId)) {
+      const error = new Error("STORE 供應商只能設定本店商品供應價");
+      error.statusCode = 403;
+      throw error;
+    }
+    return product;
+  }
+  if (supplier.ownerType === "COMPANY") {
+    if (!context.writableCompanyIds.includes(Number(supplier.ownerCompanyId))) {
+      const error = new Error("公司供應商供應價需由本部權限管理");
+      error.statusCode = 403;
+      throw error;
+    }
+    const storeIds = context.companyStoreIdsByCompany[Number(supplier.ownerCompanyId)] || [];
+    if (!storeIds.includes(Number(product.storeId))) {
+      const error = new Error("公司供應商只能設定公司所屬門市商品供應價");
+      error.statusCode = 403;
+      throw error;
+    }
+    return product;
+  }
+  if (!context.platformAdmin) {
+    const error = new Error("平台供應商暫不開放管理");
+    error.statusCode = 403;
+    throw error;
+  }
+  return product;
+}
+
 router.get("/", async (req, res, next) => {
   try {
-    const storeId = req.storeId;
+    const context = await resolveSupplierScopeContext(req);
     const includeInactive = String(req.query.includeInactive || "").toLowerCase() === "true";
+    const scope = String(req.query.scope || "all").trim().toLowerCase();
     const whereInactive = includeInactive ? "" : "AND is_active = 1 AND deleted_at IS NULL";
+    const access = buildSupplierAccessWhere(context, scope);
     const [rows] = await pool.query(
       `
         SELECT
-          id,
-          store_id AS storeId,
-          name,
-          contact_name AS contactName,
-          phone,
-          line_contact AS lineContact,
-          email,
-          address,
-          tax_id AS taxId,
-          note,
-          status,
-          is_active AS isActive,
-          deleted_at AS deletedAt,
-          created_at AS createdAt,
-          updated_at AS updatedAt
-        FROM suppliers
-        WHERE store_id = ?
+          s.id,
+          s.store_id AS storeId,
+          ${supplierOwnerSelectSql("s")},
+          s.name,
+          s.contact_name AS contactName,
+          s.phone,
+          s.line_contact AS lineContact,
+          s.email,
+          s.address,
+          s.tax_id AS taxId,
+          s.note,
+          s.status,
+          s.is_active AS isActive,
+          s.deleted_at AS deletedAt,
+          s.created_at AS createdAt,
+          s.updated_at AS updatedAt
+        FROM suppliers s
+        WHERE ${access.where}
           ${whereInactive}
-        ORDER BY is_active DESC, name ASC
+        ORDER BY s.is_active DESC, FIELD(s.owner_type, 'STORE','COMPANY','PLATFORM'), s.name ASC
       `,
-      [storeId]
+      access.params
     );
-    return res.json(rows);
+    return res.json(rows.map((row) => mapSupplier(row, context)));
   } catch (error) {
     return next(error);
   }
@@ -351,16 +532,46 @@ router.get("/", async (req, res, next) => {
 
 router.post("/", requireStoreAdminRole, async (req, res, next) => {
   try {
-    const storeId = req.storeId;
+    const context = await resolveSupplierScopeContext(req);
     const payload = normalizeSupplierPayload(req.body);
+    const ownerType = normalizeOwnerType(req.body?.ownerType || req.body?.owner_type || "STORE");
     if (!payload.name) {
       return res.status(400).json({ message: "請輸入供應商名稱" });
+    }
+    let ownerStoreId = Number(req.body?.ownerStoreId || req.body?.owner_store_id || context.storeId || 0) || null;
+    let ownerCompanyId = Number(req.body?.ownerCompanyId || req.body?.owner_company_id || 0) || null;
+    let recordStoreId = context.storeId;
+    let visibility = "PRIVATE";
+    if (ownerType === "STORE") {
+      if (Number(ownerStoreId) !== Number(context.storeId)) {
+        return res.status(403).json({ message: "只能建立本店供應商" });
+      }
+    } else if (ownerType === "COMPANY") {
+      if (!ownerCompanyId && context.writableCompanyIds.length === 1) {
+        ownerCompanyId = context.writableCompanyIds[0];
+      }
+      if (!ownerCompanyId || !context.writableCompanyIds.includes(Number(ownerCompanyId))) {
+        return res.status(403).json({ message: "沒有公司供應商管理權限" });
+      }
+      ownerStoreId = null;
+      visibility = "COMPANY_VISIBLE";
+    } else if (ownerType === "PLATFORM") {
+      if (!context.platformAdmin) {
+        return res.status(403).json({ message: "平台供應商暫不開放" });
+      }
+      ownerStoreId = null;
+      ownerCompanyId = null;
+      visibility = "PLATFORM_VISIBLE";
     }
 
     const [result] = await pool.query(
       `
         INSERT INTO suppliers (
           store_id,
+          owner_type,
+          owner_store_id,
+          owner_company_id,
+          visibility,
           name,
           contact_name,
           phone,
@@ -372,10 +583,14 @@ router.post("/", requireStoreAdminRole, async (req, res, next) => {
           status,
           is_active
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
-        storeId,
+        recordStoreId,
+        ownerType,
+        ownerStoreId,
+        ownerCompanyId,
+        visibility,
         payload.name,
         payload.contactName || null,
         payload.phone || null,
@@ -389,7 +604,7 @@ router.post("/", requireStoreAdminRole, async (req, res, next) => {
       ]
     );
 
-    const supplier = await fetchSupplierById(result.insertId, storeId);
+    const supplier = await fetchSupplierById(result.insertId, context);
     return res.status(201).json(supplier);
   } catch (error) {
     if (error?.code === "ER_DUP_ENTRY") {
@@ -401,7 +616,7 @@ router.post("/", requireStoreAdminRole, async (req, res, next) => {
 
 router.patch("/:id", requireStoreAdminRole, async (req, res, next) => {
   try {
-    const storeId = req.storeId;
+    const context = await resolveSupplierScopeContext(req);
     const supplierId = Number(req.params.id);
     const payload = normalizeSupplierPayload(req.body);
     if (!supplierId) {
@@ -411,7 +626,8 @@ router.patch("/:id", requireStoreAdminRole, async (req, res, next) => {
       return res.status(400).json({ message: "請輸入供應商名稱" });
     }
 
-    await assertSupplierExists(supplierId, storeId);
+    const supplier = await assertSupplierExists(supplierId, context);
+    assertSupplierWritable(supplier, context);
     await pool.query(
       `
         UPDATE suppliers
@@ -428,7 +644,6 @@ router.patch("/:id", requireStoreAdminRole, async (req, res, next) => {
           is_active = ?,
           deleted_at = CASE WHEN ? = 'ACTIVE' THEN NULL ELSE deleted_at END
         WHERE id = ?
-          AND store_id = ?
       `,
       [
         payload.name,
@@ -442,12 +657,11 @@ router.patch("/:id", requireStoreAdminRole, async (req, res, next) => {
         payload.status,
         payload.status === "ACTIVE" ? 1 : 0,
         payload.status,
-        supplierId,
-        storeId
+        supplierId
       ]
     );
 
-    return res.json(await fetchSupplierById(supplierId, storeId));
+    return res.json(await fetchSupplierById(supplierId, context));
   } catch (error) {
     if (error?.code === "ER_DUP_ENTRY") {
       return res.status(409).json({ message: "同門市已有相同供應商名稱" });
@@ -458,13 +672,14 @@ router.patch("/:id", requireStoreAdminRole, async (req, res, next) => {
 
 router.delete("/:id", requireStoreAdminRole, async (req, res, next) => {
   try {
-    const storeId = req.storeId;
+    const context = await resolveSupplierScopeContext(req);
     const supplierId = Number(req.params.id);
     if (!supplierId) {
       return res.status(400).json({ message: "請提供有效供應商" });
     }
 
-    await assertSupplierExists(supplierId, storeId);
+    const supplier = await assertSupplierExists(supplierId, context);
+    assertSupplierWritable(supplier, context);
     await pool.query(
       `
         UPDATE suppliers
@@ -473,12 +688,11 @@ router.delete("/:id", requireStoreAdminRole, async (req, res, next) => {
             deleted_at = COALESCE(deleted_at, NOW()),
             deleted_by = ?
         WHERE id = ?
-          AND store_id = ?
       `,
-      [req.user?.id || null, supplierId, storeId]
+      [req.user?.id || null, supplierId]
     );
 
-    return res.json(await fetchSupplierById(supplierId, storeId));
+    return res.json(await fetchSupplierById(supplierId, context));
   } catch (error) {
     return next(error);
   }
@@ -486,9 +700,15 @@ router.delete("/:id", requireStoreAdminRole, async (req, res, next) => {
 
 router.get("/:id/product-prices", async (req, res, next) => {
   try {
-    const storeId = req.storeId;
+    const context = await resolveSupplierScopeContext(req);
     const supplierId = Number(req.params.id);
-    await assertSupplierExists(supplierId, storeId);
+    const supplier = await assertSupplierExists(supplierId, context);
+    const storeIds = supplier.ownerType === "COMPANY"
+      ? (context.companyStoreIdsByCompany[Number(supplier.ownerCompanyId)] || [])
+      : [Number(supplier.ownerStoreId || supplier.storeId)];
+    if (!storeIds.length) {
+      return res.json([]);
+    }
 
     const [rows] = await pool.query(
       `
@@ -513,11 +733,11 @@ router.get("/:id/product-prices", async (req, res, next) => {
         FROM supplier_product_prices spp
         INNER JOIN products p ON p.id = spp.product_id
           AND p.store_id = spp.store_id
-        WHERE spp.store_id = ?
-          AND spp.supplier_id = ?
+        WHERE spp.supplier_id = ?
+          AND spp.store_id IN (${storeIds.map(() => "?").join(",")})
         ORDER BY spp.is_active DESC, p.sku ASC
       `,
-      [storeId, supplierId]
+      [supplierId, ...storeIds]
     );
 
     return res.json(rows);
@@ -528,15 +748,16 @@ router.get("/:id/product-prices", async (req, res, next) => {
 
 router.post("/:id/product-prices", requireStoreAdminRole, async (req, res, next) => {
   try {
-    const storeId = req.storeId;
+    const context = await resolveSupplierScopeContext(req);
     const supplierId = Number(req.params.id);
     const payload = normalizeSupplierPricePayload(req.body);
     if (!payload.productId) {
       return res.status(400).json({ message: "請選擇商品" });
     }
 
-    await assertSupplierExists(supplierId, storeId);
-    await assertProductInStore(payload.productId, storeId);
+    const supplier = await assertSupplierExists(supplierId, context);
+    assertSupplierWritable(supplier, context);
+    const product = await assertProductAllowedForSupplier(payload.productId, supplier, context);
     const [result] = await pool.query(
       `
         INSERT INTO supplier_product_prices (
@@ -552,7 +773,7 @@ router.post("/:id/product-prices", requireStoreAdminRole, async (req, res, next)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
-        storeId,
+        product.storeId,
         supplierId,
         payload.productId,
         payload.supplierSku || null,
@@ -574,26 +795,27 @@ router.post("/:id/product-prices", requireStoreAdminRole, async (req, res, next)
 
 router.patch("/:id/product-prices/:priceId", requireStoreAdminRole, async (req, res, next) => {
   try {
-    const storeId = req.storeId;
+    const context = await resolveSupplierScopeContext(req);
     const supplierId = Number(req.params.id);
     const priceId = Number(req.params.priceId);
     const payload = normalizeSupplierPricePayload(req.body);
 
-    await assertSupplierExists(supplierId, storeId);
+    const supplier = await assertSupplierExists(supplierId, context);
+    assertSupplierWritable(supplier, context);
     const [rows] = await pool.query(
       `
-        SELECT id, product_id AS productId
+        SELECT id, product_id AS productId, store_id AS storeId
         FROM supplier_product_prices
         WHERE id = ?
           AND supplier_id = ?
-          AND store_id = ?
         LIMIT 1
       `,
-      [priceId, supplierId, storeId]
+      [priceId, supplierId]
     );
     if (!rows[0]) {
       return res.status(404).json({ message: "找不到商品供應價" });
     }
+    await assertProductAllowedForSupplier(rows[0].productId, supplier, context);
 
     await pool.query(
       `
@@ -605,7 +827,6 @@ router.patch("/:id/product-prices/:priceId", requireStoreAdminRole, async (req, 
             is_active = ?
         WHERE id = ?
           AND supplier_id = ?
-          AND store_id = ?
       `,
       [
         payload.supplierSku || null,
@@ -614,8 +835,7 @@ router.patch("/:id/product-prices/:priceId", requireStoreAdminRole, async (req, 
         payload.note || null,
         payload.isActive,
         priceId,
-        supplierId,
-        storeId
+        supplierId
       ]
     );
 
@@ -627,19 +847,19 @@ router.patch("/:id/product-prices/:priceId", requireStoreAdminRole, async (req, 
 
 router.delete("/:id/product-prices/:priceId", requireStoreAdminRole, async (req, res, next) => {
   try {
-    const storeId = req.storeId;
+    const context = await resolveSupplierScopeContext(req);
     const supplierId = Number(req.params.id);
     const priceId = Number(req.params.priceId);
-    await assertSupplierExists(supplierId, storeId);
+    const supplier = await assertSupplierExists(supplierId, context);
+    assertSupplierWritable(supplier, context);
     const [result] = await pool.query(
       `
         UPDATE supplier_product_prices
         SET is_active = 0
         WHERE id = ?
           AND supplier_id = ?
-          AND store_id = ?
       `,
-      [priceId, supplierId, storeId]
+      [priceId, supplierId]
     );
     if (!result.affectedRows) {
       return res.status(404).json({ message: "找不到商品供應價" });

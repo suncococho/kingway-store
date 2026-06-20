@@ -6,6 +6,7 @@ import { apiRequest } from "../lib/api";
 
 const SUPPLIER_EMPTY_FORM = {
   name: "",
+  ownerType: "STORE",
   contactName: "",
   phone: "",
   lineContact: "",
@@ -66,6 +67,20 @@ function getStatusTone(status) {
   return "info";
 }
 
+function getScopeLabel(value) {
+  const normalized = String(value || "STORE").trim().toUpperCase();
+  if (normalized === "COMPANY") return "公司";
+  if (normalized === "PLATFORM") return "平台";
+  return "本店";
+}
+
+function getScopeTone(value) {
+  const normalized = String(value || "STORE").trim().toUpperCase();
+  if (normalized === "COMPANY") return "info";
+  if (normalized === "PLATFORM") return "warning";
+  return "success";
+}
+
 function getPendingQuantity(row) {
   if (normalizeRequestType(row.requestType) !== "PURCHASE_ORDER") return 0;
   return Math.max(toNumber(row.quantity) - toNumber(row.receivedQuantity), 0);
@@ -78,6 +93,7 @@ function getProductSupplierName(product) {
 function buildSupplierPayload(form) {
   return {
     name: form.name.trim(),
+    ownerType: form.ownerType || "STORE",
     contactName: form.contactName.trim(),
     phone: form.phone.trim(),
     lineContact: form.lineContact.trim(),
@@ -102,6 +118,7 @@ function buildPricePayload(form) {
 
 export default function SuppliersPage() {
   const [activeTab, setActiveTab] = useState("suppliers");
+  const [supplierScope, setSupplierScope] = useState("all");
   const [rows, setRows] = useState([]);
   const [monthly, setMonthly] = useState([]);
   const [products, setProducts] = useState([]);
@@ -136,13 +153,16 @@ export default function SuppliersPage() {
         apiRequest("/suppliers/requests"),
         apiRequest("/suppliers/monthly"),
         apiRequest("/products"),
-        apiRequest("/suppliers?includeInactive=true")
+        apiRequest(`/suppliers?includeInactive=true&scope=${encodeURIComponent(supplierScope)}`)
       ]);
       setRows(nextRows);
       setMonthly(nextMonthly);
       setProducts(nextProducts);
       setSuppliers(nextSuppliers);
-      if (!selectedSupplierId && nextSuppliers.find((supplier) => supplier.isActive)) {
+      if (selectedSupplierId && !nextSuppliers.some((supplier) => String(supplier.id) === String(selectedSupplierId))) {
+        setSelectedSupplierId("");
+        setSupplierPrices([]);
+      } else if (!selectedSupplierId && nextSuppliers.find((supplier) => supplier.isActive)) {
         setSelectedSupplierId(String(nextSuppliers.find((supplier) => supplier.isActive).id));
       }
     } catch (requestError) {
@@ -178,7 +198,7 @@ export default function SuppliersPage() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [supplierScope]);
 
   useEffect(() => {
     loadSupplierPrices(selectedSupplierId);
@@ -342,6 +362,8 @@ export default function SuppliersPage() {
 
   const selectedProduct = products.find((product) => product.sku === form.sku);
   const selectedPriceProduct = products.find((product) => Number(product.id) === Number(priceForm.productId));
+  const selectedSupplier = suppliers.find((supplier) => String(supplier.id) === String(selectedSupplierId));
+  const canEditSelectedSupplier = selectedSupplier ? Boolean(selectedSupplier.canEdit) : false;
 
   function resetSupplierForm() {
     setEditingSupplierId(null);
@@ -352,6 +374,7 @@ export default function SuppliersPage() {
     setEditingSupplierId(supplier.id);
     setSupplierForm({
       name: supplier.name || "",
+      ownerType: supplier.ownerType || "STORE",
       contactName: supplier.contactName || "",
       phone: supplier.phone || "",
       lineContact: supplier.lineContact || "",
@@ -488,6 +511,7 @@ export default function SuppliersPage() {
 
   const supplierColumns = [
     { key: "name", label: "供應商名稱" },
+    { key: "ownerType", label: "範圍", render: (row) => <StatusBadge tone={getScopeTone(row.ownerType)}>{row.scopeLabel || getScopeLabel(row.ownerType)}</StatusBadge> },
     { key: "contactName", label: "聯絡人", render: (row) => row.contactName || "-" },
     { key: "phone", label: "電話", render: (row) => row.phone || "-" },
     { key: "lineContact", label: "LINE", render: (row) => row.lineContact || "-" },
@@ -499,8 +523,8 @@ export default function SuppliersPage() {
       label: "操作",
       render: (row) => (
         <div className="action-row compact-actions">
-          <button type="button" className="secondary-button" onClick={() => editSupplier(row)}>編輯</button>
-          {row.isActive ? <button type="button" className="secondary-button" onClick={() => deactivateSupplier(row)} disabled={isProcessing}>停用</button> : null}
+          {row.canEdit ? <button type="button" className="secondary-button" onClick={() => editSupplier(row)}>編輯</button> : <StatusBadge tone="neutral">唯讀</StatusBadge>}
+          {row.isActive && row.canDelete ? <button type="button" className="secondary-button" onClick={() => deactivateSupplier(row)} disabled={isProcessing}>停用</button> : null}
         </div>
       )
     }
@@ -519,8 +543,8 @@ export default function SuppliersPage() {
       label: "操作",
       render: (row) => (
         <div className="action-row compact-actions">
-          <button type="button" className="secondary-button" onClick={() => editPrice(row)}>編輯</button>
-          {row.isActive ? <button type="button" className="secondary-button" onClick={() => deactivatePrice(row)} disabled={isProcessing}>停用</button> : null}
+          {canEditSelectedSupplier ? <button type="button" className="secondary-button" onClick={() => editPrice(row)}>編輯</button> : <StatusBadge tone="neutral">唯讀</StatusBadge>}
+          {row.isActive && canEditSelectedSupplier ? <button type="button" className="secondary-button" onClick={() => deactivatePrice(row)} disabled={isProcessing}>停用</button> : null}
         </div>
       )
     }
@@ -596,6 +620,7 @@ export default function SuppliersPage() {
           <section className="content-card section-panel">
             <div className="section-header"><div><h2>{editingSupplierId ? "編輯供應商" : "新增供應商"}</h2><p className="muted-text">停用會保留歷史資料，不會刪除既有發注或退貨紀錄。</p></div></div>
             <div className="grid-form compact-grid">
+              <label className="form-field"><span>供應商範圍</span><select value={supplierForm.ownerType} onChange={(event) => setSupplierForm((current) => ({ ...current, ownerType: event.target.value }))} disabled={Boolean(editingSupplierId)}><option value="STORE">本店供應商</option><option value="COMPANY">公司供應商</option></select></label>
               <label className="form-field"><span>供應商名稱 *</span><input value={supplierForm.name} onChange={(event) => setSupplierForm((current) => ({ ...current, name: event.target.value }))} /></label>
               <label className="form-field"><span>聯絡人</span><input value={supplierForm.contactName} onChange={(event) => setSupplierForm((current) => ({ ...current, contactName: event.target.value }))} /></label>
               <label className="form-field"><span>電話</span><input value={supplierForm.phone} onChange={(event) => setSupplierForm((current) => ({ ...current, phone: event.target.value }))} /></label>
@@ -609,7 +634,12 @@ export default function SuppliersPage() {
             </div>
           </section>
           <section className="content-card section-panel">
-            <div className="section-header"><div><h2>供應商列表</h2><p className="muted-text">同一門市不可建立重複供應商名稱。</p></div><StatusBadge tone="info">{suppliers.length} 筆</StatusBadge></div>
+            <div className="section-header"><div><h2>供應商列表</h2><p className="muted-text">本店供應商可自行管理；公司供應商依本部權限管理。</p></div><StatusBadge tone="info">{suppliers.length} 筆</StatusBadge></div>
+            <div className="settings-tabs">
+              <button type="button" className={supplierScope === "store" ? "active" : ""} onClick={() => setSupplierScope("store")}>本店供應商</button>
+              <button type="button" className={supplierScope === "company" ? "active" : ""} onClick={() => setSupplierScope("company")}>公司供應商</button>
+              <button type="button" className={supplierScope === "all" ? "active" : ""} onClick={() => setSupplierScope("all")}>全部可用供應商</button>
+            </div>
             <DataTable columns={supplierColumns} rows={suppliers} emptyText="目前尚無供應商資料。" cardTitle={(row) => row.name} cardDescription={(row) => `${row.contactName || "未填聯絡人"} / ${row.phone || "未填電話"}`} cardBadges={(row) => <StatusBadge tone={getStatusTone(row.status)}>{getStatusLabel(row.status)}</StatusBadge>} />
           </section>
         </>
@@ -629,7 +659,8 @@ export default function SuppliersPage() {
               <label className="form-field form-field-wide"><span>備註</span><input value={priceForm.note} onChange={(event) => setPriceForm((current) => ({ ...current, note: event.target.value }))} /></label>
               {selectedPriceProduct ? <div className="field-item form-field-wide"><div className="field-label">已選擇商品</div><div className="field-value">{selectedPriceProduct.sku} / {selectedPriceProduct.name} / 目前商品原價 NT$ {toNumber(selectedPriceProduct.costPrice).toLocaleString()}</div></div> : null}
               {priceProductOptions.length ? <div className="stack-list form-field-wide">{priceProductOptions.map((product) => <button type="button" key={product.id} className="secondary-button" onClick={() => setPriceForm((current) => ({ ...current, productId: product.id, productSearch: `${product.sku} ${product.name}` }))}>{product.sku} / {product.name} / 商品原價 NT$ {toNumber(product.costPrice).toLocaleString()}</button>)}</div> : null}
-              <div className="action-row form-field-wide"><button type="button" className="primary-button" onClick={savePrice} disabled={isProcessing || !selectedSupplierId}>{pendingAction?.id === "supplier-price-save" ? "保存中..." : "保存商品供應價"}</button>{priceForm.id ? <button type="button" className="secondary-button" onClick={() => setPriceForm(PRICE_EMPTY_FORM)}>取消編輯</button> : null}</div>
+              {!canEditSelectedSupplier && selectedSupplier ? <div className="empty-state form-field-wide">此供應商為唯讀，不能修改商品供應價。</div> : null}
+              <div className="action-row form-field-wide"><button type="button" className="primary-button" onClick={savePrice} disabled={isProcessing || !selectedSupplierId || !canEditSelectedSupplier}>{pendingAction?.id === "supplier-price-save" ? "保存中..." : "保存商品供應價"}</button>{priceForm.id ? <button type="button" className="secondary-button" onClick={() => setPriceForm(PRICE_EMPTY_FORM)}>取消編輯</button> : null}</div>
             </div>
           </section>
           <section className="content-card section-panel">
