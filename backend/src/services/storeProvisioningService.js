@@ -14,6 +14,7 @@ const { normalizeSlug } = require("../utils/publicStoreResolver");
 const STORE_STATUS = "active";
 const DEFAULT_PLAN = "trial";
 const DEFAULT_OWNER_ROLE = "ADMIN";
+const STORE_STATUSES = new Set(["active", "inactive", "suspended"]);
 const OWNER_ROLES = new Set(["ADMIN", "MANAGER"]);
 const FEATURE_KEYS = [
   "pos_enabled",
@@ -134,6 +135,14 @@ function normalizePlan(value) {
   return plan;
 }
 
+function normalizeStoreStatus(value) {
+  const status = String(value || STORE_STATUS).trim().toLowerCase();
+  if (!STORE_STATUSES.has(status)) {
+    throw new ProvisioningError(400, "Invalid store status");
+  }
+  return status;
+}
+
 function generateTemporaryPassword() {
   return crypto.randomBytes(12).toString("base64url");
 }
@@ -189,7 +198,7 @@ async function insertStore(connection, payload, hasSlugColumn) {
         INSERT INTO stores (code, name, slug, status, plan)
         VALUES (?, ?, ?, ?, ?)
       `,
-      [payload.code, payload.name, payload.slug, STORE_STATUS, payload.plan]
+      [payload.code, payload.name, payload.slug, payload.status || STORE_STATUS, payload.plan]
     );
     return result.insertId;
   }
@@ -199,7 +208,7 @@ async function insertStore(connection, payload, hasSlugColumn) {
       INSERT INTO stores (code, name, status, plan)
       VALUES (?, ?, ?, ?)
     `,
-    [payload.code, payload.name, STORE_STATUS, payload.plan]
+    [payload.code, payload.name, payload.status || STORE_STATUS, payload.plan]
   );
   return result.insertId;
 }
@@ -326,13 +335,14 @@ function sanitizeStoreResponse(store) {
   };
 }
 
-async function provisionStore(input, actor = null) {
+async function provisionStoreWithConnection(connection, input, actor = null) {
   const code = normalizeCode(input?.code);
   const name = normalizeName(input?.name);
   const slug = normalizeRequestedSlug(input?.slug, code);
   const ownerUsername = normalizeUsername(input?.ownerUsername);
   const ownerRole = normalizeOwnerRole(input?.ownerRole);
   const plan = normalizePlan(input?.plan);
+  const status = normalizeStoreStatus(input?.status);
   const ownerName = normalizeOwnerName(input?.ownerName, name);
   const providedPassword = typeof input?.ownerPassword === "string" ? input.ownerPassword.trim() : "";
   const temporaryPassword = providedPassword || generateTemporaryPassword();
@@ -342,50 +352,54 @@ async function provisionStore(input, actor = null) {
 
   const passwordHash = await hashPassword(temporaryPassword);
 
+  const hasSlugColumn = await storesTableHasSlug(connection);
+  await assertStoreCodeAvailable(connection, code);
+  await assertStoreSlugAvailable(connection, slug, hasSlugColumn);
+  await assertOwnerUsernameAvailable(connection, ownerUsername);
+
+  const storeId = await insertStore(connection, { code, name, slug, status, plan }, hasSlugColumn);
+  await insertStoreFeatures(connection, storeId);
+  const productCategoriesPersisted = await insertDefaultProductCategories(connection, storeId);
+  const staffUserId = await insertOwner(connection, {
+    ownerUsername,
+    passwordHash,
+    ownerName,
+    ownerRole,
+    storeId
+  });
+  await insertOwnerMembership(connection, { storeId, staffUserId });
+  const profileSettingsPersisted = await insertStoreProfileSettings(connection, storeId, {
+    ...(input?.profileSettings && typeof input.profileSettings === "object" ? input.profileSettings : {}),
+    displayName: input?.profileSettings?.displayName || name
+  });
+
+  return {
+    actor: actor ? { id: actor.id, email: actor.email, role: actor.role } : null,
+    store: sanitizeStoreResponse({
+      id: storeId,
+      code,
+      name,
+      slug,
+      status,
+      plan
+    }),
+    owner: {
+      id: staffUserId,
+      username: ownerUsername,
+      role: ownerRole,
+      displayName: ownerName,
+      storeRole: "owner"
+    },
+    temporaryPassword: providedPassword ? null : temporaryPassword,
+    slugPersisted: hasSlugColumn,
+    profileSettingsPersisted,
+    productCategoriesPersisted
+  };
+}
+
+async function provisionStore(input, actor = null) {
   return withTransaction(async (connection) => {
-    const hasSlugColumn = await storesTableHasSlug(connection);
-    await assertStoreCodeAvailable(connection, code);
-    await assertStoreSlugAvailable(connection, slug, hasSlugColumn);
-    await assertOwnerUsernameAvailable(connection, ownerUsername);
-
-    const storeId = await insertStore(connection, { code, name, slug, plan }, hasSlugColumn);
-    await insertStoreFeatures(connection, storeId);
-    const productCategoriesPersisted = await insertDefaultProductCategories(connection, storeId);
-    const staffUserId = await insertOwner(connection, {
-      ownerUsername,
-      passwordHash,
-      ownerName,
-      ownerRole,
-      storeId
-    });
-    await insertOwnerMembership(connection, { storeId, staffUserId });
-    const profileSettingsPersisted = await insertStoreProfileSettings(connection, storeId, {
-      ...(input?.profileSettings && typeof input.profileSettings === "object" ? input.profileSettings : {}),
-      displayName: input?.profileSettings?.displayName || name
-    });
-
-    return {
-      actor: actor ? { id: actor.id, email: actor.email, role: actor.role } : null,
-      store: sanitizeStoreResponse({
-        id: storeId,
-        code,
-        name,
-        slug,
-        status: STORE_STATUS,
-        plan
-      }),
-      owner: {
-        id: staffUserId,
-        username: ownerUsername,
-        role: ownerRole,
-        displayName: ownerName,
-        storeRole: "owner"
-      },
-      temporaryPassword: providedPassword ? null : temporaryPassword,
-      slugPersisted: hasSlugColumn,
-      profileSettingsPersisted,
-      productCategoriesPersisted
-    };
+    return provisionStoreWithConnection(connection, input, actor);
   });
 }
 
@@ -395,5 +409,6 @@ module.exports = {
   PLAN_PRESET_KEYS,
   ProvisioningError,
   deriveSlugFromCode,
-  provisionStore
+  provisionStore,
+  provisionStoreWithConnection
 };

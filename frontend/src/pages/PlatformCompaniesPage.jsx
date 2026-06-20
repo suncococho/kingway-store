@@ -228,7 +228,12 @@ function PlatformCompaniesPage() {
           eyebrow="平台管理"
           title="Franchise Companies"
           description="此區只管理公司結構，不處理出貨、入庫或加盟店結算。"
-          actions={<Link to="/platform-admin" className="secondary-button">返回平台管理</Link>}
+          actions={(
+            <div className="compact-actions">
+              <Link to="/platform-admin/onboarding" className="primary-button">新增店家 / 公司</Link>
+              <Link to="/platform-admin" className="secondary-button">返回平台管理</Link>
+            </div>
+          )}
         />
         {loading ? <div className="loading-state">載入中...</div> : null}
         {error ? <div className="empty-state">{error}</div> : null}
@@ -263,6 +268,7 @@ function PlatformCompaniesPage() {
             title={selectedCompany.name}
             description="管理所屬門市與總部權限。本部出貨、門市入庫、加盟店結算尚未啟用。"
             badges={<StatusBadge tone={getStatusTone(selectedCompany.status)}>{selectedCompany.status === "ACTIVE" ? "啟用" : "停用"}</StatusBadge>}
+            actions={<Link to={`/platform-admin/onboarding?type=company-store&companyId=${selectedCompany.id}`} className="primary-button">新增門市</Link>}
           />
 
           <div className="two-column-grid">

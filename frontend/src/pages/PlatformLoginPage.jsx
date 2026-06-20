@@ -89,6 +89,8 @@ export function PlatformAdminPage() {
     <main className="page-content">
       <div className="compact-actions" style={{ marginBottom: 16 }}>
         <span className="secondary-button">{user?.displayName || user?.email || "平台管理員"}</span>
+        <button type="button" className="secondary-button" onClick={() => navigate("/platform-admin/onboarding")}>SaaS 開店設定</button>
+        <button type="button" className="secondary-button" onClick={() => navigate("/platform-admin/companies")}>公司 / 品牌</button>
         <button type="button" className="secondary-button" onClick={handleLogout}>登出</button>
       </div>
       <SaasAdminPage />
