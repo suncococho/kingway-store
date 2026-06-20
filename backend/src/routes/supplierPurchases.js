@@ -1,7 +1,7 @@
 const express = require("express");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
-const { requireStoreFeature } = require("../middleware/storeFeature");
+const { requireFeature } = require("../services/storeAccessService");
 
 const router = express.Router();
 
@@ -9,7 +9,7 @@ const COMPANY_WRITE_ROLES = new Set(["company_owner", "hq_admin", "inventory_man
 const HQ_STORE_ROLES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
 const OPEN_RECEIVE_STATUSES = new Set(["ORDERED", "PARTIALLY_RECEIVED"]);
 
-router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER", "INVENTORY"]), requireStoreFeature("suppliers_enabled"));
+router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER", "INVENTORY"]), requireFeature("supplier_purchases"));
 const requireStoreAdminRole = requireStoreRole(["owner", "admin"]);
 
 function createError(message, statusCode = 400) {

@@ -34,7 +34,10 @@ const EMPTY_INDEPENDENT = {
   ownerEmail: "",
   temporaryPassword: "",
   plan: "trial",
-  status: "active"
+  status: "active",
+  trialEndsAt: "",
+  paymentStatus: "NONE",
+  billingNote: ""
 };
 const EMPTY_FRANCHISE = {
   companyCode: "",
@@ -46,7 +49,10 @@ const EMPTY_FRANCHISE = {
   hqOwnerPhone: "",
   temporaryPassword: "",
   plan: "trial",
-  status: "active"
+  status: "active",
+  trialEndsAt: "",
+  paymentStatus: "NONE",
+  billingNote: ""
 };
 const EMPTY_COMPANY_STORE = {
   companyId: "",
@@ -59,8 +65,17 @@ const EMPTY_COMPANY_STORE = {
   ownerEmail: "",
   temporaryPassword: "",
   plan: "trial",
-  status: "active"
+  status: "active",
+  trialEndsAt: "",
+  paymentStatus: "NONE",
+  billingNote: ""
 };
+const PAYMENT_STATUS_OPTIONS = [
+  { value: "NONE", label: "未設定" },
+  { value: "UNPAID", label: "未付款" },
+  { value: "PAID", label: "已付款" },
+  { value: "PAST_DUE", label: "逾期" }
+];
 
 function isManageRole(role) {
   return ["PLATFORM_OWNER", "PLATFORM_ADMIN"].includes(String(role || "").toUpperCase());
@@ -252,6 +267,8 @@ function PlatformOnboardingPage() {
             <Field label="臨時密碼"><input name="temporaryPassword" type="password" value={independentForm.temporaryPassword} onChange={updateForm(setIndependentForm)} minLength={8} required /></Field>
             <Field label="方案"><select name="plan" value={independentForm.plan} onChange={updateForm(setIndependentForm)}>{PLAN_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
             <Field label="狀態"><select name="status" value={independentForm.status} onChange={updateForm(setIndependentForm)}>{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
+            <Field label="Trial 到期"><input name="trialEndsAt" type="datetime-local" value={independentForm.trialEndsAt} onChange={updateForm(setIndependentForm)} /></Field>
+            <Field label="付款狀態"><select name="paymentStatus" value={independentForm.paymentStatus} onChange={updateForm(setIndependentForm)}>{PAYMENT_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
             <button type="submit" className="primary-button inline-submit" disabled={saving}>{saving ? "建立中..." : "建立個人店家"}</button>
           </form>
         </section>
@@ -271,6 +288,8 @@ function PlatformOnboardingPage() {
             <Field label="臨時密碼"><input name="temporaryPassword" type="password" value={franchiseForm.temporaryPassword} onChange={updateForm(setFranchiseForm)} minLength={8} required /></Field>
             <Field label="方案"><select name="plan" value={franchiseForm.plan} onChange={updateForm(setFranchiseForm)}>{PLAN_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
             <Field label="狀態"><select name="status" value={franchiseForm.status} onChange={updateForm(setFranchiseForm)}>{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
+            <Field label="Trial 到期"><input name="trialEndsAt" type="datetime-local" value={franchiseForm.trialEndsAt} onChange={updateForm(setFranchiseForm)} /></Field>
+            <Field label="付款狀態"><select name="paymentStatus" value={franchiseForm.paymentStatus} onChange={updateForm(setFranchiseForm)}>{PAYMENT_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
             <button type="submit" className="primary-button inline-submit" disabled={saving}>{saving ? "建立中..." : "建立公司與 HQ"}</button>
           </form>
         </section>
@@ -296,6 +315,8 @@ function PlatformOnboardingPage() {
             <Field label="臨時密碼"><input name="temporaryPassword" type="password" value={companyStoreForm.temporaryPassword} onChange={updateForm(setCompanyStoreForm)} minLength={8} required /></Field>
             <Field label="方案"><select name="plan" value={companyStoreForm.plan} onChange={updateForm(setCompanyStoreForm)}>{PLAN_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
             <Field label="狀態"><select name="status" value={companyStoreForm.status} onChange={updateForm(setCompanyStoreForm)}>{STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
+            <Field label="Trial 到期"><input name="trialEndsAt" type="datetime-local" value={companyStoreForm.trialEndsAt} onChange={updateForm(setCompanyStoreForm)} /></Field>
+            <Field label="付款狀態"><select name="paymentStatus" value={companyStoreForm.paymentStatus} onChange={updateForm(setCompanyStoreForm)}>{PAYMENT_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
             <button type="submit" className="primary-button inline-submit" disabled={saving}>{saving ? "建立中..." : "建立公司門市"}</button>
           </form>
         </section>

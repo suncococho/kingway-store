@@ -3,7 +3,7 @@ const { sendInternalTelegram } = require("../services/telegramService");
 const { pool } = require("../db");
 const config = require("../config");
 const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
-const { requireStoreFeature } = require("../middleware/storeFeature");
+const { requireFeature } = require("../services/storeAccessService");
 const { resolveStoreLineCredentials } = require("../services/storeLineSettingsService");
 const { sendLineMessage } = require("../utils/line");
 const { loadCompanyMembership } = require("../middleware/companyAuth");
@@ -225,7 +225,7 @@ async function notifySupplierRequestLine({ requestId, requestType, supplierName,
   }
 }
 
-router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]), requireStoreFeature("suppliers_enabled"));
+router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]), requireFeature("suppliers"));
 const requireStoreAdminRole = requireStoreRole(["owner", "admin"]);
 const COMPANY_SUPPLIER_WRITE_ROLES = new Set(["company_owner", "hq_admin", "inventory_manager"]);
 const SUPPLIER_OWNER_TYPES = new Set(["STORE", "COMPANY", "PLATFORM"]);

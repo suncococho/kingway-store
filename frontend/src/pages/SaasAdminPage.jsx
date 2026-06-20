@@ -14,7 +14,8 @@ const PLAN_OPTIONS = [
   { value: "trial", label: "試用版" },
   { value: "single_store", label: "單店版" }
 ];
-const EDITABLE_PLAN_OPTIONS = PLAN_OPTIONS.filter((option) => ["free", "premium"].includes(option.value));
+const EDITABLE_PLAN_OPTIONS = PLAN_OPTIONS.filter((option) => ["free", "trial", "premium"].includes(option.value));
+const BILLING_PLAN_OPTIONS = PLAN_OPTIONS.filter((option) => option.value !== "ALL");
 const STATUS_OPTIONS = [
   { value: "ALL", label: "全部狀態" },
   { value: "active", label: "啟用" },
@@ -22,6 +23,20 @@ const STATUS_OPTIONS = [
   { value: "suspended", label: "暫停" }
 ];
 const EDITABLE_STATUS_OPTIONS = STATUS_OPTIONS.filter((option) => option.value !== "ALL");
+const PAYMENT_STATUS_OPTIONS = [
+  { value: "NONE", label: "未設定" },
+  { value: "UNPAID", label: "未付款" },
+  { value: "PAID", label: "已付款" },
+  { value: "PAST_DUE", label: "逾期" }
+];
+const DEFAULT_BILLING_FORM = {
+  plan: "trial",
+  status: "active",
+  trialEndsAt: "",
+  subscriptionEndsAt: "",
+  paymentStatus: "NONE",
+  billingNote: ""
+};
 const DEFAULT_CREATE_FORM = {
   code: "",
   name: "",
@@ -221,7 +236,15 @@ function getAuditPayload(log, field) {
   return log?.[field];
 }
 
-function renderActionButtons(store, onOpenSettings, onSelectStore, onImpersonate, onOpenAuditLog, onOpenOwnerPasswordReset) {
+function toDatetimeLocalValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function renderActionButtons(store, onOpenSettings, onSelectStore, onImpersonate, onOpenAuditLog, onOpenOwnerPasswordReset, onOpenBilling) {
   return (
     <div className="compact-actions">
       <button type="button" className="secondary-button" onClick={() => onSelectStore(store)}>
@@ -230,6 +253,11 @@ function renderActionButtons(store, onOpenSettings, onSelectStore, onImpersonate
       <button type="button" className="secondary-button" onClick={() => onOpenSettings(store)}>
         店家設定
       </button>
+      {onOpenBilling ? (
+        <button type="button" className="secondary-button" onClick={() => onOpenBilling(store)}>
+          方案 / 付款
+        </button>
+      ) : null}
       {onOpenAuditLog ? (
         <button type="button" className="secondary-button" onClick={() => onOpenAuditLog(store)}>
           變更紀錄
@@ -309,6 +337,14 @@ function SaasAdminPage() {
     store: null,
     newPassword: "",
     confirmPassword: "",
+    saving: false,
+    error: "",
+    success: ""
+  });
+  const [billingState, setBillingState] = useState({
+    open: false,
+    store: null,
+    form: DEFAULT_BILLING_FORM,
     saving: false,
     error: "",
     success: ""
@@ -542,6 +578,94 @@ function SaasAdminPage() {
       setStoreUpdateError(updateError.message || "更新店家資料失敗");
     } finally {
       setStoreSaving({ id: null, field: "" });
+    }
+  }
+
+  function openBillingModal(store) {
+    if (!store?.id || !canEditSettings) return;
+    setBillingState({
+      open: true,
+      store,
+      form: {
+        plan: String(store.plan || "trial").toLowerCase(),
+        status: String(store.status || "active").toLowerCase(),
+        trialEndsAt: toDatetimeLocalValue(store.trialEndsAt),
+        subscriptionEndsAt: toDatetimeLocalValue(store.subscriptionEndsAt),
+        paymentStatus: String(store.paymentStatus || "NONE").toUpperCase(),
+        billingNote: String(store.billingNote || "")
+      },
+      saving: false,
+      error: "",
+      success: ""
+    });
+  }
+
+  function closeBillingModal() {
+    if (billingState.saving) return;
+    setBillingState({
+      open: false,
+      store: null,
+      form: DEFAULT_BILLING_FORM,
+      saving: false,
+      error: "",
+      success: ""
+    });
+  }
+
+  function handleBillingChange(event) {
+    const { name, value } = event.target;
+    setBillingState((current) => ({
+      ...current,
+      form: { ...current.form, [name]: value },
+      error: "",
+      success: ""
+    }));
+  }
+
+  async function handleBillingSubmit(event) {
+    event.preventDefault();
+    const storeId = Number(billingState.store?.id || 0);
+    if (!storeId || !canEditSettings) return;
+    setBillingState((current) => ({ ...current, saving: true, error: "", success: "" }));
+    try {
+      await platformRequest(`/platform-admin/stores/${storeId}/billing`, {
+        method: "PUT",
+        body: JSON.stringify(billingState.form)
+      });
+      setBillingState((current) => ({ ...current, saving: false, success: "方案與付款狀態已更新。" }));
+      setStoreUpdateSuccess("方案與付款狀態已更新。");
+      await loadStores();
+    } catch (error) {
+      setBillingState((current) => ({
+        ...current,
+        saving: false,
+        error: error.message || "更新方案與付款狀態失敗"
+      }));
+    }
+  }
+
+  async function handleApplyBillingPreset(preset) {
+    const storeId = Number(billingState.store?.id || 0);
+    if (!storeId || !canEditSettings) return;
+    setBillingState((current) => ({ ...current, saving: true, error: "", success: "" }));
+    try {
+      await platformRequest(`/platform-admin/stores/${storeId}/feature-preset`, {
+        method: "PUT",
+        body: JSON.stringify({ preset })
+      });
+      setBillingState((current) => ({
+        ...current,
+        saving: false,
+        form: { ...current.form, plan: preset },
+        success: `${getPlanLabel(preset)} preset 已套用。`
+      }));
+      await loadStores();
+    } catch (error) {
+      setBillingState((current) => ({
+        ...current,
+        saving: false,
+        error: error.message || "套用功能 preset 失敗"
+      }));
     }
   }
 
@@ -934,6 +1058,19 @@ function SaasAdminPage() {
       )
     },
     {
+      key: "billing",
+      label: "付款 / 試用",
+      render: (row) => (
+        <div className="stack-meta">
+          <StatusBadge tone={String(row.paymentStatus || "NONE") === "PAID" ? "success" : String(row.paymentStatus || "NONE") === "PAST_DUE" ? "warning" : "neutral"}>
+            {PAYMENT_STATUS_OPTIONS.find((option) => option.value === String(row.paymentStatus || "NONE").toUpperCase())?.label || row.paymentStatus || "未設定"}
+          </StatusBadge>
+          <span>試用到期 {row.trialEndsAt ? formatAuditDate(row.trialEndsAt) : "-"}</span>
+          <span>訂閱到期 {row.subscriptionEndsAt ? formatAuditDate(row.subscriptionEndsAt) : "-"}</span>
+        </div>
+      )
+    },
+    {
       key: "owner",
       label: "Owner",
       render: (row) => row.owner ? (
@@ -970,7 +1107,8 @@ function SaasAdminPage() {
           handleSelectDetail,
           canImpersonate ? openImpersonationModal : null,
           handleOpenAuditLogs,
-          canResetOwnerPassword ? openOwnerPasswordResetModal : null
+          canResetOwnerPassword ? openOwnerPasswordResetModal : null,
+          canEditSettings ? openBillingModal : null
         )
     }
   ];
@@ -1176,7 +1314,8 @@ function SaasAdminPage() {
               handleSelectDetail,
               canImpersonate ? openImpersonationModal : null,
               handleOpenAuditLogs,
-              canResetOwnerPassword ? openOwnerPasswordResetModal : null
+              canResetOwnerPassword ? openOwnerPasswordResetModal : null,
+              canEditSettings ? openBillingModal : null
             )
           }
         />
@@ -1201,7 +1340,8 @@ function SaasAdminPage() {
               handleSelectDetail,
               canImpersonate ? openImpersonationModal : null,
               handleOpenAuditLogs,
-              canResetOwnerPassword ? openOwnerPasswordResetModal : null
+              canResetOwnerPassword ? openOwnerPasswordResetModal : null,
+              canEditSettings ? openBillingModal : null
             )}
           />
           <div className="admin-summary-grid">
@@ -1495,6 +1635,81 @@ function SaasAdminPage() {
           </article>
         </section>
       </div>
+
+      {billingState.open ? (
+        <div className="admin-modal-backdrop">
+          <section className="admin-modal">
+            <div className="admin-modal-header">
+              <h2>方案 / 付款設定</h2>
+              <button type="button" className="secondary-button" onClick={closeBillingModal} disabled={billingState.saving}>
+                關閉
+              </button>
+            </div>
+            <div className="admin-modal-body">
+              <div className="admin-summary-grid">
+                <article className="admin-summary-card">
+                  <div className="admin-summary-label">目標店家</div>
+                  <div className="admin-summary-value admin-summary-value-small">
+                    {billingState.store?.name || billingState.store?.code || "-"}
+                  </div>
+                  <div className="muted-text">ID：{billingState.store?.id || "-"}</div>
+                </article>
+                <article className="admin-summary-card">
+                  <div className="admin-summary-label">目前方案</div>
+                  <div className="admin-summary-value admin-summary-value-small">
+                    {getPlanLabel(billingState.store?.plan)} / {getStatusLabel(billingState.store?.status)}
+                  </div>
+                  <div className="muted-text">{billingState.store?.paymentStatus || "NONE"}</div>
+                </article>
+              </div>
+
+              {billingState.error ? <div className="error-banner">{billingState.error}</div> : null}
+              {billingState.success ? <div className="platform-store-settings-success">{billingState.success}</div> : null}
+
+              <form className="form-grid" onSubmit={handleBillingSubmit}>
+                <label className="form-field">
+                  <span>方案</span>
+                  <select name="plan" value={billingState.form.plan} onChange={handleBillingChange} disabled={billingState.saving}>
+                    {BILLING_PLAN_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+                <label className="form-field">
+                  <span>狀態</span>
+                  <select name="status" value={billingState.form.status} onChange={handleBillingChange} disabled={billingState.saving}>
+                    {EDITABLE_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+                <label className="form-field">
+                  <span>付款狀態</span>
+                  <select name="paymentStatus" value={billingState.form.paymentStatus} onChange={handleBillingChange} disabled={billingState.saving}>
+                    {PAYMENT_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+                <label className="form-field">
+                  <span>Trial 到期</span>
+                  <input name="trialEndsAt" type="datetime-local" value={billingState.form.trialEndsAt} onChange={handleBillingChange} disabled={billingState.saving} />
+                </label>
+                <label className="form-field">
+                  <span>訂閱到期</span>
+                  <input name="subscriptionEndsAt" type="datetime-local" value={billingState.form.subscriptionEndsAt} onChange={handleBillingChange} disabled={billingState.saving} />
+                </label>
+                <label className="form-field form-field-wide">
+                  <span>Billing note</span>
+                  <textarea name="billingNote" value={billingState.form.billingNote} onChange={handleBillingChange} disabled={billingState.saving} rows={3} />
+                </label>
+                <div className="compact-actions">
+                  <button type="submit" className="primary-button" disabled={billingState.saving}>
+                    {billingState.saving ? "儲存中..." : "儲存方案 / 付款"}
+                  </button>
+                  <button type="button" className="secondary-button" onClick={() => handleApplyBillingPreset("free")} disabled={billingState.saving}>Free preset</button>
+                  <button type="button" className="secondary-button" onClick={() => handleApplyBillingPreset("trial")} disabled={billingState.saving}>Trial preset</button>
+                  <button type="button" className="secondary-button" onClick={() => handleApplyBillingPreset("premium")} disabled={billingState.saving}>Premium preset</button>
+                </div>
+              </form>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {ownerPasswordResetState.open ? (
         <div className="admin-modal-backdrop">

@@ -22,7 +22,7 @@ const {
 } = require("../services/platformAuditService");
 
 const router = express.Router();
-const ALLOWED_STORE_PLANS = new Set(["free", "premium"]);
+const ALLOWED_STORE_PLANS = new Set(["free", "trial", "premium"]);
 const ALLOWED_STORE_STATUSES = new Set(["active", "inactive", "suspended"]);
 const IMPERSONATION_TTL_SECONDS = 2 * 60 * 60;
 const IMPERSONATION_TTL_TEXT = "2 小時";
@@ -250,6 +250,11 @@ function buildStoreResponse(row) {
     slug: deriveSlugFromCode(row.code),
     status: t(row.status, "unknown"),
     plan: t(row.plan, "unknown"),
+    trialEndsAt: row.trialEndsAt || row.trial_ends_at || null,
+    subscriptionEndsAt: row.subscriptionEndsAt || row.subscription_ends_at || null,
+    paymentStatus: t(row.paymentStatus || row.payment_status || "NONE"),
+    billingNote: t(row.billingNote || row.billing_note || ""),
+    lastPlanChangedAt: row.lastPlanChangedAt || row.last_plan_changed_at || null,
     owner,
     hasOwner: Boolean(owner),
     staffCount: n(row.staffCount),
@@ -309,6 +314,11 @@ async function getStore(storeId) {
         s.name,
         s.status,
         s.plan,
+        s.trial_ends_at AS trialEndsAt,
+        s.subscription_ends_at AS subscriptionEndsAt,
+        s.payment_status AS paymentStatus,
+        s.billing_note AS billingNote,
+        s.last_plan_changed_at AS lastPlanChangedAt,
         su.id AS ownerUserId,
         su.username AS ownerUsername,
         su.display_name AS ownerDisplayName,
@@ -568,7 +578,19 @@ function parseJson(value) {
 async function getStoreAuditSnapshot(storeId) {
   const [rows] = await pool.query(
     `
-      SELECT id, code, name, status, plan, created_at AS createdAt, updated_at AS updatedAt
+      SELECT
+        id,
+        code,
+        name,
+        status,
+        plan,
+        trial_ends_at AS trialEndsAt,
+        subscription_ends_at AS subscriptionEndsAt,
+        payment_status AS paymentStatus,
+        billing_note AS billingNote,
+        last_plan_changed_at AS lastPlanChangedAt,
+        created_at AS createdAt,
+        updated_at AS updatedAt
       FROM stores
       WHERE id = ?
       LIMIT 1
@@ -1407,7 +1429,7 @@ router.patch("/stores/:id", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADM
     if (Object.prototype.hasOwnProperty.call(body, "plan")) {
       const plan = t(body.plan).trim().toLowerCase();
       if (!ALLOWED_STORE_PLANS.has(plan)) {
-        return res.status(400).json({ message: "方案只能設定為免費版或進階版" });
+        return res.status(400).json({ message: "方案只能設定為免費版、試用版或進階版" });
       }
       updates.push("plan = ?");
       values.push(plan);
@@ -1460,6 +1482,11 @@ router.get("/stores", async (req, res, next) => {
         s.name,
         s.status,
         s.plan,
+        s.trial_ends_at AS trialEndsAt,
+        s.subscription_ends_at AS subscriptionEndsAt,
+        s.payment_status AS paymentStatus,
+        s.billing_note AS billingNote,
+        s.last_plan_changed_at AS lastPlanChangedAt,
         su.id AS ownerUserId,
         su.username AS ownerUsername,
         su.display_name AS ownerDisplayName,

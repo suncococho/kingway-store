@@ -6,12 +6,26 @@ import { platformRequest } from "../lib/platformAuth";
 import { getStoredUser } from "../lib/auth";
 import { useMenuPermissions } from "../hooks/useMenuPermissions";
 import { canAccessPath, getMenuKeyForPath } from "../lib/menuPermissions";
+import { useStoreAccess } from "../hooks/useStoreAccess";
+
+const PATH_FEATURE_MAP = {
+  "/suppliers": "suppliers",
+  "/store-transfers": "store_transfers",
+  "/inbound-transfers": "store_transfers",
+  "/company-store-settlements": "company_store_settlements",
+  "/headquarters": "headquarters"
+};
+
+function getFeatureForPath(pathname) {
+  return PATH_FEATURE_MAP[pathname] || null;
+}
 
 function ProtectedLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const user = getStoredUser();
   const { permissions: menuPermissions, loading: menuPermissionsLoading } = useMenuPermissions(user);
+  const { access: storeAccess } = useStoreAccess(user);
   const impersonationSession = useMemo(() => getImpersonationSession(), [location.pathname, location.search]);
 
   async function handleEndImpersonation() {
@@ -48,6 +62,9 @@ function ProtectedLayout() {
   const guardedMenuKey = getMenuKeyForPath(location.pathname);
   const isCheckingMenuPermission = Boolean(guardedMenuKey && menuPermissionsLoading);
   const hasMenuAccess = canAccessPath(location.pathname, menuPermissions, user);
+  const featureKey = getFeatureForPath(location.pathname);
+  const featureLocked = Boolean(featureKey && storeAccess?.lockedFeatures?.includes(featureKey));
+  const shouldShowAccessBanner = Boolean(storeAccess?.warningMessage);
 
   return (
     <div className={`app-shell ${isPosFullscreen ? "app-shell-pos-fullscreen" : ""}`}>
@@ -69,6 +86,14 @@ function ProtectedLayout() {
             </button>
           </div>
         ) : null}
+        {shouldShowAccessBanner ? (
+          <div className="impersonation-banner">
+            <div>
+              <strong>{storeAccess.effectiveStatus === "TRIAL_EXPIRED" ? "試用已到期" : storeAccess.effectiveStatus}</strong>
+              <div className="muted-text">{storeAccess.warningMessage}</div>
+            </div>
+          </div>
+        ) : null}
         {isCheckingMenuPermission ? (
           <section className="content-card section-panel">
             <div className="empty-state">權限確認中...</div>
@@ -78,6 +103,13 @@ function ProtectedLayout() {
             <div className="empty-state">
               <h2>權限不足</h2>
               <p>您沒有權限使用此功能</p>
+            </div>
+          </section>
+        ) : featureLocked ? (
+          <section className="content-card section-panel">
+            <div className="empty-state">
+              <h2>功能已鎖定</h2>
+              <p>{storeAccess.warningMessage || "此功能不包含在目前方案，請聯絡平台管理員。"}</p>
             </div>
           </section>
         ) : (

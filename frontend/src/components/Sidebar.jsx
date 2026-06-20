@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { clearAuth, getStoredStoreName, getStoredUser } from "../lib/auth";
 import { apiRequest } from "../lib/api";
 import { useStoreFeatures } from "../hooks/useStoreFeatures";
+import { useStoreAccess } from "../hooks/useStoreAccess";
 import { useMenuPermissions } from "../hooks/useMenuPermissions";
 import { getMobileMenuSectionsForUser, isMenuItemActive } from "../lib/mobileNavigation";
 
@@ -12,20 +13,31 @@ function Sidebar() {
   const user = getStoredUser();
   const currentStoreName = getStoredStoreName();
   const { features } = useStoreFeatures();
+  const { access } = useStoreAccess(user);
   const { permissions: menuPermissions } = useMenuPermissions(user);
+  const effectiveFeatures = {
+    ...features,
+    suppliers_enabled: features.suppliers_enabled !== false && !access?.lockedFeatures?.includes("suppliers"),
+    supplier_purchases_enabled: !access?.lockedFeatures?.includes("supplier_purchases"),
+    store_transfers_enabled: !access?.lockedFeatures?.includes("store_transfers"),
+    company_store_settlements_enabled: !access?.lockedFeatures?.includes("company_store_settlements"),
+    headquarters_enabled: !access?.lockedFeatures?.includes("headquarters")
+  };
   const [companyAccess, setCompanyAccess] = useState({ loaded: false, enabled: false });
-  const mobileMenuSections = getMobileMenuSectionsForUser(user, features, menuPermissions)
+  const mobileMenuSections = getMobileMenuSectionsForUser(user, effectiveFeatures, menuPermissions)
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => item.to !== "/saas-admin")
     }))
     .filter((group) => group.items.length > 0);
-  if (companyAccess.enabled) {
+  if (companyAccess.enabled && effectiveFeatures.headquarters_enabled !== false) {
     mobileMenuSections.splice(2, 0, {
       heading: "總部",
       items: [
         { to: "/headquarters", label: "總部管理", description: "公司資料、所屬門市與總部功能" },
-        { to: "/company-store-settlements", label: "本部月結", description: "本部供貨應收與門市應付月結" }
+        ...(effectiveFeatures.company_store_settlements_enabled !== false
+          ? [{ to: "/company-store-settlements", label: "本部月結", description: "本部供貨應收與門市應付月結" }]
+          : [])
       ]
     });
   }

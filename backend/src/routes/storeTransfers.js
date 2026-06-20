@@ -2,6 +2,7 @@ const express = require("express");
 const { pool, withTransaction } = require("../db");
 const { authenticate, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { loadCompanyMembership, requireCompanyRole } = require("../middleware/companyAuth");
+const { requireFeature } = require("../services/storeAccessService");
 const { createError } = require("../utils/errors");
 
 const router = express.Router();
@@ -248,7 +249,7 @@ async function insertItems(connection, transferId, companyId, fromStoreId, toSto
   }
 }
 
-router.use(authenticate);
+router.use(authenticate, requireStoreScope(), requireFeature("store_transfers"));
 
 async function resolveTransferCompanyForStores(staffUserId, fromStoreId, toStoreId) {
   const [rows] = await pool.query(

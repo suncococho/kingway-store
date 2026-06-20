@@ -2,6 +2,7 @@ const express = require("express");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { loadCompanyMembership } = require("../middleware/companyAuth");
+const { requireFeature } = require("../services/storeAccessService");
 
 const router = express.Router();
 
@@ -9,7 +10,7 @@ const HQ_WRITE_ROLES = new Set(["company_owner", "hq_admin", "inventory_manager"
 const HQ_READ_ROLES = new Set(["company_owner", "hq_admin", "finance", "inventory_manager", "viewer"]);
 const FINAL_SETTLEMENT_STATUSES = ["CONFIRMED", "PARTIALLY_PAID", "PAID"];
 
-router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "INVENTORY"]));
+router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "INVENTORY"]), requireFeature("company_store_settlements"));
 
 function createError(message, statusCode = 400) {
   const error = new Error(message);

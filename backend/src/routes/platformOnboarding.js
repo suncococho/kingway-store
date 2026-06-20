@@ -81,6 +81,21 @@ function normalizeTemporaryPassword(value) {
   return password;
 }
 
+function defaultTrialEndsAt(plan) {
+  if (String(plan || "").trim().toLowerCase() !== "trial") return null;
+  const date = new Date();
+  date.setDate(date.getDate() + 30);
+  date.setHours(23, 59, 59, 0);
+  return date.toISOString().slice(0, 19).replace("T", " ");
+}
+
+function normalizePaymentStatusForPlan(value, plan) {
+  const raw = text(value).toUpperCase();
+  if (["NONE", "UNPAID", "PAID", "PAST_DUE"].includes(raw)) return raw;
+  if (String(plan || "").trim().toLowerCase() === "premium") return "PAID";
+  return "NONE";
+}
+
 function normalizeStorePayload(body, prefix = "") {
   const storeCodeKey = prefix ? `${prefix}StoreCode` : "storeCode";
   const storeNameKey = prefix ? `${prefix}StoreName` : "storeName";
@@ -93,6 +108,7 @@ function normalizeStorePayload(body, prefix = "") {
   const ownerPhone = optionalText(body?.[ownerPhoneKey], 80);
   const ownerEmail = optionalText(body?.[ownerEmailKey], 120);
 
+  const plan = normalizePlan(body?.plan);
   return {
     code: upperCode(body?.[storeCodeKey], "Store"),
     name: storeName,
@@ -100,8 +116,12 @@ function normalizeStorePayload(body, prefix = "") {
     ownerName: requiredText(body?.[ownerNameKey], "Owner name", 120),
     ownerPassword: normalizeTemporaryPassword(body?.temporaryPassword || body?.ownerPassword),
     ownerRole: "ADMIN",
-    plan: normalizePlan(body?.plan),
+    plan,
     status: normalizeStoreStatus(body?.status),
+    trialEndsAt: body?.trialEndsAt || defaultTrialEndsAt(plan),
+    subscriptionEndsAt: body?.subscriptionEndsAt || null,
+    paymentStatus: normalizePaymentStatusForPlan(body?.paymentStatus, plan),
+    billingNote: optionalText(body?.billingNote, 500),
     profileSettings: {
       displayName: storeName,
       phone: ownerPhone,

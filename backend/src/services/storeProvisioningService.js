@@ -29,7 +29,7 @@ const FEATURE_KEYS = [
   "sales_dashboard_enabled",
   "staff_management_enabled"
 ];
-const PLAN_PRESET_KEYS = ["FREE", "PREMIUM"];
+const PLAN_PRESET_KEYS = ["FREE", "TRIAL", "PREMIUM"];
 const FEATURE_PRESETS = {
   FREE: {
     pos_enabled: true,
@@ -58,6 +58,7 @@ const FEATURE_PRESETS = {
     staff_management_enabled: true
   }
 };
+FEATURE_PRESETS.TRIAL = FEATURE_PRESETS.PREMIUM;
 
 class ProvisioningError extends Error {
   constructor(status, message, details = null) {
@@ -161,6 +162,19 @@ async function storesTableHasSlug(connection) {
   return Boolean(rows[0]);
 }
 
+async function storesTableHasBillingColumns(connection) {
+  const [rows] = await connection.query(
+    `
+      SELECT COUNT(*) AS count
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'stores'
+        AND COLUMN_NAME IN ('trial_ends_at', 'subscription_ends_at', 'payment_status', 'billing_note', 'last_plan_changed_at')
+    `
+  );
+  return Number(rows[0]?.count || 0) >= 5;
+}
+
 async function assertStoreCodeAvailable(connection, code) {
   const [rows] = await connection.query("SELECT id FROM stores WHERE code = ? LIMIT 1", [code]);
   if (rows[0]) {
@@ -191,32 +205,42 @@ async function assertOwnerUsernameAvailable(connection, username) {
   }
 }
 
-async function insertStore(connection, payload, hasSlugColumn) {
+async function insertStore(connection, payload, hasSlugColumn, hasBillingColumns = false) {
+  const baseColumns = ["code", "name"];
+  const baseValues = [payload.code, payload.name];
   if (hasSlugColumn) {
-    const [result] = await connection.query(
-      `
-        INSERT INTO stores (code, name, slug, status, plan)
-        VALUES (?, ?, ?, ?, ?)
-      `,
-      [payload.code, payload.name, payload.slug, payload.status || STORE_STATUS, payload.plan]
+    baseColumns.push("slug");
+    baseValues.push(payload.slug);
+  }
+  baseColumns.push("status", "plan");
+  baseValues.push(payload.status || STORE_STATUS, payload.plan);
+  if (hasBillingColumns) {
+    baseColumns.push("trial_ends_at", "subscription_ends_at", "payment_status", "billing_note", "last_plan_changed_at");
+    baseValues.push(
+      payload.trialEndsAt || null,
+      payload.subscriptionEndsAt || null,
+      payload.paymentStatus || "NONE",
+      payload.billingNote || null,
+      null
     );
-    return result.insertId;
   }
 
   const [result] = await connection.query(
     `
-      INSERT INTO stores (code, name, status, plan)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO stores (${baseColumns.join(", ")})
+      VALUES (${baseColumns.map(() => "?").join(", ")})
     `,
-    [payload.code, payload.name, payload.status || STORE_STATUS, payload.plan]
+    baseValues
   );
   return result.insertId;
 }
 
-async function insertStoreFeatures(connection, storeId) {
+async function insertStoreFeatures(connection, storeId, plan = DEFAULT_PLAN) {
   const columns = FEATURE_KEYS.join(", ");
   const placeholders = FEATURE_KEYS.map(() => "?").join(", ");
-  const values = FEATURE_KEYS.map((key) => (FEATURE_PRESETS.FREE[key] ? 1 : 0));
+  const presetKey = String(plan || "").trim().toUpperCase();
+  const preset = FEATURE_PRESETS[presetKey] || FEATURE_PRESETS.FREE;
+  const values = FEATURE_KEYS.map((key) => (preset[key] ? 1 : 0));
 
   await connection.query(
     `
@@ -344,6 +368,10 @@ async function provisionStoreWithConnection(connection, input, actor = null) {
   const plan = normalizePlan(input?.plan);
   const status = normalizeStoreStatus(input?.status);
   const ownerName = normalizeOwnerName(input?.ownerName, name);
+  const paymentStatus = String(input?.paymentStatus || (plan === "premium" ? "PAID" : "NONE")).trim().toUpperCase();
+  const trialEndsAt = input?.trialEndsAt || input?.trial_ends_at || null;
+  const subscriptionEndsAt = input?.subscriptionEndsAt || input?.subscription_ends_at || null;
+  const billingNote = input?.billingNote || input?.billing_note || null;
   const providedPassword = typeof input?.ownerPassword === "string" ? input.ownerPassword.trim() : "";
   const temporaryPassword = providedPassword || generateTemporaryPassword();
   if (temporaryPassword.length < 8) {
@@ -353,12 +381,23 @@ async function provisionStoreWithConnection(connection, input, actor = null) {
   const passwordHash = await hashPassword(temporaryPassword);
 
   const hasSlugColumn = await storesTableHasSlug(connection);
+  const hasBillingColumns = await storesTableHasBillingColumns(connection);
   await assertStoreCodeAvailable(connection, code);
   await assertStoreSlugAvailable(connection, slug, hasSlugColumn);
   await assertOwnerUsernameAvailable(connection, ownerUsername);
 
-  const storeId = await insertStore(connection, { code, name, slug, status, plan }, hasSlugColumn);
-  await insertStoreFeatures(connection, storeId);
+  const storeId = await insertStore(connection, {
+    code,
+    name,
+    slug,
+    status,
+    plan,
+    trialEndsAt,
+    subscriptionEndsAt,
+    paymentStatus,
+    billingNote
+  }, hasSlugColumn, hasBillingColumns);
+  await insertStoreFeatures(connection, storeId, plan);
   const productCategoriesPersisted = await insertDefaultProductCategories(connection, storeId);
   const staffUserId = await insertOwner(connection, {
     ownerUsername,
@@ -381,7 +420,11 @@ async function provisionStoreWithConnection(connection, input, actor = null) {
       name,
       slug,
       status,
-      plan
+      plan,
+      trialEndsAt,
+      subscriptionEndsAt,
+      paymentStatus,
+      billingNote
     }),
     owner: {
       id: staffUserId,
