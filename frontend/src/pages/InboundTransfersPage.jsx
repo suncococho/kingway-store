@@ -6,7 +6,7 @@ import StatusBadge from "../components/StatusBadge";
 import { apiRequest } from "../lib/api";
 
 const STATUS_LABELS = {
-  SHIPPED: "已出貨",
+  SHIPPED: "待入庫",
   PARTIALLY_RECEIVED: "部分入庫",
   RECEIVED: "已入庫",
   DISCREPANCY: "差異"
@@ -67,6 +67,19 @@ function InboundTransfersPage() {
   async function confirmReceive(event) {
     event.preventDefault();
     if (!selectedTransfer) return;
+    for (const item of selectedTransfer.items || []) {
+      const nextReceived = Number(receiveForm[item.id] || 0);
+      const currentReceived = Number(item.quantityReceived || 0);
+      const shipped = Number(item.quantityShipped || 0);
+      if (nextReceived > shipped) {
+        alert("入庫數量不可超過出貨數量");
+        return;
+      }
+      if (nextReceived < currentReceived) {
+        alert("入庫累計數量不可小於已入庫數量");
+        return;
+      }
+    }
     const items = (selectedTransfer.items || [])
       .map((item) => ({ itemId: item.id, quantityReceived: Number(receiveForm[item.id] || 0) }));
     const hasIncrease = (selectedTransfer.items || []).some((item) => Number(receiveForm[item.id] || 0) > Number(item.quantityReceived || 0));
@@ -74,6 +87,7 @@ function InboundTransfersPage() {
       alert("請輸入新的累計入庫數量");
       return;
     }
+    if (!confirm("確認入庫後，門市庫存將增加，請確認實收數量正確。")) return;
 
     try {
       const response = await apiRequest(`/store-transfers/${selectedTransfer.id}/receive`, {
@@ -94,12 +108,12 @@ function InboundTransfersPage() {
     { key: "status", label: "狀態", render: (row) => <StatusBadge tone={getStatusTone(row.status)}>{STATUS_LABELS[row.status] || row.status}</StatusBadge> },
     { key: "fromStoreName", label: "出貨門市" },
     { key: "itemSummary", label: "商品" },
-    { key: "actions", label: "操作", render: (row) => <button type="button" className="primary-button" onClick={() => openTransfer(row)}>入庫確認</button> }
+    { key: "actions", label: "操作", render: (row) => <button type="button" className="primary-button" onClick={() => openTransfer(row)}>查看出貨內容</button> }
   ];
 
   return (
     <div>
-      <PageHeader title="門市入庫確認" description="確認總部出貨到本門市的實收數量。" />
+      <PageHeader title="門市入庫確認" description="門市入庫確認用於確認實際收到的本部出貨商品。確認後門市庫存才會增加。" />
       {error ? <div className="empty-state">{error}</div> : null}
       <section className="content-card section-panel">
         <AdminSectionHeader eyebrow="待入庫" title="入庫單列表" description={loading ? "讀取中..." : "只顯示已出貨且尚未完全入庫的資料。"} />
@@ -117,7 +131,8 @@ function InboundTransfersPage() {
                 return (
                   <div className="field-item" key={item.id}>
                     <div className="field-label">{item.sku} / {item.productName}</div>
-                    <div className="field-value">出貨 {item.quantityShipped} / 已入庫 {item.quantityReceived} / 尚待 {remaining}</div>
+                    <div className="field-value">出貨數量 {item.quantityShipped} / 已入庫數量 {item.quantityReceived} / 尚待 {remaining}</div>
+                    <div className="field-label">本次確認後累計入庫數量，不可超過出貨數量。</div>
                     <input type="number" min={currentReceived} max={item.quantityShipped} value={receiveForm[item.id] ?? currentReceived} onChange={(event) => updateReceiveQuantity(item.id, event.target.value)} />
                   </div>
                 );

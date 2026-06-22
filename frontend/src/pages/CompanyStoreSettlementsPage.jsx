@@ -122,7 +122,7 @@ export default function CompanyStoreSettlementsPage() {
   }
 
   async function confirmSettlement(row) {
-    if (!confirm("確認此月結？確認後明細不可重新產生。")) return;
+    if (!confirm("確認月結後，明細將鎖定，請確認金額無誤。")) return;
     try {
       const response = await apiRequest(`/company-store-settlements/${row.id}/confirm`, {
         method: "POST",
@@ -139,6 +139,7 @@ export default function CompanyStoreSettlementsPage() {
   async function markPaid(row) {
     const value = prompt("請輸入累計已付款金額", String(row.totalAmount || 0));
     if (value === null) return;
+    if (!confirm("標記已付款後，此月結將顯示為已付款。此操作不會改變庫存。")) return;
     try {
       const response = await apiRequest(`/company-store-settlements/${row.id}/mark-paid`, {
         method: "POST",
@@ -154,19 +155,19 @@ export default function CompanyStoreSettlementsPage() {
 
   const settlementColumns = [
     { key: "settlementNo", label: "月結單號" },
-    { key: "settlementMonth", label: "月份" },
-    { key: "targetStoreName", label: "門市" },
+    { key: "settlementMonth", label: "月結月份" },
+    { key: "targetStoreName", label: "對象門市" },
     { key: "targetRelationshipType", label: "類型", render: (row) => relationshipLabel(row.targetRelationshipType) },
     { key: "status", label: "狀態", render: (row) => <StatusBadge tone={statusTone(row.status)}>{statusLabel(row.status)}</StatusBadge> },
     { key: "totalAmount", label: canManage ? "應收金額" : "應付金額", render: (row) => money(row.totalAmount) },
-    { key: "paidAmount", label: "已付款", render: (row) => money(row.paidAmount) },
-    { key: "unpaidAmount", label: "未付款", render: (row) => money(row.unpaidAmount) },
+    { key: "paidAmount", label: "已付金額", render: (row) => money(row.paidAmount) },
+    { key: "unpaidAmount", label: "未付金額", render: (row) => money(row.unpaidAmount) },
     {
       key: "actions",
       label: "操作",
       render: (row) => (
         <div className="action-row compact-actions">
-          <button type="button" className="secondary-button" onClick={() => openDetail(row)}>詳細</button>
+          <button type="button" className="secondary-button" onClick={() => openDetail(row)}>查看明細</button>
           {canManage && row.status === "DRAFT" ? <button type="button" className="primary-button" onClick={() => confirmSettlement(row)}>確認月結</button> : null}
           {canManage && ["CONFIRMED", "PARTIALLY_PAID", "PAID"].includes(row.status) ? <button type="button" className="secondary-button" onClick={() => markPaid(row)}>標記已付款</button> : null}
         </div>
@@ -175,21 +176,21 @@ export default function CompanyStoreSettlementsPage() {
   ];
 
   const summaryColumns = [
-    { key: "targetStoreName", label: "門市" },
+    { key: "targetStoreName", label: "對象門市" },
     { key: "targetRelationshipType", label: "類型", render: (row) => relationshipLabel(row.targetRelationshipType) },
     { key: "settlementCount", label: "月結筆數" },
     { key: "totalAmount", label: canManage ? "應收金額" : "應付金額", render: (row) => money(row.totalAmount) },
-    { key: "paidAmount", label: "已付款", render: (row) => money(row.paidAmount) },
-    { key: "unpaidAmount", label: "未付款", render: (row) => money(row.unpaidAmount) }
+    { key: "paidAmount", label: "已付金額", render: (row) => money(row.paidAmount) },
+    { key: "unpaidAmount", label: "未付金額", render: (row) => money(row.unpaidAmount) }
   ];
 
   const itemColumns = [
-    { key: "transferNo", label: "出貨單" },
+    { key: "transferNo", label: "transfer no" },
     { key: "sku", label: "SKU" },
     { key: "productName", label: "商品" },
     { key: "quantityReceived", label: "入庫數量" },
     { key: "unitPrice", label: "結算單價", render: (row) => money(row.unitPrice) },
-    { key: "lineAmount", label: "金額", render: (row) => money(row.lineAmount) },
+    { key: "lineAmount", label: "小計", render: (row) => money(row.lineAmount) },
     { key: "sourceReceivedAt", label: "入庫日期", render: (row) => row.sourceReceivedAt ? String(row.sourceReceivedAt).slice(0, 10) : "-" }
   ];
 
@@ -197,7 +198,7 @@ export default function CompanyStoreSettlementsPage() {
     <div>
       <PageHeader
         title={canManage ? "本部月結應收" : "本部應付月結"}
-        description={canManage ? "依門市入庫數量產生本部供貨應收月結。" : "查看本門市對本部供貨的應付月結。"}
+        description="本部月結會依門市已完成入庫的商品數量與結算單價計算。月結不會改變庫存，只用於應收/應付金額管理。"
       />
       {error ? <div className="empty-state">{error}</div> : null}
       <section className="content-card section-panel">
@@ -208,6 +209,7 @@ export default function CompanyStoreSettlementsPage() {
             <label className="form-field"><span>門市</span><select value={targetStoreId} onChange={(event) => setTargetStoreId(event.target.value)}><option value="">全部門市</option>{targetStores.map((store) => <option key={store.storeId} value={store.storeId}>{store.storeName} / {relationshipLabel(store.relationshipType)}</option>)}</select></label>
           ) : null}
           <label className="form-field checkbox-field"><input type="checkbox" checked={excludeDemoData} onChange={(event) => setExcludeDemoData(event.target.checked)} /><span>排除測試資料</span></label>
+          <div className="form-field form-field-wide"><span className="muted-text">勾選後，PROD DEMO / 測試資料不會列入月結統計。</span></div>
           {canManage ? <button type="button" className="primary-button inline-submit" onClick={generateSettlement} disabled={!targetStoreId}>產生月結</button> : null}
         </div>
       </section>
@@ -227,8 +229,8 @@ export default function CompanyStoreSettlementsPage() {
           <AdminSectionHeader eyebrow="明細" title={selected.settlementNo} description={`${selected.targetStoreName} / ${selected.settlementMonth}`} badges={<StatusBadge tone={statusTone(selected.status)}>{statusLabel(selected.status)}</StatusBadge>} />
           <div className="admin-summary-grid">
             <article className="admin-summary-card"><div className="admin-summary-label">{canManage ? "應收金額" : "應付金額"}</div><div className="admin-summary-value">{money(selected.totalAmount)}</div></article>
-            <article className="admin-summary-card"><div className="admin-summary-label">已付款</div><div className="admin-summary-value">{money(selected.paidAmount)}</div></article>
-            <article className="admin-summary-card"><div className="admin-summary-label">未付款</div><div className="admin-summary-value">{money(selected.unpaidAmount)}</div></article>
+            <article className="admin-summary-card"><div className="admin-summary-label">已付金額</div><div className="admin-summary-value">{money(selected.paidAmount)}</div></article>
+            <article className="admin-summary-card"><div className="admin-summary-label">未付金額</div><div className="admin-summary-value">{money(selected.unpaidAmount)}</div></article>
           </div>
           <DataTable columns={itemColumns} rows={selected.items || []} emptyText="此月結沒有明細。" cardTitle={(row) => row.sku} cardDescription={(row) => `${row.productName} / ${row.quantityReceived} x ${money(row.unitPrice)}`} />
         </section>

@@ -18,9 +18,9 @@ function getRelationshipLabel(value) {
 
 const STATUS_LABELS = {
   DRAFT: "草稿",
-  SHIPPED: "已出貨",
+  SHIPPED: "已出貨，待門市入庫",
   PARTIALLY_RECEIVED: "部分入庫",
-  RECEIVED: "已入庫",
+  RECEIVED: "已完成入庫",
   DISCREPANCY: "差異",
   CANCELED: "已取消"
 };
@@ -106,8 +106,10 @@ function HeadquartersPage() {
     { key: "itemSummary", label: "商品" },
     { key: "actions", label: "操作", render: (row) => (
       <div className="action-row compact-actions">
-        {row.status === "DRAFT" && canWriteTransfers ? <button type="button" className="primary-button" onClick={() => shipTransfer(row.id)}>出貨</button> : null}
+        {row.status === "DRAFT" && canWriteTransfers ? <button type="button" className="primary-button" onClick={() => shipTransfer(row.id)}>確認出貨</button> : null}
         {row.status === "DRAFT" && canWriteTransfers ? <button type="button" className="secondary-button" onClick={() => cancelTransfer(row.id)}>取消</button> : null}
+        {row.status === "SHIPPED" ? <StatusBadge tone="warning">待入庫</StatusBadge> : null}
+        {row.status === "RECEIVED" ? <StatusBadge tone="success">已完成入庫</StatusBadge> : null}
       </div>
     ) }
   ];
@@ -258,7 +260,7 @@ function HeadquartersPage() {
   }
 
   async function shipTransfer(id) {
-    if (!confirm("確認出貨並扣除本部庫存？")) return;
+    if (!confirm("確認出貨後，本部庫存將立即扣除，是否繼續？")) return;
     try {
       await apiRequest(`/store-transfers/company/${selectedCompany.id}/${id}/ship`, { method: "POST", processingMessage: "出貨處理中" });
       await loadTransfers();
@@ -333,15 +335,29 @@ function HeadquartersPage() {
       {activeTab === "transfers" ? (
         <>
           <section className="content-card section-panel">
-            <AdminSectionHeader eyebrow="本部出貨" title="建立出貨草稿" description="出貨處理後會扣除出貨門市庫存；收貨門市需另行入庫確認。" />
+            <AdminSectionHeader
+              eyebrow="本部出貨"
+              title="新增調撥單"
+              description="本部出貨用於將高雄本部庫存調撥至直營店或加盟店。出貨後本部庫存會先扣除，門市完成入庫確認後，門市庫存才會增加。"
+            />
             {canWriteTransfers ? (
               <form className="grid-form compact-grid" onSubmit={createTransfer}>
                 <label className="form-field"><span>出貨門市</span><select name="fromStoreId" value={transferForm.fromStoreId} onChange={updateTransferForm}>{fromStores.map((store) => <option key={store.storeId} value={store.storeId}>{store.storeName}</option>)}</select></label>
                 <label className="form-field"><span>收貨門市</span><select name="toStoreId" value={transferForm.toStoreId} onChange={updateTransferForm}>{toStores.map((store) => <option key={store.storeId} value={store.storeId}>{store.storeName}</option>)}</select></label>
                 <label className="form-field"><span>商品搜尋</span><input name="productQuery" value={transferForm.productQuery} onChange={updateTransferForm} placeholder="SKU / 商品名稱" /></label>
                 <label className="form-field"><span>數量</span><input name="quantity" type="number" min="1" value={transferForm.quantity} onChange={updateTransferForm} /></label>
-                <label className="form-field"><span>單位成本</span><input name="unitCost" type="number" min="0" step="1" value={transferForm.unitCost} onChange={updateTransferForm} /></label>
+                <label className="form-field"><span>結算單價</span><input name="unitCost" type="number" min="0" step="1" value={transferForm.unitCost} onChange={updateTransferForm} /></label>
                 <label className="form-field form-field-wide"><span>備註</span><input name="note" value={transferForm.note} onChange={updateTransferForm} /></label>
+                {Number(transferForm.unitCost || 0) <= 0 ? <div className="empty-state form-field-wide">結算單價為 0，月結金額可能為 0，請確認。</div> : null}
+                {selectedCandidate ? (
+                  <div className="field-grid form-field-wide">
+                    <div className="field-item"><div className="field-label">SKU</div><div className="field-value">{selectedCandidate.sku}</div></div>
+                    <div className="field-item"><div className="field-label">商品名稱</div><div className="field-value">{selectedCandidate.name}</div></div>
+                    <div className="field-item"><div className="field-label">出貨數量</div><div className="field-value">{transferForm.quantity}</div></div>
+                    <div className="field-item"><div className="field-label">結算單價</div><div className="field-value">NT$ {Number(transferForm.unitCost || 0).toLocaleString()}</div></div>
+                    <div className="field-item"><div className="field-label">小計</div><div className="field-value">NT$ {(Number(transferForm.quantity || 0) * Number(transferForm.unitCost || 0)).toLocaleString()}</div></div>
+                  </div>
+                ) : null}
                 <div className="form-field-wide stack-list">
                   {candidates.slice(0, 8).map((product) => (
                     <button type="button" key={product.fromProductId} className={String(product.fromProductId) === String(transferForm.selectedProductId) ? "primary-button" : "secondary-button"} onClick={() => chooseCandidate(product)}>
@@ -351,14 +367,15 @@ function HeadquartersPage() {
                 </div>
                 <div className="action-row form-field-wide">
                   <button type="button" className="secondary-button" onClick={addTransferItem}>加入出貨商品</button>
-                  <button type="submit" className="primary-button">建立草稿</button>
+                  <button type="submit" className="primary-button">新增調撥單</button>
                 </div>
                 {transferForm.items.length ? (
                   <div className="form-field-wide stack-list">
                     {transferForm.items.map((item) => (
                       <div className="field-item" key={item.fromProductId}>
                         <div className="field-label">{item.sku} / {item.name}</div>
-                        <div className="field-value">出貨 {item.quantity} / 單位成本 NT$ {item.unitCost}</div>
+                        <div className="field-value">出貨數量 {item.quantity} / 結算單價 NT$ {item.unitCost.toLocaleString()} / 小計 NT$ {(Number(item.quantity || 0) * Number(item.unitCost || 0)).toLocaleString()}</div>
+                        {Number(item.unitCost || 0) <= 0 ? <div className="field-label">結算單價為 0，月結金額可能為 0，請確認。</div> : null}
                         <button type="button" className="secondary-button" onClick={() => removeTransferItem(item.fromProductId)}>移除</button>
                       </div>
                     ))}

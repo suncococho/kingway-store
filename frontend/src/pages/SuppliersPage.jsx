@@ -849,6 +849,7 @@ export default function SuppliersPage() {
           <section className="content-card section-panel">
             <div className="section-header"><div><h2>發注列表</h2><p className="muted-text">確認發注不影響庫存；供應商入庫時才會增加 stock 並寫入庫存異動。</p></div><StatusBadge tone="info">{purchaseOrders.length} 筆</StatusBadge></div>
             <label className="form-field checkbox-field"><input type="checkbox" checked={excludeDemoData} onChange={(event) => setExcludeDemoData(event.target.checked)} /><span>排除測試資料</span></label>
+            <div className="muted-text">勾選後，PROD DEMO / 測試資料不會列入月結統計。</div>
             <DataTable columns={purchaseColumns} rows={purchaseOrders} emptyText="目前沒有供應商發注單。" cardTitle={(row) => row.poNo} cardDescription={(row) => `${row.supplierName} / ${row.itemSummary || "-"}`} cardBadges={(row) => <StatusBadge tone={row.status === "RECEIVED" ? "success" : "info"}>{getPurchaseStatusLabel(row.status)}</StatusBadge>} />
           </section>
           <section className="content-card section-panel"><div className="section-header"><div><h2>月結應付</h2><p className="muted-text">依入庫金額彙總供應商月結應付與未付款。</p></div></div><DataTable columns={purchaseMonthlyColumns} rows={purchaseMonthly} emptyText="目前沒有新發注月結資料。" cardTitle={(row) => row.supplierName} cardDescription={(row) => `應付 ${formatMoney(row.totalReceivedAmount)} / 未付 ${formatMoney(row.unpaidAmount)}`} /></section>
