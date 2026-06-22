@@ -5,24 +5,18 @@ import SignaturePad from "../components/SignaturePad";
 import { apiRequest } from "../lib/api";
 
 const DELIVERY_CHECK_ITEMS = [
-  { id: "check-appearance", label: "外觀無損", value: "外觀無損", description: "車架、前叉、輪圈、漆面等無明顯刮傷或損傷" },
-  { id: "check-function", label: "功能正常", value: "功能正常", description: "電機、控制器、剎車等主要功能運作正常" },
-  { id: "check-accessories", label: "配件齊全", value: "配件齊全", description: "所有隨車配件（鑰匙、充電器、說明書等）已完整交付" },
-  { id: "check-spec", label: "規格相符", value: "規格相符", description: "自行車型號、規格與訂單內容相同" }
+  { id: "check-condition", label: "車況確認", value: "車況確認", description: "已當場檢查車輛外觀、功能、配件與規格，確認皆正常無誤、與訂單相符。" },
+  { id: "check-photo", label: "照片使用同意", value: "照片使用同意", description: "本人同意門市於交車時拍攝之照片，得用於門市紀錄、社群或行銷用途。" }
 ];
 
 const EXPLANATION_CHECK_ITEMS = [
-  { id: "explain-usage", label: "使用方法", value: "使用方法" },
-  { id: "explain-warranty", label: "保固範圍", value: "保固範圍與期限（1年）" },
-  { id: "explain-maintenance", label: "保養方法", value: "日常維護與保養方法" },
-  { id: "explain-laws", label: "法規說明", value: "臺灣電動自行車相關法規及速度限制" },
-  { id: "explain-safety", label: "安全事項", value: "騎乘安全注意事項" }
+  { id: "explain-delivery", label: "說明確認", value: "說明確認", description: "已聽取店員關於使用方法、保固範圍（1年）、保養及安全注意事項之說明。" }
 ];
 
 const DEFAULT_CONTENT = {
   pageTitle: "KINGWAY 自行車交付確認",
   pageSubtitle: "購買後自行車確認簽名表單",
-  vehicleTypeNotice: "✓ 請店員依本車輛實際配備狀況勾選，此項將決定適用之法規條款內容。",
+  vehicleTypeNotice: "✓ 請依本車輛實際配備狀況確認車輛資訊。",
   vehicleTypes: {
     road: {
       value: "road",
@@ -32,30 +26,63 @@ const DEFAULT_CONTENT = {
     offroad: {
       value: "offroad",
       label: "越野休閒版",
-      description: "越野休閒版 - 本車輛未配備臺灣「閃電標章」，僅限於私有土地、封閉式賽道、室內空間等休閒用途使用，絕對不得於公共道路行駛。"
+      description: "越野休閒版 - 本車輛未配備臺灣「閃電標章」，主要設計用於越野、私有場地或休閒騎乘用途。若於一般道路使用，請依當地交通法規行駛。"
     }
   },
-  deliveryNotice: "✓ 請仔細檢查自行車的狀況，確認以下所有項目。交車後如有問題，本公司不負責。",
+  deliveryNotice: "請確認以下交付確認項目。",
   deliveryCheckItems: DELIVERY_CHECK_ITEMS,
   deliveryChecks: DELIVERY_CHECK_ITEMS.map((item) => item.value),
-  staffExplanationNotice: "✓ 我已收到店員的以下說明，並理解相關內容。",
-  staffExplanationItems: EXPLANATION_CHECK_ITEMS.map((item) => ({
-    ...item,
-    description:
-      item.id === "explain-usage" ? "店員已說明自行車的正確使用方法與注意事項" :
-      item.id === "explain-warranty" ? "店員已清楚說明本產品一年保固僅限正常使用下之非人為製造缺陷；消耗品、外觀磨耗、人為損壞、泡水、摔車、碰撞、超載、擅自改裝、解除限速、違反法規使用、非保固檢修費、運送費用及逾期保管費均不屬於免費保固範圍。" :
-      item.id === "explain-maintenance" ? "店員已說明日常維護與保養方法" :
-      item.id === "explain-laws" ? "店員已說明臺灣電動自行車相關法規及速度限制" :
-      "店員已說明騎乘安全注意事項"
-  })),
+  staffExplanationNotice: "請確認店員已完成以下說明。",
+  staffExplanationItems: EXPLANATION_CHECK_ITEMS,
   staffExplanations: EXPLANATION_CHECK_ITEMS.map((item) => item.value),
   termsTitle: "購買自行車條款與責任聲明",
-  termsIntroTitle: "一、產品信息與法規合規",
-  termsIntro: "購買本公司電動自行車，購買者確認已知悉（依本表單第2項「車輛類型確認」勾選結果適用）：",
+  termsIntroTitle: "一、產品與使用說明",
+  termsIntro: "1. 電動輔助自行車建議由年滿14歲以上者使用，未成年者應於監護人陪同與同意下使用。\n2. 本車輛未配備臺灣「閃電標章」，主要設計用於越野、私有場地或休閒騎乘用途。若於一般道路使用，請依當地交通法規行駛。違規行駛可能處新臺幣1,200元至3,600元罰鍰，若有酒駕或肇事等情形，警方亦得依職權扣留或沒入車輛。\n3. 電動輔助自行車依規定最高時速為25公里。請避免自行改裝或解除速度限制，以維持安全與合法使用。",
   vehicleTerms: {},
-  commonTerms: [],
-  termsAgreement: "我已詳細閱讀並同意上述所有購買使用條款與責任聲明。",
-  finalStatement: "本人已確認上述自行車交付項目皆已完成，且自行檢查無誤，正式領回此自行車。對於已領回之產品，交車後如有問題，本公司不負責。",
+  commonTerms: [
+    {
+      title: "二、購買者責任與安全",
+      items: [
+        "騎乘時請配戴安全帽等護具，遵守交通規則，避免載人、超載或危險騎乘。",
+        "因使用不當、自行改裝、超速或人為疏失所造成之損壞、事故或傷害，由購買者自行負責。",
+        "因個人違規使用而衍生之罰款或法律責任，由購買者自行承擔。"
+      ]
+    },
+    {
+      title: "三、保固服務範圍",
+      items: [
+        "保固期限：自交車日起一年內。",
+        "保固範圍：非人為損壞之製造缺陷（如電控系統、馬達本體故障等）。",
+        "不列入保固範圍：消耗品（輪胎、煞車皮、鍊條等）、結構件（車架、前叉、輪圈等）、外觀磨損、人為損壞（改裝、超載、泡水、碰撞等）及正常使用磨損。電池自然衰減為正常現象，亦不列入保固。",
+        "申請保固服務時，購買者須自行將車輛及相關零件攜帶至門市，相關運送費用由購買者自行負擔。"
+      ]
+    },
+    {
+      title: "四、交車確認",
+      paragraph: "完成交車並簽名領回後，恕不接受退貨或換貨，敬請於交車時詳加確認車況、配件與規格，感謝您的理解與配合。",
+      items: [
+        "交車前請確認車輛外觀、主要功能、規格及隨車配件皆正常無誤。",
+        "確認無誤並簽名後即完成交車。"
+      ]
+    },
+    {
+      title: "五、電池與充電安全",
+      items: [
+        "充電器屬免費贈送之消耗品，不在保固範圍內。如因使用環境或自然耗損導致故障，請自行另行購買，本公司不負保固責任。",
+        "請使用原廠充電器，避免於極端溫度環境下充電。",
+        "如發現電池膨脹、漏液或過熱，請立即停止使用並與門市聯繫。"
+      ]
+    },
+    {
+      title: "六、其他",
+      items: [
+        "本條款適用中華民國（臺灣）法律，任何爭議雙方應優先友善協商解決。",
+        "本公司保留修改本條款之權利，修改後將於官網公布。"
+      ]
+    }
+  ],
+  termsAgreement: "我已詳細閱讀並同意上述購買使用條款與責任聲明。",
+  finalStatement: "本人已確認上述交付項目皆已完成，且自行檢查無誤，正式領回此自行車。",
   errors: {
     buyerName: "請完成所有必填欄位與勾選項目",
     buyerPhone: "請完成所有必填欄位與勾選項目",
@@ -761,7 +788,7 @@ function PurchaseConfirmPublicPage() {
         <div className="page-section">
           <h2>{"5. 店員說明確認"}</h2>
           <p className="muted-text">{content.staffExplanationNotice}</p>
-          <p className="muted-text">保固範圍 - 店員已清楚說明：一年保固並不等於所有損壞均免費維修。</p>
+          <p className="muted-text">說明確認 - 已聽取店員關於使用方法、保固範圍（1年）、保養及安全注意事項之說明。</p>
           <div className="checklist-list">
             {explanationItems.map((item) => (
               <label key={item.value} className="checklist-item" htmlFor={`explanation-${item.value}`}>
