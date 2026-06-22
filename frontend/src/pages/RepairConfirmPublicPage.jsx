@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 import SignaturePad from "../components/SignaturePad";
 import { apiRequest } from "../lib/api";
 
@@ -104,7 +104,9 @@ function TermsContent({ content }) {
 }
 
 function RepairConfirmPublicPage() {
-  const { token } = useParams();
+  const { token: pathToken } = useParams();
+  const location = useLocation();
+  const token = pathToken || String(new URLSearchParams(location.search).get("token") || "").trim();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -115,6 +117,12 @@ function RepairConfirmPublicPage() {
 
   useEffect(() => {
     async function load() {
+      if (!token) {
+        setError("缺少維修完成確認書連結");
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       setError("");
       try {

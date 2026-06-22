@@ -62,6 +62,7 @@ function App() {
       <Route path="/purchase-confirm/manual" element={<PurchaseConfirmPublicPage />} />
       <Route path="/purchase-confirm" element={<PurchaseConfirmPublicPage />} />
       <Route path="/purchase-confirm/:token" element={<PurchaseConfirmPublicPage />} />
+      <Route path="/repair-confirm" element={<RepairConfirmPublicPage />} />
       <Route path="/repair-confirm/:token" element={<RepairConfirmPublicPage />} />
       <Route path="/surveys/:token" element={<SurveyPublicPage />} />
       <Route path="/line-order" element={<LineOrderPage />} />
