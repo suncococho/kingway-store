@@ -159,6 +159,7 @@ export default function SuppliersPage() {
   const [monthly, setMonthly] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [purchaseMonthly, setPurchaseMonthly] = useState([]);
+  const [excludeDemoData, setExcludeDemoData] = useState(false);
   const [products, setProducts] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [supplierPrices, setSupplierPrices] = useState([]);
@@ -194,9 +195,18 @@ export default function SuppliersPage() {
         apiRequest("/products"),
         apiRequest(`/suppliers?includeInactive=true&scope=${encodeURIComponent(supplierScope)}`)
       ]);
+      const purchaseParams = new URLSearchParams({ scope: supplierScope });
+      const purchaseMonthlyParams = new URLSearchParams({
+        scope: supplierScope,
+        month: purchaseForm.settlementMonth
+      });
+      if (excludeDemoData) {
+        purchaseParams.set("excludeDemo", "true");
+        purchaseMonthlyParams.set("excludeDemo", "true");
+      }
       const [nextPurchaseOrders, nextPurchaseMonthly] = await Promise.all([
-        apiRequest(`/supplier-purchases?scope=${encodeURIComponent(supplierScope)}`).catch(() => []),
-        apiRequest(`/supplier-purchases/monthly-summary?scope=${encodeURIComponent(supplierScope)}&month=${encodeURIComponent(purchaseForm.settlementMonth)}`).catch(() => [])
+        apiRequest(`/supplier-purchases?${purchaseParams.toString()}`).catch(() => []),
+        apiRequest(`/supplier-purchases/monthly-summary?${purchaseMonthlyParams.toString()}`).catch(() => [])
       ]);
       setRows(nextRows);
       setMonthly(nextMonthly);
@@ -243,7 +253,7 @@ export default function SuppliersPage() {
 
   useEffect(() => {
     load();
-  }, [supplierScope, purchaseForm.settlementMonth]);
+  }, [supplierScope, purchaseForm.settlementMonth, excludeDemoData]);
 
   useEffect(() => {
     loadSupplierPrices(selectedSupplierId);
@@ -836,7 +846,11 @@ export default function SuppliersPage() {
               <button type="button" className="primary-button inline-submit" onClick={createPurchaseOrder} disabled={isProcessing || !purchaseForm.supplierId}>{pendingAction?.id === "supplier-po-create" ? "建立中..." : "建立發注單"}</button>
             </div>
           </section>
-          <section className="content-card section-panel"><div className="section-header"><div><h2>發注列表</h2><p className="muted-text">確認發注不影響庫存；供應商入庫時才會增加 stock 並寫入庫存異動。</p></div><StatusBadge tone="info">{purchaseOrders.length} 筆</StatusBadge></div><DataTable columns={purchaseColumns} rows={purchaseOrders} emptyText="目前沒有供應商發注單。" cardTitle={(row) => row.poNo} cardDescription={(row) => `${row.supplierName} / ${row.itemSummary || "-"}`} cardBadges={(row) => <StatusBadge tone={row.status === "RECEIVED" ? "success" : "info"}>{getPurchaseStatusLabel(row.status)}</StatusBadge>} /></section>
+          <section className="content-card section-panel">
+            <div className="section-header"><div><h2>發注列表</h2><p className="muted-text">確認發注不影響庫存；供應商入庫時才會增加 stock 並寫入庫存異動。</p></div><StatusBadge tone="info">{purchaseOrders.length} 筆</StatusBadge></div>
+            <label className="form-field checkbox-field"><input type="checkbox" checked={excludeDemoData} onChange={(event) => setExcludeDemoData(event.target.checked)} /><span>排除測試資料</span></label>
+            <DataTable columns={purchaseColumns} rows={purchaseOrders} emptyText="目前沒有供應商發注單。" cardTitle={(row) => row.poNo} cardDescription={(row) => `${row.supplierName} / ${row.itemSummary || "-"}`} cardBadges={(row) => <StatusBadge tone={row.status === "RECEIVED" ? "success" : "info"}>{getPurchaseStatusLabel(row.status)}</StatusBadge>} />
+          </section>
           <section className="content-card section-panel"><div className="section-header"><div><h2>月結應付</h2><p className="muted-text">依入庫金額彙總供應商月結應付與未付款。</p></div></div><DataTable columns={purchaseMonthlyColumns} rows={purchaseMonthly} emptyText="目前沒有新發注月結資料。" cardTitle={(row) => row.supplierName} cardDescription={(row) => `應付 ${formatMoney(row.totalReceivedAmount)} / 未付 ${formatMoney(row.unpaidAmount)}`} /></section>
           <section className="content-card section-panel">
             <div className="section-header"><div><h2>篩選條件</h2><p className="muted-text">先縮小期間、供應商、商品與狀態，再查看摘要與交易。</p></div></div>

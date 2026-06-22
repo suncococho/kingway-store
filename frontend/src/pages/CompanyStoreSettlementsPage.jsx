@@ -45,6 +45,7 @@ export default function CompanyStoreSettlementsPage() {
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [excludeDemoData, setExcludeDemoData] = useState(false);
 
   const hqCompany = companyInfo?.companies?.[0] || null;
   const canManage = Boolean(hqCompany && HQ_WRITE_ROLES.has(hqCompany.role));
@@ -65,6 +66,7 @@ export default function CompanyStoreSettlementsPage() {
       if (company?.id) params.set("companyId", String(company.id));
       if (!company?.id) params.set("view", "payable");
       if (targetStoreId) params.set("targetStoreId", targetStoreId);
+      if (excludeDemoData) params.set("excludeDemo", "true");
       const list = await apiRequest(`/company-store-settlements?${params.toString()}`);
       setSettlements(Array.isArray(list.settlements) ? list.settlements : []);
 
@@ -72,6 +74,7 @@ export default function CompanyStoreSettlementsPage() {
       summaryParams.set("month", month);
       if (company?.id) summaryParams.set("companyId", String(company.id));
       if (targetStoreId) summaryParams.set("targetStoreId", targetStoreId);
+      if (excludeDemoData) summaryParams.set("excludeDemo", "true");
       const nextSummary = await apiRequest(`/company-store-settlements/monthly-summary?${summaryParams.toString()}`);
       setSummary(Array.isArray(nextSummary.summary) ? nextSummary.summary : []);
     } catch (requestError) {
@@ -83,7 +86,7 @@ export default function CompanyStoreSettlementsPage() {
 
   useEffect(() => {
     load();
-  }, [month, targetStoreId]);
+  }, [month, targetStoreId, excludeDemoData]);
 
   async function openDetail(row) {
     try {
@@ -204,6 +207,7 @@ export default function CompanyStoreSettlementsPage() {
           {canManage ? (
             <label className="form-field"><span>門市</span><select value={targetStoreId} onChange={(event) => setTargetStoreId(event.target.value)}><option value="">全部門市</option>{targetStores.map((store) => <option key={store.storeId} value={store.storeId}>{store.storeName} / {relationshipLabel(store.relationshipType)}</option>)}</select></label>
           ) : null}
+          <label className="form-field checkbox-field"><input type="checkbox" checked={excludeDemoData} onChange={(event) => setExcludeDemoData(event.target.checked)} /><span>排除測試資料</span></label>
           {canManage ? <button type="button" className="primary-button inline-submit" onClick={generateSettlement} disabled={!targetStoreId}>產生月結</button> : null}
         </div>
       </section>

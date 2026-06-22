@@ -3,6 +3,7 @@ const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { loadCompanyMembership } = require("../middleware/companyAuth");
 const { requireFeature } = require("../services/storeAccessService");
+const { buildDemoKeywordCondition, buildDemoExclusionCondition, isExcludeDemoRequested } = require("../utils/demoDataFilter");
 
 const router = express.Router();
 
@@ -212,7 +213,43 @@ function buildListFilters(query, params) {
     filters.push("css.status = ?");
     params.push(String(query.status).toUpperCase());
   }
+  if (isExcludeDemoRequested(query.excludeDemo)) {
+    appendSettlementDemoExclusion(filters, params);
+  }
   return filters;
+}
+
+function appendSettlementDemoExclusion(filters, params) {
+  filters.push(buildDemoExclusionCondition([
+    "css.settlement_no",
+    "css.note",
+    "ts.code",
+    "ts.name",
+    "ts.billing_note"
+  ], params));
+  filters.push(`
+    NOT EXISTS (
+      SELECT 1
+      FROM company_store_settlement_items cssi_demo
+      LEFT JOIN store_transfers st_demo ON st_demo.id = cssi_demo.transfer_id
+      LEFT JOIN store_transfer_items sti_demo ON sti_demo.id = cssi_demo.transfer_item_id
+      LEFT JOIN products p_demo ON p_demo.id = cssi_demo.product_id
+      WHERE cssi_demo.settlement_id = css.id
+        AND ${buildDemoKeywordCondition([
+          "cssi_demo.sku_snapshot",
+          "cssi_demo.product_name_snapshot",
+          "st_demo.transfer_no",
+          "st_demo.note",
+          "sti_demo.sku_snapshot",
+          "sti_demo.product_name_snapshot",
+          "sti_demo.note",
+          "p_demo.sku",
+          "p_demo.name",
+          "p_demo.description",
+          "p_demo.source"
+        ], params)}
+    )
+  `);
 }
 
 router.get("/", async (req, res, next) => {
@@ -321,6 +358,9 @@ router.get("/monthly-summary", async (req, res, next) => {
     if (req.query.targetStoreId) {
       clauses.push("css.target_store_id = ?");
       params.push(Number(req.query.targetStoreId));
+    }
+    if (isExcludeDemoRequested(req.query.excludeDemo)) {
+      appendSettlementDemoExclusion(clauses, params);
     }
 
     const [rows] = await pool.query(

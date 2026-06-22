@@ -2,6 +2,7 @@ const express = require("express");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { requireFeature } = require("../services/storeAccessService");
+const { buildDemoKeywordCondition, buildDemoExclusionCondition, isExcludeDemoRequested } = require("../utils/demoDataFilter");
 
 const router = express.Router();
 
@@ -99,6 +100,40 @@ function buildPoAccessWhere(context, scope = "all", alias = "spo") {
   }
   if (!clauses.length) return { where: "1 = 0", params: [] };
   return { where: `(${clauses.map((clause) => `(${clause})`).join(" OR ")})`, params };
+}
+
+function appendPurchaseDemoExclusion(filters, params) {
+  filters.push(buildDemoExclusionCondition([
+    "spo.po_no",
+    "spo.note",
+    "s.name",
+    "s.note"
+  ], params));
+  filters.push(`
+    NOT EXISTS (
+      SELECT 1
+      FROM supplier_purchase_order_items spoi_demo
+      LEFT JOIN products p_demo ON p_demo.id = spoi_demo.product_id
+      WHERE spoi_demo.purchase_order_id = spo.id
+        AND ${buildDemoKeywordCondition([
+          "spoi_demo.sku_snapshot",
+          "spoi_demo.product_name_snapshot",
+          "spoi_demo.note",
+          "p_demo.sku",
+          "p_demo.name",
+          "p_demo.description",
+          "p_demo.source"
+        ], params)}
+    )
+  `);
+  filters.push(`
+    NOT EXISTS (
+      SELECT 1
+      FROM supplier_purchase_receipts spr_demo
+      WHERE spr_demo.purchase_order_id = spo.id
+        AND ${buildDemoKeywordCondition(["spr_demo.receipt_no", "spr_demo.note"], params)}
+    )
+  `);
 }
 
 function mapPurchaseOrder(row) {
@@ -371,6 +406,9 @@ router.get("/", async (req, res, next) => {
       filters.push("spo.settlement_month = ?");
       params.push(normalizeMonth(req.query.month));
     }
+    if (isExcludeDemoRequested(req.query.excludeDemo)) {
+      appendPurchaseDemoExclusion(filters, params);
+    }
 
     const [rows] = await pool.query(
       `
@@ -423,6 +461,10 @@ router.get("/monthly-summary", async (req, res, next) => {
     const access = buildPoAccessWhere(context, req.query.scope || "all");
     const month = normalizeMonth(req.query.month);
     const params = [...access.params, month];
+    const filters = [];
+    if (isExcludeDemoRequested(req.query.excludeDemo)) {
+      appendPurchaseDemoExclusion(filters, params);
+    }
     const [rows] = await pool.query(
       `
         SELECT
@@ -446,6 +488,7 @@ router.get("/monthly-summary", async (req, res, next) => {
         WHERE ${access.where}
           AND spo.settlement_month = ?
           AND spo.status <> 'CANCELED'
+          ${filters.length ? `AND ${filters.join(" AND ")}` : ""}
         GROUP BY spo.supplier_id, s.name, spo.settlement_month
         ORDER BY unpaidAmount DESC, s.name ASC
       `,
