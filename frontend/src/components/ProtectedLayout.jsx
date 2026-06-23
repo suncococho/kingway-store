@@ -11,6 +11,8 @@ import { useStoreAccess } from "../hooks/useStoreAccess";
 const PATH_FEATURE_MAP = {
   "/suppliers": "suppliers",
   "/store-transfers": "store_transfers",
+  "/store-replenishment-requests": "store_transfers",
+  "/hq-replenishment-requests": "store_transfers",
   "/inbound-transfers": "store_transfers",
   "/company-store-settlements": "company_store_settlements",
   "/headquarters": "headquarters"

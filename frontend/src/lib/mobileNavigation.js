@@ -7,6 +7,8 @@ const FEATURE_ROUTE_MAP = {
   "/coupons": "coupons_enabled",
   "/suppliers": "suppliers_enabled",
   "/store-transfers": "store_transfers_enabled",
+  "/store-replenishment-requests": "store_transfers_enabled",
+  "/hq-replenishment-requests": "store_transfers_enabled",
   "/inbound-transfers": "store_transfers_enabled",
   "/company-store-settlements": "company_store_settlements_enabled",
   "/headquarters": "headquarters_enabled",
@@ -38,6 +40,7 @@ export const mobileMenuSections = [
     items: [
       { to: "/products", label: "商品管理", description: "商品、SKU、圖片與批次操作", menuKey: "products" },
       { to: "/inventory", label: "庫存管理", description: "異動、警戒值與供應商流程", menuKey: "inventory" },
+      { to: "/store-replenishment-requests", label: "門市請貨", description: "向本部申請補貨，送出後由本部出貨", menuKey: "inbound_transfers" },
       { to: "/store-transfers", label: "門市調撥", description: "本部出貨與門市入庫確認", menuKey: "store_transfers" },
       { to: "/inbound-transfers", label: "門市入庫", description: "確認本部出貨到店的實收數量", menuKey: "inbound_transfers" },
       { to: "/company-store-settlements", label: "本部月結", description: "本部供貨應收與門市應付月結", menuKey: "store_transfers" },

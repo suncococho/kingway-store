@@ -492,6 +492,74 @@ async function queryRequests(whereSql, params, query = {}) {
   return rows.map(mapRequest);
 }
 
+router.get("/hq-products", async (req, res, next) => {
+  try {
+    const storeId = Number(req.storeId || req.user?.storeId || 0);
+    const q = String(req.query.q || "").trim();
+    const storeContext = await loadCompanyStore(storeId, ["DIRECT_STORE", "FRANCHISE_STORE"]);
+    if (!storeContext) {
+      throw createError("只有直營或加盟門市可建立請貨單", 403);
+    }
+
+    const params = [storeContext.companyId, storeId];
+    let searchSql = "";
+    if (q) {
+      searchSql = "AND (p.sku LIKE ? OR p.name LIKE ?)";
+      params.push(`%${q}%`, `%${q}%`);
+    }
+
+    const [rows] = await pool.query(
+      `
+        SELECT
+          p.id AS hqProductId,
+          p.store_id AS hqStoreId,
+          p.sku,
+          p.name,
+          p.stock AS hqStock,
+          p.price,
+          p.cost_price AS costPrice,
+          CASE WHEN p.cost_price > 0 THEN p.cost_price ELSE p.price END AS unitCost,
+          tp.id AS targetStoreProductId,
+          tp.stock AS targetStock
+        FROM products p
+        INNER JOIN company_stores hqcs ON hqcs.store_id = p.store_id
+          AND hqcs.company_id = ?
+          AND hqcs.status = 'ACTIVE'
+          AND hqcs.relationship_type IN ('HEADQUARTERS', 'WAREHOUSE')
+        LEFT JOIN products tp ON tp.store_id = ?
+          AND tp.sku = p.sku
+          AND tp.deleted_at IS NULL
+        WHERE p.deleted_at IS NULL
+          AND p.sku IS NOT NULL
+          AND p.sku <> ''
+          ${searchSql}
+        ORDER BY p.stock DESC, p.sku ASC
+        LIMIT 50
+      `,
+      params
+    );
+
+    return res.json({
+      ok: true,
+      products: rows.map((row) => ({
+        hqProductId: Number(row.hqProductId),
+        hqStoreId: Number(row.hqStoreId),
+        sku: row.sku || "",
+        name: row.name || "",
+        hqStock: Number(row.hqStock || 0),
+        price: Number(row.price || 0),
+        costPrice: Number(row.costPrice || 0),
+        unitCost: Number(row.unitCost || 0),
+        targetStoreProductId: row.targetStoreProductId === null ? null : Number(row.targetStoreProductId),
+        targetStock: row.targetStock === null || row.targetStock === undefined ? null : Number(row.targetStock),
+        mapped: Boolean(row.targetStoreProductId)
+      }))
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/", async (req, res, next) => {
   try {
     const storeId = Number(req.storeId || req.user?.storeId || 0);

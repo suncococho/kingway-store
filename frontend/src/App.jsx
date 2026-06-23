@@ -49,6 +49,8 @@ import TrashPage from "./pages/TrashPage";
 import HeadquartersPage from "./pages/HeadquartersPage";
 import InboundTransfersPage from "./pages/InboundTransfersPage";
 import CompanyStoreSettlementsPage from "./pages/CompanyStoreSettlementsPage";
+import StoreReplenishmentRequestsPage from "./pages/StoreReplenishmentRequestsPage";
+import HqReplenishmentRequestsPage from "./pages/HqReplenishmentRequestsPage";
 
 function App() {
   const token = getStoredToken();
@@ -125,6 +127,8 @@ function App() {
         <Route path="/headquarters" element={<HeadquartersPage />} />
         <Route path="/inbound-transfers" element={<InboundTransfersPage />} />
         <Route path="/company-store-settlements" element={<CompanyStoreSettlementsPage />} />
+        <Route path="/store-replenishment-requests" element={<StoreReplenishmentRequestsPage />} />
+        <Route path="/hq-replenishment-requests" element={<HqReplenishmentRequestsPage />} />
       </Route>
       <Route
         path="*"
