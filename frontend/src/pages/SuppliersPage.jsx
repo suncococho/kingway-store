@@ -3,6 +3,7 @@ import DataTable from "../components/DataTable";
 import StatusBadge from "../components/StatusBadge";
 import { useProcessingGuard } from "../hooks/useProcessingGuard";
 import { apiRequest } from "../lib/api";
+import { getStoredUser } from "../lib/auth";
 
 const SUPPLIER_EMPTY_FORM = {
   name: "",
@@ -117,6 +118,14 @@ function getScopeTone(value) {
   return "success";
 }
 
+function getPurchaseSupplierLabel(supplier) {
+  const scopeLabel = supplier.scopeLabel || getScopeLabel(supplier.ownerType);
+  if (String(supplier.ownerType || "").toUpperCase() === "COMPANY") {
+    return `${supplier.name} / ${scopeLabel}（僅本部/倉庫入庫）`;
+  }
+  return `${supplier.name} / ${scopeLabel}`;
+}
+
 function getPendingQuantity(row) {
   if (normalizeRequestType(row.requestType) !== "PURCHASE_ORDER") return 0;
   return Math.max(toNumber(row.quantity) - toNumber(row.receivedQuantity), 0);
@@ -160,6 +169,7 @@ export default function SuppliersPage() {
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [purchaseMonthly, setPurchaseMonthly] = useState([]);
   const [excludeDemoData, setExcludeDemoData] = useState(false);
+  const [companyInfo, setCompanyInfo] = useState(null);
   const [products, setProducts] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [supplierPrices, setSupplierPrices] = useState([]);
@@ -185,15 +195,26 @@ export default function SuppliersPage() {
     type: "PURCHASE_ORDER"
   });
   const { isProcessing, pendingAction, runWithProcessing } = useProcessingGuard();
+  const storedUser = getStoredUser();
+  const currentStoreId = Number(storedUser?.storeId || storedUser?.store_id || 0);
+  const currentCompanyStore = useMemo(() => {
+    for (const company of companyInfo?.companies || []) {
+      const store = (company.stores || []).find((row) => Number(row.storeId) === currentStoreId);
+      if (store) return store;
+    }
+    return null;
+  }, [companyInfo, currentStoreId]);
+  const canCurrentStoreUseCompanySupplier = !currentCompanyStore || ["HEADQUARTERS", "WAREHOUSE"].includes(currentCompanyStore.relationshipType);
 
   async function load() {
     setError("");
     try {
-      const [nextRows, nextMonthly, nextProducts, nextSuppliers] = await Promise.all([
+      const [nextRows, nextMonthly, nextProducts, nextSuppliers, nextCompanyInfo] = await Promise.all([
         apiRequest("/suppliers/requests"),
         apiRequest("/suppliers/monthly"),
         apiRequest("/products"),
-        apiRequest(`/suppliers?includeInactive=true&scope=${encodeURIComponent(supplierScope)}`)
+        apiRequest(`/suppliers?includeInactive=true&scope=${encodeURIComponent(supplierScope)}`),
+        apiRequest("/company/me").catch(() => null)
       ]);
       const purchaseParams = new URLSearchParams({ scope: supplierScope });
       const purchaseMonthlyParams = new URLSearchParams({
@@ -214,6 +235,7 @@ export default function SuppliersPage() {
       setPurchaseMonthly(nextPurchaseMonthly);
       setProducts(nextProducts);
       setSuppliers(nextSuppliers);
+      setCompanyInfo(nextCompanyInfo);
       if (selectedSupplierId && !nextSuppliers.some((supplier) => String(supplier.id) === String(selectedSupplierId))) {
         setSelectedSupplierId("");
         setSupplierPrices([]);
@@ -419,6 +441,8 @@ export default function SuppliersPage() {
   const selectedPriceProduct = products.find((product) => Number(product.id) === Number(priceForm.productId));
   const selectedPurchaseProduct = products.find((product) => Number(product.id) === Number(purchaseForm.productId));
   const selectedPurchaseSupplier = suppliers.find((supplier) => String(supplier.id) === String(purchaseForm.supplierId));
+  const selectedPurchaseSupplierIsCompany = String(selectedPurchaseSupplier?.ownerType || "").toUpperCase() === "COMPANY";
+  const selectedPurchaseCompanySupplierBlocked = selectedPurchaseSupplierIsCompany && !canCurrentStoreUseCompanySupplier;
   const selectedSupplier = suppliers.find((supplier) => String(supplier.id) === String(selectedSupplierId));
   const canEditSelectedSupplier = selectedSupplier ? Boolean(selectedSupplier.canEdit) : false;
   const purchaseProductOptions = products.filter((product) => {
@@ -551,6 +575,10 @@ export default function SuppliersPage() {
   async function createPurchaseOrder() {
     if (!purchaseForm.supplierId || !purchaseForm.productId || Number(purchaseForm.quantityOrdered || 0) <= 0) {
       alert("請選擇供應商、商品與數量");
+      return;
+    }
+    if (selectedPurchaseCompanySupplierBlocked) {
+      alert("公司供應商僅供本部或倉庫入庫使用。若門市要接收本部庫存，請使用『本部出貨 → 門市入庫 → 本部月結』流程。若門市需自行向外部供應商採購，請建立門市供應商後再發注。");
       return;
     }
     await runWithProcessing(async () => {
@@ -832,18 +860,19 @@ export default function SuppliersPage() {
       {activeTab === "requests" ? (
         <>
           <section className="content-card section-panel">
-            <div className="section-header"><div><h2>供應商發注</h2><p className="muted-text">建立草稿不影響庫存；確認入庫後才會增加商品庫存。</p></div></div>
+            <div className="section-header"><div><h2>供應商發注</h2><p className="muted-text">建立草稿不影響庫存；確認入庫後才會增加商品庫存。公司供應商用於本部/倉庫進貨；門市接收本部庫存請使用門市入庫流程。</p></div></div>
             <div className="grid-form compact-grid">
-              <label className="form-field"><span>供應商</span><select value={purchaseForm.supplierId} onChange={(event) => setPurchaseForm((current) => ({ ...current, supplierId: event.target.value }))}><option value="">請選擇供應商</option>{suppliers.filter((supplier) => supplier.isActive && supplier.canEdit).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name} / {supplier.scopeLabel || getScopeLabel(supplier.ownerType)}</option>)}</select></label>
+              <label className="form-field"><span>供應商</span><select value={purchaseForm.supplierId} onChange={(event) => setPurchaseForm((current) => ({ ...current, supplierId: event.target.value }))}><option value="">請選擇供應商</option>{suppliers.filter((supplier) => supplier.isActive && supplier.canEdit).map((supplier) => <option key={supplier.id} value={supplier.id}>{getPurchaseSupplierLabel(supplier)}</option>)}</select></label>
               <label className="form-field"><span>商品搜尋</span><input value={purchaseForm.productSearch} onChange={(event) => setPurchaseForm((current) => ({ ...current, productSearch: event.target.value, productId: "" }))} placeholder="輸入 SKU 或商品名稱" /></label>
               <label className="form-field"><span>數量</span><input type="number" min="1" value={purchaseForm.quantityOrdered} onChange={(event) => setPurchaseForm((current) => ({ ...current, quantityOrdered: Number(event.target.value) }))} /></label>
               <label className="form-field"><span>單價</span><input type="number" min="0" value={purchaseForm.unitCost} onChange={(event) => setPurchaseForm((current) => ({ ...current, unitCost: event.target.value }))} placeholder="空白則使用供應價" /></label>
               <label className="form-field"><span>月結月份</span><input type="month" value={purchaseForm.settlementMonth} onChange={(event) => setPurchaseForm((current) => ({ ...current, settlementMonth: event.target.value }))} /></label>
               <label className="form-field form-field-wide"><span>備註</span><input value={purchaseForm.note} onChange={(event) => setPurchaseForm((current) => ({ ...current, note: event.target.value }))} /></label>
-              {selectedPurchaseSupplier ? <div className="field-item form-field-wide"><div className="field-label">已選擇供應商</div><div className="field-value">{selectedPurchaseSupplier.name} / {selectedPurchaseSupplier.scopeLabel || getScopeLabel(selectedPurchaseSupplier.ownerType)}</div></div> : null}
+              {selectedPurchaseSupplier ? <div className="field-item form-field-wide"><div className="field-label">已選擇供應商</div><div className="field-value">{getPurchaseSupplierLabel(selectedPurchaseSupplier)}</div></div> : null}
+              {selectedPurchaseCompanySupplierBlocked ? <div className="empty-state form-field-wide">公司供應商僅供本部或倉庫入庫使用。若門市要接收本部庫存，請使用「本部出貨 → 門市入庫 → 本部月結」流程。若門市需自行向外部供應商採購，請建立門市供應商後再發注。</div> : null}
               {selectedPurchaseProduct ? <div className="field-item form-field-wide"><div className="field-label">已選擇商品</div><div className="field-value">{selectedPurchaseProduct.sku} / {selectedPurchaseProduct.name} / 庫存 {selectedPurchaseProduct.stock}</div></div> : null}
               {purchaseProductOptions.length ? <div className="stack-list form-field-wide">{purchaseProductOptions.map((product) => <button type="button" key={product.id} className="secondary-button" onClick={() => setPurchaseForm((current) => ({ ...current, productId: product.id, productSearch: `${product.sku} ${product.name}` }))}>{product.sku} / {product.name} / 庫存 {product.stock} / 原價 {formatMoney(product.costPrice)}</button>)}</div> : null}
-              <button type="button" className="primary-button inline-submit" onClick={createPurchaseOrder} disabled={isProcessing || !purchaseForm.supplierId}>{pendingAction?.id === "supplier-po-create" ? "建立中..." : "建立發注單"}</button>
+              <button type="button" className="primary-button inline-submit" onClick={createPurchaseOrder} disabled={isProcessing || !purchaseForm.supplierId || selectedPurchaseCompanySupplierBlocked}>{pendingAction?.id === "supplier-po-create" ? "建立中..." : "建立發注單"}</button>
             </div>
           </section>
           <section className="content-card section-panel">
