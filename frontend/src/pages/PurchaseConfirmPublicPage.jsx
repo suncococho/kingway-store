@@ -5,33 +5,33 @@ import SignaturePad from "../components/SignaturePad";
 import { apiRequest } from "../lib/api";
 
 const DELIVERY_CHECK_ITEMS = [
-  { id: "check-condition", label: "車況確認", value: "車況確認", description: "已當場檢查車輛外觀、功能、配件與規格，確認皆正常無誤、與訂單相符。" },
-  { id: "check-photo", label: "照片使用同意", value: "照片使用同意", description: "本人同意門市於交車時拍攝之照片，得用於門市紀錄、社群或行銷用途。" }
+  { id: "check-condition", label: "車況確認", value: "車況確認", description: "已當場檢查車輛外觀、功能、配件與規格，確認皆正常無誤、與訂單相符。", required: true },
+  { id: "check-photo", label: "照片使用同意", value: "照片使用同意", description: "本人同意門市於交車時拍攝之照片，得用於門市紀錄、社群或行銷用途。", required: false }
 ];
 
 const EXPLANATION_CHECK_ITEMS = [
-  { id: "explain-delivery", label: "說明確認", value: "說明確認", description: "已聽取店員關於使用方法、保固範圍（1年）、保養及安全注意事項之說明。" }
+  { id: "explain-delivery", label: "說明確認", value: "說明確認", description: "已聽取店員關於使用方法、保固範圍（1年）、保養及安全注意事項之說明。", required: true }
 ];
 
 const DEFAULT_CONTENT = {
-  pageTitle: "KINGWAY 自行車交付確認",
+  pageTitle: "KINGWAY 自行車\n交付確認",
   pageSubtitle: "購買後自行車確認簽名表單",
-  vehicleTypeNotice: "✓ 請依本車輛實際配備狀況確認車輛資訊。",
+  vehicleTypeNotice: "",
   vehicleTypes: {
     road: {
       value: "road",
-      label: "道路合法版",
-      description: "道路合法版 - 本車輛已配備臺灣「閃電標章」（審驗合格標章），可依法於一般道路、自行車道行駛（須遵守時速25公里限制及相關交通法規）。"
+      label: "交付確認",
+      description: ""
     },
     offroad: {
       value: "offroad",
-      label: "越野休閒版",
-      description: "越野休閒版 - 本車輛未配備臺灣「閃電標章」，主要設計用於越野、私有場地或休閒騎乘用途。若於一般道路使用，請依當地交通法規行駛。"
+      label: "交付確認",
+      description: ""
     }
   },
-  deliveryNotice: "請確認以下交付確認項目。",
+  deliveryNotice: "✓ 請確認以下項目後勾選。",
   deliveryCheckItems: DELIVERY_CHECK_ITEMS,
-  deliveryChecks: DELIVERY_CHECK_ITEMS.map((item) => item.value),
+  deliveryChecks: DELIVERY_CHECK_ITEMS.filter((item) => item.required !== false).map((item) => item.value),
   staffExplanationNotice: "請確認店員已完成以下說明。",
   staffExplanationItems: EXPLANATION_CHECK_ITEMS,
   staffExplanations: EXPLANATION_CHECK_ITEMS.map((item) => item.value),
@@ -86,7 +86,7 @@ const DEFAULT_CONTENT = {
   errors: {
     buyerName: "請完成所有必填欄位與勾選項目",
     buyerPhone: "請完成所有必填欄位與勾選項目",
-    buyerIdNumber: "請輸入身份證後四碼",
+    buyerIdNumber: "請輸入身份證末四碼",
     vehicleType: "請選擇車輛類型",
     signatureData: "請完成簽名",
     deliveryChecks: "請完成所有必填欄位與勾選項目",
@@ -100,7 +100,7 @@ const EMPTY_FORM = {
   buyerName: "",
   buyerPhone: "",
   buyerIdNumber: "",
-  vehicleType: "",
+  vehicleType: "offroad",
   deliveryChecks: [],
   staffExplanations: [],
   termsAccepted: false,
@@ -119,6 +119,46 @@ const SIGNATURE_MAX_HEIGHT = 360;
 const SIGNATURE_JPEG_QUALITY = 0.75;
 const SIGNATURE_MAX_DATA_URL_LENGTH = 600000;
 const SIGNATURE_TOO_LARGE_MESSAGE = "簽名資料過大，請清除簽名後重新簽名，或重新整理頁面後再試一次。";
+const PURCHASE_CARD_STYLE = {
+  borderColor: "#d6a84f",
+  boxShadow: "0 18px 42px rgba(148, 108, 34, 0.16)"
+};
+const SECTION_CARD_STYLE = {
+  border: "1px solid rgba(214, 168, 79, 0.7)",
+  borderRadius: 16,
+  padding: 18,
+  background: "#fffdf8"
+};
+const SECTION_TITLE_STYLE = {
+  display: "flex",
+  alignItems: "center",
+  gap: 10
+};
+const SECTION_BADGE_STYLE = {
+  width: 30,
+  height: 30,
+  borderRadius: "50%",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  background: "#c8932f",
+  color: "#ffffff",
+  fontSize: 15,
+  fontWeight: 900,
+  flex: "0 0 auto"
+};
+const TERMS_SCROLL_STYLE = {
+  maxHeight: 420,
+  overflowY: "auto",
+  padding: 16,
+  border: "1px solid rgba(214, 168, 79, 0.7)",
+  borderRadius: 12,
+  background: "#ffffff"
+};
+const AGREEMENT_CHECK_STYLE = {
+  borderColor: "rgba(22, 163, 74, 0.45)",
+  background: "#ecfdf5"
+};
 
 function buildResolvedStoreContext(response, requestedStoreCode) {
   return {
@@ -252,35 +292,35 @@ async function compressSignatureDataUrl(signatureData) {
   return compressedDataUrl;
 }
 
-function TermsContent({ content, vehicleType }) {
-  const selectedVehicleTerms = content?.vehicleTerms?.[vehicleType] || null;
+function TermsContent({ content }) {
   return (
-    <div className="purchase-terms-list">
+    <div className="purchase-terms-list" style={TERMS_SCROLL_STYLE}>
       <h3>{content.termsTitle}</h3>
       <h4>{content.termsIntroTitle}</h4>
-      <p>{content.termsIntro}</p>
-      {selectedVehicleTerms ? (
-        <div className="terms-block">
-          <h4>{selectedVehicleTerms.title}</h4>
-          <ol>
-            {selectedVehicleTerms.items.map((item) => <li key={item}>{item}</li>)}
-          </ol>
-        </div>
-      ) : null}
+      {String(content.termsIntro || "").split("\n").map((line) => <p key={line}>{line}</p>)}
       {(content.commonTerms || []).map((section) => (
         <div className="terms-block" key={section.title}>
           <h4>{section.title}</h4>
           {section.intro ? <p>{section.intro}</p> : null}
-          {section.paragraph ? <p>{section.paragraph}</p> : null}
           {Array.isArray(section.items) ? (
             <ol>
               {section.items.map((item) => <li key={item}>{item}</li>)}
             </ol>
           ) : null}
+          {section.paragraph ? <p>{section.paragraph}</p> : null}
           {section.warning ? <p className="terms-warning">{section.warning}</p> : null}
         </div>
       ))}
     </div>
+  );
+}
+
+function SectionTitle({ number, title }) {
+  return (
+    <h2 style={SECTION_TITLE_STYLE}>
+      <span style={SECTION_BADGE_STYLE}>{number}</span>
+      <span>{title}</span>
+    </h2>
   );
 }
 
@@ -432,7 +472,7 @@ function PurchaseConfirmPublicPage() {
           buyerName: sessionStorage.getItem("lineProfileName") || response.buyerName || response.customerName || "",
           buyerPhone: response.buyerPhone || response.customerPhone || "",
           buyerIdNumber: normalizeIdLast4(response.idLast4 || response.buyerIdNumber || ""),
-          vehicleType: response.vehicleType || snapshot.vehicleType || "",
+          vehicleType: response.vehicleType || snapshot.vehicleType || "offroad",
           deliveryChecks: response.deliveryChecks || [],
           staffExplanations: response.staffExplanations || [],
           termsAccepted: Boolean(response.termsAccepted),
@@ -475,8 +515,12 @@ function PurchaseConfirmPublicPage() {
       alert(content.errors.vehicleType);
       return;
     }
-    const requiredDeliveryValues = getDeliveryItems(content).map((item) => item.value);
-    const requiredExplanationValues = getExplanationItems(content).map((item) => item.value);
+    const requiredDeliveryValues = getDeliveryItems(content)
+      .filter((item) => item.required !== false)
+      .map((item) => item.value);
+    const requiredExplanationValues = getExplanationItems(content)
+      .filter((item) => item.required !== false)
+      .map((item) => item.value);
 
     const checkedDeliveryValues = new Set(form.deliveryChecks || []);
     const checkedExplanationValues = new Set(form.staffExplanations || []);
@@ -687,16 +731,26 @@ function PurchaseConfirmPublicPage() {
   const content = data.content || DEFAULT_CONTENT;
   const deliveryItems = getDeliveryItems(content);
   const explanationItems = getExplanationItems(content);
-  const selectedVehicle = content.vehicleTypes?.[form.vehicleType] || null;
 
   return (
     <div className="public-page">
-      <form className={`public-card purchase-confirm-card ${isManual ? "manual-tablet-card" : ""}`} onSubmit={handleSubmit}>
-        <h1>{content.pageTitle}</h1>
+      <form
+        className={`public-card purchase-confirm-card ${isManual ? "manual-tablet-card" : ""}`}
+        style={PURCHASE_CARD_STYLE}
+        onSubmit={handleSubmit}
+      >
+        <h1>
+          {String(content.pageTitle || "").split("\n").map((line, index) => (
+            <span key={line}>
+              {index > 0 ? <br /> : null}
+              {line}
+            </span>
+          ))}
+        </h1>
         <p>{content.pageSubtitle}</p>
         {storeContext?.isExplicitStore ? <p>{`門市：${storeContext.storeName}`}</p> : null}
         {manualSuccess ? (
-          <div className="page-section">
+          <div className="page-section" style={SECTION_CARD_STYLE}>
             <h2>{"已完成送出"}</h2>
             <p>{manualSuccess.message}</p>
             {manualSuccess.pdfUrl ? (
@@ -706,20 +760,20 @@ function PurchaseConfirmPublicPage() {
             ) : null}
           </div>
         ) : null}
-        <div className="page-section">
-          <h2>{"1. 購買者資料"}</h2>
+        <div className="page-section" style={SECTION_CARD_STYLE}>
+          <SectionTitle number="1" title="購買者資料" />
           <div className="grid-form compact-grid">
             <label className="form-field">
               <span>{"購買者姓名 *"}</span>
               <input name="buyerName" value={form.buyerName} onChange={handleInputChange} />
             </label>
             <label className="form-field">
-              <span>{"身份證後四碼 *"}</span>
+              <span>{"身份證末四碼 *"}</span>
               <input
                 name="buyerIdNumber"
                 value={form.buyerIdNumber}
                 onChange={handleInputChange}
-                placeholder="請輸入身份證後四碼"
+                placeholder="請輸入身份證末四碼"
                 inputMode="numeric"
                 pattern="\d{4}"
                 maxLength={4}
@@ -731,27 +785,8 @@ function PurchaseConfirmPublicPage() {
             </label>
           </div>
         </div>
-        <div className="page-section">
-          <h2>{"2. 車輛類型確認"}</h2>
-          <p className="muted-text">{content.vehicleTypeNotice}</p>
-          <div className="checklist-list">
-            {getVehicleOptions(content).map((item) => (
-              <label key={item.value} className="checklist-item" htmlFor={`vehicle-${item.value}`}>
-                <input
-                  id={`vehicle-${item.value}`}
-                  type="radio"
-                  name="vehicleType"
-                  value={item.value}
-                  checked={form.vehicleType === item.value}
-                  onChange={handleInputChange}
-                />
-                <span><strong>{item.label}</strong><br />{item.description}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-        <div className="page-section">
-          <h2>{"3. 自行車交付檢查"}</h2>
+        <div className="page-section" style={SECTION_CARD_STYLE}>
+          <SectionTitle number="2" title="交付確認" />
           <p className="muted-text">{content.deliveryNotice}</p>
           <div className="checklist-list">
             {deliveryItems.map((item) => (
@@ -765,31 +800,6 @@ function PurchaseConfirmPublicPage() {
                 <span><strong>{item.label}</strong>{item.description ? ` - ${item.description}` : ""}</span>
               </label>
             ))}
-          </div>
-        </div>
-        <div className="page-section">
-          <h2>{"4. 購買使用條款"}</h2>
-          {!form.vehicleType ? <p className="muted-text">{"請先選擇車輛類型，系統會顯示適用條款。"}</p> : null}
-          {form.vehicleType ? <TermsContent content={content} vehicleType={form.vehicleType} /> : null}
-          {selectedVehicle ? <p className="muted-text">{`目前選擇：${selectedVehicle.label}`}</p> : null}
-          <div className="checklist-list">
-            <label className="checklist-item" htmlFor="acceptance-terms">
-              <input
-                id="acceptance-terms"
-                type="checkbox"
-                name="termsAccepted"
-                checked={form.termsAccepted}
-                onChange={handleInputChange}
-              />
-              <span>{content.termsAgreement}</span>
-            </label>
-          </div>
-        </div>
-        <div className="page-section">
-          <h2>{"5. 店員說明確認"}</h2>
-          <p className="muted-text">{content.staffExplanationNotice}</p>
-          <p className="muted-text">說明確認 - 已聽取店員關於使用方法、保固範圍（1年）、保養及安全注意事項之說明。</p>
-          <div className="checklist-list">
             {explanationItems.map((item) => (
               <label key={item.value} className="checklist-item" htmlFor={`explanation-${item.value}`}>
                 <input
@@ -803,8 +813,24 @@ function PurchaseConfirmPublicPage() {
             ))}
           </div>
         </div>
-        <div className="page-section">
-          <h2>{"6. 確認聲明"}</h2>
+        <div className="page-section" style={SECTION_CARD_STYLE}>
+          <SectionTitle number="3" title="購買使用條款" />
+          <TermsContent content={content} />
+          <div className="checklist-list">
+            <label className="checklist-item" htmlFor="acceptance-terms" style={AGREEMENT_CHECK_STYLE}>
+              <input
+                id="acceptance-terms"
+                type="checkbox"
+                name="termsAccepted"
+                checked={form.termsAccepted}
+                onChange={handleInputChange}
+              />
+              <span>{content.termsAgreement}</span>
+            </label>
+          </div>
+        </div>
+        <div className="page-section" style={SECTION_CARD_STYLE}>
+          <SectionTitle number="4" title="確認聲明" />
           <div className="checklist-list">
             <label className="checklist-item" htmlFor="acceptance-final">
               <input
@@ -818,12 +844,12 @@ function PurchaseConfirmPublicPage() {
             </label>
           </div>
         </div>
-        <div className="page-section">
-          <h2>{"7. 購買者簽名"}</h2>
+        <div className="page-section" style={SECTION_CARD_STYLE}>
+          <SectionTitle number="5" title="購買者簽名" />
           <SignaturePad value={form.signatureData} onChange={(value) => setForm((current) => ({ ...current, signatureData: value }))} />
         </div>
         <button type="submit" className="primary-button" disabled={submitting}>
-          {submitting ? "送出中..." : isManual ? "送出購買確認書" : "送出確認"}
+          {submitting ? "送出中..." : "提交並儲存確認書"}
         </button>
       </form>
     </div>
