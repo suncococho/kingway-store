@@ -40,6 +40,7 @@ export const PATH_MENU_KEY_MAP = [
   { path: "/suppliers", key: "suppliers" },
   { path: "/store-replenishment-requests", key: "inbound_transfers" },
   { path: "/hq-replenishment-requests", key: "store_transfers" },
+  { path: "/hq-transfer-report", key: "store_transfers" },
   { path: "/staff", key: "staff" },
   { path: "/staff-attendance", key: "staff" },
   { path: "/attendance", key: "staff" },

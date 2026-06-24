@@ -50,6 +50,7 @@ import InboundTransfersPage from "./pages/InboundTransfersPage";
 import CompanyStoreSettlementsPage from "./pages/CompanyStoreSettlementsPage";
 import StoreReplenishmentRequestsPage from "./pages/StoreReplenishmentRequestsPage";
 import HqReplenishmentRequestsPage from "./pages/HqReplenishmentRequestsPage";
+import HqTransferReportPage from "./pages/HqTransferReportPage";
 
 function LegacyStoreFeaturesRedirect() {
   const { id } = useParams();
@@ -131,6 +132,7 @@ function App() {
         <Route path="/headquarters" element={<HeadquartersPage />} />
         <Route path="/inbound-transfers" element={<InboundTransfersPage />} />
         <Route path="/company-store-settlements" element={<CompanyStoreSettlementsPage />} />
+        <Route path="/hq-transfer-report" element={<HqTransferReportPage />} />
         <Route path="/store-replenishment-requests" element={<StoreReplenishmentRequestsPage />} />
         <Route path="/hq-replenishment-requests" element={<HqReplenishmentRequestsPage />} />
       </Route>

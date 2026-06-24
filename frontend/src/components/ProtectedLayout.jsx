@@ -13,6 +13,7 @@ const PATH_FEATURE_MAP = {
   "/store-transfers": "store_transfers",
   "/store-replenishment-requests": "store_transfers",
   "/hq-replenishment-requests": "store_transfers",
+  "/hq-transfer-report": "store_transfers",
   "/inbound-transfers": "store_transfers",
   "/company-store-settlements": "company_store_settlements",
   "/headquarters": "headquarters"

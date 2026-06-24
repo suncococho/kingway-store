@@ -1,4 +1,5 @@
 const express = require("express");
+const ExcelJS = require("exceljs");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { loadCompanyMembership } = require("../middleware/companyAuth");
@@ -252,6 +253,246 @@ function appendSettlementDemoExclusion(filters, params) {
   `);
 }
 
+function normalizeDate(value, fallback) {
+  const text = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : fallback;
+}
+
+function todayText() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function monthStartText() {
+  return `${todayText().slice(0, 7)}-01`;
+}
+
+function normalizeTransferStatus(value) {
+  const status = String(value || "ALL").trim().toUpperCase();
+  return ["DRAFT", "SHIPPED", "PARTIALLY_RECEIVED", "RECEIVED", "DISCREPANCY", "CANCELED"].includes(status) ? status : "ALL";
+}
+
+function normalizeSettlementStatus(value) {
+  const status = String(value || "ALL").trim().toUpperCase();
+  return ["SETTLED", "UNSETTLED"].includes(status) ? status : "ALL";
+}
+
+function formatReportDate(value) {
+  return value ? String(value).slice(0, 10) : "";
+}
+
+function mapTransferReportRow(row) {
+  const quantityShipped = Number(row.quantityShipped || 0);
+  const quantityReceived = Number(row.quantityReceived || 0);
+  const unitCost = Number(row.unitCost || 0);
+  return {
+    transferId: Number(row.transferId),
+    transferNo: row.transferNo || "",
+    transferStatus: row.transferStatus || "",
+    fromStoreId: Number(row.fromStoreId),
+    fromStoreName: row.fromStoreName || "",
+    targetStoreId: Number(row.targetStoreId),
+    targetStoreName: row.targetStoreName || "",
+    shippedAt: row.shippedAt || null,
+    receivedAt: row.receivedAt || null,
+    sku: row.sku || "",
+    productName: row.productName || "",
+    quantityShipped,
+    quantityReceived,
+    unitCost,
+    lineAmount: toMoney(row.lineAmount),
+    unitCostSource: row.unitCostSource || "transfer_item",
+    settlementId: row.settlementId === null || row.settlementId === undefined ? null : Number(row.settlementId),
+    settlementNo: row.settlementNo || "",
+    settlementStatus: row.settlementStatus || "UNSETTLED",
+    settlementMonth: row.settlementMonth || ""
+  };
+}
+
+function buildTransferReportSummary(rows) {
+  return rows.reduce((summary, row) => {
+    summary.totalQuantityShipped += Number(row.quantityShipped || 0);
+    summary.totalQuantityReceived += Number(row.quantityReceived || 0);
+    summary.totalAmount = toMoney(summary.totalAmount + Number(row.lineAmount || 0));
+    summary.rowCount += 1;
+    return summary;
+  }, {
+    totalQuantityShipped: 0,
+    totalQuantityReceived: 0,
+    totalAmount: 0,
+    rowCount: 0
+  });
+}
+
+async function resolveReportCompanyIds(req, requestedCompanyId) {
+  if (requestedCompanyId) {
+    const context = await loadCompanyContext(req, requestedCompanyId);
+    if (!context.canHqRead) throw createError("沒有本部出貨明細權限", 403);
+    return [requestedCompanyId];
+  }
+  const [memberships] = await pool.query(
+    "SELECT company_id AS companyId, role FROM company_memberships WHERE staff_user_id = ? AND status = 'ACTIVE'",
+    [req.user.id]
+  );
+  return memberships
+    .filter((row) => HQ_READ_ROLES.has(row.role))
+    .map((row) => Number(row.companyId))
+    .filter(Boolean);
+}
+
+async function queryTransferReportRows(req) {
+  const startDate = normalizeDate(req.query.fromDate || req.query.startDate, monthStartText());
+  const endDate = normalizeDate(req.query.toDate || req.query.endDate, todayText());
+  const companyIds = await resolveReportCompanyIds(req, Number(req.query.companyId || 0));
+  if (!companyIds.length) throw createError("沒有本部出貨明細權限", 403);
+
+  const params = [...companyIds, startDate, endDate];
+  const filters = [
+    `st.company_id IN (${companyIds.map(() => "?").join(",")})`,
+    "DATE(COALESCE(st.shipped_at, st.created_at)) BETWEEN ? AND ?"
+  ];
+
+  const targetStoreId = Number(req.query.targetStoreId || 0);
+  if (targetStoreId) {
+    filters.push("st.to_store_id = ?");
+    params.push(targetStoreId);
+  }
+
+  const status = normalizeTransferStatus(req.query.status);
+  if (status !== "ALL") {
+    filters.push("st.status = ?");
+    params.push(status);
+  }
+
+  const settlementStatus = normalizeSettlementStatus(req.query.settlementStatus);
+  if (settlementStatus === "SETTLED") {
+    filters.push("css.id IS NOT NULL");
+  } else if (settlementStatus === "UNSETTLED") {
+    filters.push("css.id IS NULL");
+  }
+
+  const [rows] = await pool.query(
+    `
+      SELECT
+        st.id AS transferId,
+        st.transfer_no AS transferNo,
+        st.status AS transferStatus,
+        st.from_store_id AS fromStoreId,
+        fs.name AS fromStoreName,
+        st.to_store_id AS targetStoreId,
+        ts.name AS targetStoreName,
+        st.shipped_at AS shippedAt,
+        st.received_at AS receivedAt,
+        sti.sku_snapshot AS sku,
+        sti.product_name_snapshot AS productName,
+        sti.quantity_shipped AS quantityShipped,
+        sti.quantity_received AS quantityReceived,
+        CASE
+          WHEN sti.unit_cost IS NOT NULL THEN sti.unit_cost
+          WHEN fp.cost_price IS NOT NULL AND fp.cost_price > 0 THEN fp.cost_price
+          WHEN fp.price IS NOT NULL THEN fp.price
+          ELSE 0
+        END AS unitCost,
+        CASE
+          WHEN sti.unit_cost IS NOT NULL THEN 'transfer_item'
+          WHEN fp.cost_price IS NOT NULL AND fp.cost_price > 0 THEN 'product_cost_price_fallback'
+          WHEN fp.price IS NOT NULL THEN 'product_price_fallback'
+          ELSE 'missing'
+        END AS unitCostSource,
+        (sti.quantity_shipped * CASE
+          WHEN sti.unit_cost IS NOT NULL THEN sti.unit_cost
+          WHEN fp.cost_price IS NOT NULL AND fp.cost_price > 0 THEN fp.cost_price
+          WHEN fp.price IS NOT NULL THEN fp.price
+          ELSE 0
+        END) AS lineAmount,
+        css.id AS settlementId,
+        css.settlement_no AS settlementNo,
+        css.status AS settlementStatus,
+        css.settlement_month AS settlementMonth
+      FROM store_transfers st
+      INNER JOIN store_transfer_items sti ON sti.transfer_id = st.id
+      INNER JOIN stores fs ON fs.id = st.from_store_id
+      INNER JOIN stores ts ON ts.id = st.to_store_id
+      INNER JOIN company_stores hqcs ON hqcs.company_id = st.company_id
+        AND hqcs.store_id = st.from_store_id
+        AND hqcs.status = 'ACTIVE'
+        AND hqcs.relationship_type IN ('HEADQUARTERS','WAREHOUSE')
+      LEFT JOIN products fp ON fp.id = sti.from_product_id
+      LEFT JOIN company_store_settlement_items cssi ON cssi.transfer_item_id = sti.id
+      LEFT JOIN company_store_settlements css ON css.id = cssi.settlement_id
+        AND css.status <> 'CANCELED'
+      WHERE ${filters.join(" AND ")}
+      ORDER BY COALESCE(st.shipped_at, st.created_at) DESC, st.id DESC, sti.id ASC
+      LIMIT 2000
+    `,
+    params
+  );
+
+  const mappedRows = rows.map(mapTransferReportRow);
+  return {
+    startDate,
+    endDate,
+    rows: mappedRows,
+    summary: buildTransferReportSummary(mappedRows)
+  };
+}
+
+function buildTransferReportWorkbook({ rows, summary, startDate, endDate }) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "KINGWAY";
+  const sheet = workbook.addWorksheet("本部出貨明細");
+  sheet.columns = [
+    { header: "出貨日期", key: "出貨日期", width: 14 },
+    { header: "入庫日期", key: "入庫日期", width: 14 },
+    { header: "出貨單號", key: "出貨單號", width: 24 },
+    { header: "月結單號", key: "月結單號", width: 24 },
+    { header: "出貨狀態", key: "出貨狀態", width: 16 },
+    { header: "月結狀態", key: "月結狀態", width: 16 },
+    { header: "本部", key: "本部", width: 22 },
+    { header: "門市", key: "門市", width: 22 },
+    { header: "SKU", key: "SKU", width: 18 },
+    { header: "商品名稱", key: "商品名稱", width: 34 },
+    { header: "出貨數量", key: "出貨數量", width: 12 },
+    { header: "入庫數量", key: "入庫數量", width: 12 },
+    { header: "本部批發價", key: "本部批發價", width: 14 },
+    { header: "小計", key: "小計", width: 14 },
+    { header: "備註", key: "備註", width: 32 }
+  ];
+  sheet.getRow(1).font = { bold: true };
+  sheet.addRows(rows.map((row) => ({
+    出貨日期: formatReportDate(row.shippedAt),
+    入庫日期: formatReportDate(row.receivedAt),
+    出貨單號: row.transferNo,
+    月結單號: row.settlementNo || "",
+    出貨狀態: row.transferStatus,
+    月結狀態: row.settlementStatus,
+    本部: row.fromStoreName,
+    門市: row.targetStoreName,
+    SKU: row.sku,
+    商品名稱: row.productName,
+    出貨數量: row.quantityShipped,
+    入庫數量: row.quantityReceived,
+    本部批發價: row.unitCost,
+    小計: row.lineAmount,
+    備註: row.unitCostSource === "transfer_item" ? "" : `unit cost fallback: ${row.unitCostSource}`
+  })));
+  for (const key of ["出貨數量", "入庫數量", "本部批發價", "小計"]) {
+    sheet.getColumn(key).numFmt = "#,##0";
+  }
+  const summaryStart = rows.length + 3;
+  sheet.getCell(`A${summaryStart}`).value = `查詢期間 ${startDate} ~ ${endDate}`;
+  sheet.getCell(`A${summaryStart}`).font = { bold: true };
+  sheet.getCell(`A${summaryStart + 1}`).value = "明細筆數";
+  sheet.getCell(`B${summaryStart + 1}`).value = summary.rowCount;
+  sheet.getCell(`A${summaryStart + 2}`).value = "出貨總數";
+  sheet.getCell(`B${summaryStart + 2}`).value = summary.totalQuantityShipped;
+  sheet.getCell(`A${summaryStart + 3}`).value = "入庫總數";
+  sheet.getCell(`B${summaryStart + 3}`).value = summary.totalQuantityReceived;
+  sheet.getCell(`A${summaryStart + 4}`).value = "批發總額";
+  sheet.getCell(`B${summaryStart + 4}`).value = summary.totalAmount;
+  sheet.getColumn("B").numFmt = "#,##0";
+  return workbook;
+}
+
 router.get("/", async (req, res, next) => {
   try {
     const storeId = Number(req.storeId || req.user?.storeId || 0);
@@ -399,6 +640,31 @@ router.get("/monthly-summary", async (req, res, next) => {
         partiallyPaidCount: Number(row.partiallyPaidCount || 0),
         unpaidCount: Number(row.unpaidCount || 0)
       }))
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/transfer-report", async (req, res, next) => {
+  try {
+    const report = await queryTransferReportRows(req);
+    if (String(req.query.export || "").trim().toLowerCase() === "xlsx") {
+      const workbook = buildTransferReportWorkbook(report);
+      const buffer = await workbook.xlsx.writeBuffer();
+      const filename = `kingway_hq_transfer_report_${report.startDate.replaceAll("-", "")}_${report.endDate.replaceAll("-", "")}.xlsx`;
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.send(buffer);
+    }
+    return res.json({
+      ok: true,
+      rows: report.rows,
+      summary: report.summary,
+      filters: {
+        fromDate: report.startDate,
+        toDate: report.endDate
+      }
     });
   } catch (error) {
     return next(error);
