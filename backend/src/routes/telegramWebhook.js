@@ -8,7 +8,7 @@ const {
   handleOrderApprovalCallback
 } = require("../services/telegramService");
 
-const { pool } = require("../db");
+const { pool, withTransaction } = require("../db");
 
 const router = express.Router();
 
@@ -21,6 +21,11 @@ const router = express.Router();
 const BOT_NOTIFY = "notify";
 
 const DEFAULT_TELEGRAM_STORE_ID = Number(process.env.TELEGRAM_FALLBACK_STORE_ID || process.env.LEGACY_KINGWAY_STORE_ID || 1);
+const TELEGRAM_SUPPLIER_STAFF_ID = Number(process.env.TELEGRAM_SUPPLIER_STAFF_ID || 1);
+
+const HQ_STORE_ROLES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
+const CHAIN_STORE_ROLES = new Set(["DIRECT_STORE", "FRANCHISE_STORE"]);
+const OPEN_SUPPLIER_PO_RECEIVE_STATUSES = new Set(["ORDERED", "PARTIALLY_RECEIVED"]);
 
 function resolveTelegramStoreId() {
   const resolved = Number(DEFAULT_TELEGRAM_STORE_ID);
@@ -30,6 +35,159 @@ function resolveTelegramStoreId() {
   }
 
   return 1;
+}
+
+function makeNo(prefix) {
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+    String(now.getSeconds()).padStart(2, "0")
+  ].join("");
+  return `${prefix}-${stamp}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+}
+
+function toNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toMoney(value) {
+  return Math.round(toNumber(value) * 100) / 100;
+}
+
+function normalizeTelegramSupplierToken(value) {
+  return String(value || "").trim();
+}
+
+async function resolveTelegramSupplierContext(storeId, connection = pool) {
+  const [rows] = await connection.query(
+    `
+      SELECT company_id AS companyId, relationship_type AS relationshipType
+      FROM company_stores
+      WHERE store_id = ?
+        AND status = 'ACTIVE'
+    `,
+    [storeId]
+  );
+  const relationships = rows.map((row) => row.relationshipType).filter(Boolean);
+  const companyIds = [...new Set(rows.map((row) => Number(row.companyId)).filter(Boolean))];
+  return {
+    storeId,
+    companyIds,
+    relationships,
+    isChainStore: relationships.some((role) => CHAIN_STORE_ROLES.has(role)),
+    isHqStore: relationships.some((role) => HQ_STORE_ROLES.has(role)),
+    isIndependent: relationships.length === 0
+  };
+}
+
+async function resolveTelegramSupplier(storeId, supplierToken, connection = pool) {
+  const token = normalizeTelegramSupplierToken(supplierToken);
+  if (!token) {
+    throw new Error("新版 /po 需指定供應商：/po 供應商 SKU 數量 備註");
+  }
+
+  const context = await resolveTelegramSupplierContext(storeId, connection);
+  if (context.isChainStore) {
+    throw new Error("直營或加盟門市不可使用供應商發注，請使用門市請貨流程。");
+  }
+
+  const filters = [
+    "s.status = 'ACTIVE'",
+    "s.is_active = 1",
+    "s.deleted_at IS NULL",
+    "s.owner_type <> 'PLATFORM'"
+  ];
+  const params = [];
+
+  if (/^\d+$/.test(token)) {
+    filters.push("s.id = ?");
+    params.push(Number(token));
+  } else {
+    filters.push("s.name = ?");
+    params.push(token);
+  }
+
+  const scopeClauses = ["(s.owner_type = 'STORE' AND COALESCE(s.owner_store_id, s.store_id) = ?)"];
+  const scopeParams = [storeId];
+
+  if (context.isHqStore && context.companyIds.length) {
+    scopeClauses.push(`(s.owner_type = 'COMPANY' AND s.owner_company_id IN (${context.companyIds.map(() => "?").join(",")}))`);
+    scopeParams.push(...context.companyIds);
+  }
+
+  filters.push(`(${scopeClauses.join(" OR ")})`);
+
+  const [suppliers] = await connection.query(
+    `
+      SELECT
+        s.id,
+        s.name,
+        s.owner_type AS ownerType,
+        s.store_id AS storeId,
+        s.owner_store_id AS ownerStoreId,
+        s.owner_company_id AS ownerCompanyId
+      FROM suppliers s
+      WHERE ${filters.join(" AND ")}
+      ORDER BY s.id ASC
+      LIMIT 5
+    `,
+    [...params, ...scopeParams]
+  );
+
+  if (!suppliers.length) {
+    throw new Error("找不到供應商，請確認供應商名稱或代碼。");
+  }
+  if (suppliers.length > 1) {
+    throw new Error("找到多個供應商，請使用完整供應商名稱或供應商 ID。");
+  }
+
+  return { supplier: suppliers[0], context };
+}
+
+async function loadTelegramPoProduct(storeId, sku, connection = pool) {
+  const [rows] = await connection.query(
+    `
+      SELECT id, sku, name, stock, cost_price AS costPrice, price
+      FROM products
+      WHERE sku = ?
+        AND store_id = ?
+        AND deleted_at IS NULL
+      LIMIT 1
+    `,
+    [sku, storeId]
+  );
+  return rows[0] || null;
+}
+
+async function loadTelegramSupplierUnitCost(supplierId, productId, storeId, fallbackCost, fallbackPrice, connection = pool) {
+  const [rows] = await connection.query(
+    `
+      SELECT default_unit_cost AS defaultUnitCost, last_unit_cost AS lastUnitCost
+      FROM supplier_product_prices
+      WHERE supplier_id = ?
+        AND product_id = ?
+        AND store_id = ?
+        AND is_active = 1
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+    `,
+    [supplierId, productId, storeId]
+  );
+  const priceRow = rows[0];
+  if (priceRow) {
+    const defaultCost = toMoney(priceRow.defaultUnitCost);
+    const lastCost = toMoney(priceRow.lastUnitCost);
+    if (defaultCost > 0) return defaultCost;
+    if (lastCost > 0) return lastCost;
+  }
+  const productCost = toMoney(fallbackCost);
+  if (productCost > 0) return productCost;
+  return toMoney(fallbackPrice);
 }
 
 
@@ -138,7 +296,11 @@ async function handleLowStockAutoCommand(chatId, text, storeId) {
     return true;
   }
 
-  const lines = ["🤖 自動建立補貨發注單"];
+  const lines = [
+    "🤖 低庫存補貨建議",
+    "新版 Telegram 發注需指定供應商，不再自動建立 legacy 發注單。",
+    "請使用：/po 供應商 SKU 數量 備註"
+  ];
 
   for (const product of products) {
     const suggestQty = Math.max(
@@ -146,29 +308,12 @@ async function handleLowStockAutoCommand(chatId, text, storeId) {
       1
     );
 
-    const [requestResult] = await pool.query(
-      `
-        INSERT INTO supplier_requests
-        (request_type, status, supplier_name, note, requested_by_staff_id)
-        VALUES ('PURCHASE_ORDER', 'PENDING_SUPPLIER', 'kingway', 'AUTO LOW STOCK', 1)
-      `
-    );
-
-    await pool.query(
-      `
-        INSERT INTO supplier_request_items
-        (supplier_request_id, product_id, quantity, note)
-        VALUES (?, ?, ?, 'AUTO LOW STOCK')
-      `,
-      [requestResult.insertId, product.id, suggestQty]
-    );
-
     lines.push("");
-    lines.push(`#${requestResult.insertId}`);
     lines.push(`${product.sku}`);
     lines.push(`${product.name}`);
     lines.push(`庫存：${product.stock}`);
-    lines.push(`自動補貨：${suggestQty}`);
+    lines.push(`建議補貨：${suggestQty}`);
+    lines.push(`指令：/po 供應商 ${product.sku} ${suggestQty} AUTO LOW STOCK`);
   }
 
   await sendMessage(chatId, lines.join("\n"));
@@ -538,7 +683,8 @@ async function handleSupplierHelpCommand(chatId, text) {
     "例：/return KINGWAY B-EB-001-S1 1 瑕疵換貨",
     "",
     "【入庫】",
-    "/receive 發注單號 數量",
+    "/receive PO單號 SKU 數量",
+    "或：/receive SKU 數量（僅限只有一筆未收發注）",
     "",
     "【月結 / 報表】",
     "/supplier_monthly",
@@ -576,7 +722,71 @@ async function handleLowStockCommand(chatId, text, storeId) {
     lines.push(`${index + 1}. ${p.sku}`);
     lines.push(`${p.name}`);
     lines.push(`庫存：${p.stock} / 安全庫存：${p.reorderLevel}`);
-    lines.push(`建議：/po ${p.sku} ${Math.max(Number(p.reorderLevel || 1) - Number(p.stock || 0) + 1, 1)} 補貨`);
+    lines.push(`建議：/po 供應商 ${p.sku} ${Math.max(Number(p.reorderLevel || 1) - Number(p.stock || 0) + 1, 1)} 補貨`);
+  });
+
+  await sendMessage(chatId, lines.join("\n"));
+  return true;
+}
+
+async function handleSupplierPoListCommand(chatId, text, storeId) {
+  const raw = String(text || "").trim();
+  if (!/^\/po_list(?:\s+\S+)?$/i.test(raw)) return false;
+
+  const parts = raw.split(/\s+/);
+  const supplierFilter = parts[1] || null;
+  const filters = [
+    "spo.store_id = ?",
+    "spo.status IN ('ORDERED', 'PARTIALLY_RECEIVED')"
+  ];
+  const params = [storeId];
+
+  if (supplierFilter) {
+    filters.push("s.name = ?");
+    params.push(supplierFilter);
+  }
+
+  const [rows] = await pool.query(
+    `
+      SELECT
+        spo.id,
+        spo.po_no AS poNo,
+        spo.status,
+        s.name AS supplierName,
+        spoi.sku_snapshot AS sku,
+        spoi.product_name_snapshot AS productName,
+        spoi.quantity_ordered AS quantityOrdered,
+        spoi.quantity_received AS quantityReceived,
+        DATE_FORMAT(COALESCE(spo.ordered_at, spo.created_at), '%Y-%m-%d %H:%i') AS orderedAt
+      FROM supplier_purchase_orders spo
+      INNER JOIN supplier_purchase_order_items spoi
+        ON spoi.purchase_order_id = spo.id
+      INNER JOIN suppliers s
+        ON s.id = spo.supplier_id
+      WHERE ${filters.join(" AND ")}
+      ORDER BY COALESCE(spo.ordered_at, spo.created_at) ASC, spo.id ASC
+      LIMIT 20
+    `,
+    params
+  );
+
+  if (!rows.length) {
+    await sendMessage(chatId, supplierFilter ? `目前沒有 ${supplierFilter} 的新發注未入庫紀錄。` : "目前沒有新發注未入庫紀錄。");
+    return true;
+  }
+
+  const lines = [
+    `📦 新供應商發注未入庫${supplierFilter ? `｜${supplierFilter}` : ""}`,
+    "僅顯示新版 supplier_purchase_orders；過去 legacy 發注保留為歷史紀錄。"
+  ];
+
+  rows.forEach((row) => {
+    lines.push("");
+    lines.push(`${row.poNo} / ${row.status}`);
+    lines.push(`供應商：${row.supplierName || "-"}`);
+    lines.push(`${row.sku || "-"} / ${row.productName || "-"}`);
+    lines.push(`數量：${Number(row.quantityOrdered || 0)} / 已入庫：${Number(row.quantityReceived || 0)}`);
+    lines.push(`日期：${row.orderedAt || "-"}`);
   });
 
   await sendMessage(chatId, lines.join("\n"));
@@ -737,95 +947,201 @@ async function handleSupplierReturnDoneCommand(chatId, text, storeId) {
 
 
 async function handleSupplierReceiveCommand(chatId, text, storeId) {
-  const match = String(text || "").trim().match(/^\/receive\s+(\d+)\s+(\d+)$/i);
-  if (!match) return false;
+  const parts = String(text || "").trim().split(/\s+/);
+  if (!parts.length || !/^\/receive$/i.test(parts[0])) return false;
 
-  const requestId = Number(match[1]);
-  const receiveQty = Number(match[2]);
+  let poToken = null;
+  let sku = null;
+  let receiveQty = 0;
 
-  if (!requestId || receiveQty <= 0) {
-    await sendMessage(chatId, "格式錯誤：/receive 發注單號 數量");
+  if (parts.length === 3) {
+    sku = parts[1];
+    receiveQty = Number(parts[2] || 0);
+    if (/^\d+$/.test(sku)) {
+      await sendMessage(chatId, "新版 /receive 請使用：/receive PO單號 SKU 數量，或 /receive SKU 數量");
+      return true;
+    }
+  } else if (parts.length >= 4) {
+    poToken = parts[1];
+    sku = parts[2];
+    receiveQty = Number(parts[3] || 0);
+  } else {
+    await sendMessage(chatId, "格式錯誤：/receive PO單號 SKU 數量，或 /receive SKU 數量");
     return true;
   }
 
-  const [[reqRow]] = await pool.query(
-    `
-      SELECT sr.id, sr.request_type AS requestType, sr.status
-      FROM supplier_requests sr
-      INNER JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
-      INNER JOIN products p ON p.id = sri.product_id AND p.store_id = ?
-      WHERE sr.id = ?
-      LIMIT 1
-    `,
-    [storeId, requestId]
-  );
-
-  if (!reqRow) {
-    await sendMessage(chatId, `找不到發注單 #${requestId}`);
+  if (!sku || receiveQty <= 0) {
+    await sendMessage(chatId, "格式錯誤：/receive PO單號 SKU 數量，或 /receive SKU 數量");
     return true;
   }
 
-  if (reqRow.requestType !== "PURCHASE_ORDER") {
-    await sendMessage(chatId, `#${requestId} 不是發注單，無法入庫。`);
-    return true;
+  try {
+    const result = await withTransaction(async (connection) => {
+      const context = await resolveTelegramSupplierContext(storeId, connection);
+      if (context.isChainStore) {
+        throw new Error("直營或加盟門市不可使用供應商入庫，請使用門市入庫流程。");
+      }
+
+      const where = [
+        "spo.store_id = ?",
+        "spoi.sku_snapshot = ?",
+        "spo.status IN ('ORDERED', 'PARTIALLY_RECEIVED')"
+      ];
+      const params = [storeId, sku];
+      if (poToken) {
+        if (/^\d+$/.test(poToken)) {
+          where.push("spo.id = ?");
+          params.push(Number(poToken));
+        } else {
+          where.push("spo.po_no = ?");
+          params.push(poToken);
+        }
+      }
+
+      const [matches] = await connection.query(
+        `
+          SELECT
+            spo.id AS poId,
+            spo.po_no AS poNo,
+            spo.supplier_id AS supplierId,
+            spo.store_id AS storeId,
+            spo.company_id AS companyId,
+            spo.status AS poStatus,
+            s.name AS supplierName,
+            spoi.id AS itemId,
+            spoi.product_id AS productId,
+            spoi.quantity_ordered AS quantityOrdered,
+            spoi.quantity_received AS quantityReceived,
+            spoi.unit_cost AS unitCost,
+            p.sku,
+            p.name AS productName,
+            p.stock
+          FROM supplier_purchase_orders spo
+          INNER JOIN supplier_purchase_order_items spoi
+            ON spoi.purchase_order_id = spo.id
+          INNER JOIN products p
+            ON p.id = spoi.product_id
+           AND p.store_id = spo.store_id
+          INNER JOIN suppliers s
+            ON s.id = spo.supplier_id
+          WHERE ${where.join(" AND ")}
+          ORDER BY spo.ordered_at ASC, spo.created_at ASC, spo.id ASC
+          FOR UPDATE
+        `,
+        params
+      );
+
+      if (!matches.length) {
+        throw new Error(poToken ? `找不到可入庫的發注單：${poToken} / ${sku}` : `找不到 SKU ${sku} 的未入庫發注單`);
+      }
+      if (!poToken && matches.length > 1) {
+        throw new Error("有多筆未收發注，請使用 /receive PO單號 SKU 數量");
+      }
+
+      const item = matches[0];
+      if (!OPEN_SUPPLIER_PO_RECEIVE_STATUSES.has(item.poStatus)) {
+        throw new Error("此發注單目前不可入庫");
+      }
+
+      const remaining = Math.max(Number(item.quantityOrdered || 0) - Number(item.quantityReceived || 0), 0);
+      const actualReceive = Math.min(receiveQty, remaining);
+      if (actualReceive <= 0) {
+        throw new Error(`發注單 ${item.poNo} 已全部入庫。`);
+      }
+
+      const nextReceived = Number(item.quantityReceived || 0) + actualReceive;
+      const lineReceivedAmount = toMoney(nextReceived * Number(item.unitCost || 0));
+      const deltaAmount = toMoney(actualReceive * Number(item.unitCost || 0));
+      await connection.query(
+        "UPDATE supplier_purchase_order_items SET quantity_received = ?, line_received_amount = ? WHERE id = ?",
+        [nextReceived, lineReceivedAmount, item.itemId]
+      );
+      await connection.query(
+        "UPDATE products SET stock = stock + ? WHERE id = ? AND store_id = ?",
+        [actualReceive, item.productId, storeId]
+      );
+      await connection.query(
+        `
+          INSERT INTO inventory_movements
+            (store_id, product_id, movement_type, quantity, reference_type, reference_id, created_by, notes)
+          VALUES (?, ?, 'IN', ?, 'SUPPLIER_PURCHASE', ?, ?, ?)
+        `,
+        [storeId, item.productId, actualReceive, item.poId, TELEGRAM_SUPPLIER_STAFF_ID, `Telegram /receive ${item.poNo} / ${item.sku}`]
+      );
+
+      const [receiptResult] = await connection.query(
+        `
+          INSERT INTO supplier_purchase_receipts
+            (receipt_no, purchase_order_id, supplier_id, store_id, company_id, total_received_amount, received_by_staff_id, received_at, note)
+          VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+        `,
+        [makeNo("SPR"), item.poId, item.supplierId, storeId, item.companyId || null, deltaAmount, TELEGRAM_SUPPLIER_STAFF_ID, `Telegram /receive ${item.poNo}`]
+      );
+      await connection.query(
+        `
+          INSERT INTO supplier_purchase_receipt_items
+            (receipt_id, purchase_order_item_id, product_id, quantity_received_delta, unit_cost, line_received_amount)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `,
+        [receiptResult.insertId, item.itemId, item.productId, actualReceive, item.unitCost, deltaAmount]
+      );
+
+      const [[summary]] = await connection.query(
+        `
+          SELECT
+            SUM(quantity_ordered) AS totalOrderedQty,
+            SUM(quantity_received) AS totalReceivedQty,
+            SUM(line_received_amount) AS totalReceivedAmount
+          FROM supplier_purchase_order_items
+          WHERE purchase_order_id = ?
+        `,
+        [item.poId]
+      );
+      const nextStatus = Number(summary.totalReceivedQty || 0) >= Number(summary.totalOrderedQty || 0) ? "RECEIVED" : "PARTIALLY_RECEIVED";
+      await connection.query(
+        `
+          UPDATE supplier_purchase_orders
+          SET status = ?,
+              total_received_amount = ?,
+              first_received_at = COALESCE(first_received_at, NOW()),
+              fully_received_at = IF(? = 'RECEIVED', NOW(), fully_received_at),
+              updated_by_staff_id = ?
+          WHERE id = ?
+        `,
+        [nextStatus, toMoney(summary.totalReceivedAmount), nextStatus, TELEGRAM_SUPPLIER_STAFF_ID, item.poId]
+      );
+
+      return {
+        poNo: item.poNo,
+        supplierName: item.supplierName,
+        sku: item.sku,
+        productName: item.productName,
+        actualReceive,
+        nextReceived,
+        ordered: Number(item.quantityOrdered || 0),
+        stockBefore: Number(item.stock || 0),
+        stockAfter: Number(item.stock || 0) + actualReceive,
+        status: nextStatus
+      };
+    });
+
+    await sendMessage(
+      chatId,
+      [
+        "✅ 供應商入庫已完成",
+        `單號：${result.poNo}`,
+        `供應商：${result.supplierName || "-"}`,
+        `SKU：${result.sku}`,
+        `商品：${result.productName}`,
+        `本次入庫：${result.actualReceive}`,
+        `累計入庫：${result.nextReceived}/${result.ordered}`,
+        `庫存：${result.stockBefore} → ${result.stockAfter}`,
+        `狀態：${result.status}`
+      ].join("\n")
+    );
+  } catch (error) {
+    await sendMessage(chatId, error.message || "供應商入庫失敗");
   }
-
-  const [[item]] = await pool.query(
-    `
-      SELECT sri.id, sri.product_id AS productId, sri.quantity, sri.received_quantity AS receivedQuantity,
-             p.sku, p.name, p.stock
-      FROM supplier_request_items sri
-      JOIN products p ON p.id = sri.product_id AND p.store_id = ?
-      WHERE sri.supplier_request_id = ?
-      LIMIT 1
-    `,
-    [storeId, requestId]
-  );
-
-  if (!item) {
-    await sendMessage(chatId, `發注單 #${requestId} 沒有商品資料`);
-    return true;
-  }
-
-  const remaining = Math.max(Number(item.quantity || 0) - Number(item.receivedQuantity || 0), 0);
-  const actualReceive = Math.min(receiveQty, remaining);
-
-  if (actualReceive <= 0) {
-    await sendMessage(chatId, `發注單 #${requestId} 已全部入庫。`);
-    return true;
-  }
-
-  await pool.query(
-    `UPDATE supplier_request_items SET received_quantity = received_quantity + ? WHERE id = ?`,
-    [actualReceive, item.id]
-  );
-
-  await pool.query(
-    `UPDATE products SET stock = stock + ? WHERE id = ? AND store_id = ?`,
-    [actualReceive, item.productId, storeId]
-  );
-
-  const newReceived = Number(item.receivedQuantity || 0) + actualReceive;
-  const newStatus = newReceived >= Number(item.quantity || 0) ? "RECEIVED" : "PARTIALLY_RECEIVED";
-
-  await pool.query(
-    `UPDATE supplier_requests SET status = ?, supplier_responded_at = NOW() WHERE id = ?`,
-    [newStatus, requestId]
-  );
-
-  await sendMessage(
-    chatId,
-    [
-      "✅ 發注入庫完成",
-      `單號：#${requestId}`,
-      `SKU：${item.sku}`,
-      `商品：${item.name}`,
-      `本次入庫：${actualReceive}`,
-      `累計入庫：${newReceived}/${item.quantity}`,
-      `庫存：${Number(item.stock || 0)} → ${Number(item.stock || 0) + actualReceive}`,
-      `狀態：${newStatus}`
-    ].join("\n")
-  );
 
   return true;
 }
@@ -836,6 +1152,119 @@ async function handleSupplierCommand(chatId, text, storeId) {
   if (!parts.length || !/^\/(po|return)$/i.test(parts[0])) return false;
 
   const command = parts[0].replace("/", "").toLowerCase();
+
+  if (command === "po") {
+    if (parts.length >= 3 && Number(parts[2]) > 0) {
+      await sendMessage(chatId, "新版 /po 需指定供應商：/po 供應商 SKU 數量 備註");
+      return true;
+    }
+    if (parts.length < 4) {
+      await sendMessage(chatId, "格式錯誤：/po 供應商 SKU 數量 備註");
+      return true;
+    }
+
+    const supplierToken = parts[1];
+    const sku = parts[2];
+    const quantity = Number(parts[3] || 0);
+    const note = parts.slice(4).join(" ") || null;
+
+    if (!supplierToken || !sku || quantity <= 0) {
+      await sendMessage(chatId, "格式錯誤：/po 供應商 SKU 數量 備註");
+      return true;
+    }
+
+    try {
+      const result = await withTransaction(async (connection) => {
+        const { supplier } = await resolveTelegramSupplier(storeId, supplierToken, connection);
+        const product = await loadTelegramPoProduct(storeId, sku, connection);
+        if (!product) {
+          throw new Error(`找不到商品 SKU：${sku}`);
+        }
+
+        const quantityOrdered = Number(quantity);
+        if (!Number.isSafeInteger(quantityOrdered) || quantityOrdered <= 0) {
+          throw new Error("發注數量不正確");
+        }
+
+        let buyerType = "STORE";
+        let companyId = null;
+        if (supplier.ownerType === "COMPANY") {
+          buyerType = "COMPANY";
+          companyId = Number(supplier.ownerCompanyId);
+        }
+
+        const unitCost = await loadTelegramSupplierUnitCost(
+          supplier.id,
+          product.id,
+          storeId,
+          product.costPrice,
+          product.price,
+          connection
+        );
+        const lineAmount = toMoney(quantityOrdered * unitCost);
+        const poNo = makeNo("SPO");
+
+        const [poResult] = await connection.query(
+          `
+            INSERT INTO supplier_purchase_orders
+              (po_no, supplier_id, buyer_type, store_id, company_id, status, settlement_month, total_order_amount, ordered_at, created_by_staff_id, updated_by_staff_id, note)
+            VALUES (?, ?, ?, ?, ?, 'ORDERED', DATE_FORMAT(NOW(), '%Y-%m'), ?, NOW(), ?, ?, ?)
+          `,
+          [
+            poNo,
+            supplier.id,
+            buyerType,
+            storeId,
+            companyId,
+            lineAmount,
+            TELEGRAM_SUPPLIER_STAFF_ID,
+            TELEGRAM_SUPPLIER_STAFF_ID,
+            [`Telegram /po`, note].filter(Boolean).join(" - ")
+          ]
+        );
+
+        await connection.query(
+          `
+            INSERT INTO supplier_purchase_order_items
+              (purchase_order_id, supplier_id, product_id, store_id, sku_snapshot, product_name_snapshot, quantity_ordered, unit_cost, line_order_amount, note)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          [poResult.insertId, supplier.id, product.id, storeId, product.sku || null, product.name, quantityOrdered, unitCost, lineAmount, note]
+        );
+
+        return {
+          poNo,
+          supplierName: supplier.name,
+          sku: product.sku,
+          productName: product.name,
+          quantity: quantityOrdered,
+          unitCost,
+          lineAmount,
+          stock: Number(product.stock || 0)
+        };
+      });
+
+      await sendMessage(
+        chatId,
+        [
+          "✅ 供應商發注已建立",
+          `供應商：${result.supplierName}`,
+          `單號：${result.poNo}`,
+          `SKU：${result.sku}`,
+          `商品：${result.productName}`,
+          `數量：${result.quantity}`,
+          `單價：NT$ ${Number(result.unitCost || 0).toLocaleString()}`,
+          `小計：NT$ ${Number(result.lineAmount || 0).toLocaleString()}`,
+          `目前庫存：${result.stock}`,
+          "狀態：已發注"
+        ].join("\n")
+      );
+    } catch (error) {
+      await sendMessage(chatId, error.message || "供應商發注建立失敗");
+    }
+
+    return true;
+  }
 
   let supplierName = "kingway";
   let skuIndex = 1;
@@ -1199,6 +1628,10 @@ router.post("/webhook", async (req, res) => {
     }
 
     if (await handleLowStockCommand(chatId, text, telegramStoreId)) {
+      return res.sendStatus(200);
+    }
+
+    if (await handleSupplierPoListCommand(chatId, text, telegramStoreId)) {
       return res.sendStatus(200);
     }
 
