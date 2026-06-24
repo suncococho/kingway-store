@@ -56,11 +56,23 @@ const DEFAULT_SETTINGS_FORM = {
   invoiceDisplayName: "",
   businessNumber: ""
 };
+const DEFAULT_STAFF_ACCOUNT_FORM = {
+  username: "",
+  name: "",
+  displayName: ""
+};
 const IMPERSONATION_TTL_LABEL = "2 小時";
 const STORE_ROLE_LABEL = {
   owner: "Owner",
   admin: "Admin",
   staff: "Staff"
+};
+const COMPANY_ROLE_LABEL = {
+  company_owner: "公司 owner",
+  hq_admin: "本部管理",
+  finance: "財務",
+  inventory_manager: "庫存管理",
+  viewer: "檢視"
 };
 const AUDIT_ACTION_PRESETS = [
   { value: "", label: "全部" },
@@ -143,6 +155,25 @@ function normalizeSettingsForm(settings) {
 function getStoreRoleLabel(role) {
   const normalized = String(role || "").toLowerCase();
   return STORE_ROLE_LABEL[normalized] || normalized || "staff";
+}
+
+function getCompanyRoleLabel(role) {
+  const normalized = String(role || "").toLowerCase();
+  return COMPANY_ROLE_LABEL[normalized] || normalized || "-";
+}
+
+function formatStoreMemberships(memberships = []) {
+  if (!memberships.length) return "-";
+  return memberships.map((membership) => (
+    `${membership.storeName || membership.storeCode || `Store ${membership.storeId}`} / ${getStoreRoleLabel(membership.role)}`
+  )).join("、");
+}
+
+function formatCompanyMemberships(memberships = []) {
+  if (!memberships.length) return "-";
+  return memberships.map((membership) => (
+    `${membership.companyName || membership.companyCode || `Company ${membership.companyId}`} / ${getCompanyRoleLabel(membership.role)}`
+  )).join("、");
 }
 
 function toAuditFilterValue(value) {
@@ -349,6 +380,17 @@ function SaasAdminPage() {
     error: "",
     success: ""
   });
+  const [staffUsers, setStaffUsers] = useState([]);
+  const [staffUsersLoading, setStaffUsersLoading] = useState(false);
+  const [staffUsersError, setStaffUsersError] = useState("");
+  const [staffUsersSuccess, setStaffUsersSuccess] = useState("");
+  const [staffAccountState, setStaffAccountState] = useState({
+    open: false,
+    user: null,
+    form: DEFAULT_STAFF_ACCOUNT_FORM,
+    saving: false,
+    error: ""
+  });
 
   async function loadStores() {
     setLoading(true);
@@ -364,6 +406,20 @@ function SaasAdminPage() {
     }
   }
 
+  async function loadStaffUsers() {
+    setStaffUsersLoading(true);
+    setStaffUsersError("");
+    try {
+      const response = await platformRequest("/saas-admin/staff-users");
+      setStaffUsers(Array.isArray(response?.staffUsers) ? response.staffUsers : []);
+    } catch (err) {
+      setStaffUsers([]);
+      setStaffUsersError(err.message || "載入管理員帳號失敗");
+    } finally {
+      setStaffUsersLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (!isAdmin) {
       setLoading(false);
@@ -371,6 +427,7 @@ function SaasAdminPage() {
     }
 
     loadStores();
+    loadStaffUsers();
   }, [isAdmin]);
 
   function handleCreateFormChange(event) {
@@ -578,6 +635,83 @@ function SaasAdminPage() {
       setStoreUpdateError(updateError.message || "更新店家資料失敗");
     } finally {
       setStoreSaving({ id: null, field: "" });
+    }
+  }
+
+  function openStaffAccountModal(user) {
+    if (!user?.id || !canEditSettings) return;
+    setStaffUsersSuccess("");
+    setStaffAccountState({
+      open: true,
+      user,
+      form: {
+        username: String(user.username || ""),
+        name: String(user.name || user.displayName || ""),
+        displayName: String(user.displayName || user.name || "")
+      },
+      saving: false,
+      error: ""
+    });
+  }
+
+  function closeStaffAccountModal() {
+    if (staffAccountState.saving) return;
+    setStaffAccountState({
+      open: false,
+      user: null,
+      form: DEFAULT_STAFF_ACCOUNT_FORM,
+      saving: false,
+      error: ""
+    });
+  }
+
+  function handleStaffAccountChange(event) {
+    const { name, value } = event.target;
+    setStaffAccountState((current) => ({
+      ...current,
+      form: { ...current.form, [name]: value },
+      error: ""
+    }));
+  }
+
+  async function handleStaffAccountSubmit(event) {
+    event.preventDefault();
+    const staffUserId = Number(staffAccountState.user?.id || 0);
+    if (!staffUserId || !canEditSettings) return;
+
+    const usernameChanged = staffAccountState.form.username.trim() !== String(staffAccountState.user?.username || "");
+    if (usernameChanged && !window.confirm("修改登入帳號後，該人員下次登入需使用新的帳號名稱。")) {
+      return;
+    }
+
+    setStaffAccountState((current) => ({ ...current, saving: true, error: "" }));
+    try {
+      const response = await platformRequest(`/saas-admin/staff-users/${staffUserId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          username: staffAccountState.form.username.trim(),
+          name: staffAccountState.form.name.trim(),
+          displayName: staffAccountState.form.displayName.trim()
+        })
+      });
+      const updated = response?.staffUser;
+      if (updated?.id) {
+        setStaffUsers((current) => current.map((user) => Number(user.id) === Number(updated.id) ? updated : user));
+      }
+      setStaffUsersSuccess("帳號資料已更新。");
+      setStaffAccountState({
+        open: false,
+        user: null,
+        form: DEFAULT_STAFF_ACCOUNT_FORM,
+        saving: false,
+        error: ""
+      });
+    } catch (error) {
+      setStaffAccountState((current) => ({
+        ...current,
+        saving: false,
+        error: error.message || "更新帳號失敗"
+      }));
     }
   }
 
@@ -1113,6 +1247,56 @@ function SaasAdminPage() {
     }
   ];
 
+  const staffUserColumns = [
+    { key: "id", label: "ID" },
+    {
+      key: "username",
+      label: "登入帳號",
+      render: (row) => (
+        <div className="stack-meta">
+          <strong>{row.username || "-"}</strong>
+          <span>{row.displayName || row.name || "-"}</span>
+        </div>
+      )
+    },
+    { key: "name", label: "姓名", render: (row) => row.name || "-" },
+    { key: "displayName", label: "顯示名稱", render: (row) => row.displayName || "-" },
+    {
+      key: "role",
+      label: "角色 / 狀態",
+      render: (row) => (
+        <div className="stack-meta">
+          <StatusBadge tone={row.isActive ? "success" : "neutral"}>{row.isActive ? "啟用" : "停用"}</StatusBadge>
+          <span>{row.role || "-"}</span>
+        </div>
+      )
+    },
+    {
+      key: "storeMemberships",
+      label: "連結門市",
+      render: (row) => <span>{formatStoreMemberships(row.storeMemberships)}</span>
+    },
+    {
+      key: "companyMemberships",
+      label: "公司權限",
+      render: (row) => <span>{formatCompanyMemberships(row.companyMemberships)}</span>
+    },
+    {
+      key: "staffActions",
+      label: "操作",
+      render: (row) => (
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => openStaffAccountModal(row)}
+          disabled={!canEditSettings}
+        >
+          修改帳號
+        </button>
+      )
+    }
+  ];
+
   if (!isAdmin) {
     return (
       <div>
@@ -1149,6 +1333,60 @@ function SaasAdminPage() {
           title="公司 / 品牌管理"
           description="管理 franchise company、所屬門市與總部權限；出貨、入庫與結算留待下一階段。"
           actions={<Link to="/platform-admin/companies" className="primary-button">管理公司 / 品牌</Link>}
+        />
+      </section>
+
+      <section className="admin-panel">
+        <AdminSectionHeader
+          eyebrow="帳號"
+          title="管理員帳號"
+          description="修改既有 staff 登入帳號、姓名與顯示名稱；不會變更密碼、門市關聯、公司權限或店家名稱。"
+          badges={
+            <>
+              <StatusBadge tone="info">帳號 {staffUsers.length}</StatusBadge>
+              {staffUsersLoading ? <StatusBadge tone="warning">載入中</StatusBadge> : null}
+            </>
+          }
+          actions={
+            <button type="button" className="secondary-button" onClick={loadStaffUsers} disabled={staffUsersLoading}>
+              重新整理
+            </button>
+          }
+        />
+        {staffUsersError ? <div className="error-banner">{staffUsersError}</div> : null}
+        {staffUsersSuccess ? <div className="platform-store-settings-success">{staffUsersSuccess}</div> : null}
+        <DataTable
+          columns={staffUserColumns}
+          rows={staffUsers}
+          emptyText={staffUsersLoading ? "載入帳號中..." : "目前沒有 staff 帳號資料。"}
+          cardTitle={(row) => row.username || `帳號 ${row.id}`}
+          cardDescription={(row) => `${row.displayName || row.name || "-"} / ${row.role || "-"}`}
+          cardBadges={(row) => (
+            <>
+              <StatusBadge tone={row.isActive ? "success" : "neutral"}>{row.isActive ? "啟用" : "停用"}</StatusBadge>
+              <StatusBadge tone="info">{row.role || "-"}</StatusBadge>
+            </>
+          )}
+          cardFooter={(row) => (
+            <div className="field-grid">
+              <div className="field-item">
+                <div className="field-label">連結門市</div>
+                <div className="field-value">{formatStoreMemberships(row.storeMemberships)}</div>
+              </div>
+              <div className="field-item">
+                <div className="field-label">公司權限</div>
+                <div className="field-value">{formatCompanyMemberships(row.companyMemberships)}</div>
+              </div>
+              <div className="field-item">
+                <div className="field-label">操作</div>
+                <div className="field-value">
+                  <button type="button" className="secondary-button" onClick={() => openStaffAccountModal(row)} disabled={!canEditSettings}>
+                    修改帳號
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         />
       </section>
 
@@ -1635,6 +1873,83 @@ function SaasAdminPage() {
           </article>
         </section>
       </div>
+
+      {staffAccountState.open ? (
+        <div className="admin-modal-backdrop">
+          <section className="admin-modal">
+            <div className="admin-modal-header">
+              <h2>修改管理員帳號</h2>
+              <button type="button" className="secondary-button" onClick={closeStaffAccountModal} disabled={staffAccountState.saving}>
+                關閉
+              </button>
+            </div>
+            <div className="admin-modal-body">
+              <div className="admin-summary-grid">
+                <article className="admin-summary-card">
+                  <div className="admin-summary-label">目前帳號</div>
+                  <div className="admin-summary-value admin-summary-value-small">{staffAccountState.user?.username || "-"}</div>
+                  <div className="muted-text">ID：{staffAccountState.user?.id || "-"}</div>
+                </article>
+                <article className="admin-summary-card">
+                  <div className="admin-summary-label">連結門市</div>
+                  <div className="admin-summary-value admin-summary-value-small">
+                    {formatStoreMemberships(staffAccountState.user?.storeMemberships)}
+                  </div>
+                </article>
+                <article className="admin-summary-card">
+                  <div className="admin-summary-label">公司權限</div>
+                  <div className="admin-summary-value admin-summary-value-small">
+                    {formatCompanyMemberships(staffAccountState.user?.companyMemberships)}
+                  </div>
+                </article>
+              </div>
+
+              {staffAccountState.error ? <div className="error-banner">{staffAccountState.error}</div> : null}
+
+              <form className="form-grid" onSubmit={handleStaffAccountSubmit}>
+                <label className="form-field">
+                  <span>登入帳號</span>
+                  <input
+                    name="username"
+                    value={staffAccountState.form.username}
+                    onChange={handleStaffAccountChange}
+                    disabled={staffAccountState.saving}
+                    required
+                  />
+                </label>
+                <label className="form-field">
+                  <span>姓名</span>
+                  <input
+                    name="name"
+                    value={staffAccountState.form.name}
+                    onChange={handleStaffAccountChange}
+                    disabled={staffAccountState.saving}
+                  />
+                </label>
+                <label className="form-field">
+                  <span>顯示名稱</span>
+                  <input
+                    name="displayName"
+                    value={staffAccountState.form.displayName}
+                    onChange={handleStaffAccountChange}
+                    disabled={staffAccountState.saving}
+                  />
+                </label>
+                <div className="form-field form-field-wide">
+                  <div className="muted-text">
+                    此操作不會修改密碼、門市關聯、公司權限或店家名稱。
+                  </div>
+                </div>
+                <div className="compact-actions form-field-wide">
+                  <button type="submit" className="primary-button" disabled={staffAccountState.saving || !canEditSettings}>
+                    {staffAccountState.saving ? "儲存中..." : "儲存帳號"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {billingState.open ? (
         <div className="admin-modal-backdrop">

@@ -284,6 +284,148 @@ function buildStoreStaffMemberResponse(row) {
   };
 }
 
+async function getStaffUserColumnSet() {
+  const [rows] = await pool.query("SHOW COLUMNS FROM staff_users");
+  return new Set((rows || []).map((row) => t(row.Field)));
+}
+
+function normalizeStaffUsername(value) {
+  const username = t(value).trim();
+  if (!/^[A-Za-z0-9._@-]{3,100}$/.test(username)) {
+    const error = new Error("登入帳號格式不正確，請使用 3-100 個英數字、底線、減號、點或 @");
+    error.statusCode = 400;
+    throw error;
+  }
+  return username;
+}
+
+function normalizeStaffDisplayText(value, label) {
+  const text = t(value).trim();
+  if (text.length > 120) {
+    const error = new Error(`${label}不可超過 120 個字`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return text;
+}
+
+function buildPlatformStaffUserResponse(user, storeMemberships = [], companyMemberships = []) {
+  const displayName = t(user.displayName || user.display_name || user.name || user.username);
+  return {
+    id: n(user.id),
+    username: t(user.username),
+    name: t(user.name, displayName),
+    displayName,
+    role: t(user.role),
+    status: Number(user.isActive ?? user.is_active ?? 0) ? "active" : "disabled",
+    isActive: Boolean(Number(user.isActive ?? user.is_active ?? 0)),
+    primaryStoreId: user.primaryStoreId === null || user.primary_store_id === null ? null : n(user.primaryStoreId ?? user.primary_store_id, null),
+    primaryStoreCode: t(user.primaryStoreCode || user.primary_store_code),
+    primaryStoreName: t(user.primaryStoreName || user.primary_store_name),
+    lineUserId: t(user.lineUserId || user.line_user_id),
+    telegramUsername: t(user.telegramUsername || user.telegram_username),
+    storeMemberships,
+    companyMemberships
+  };
+}
+
+async function getPlatformStaffUsers() {
+  const columns = await getStaffUserColumnSet();
+  const hasNameColumn = columns.has("name");
+  const [users] = await pool.query(
+    `
+      SELECT
+        su.id,
+        su.username,
+        ${hasNameColumn ? "su.name" : "su.display_name"} AS name,
+        su.display_name AS displayName,
+        su.role,
+        su.is_active AS isActive,
+        su.store_id AS primaryStoreId,
+        su.line_user_id AS lineUserId,
+        su.telegram_username AS telegramUsername,
+        s.code AS primaryStoreCode,
+        s.name AS primaryStoreName
+      FROM staff_users su
+      LEFT JOIN stores s ON s.id = su.store_id
+      ORDER BY su.id ASC
+    `
+  );
+
+  const [storeRows] = await pool.query(
+    `
+      SELECT
+        sm.staff_user_id AS staffUserId,
+        sm.id,
+        sm.store_id AS storeId,
+        sm.role,
+        sm.status,
+        sm.is_default AS isDefault,
+        s.code AS storeCode,
+        s.name AS storeName
+      FROM store_memberships sm
+      INNER JOIN stores s ON s.id = sm.store_id
+      ORDER BY sm.staff_user_id ASC, sm.is_default DESC, sm.id ASC
+    `
+  );
+
+  const [companyRows] = await pool.query(
+    `
+      SELECT
+        cm.staff_user_id AS staffUserId,
+        cm.id,
+        cm.company_id AS companyId,
+        cm.role,
+        cm.status,
+        c.code AS companyCode,
+        c.name AS companyName
+      FROM company_memberships cm
+      INNER JOIN companies c ON c.id = cm.company_id
+      ORDER BY cm.staff_user_id ASC, cm.id ASC
+    `
+  );
+
+  const storesByStaff = new Map();
+  for (const row of storeRows || []) {
+    const key = n(row.staffUserId);
+    if (!storesByStaff.has(key)) storesByStaff.set(key, []);
+    storesByStaff.get(key).push({
+      id: n(row.id),
+      storeId: n(row.storeId),
+      storeCode: t(row.storeCode),
+      storeName: t(row.storeName),
+      role: t(row.role),
+      status: t(row.status),
+      isDefault: Boolean(row.isDefault)
+    });
+  }
+
+  const companiesByStaff = new Map();
+  for (const row of companyRows || []) {
+    const key = n(row.staffUserId);
+    if (!companiesByStaff.has(key)) companiesByStaff.set(key, []);
+    companiesByStaff.get(key).push({
+      id: n(row.id),
+      companyId: n(row.companyId),
+      companyCode: t(row.companyCode),
+      companyName: t(row.companyName),
+      role: t(row.role),
+      status: t(row.status)
+    });
+  }
+
+  return (users || []).map((user) => buildPlatformStaffUserResponse(
+    user,
+    storesByStaff.get(n(user.id)) || [],
+    companiesByStaff.get(n(user.id)) || []
+  ));
+}
+
+async function getPlatformStaffUserDetail(staffUserId) {
+  const users = await getPlatformStaffUsers();
+  return users.find((user) => Number(user.id) === Number(staffUserId)) || null;
+}
+
 const FEATURE_CONFIG = [
   { key: "pos_enabled", label: "POS 銷售", description: "門市 POS 開單與收款流程。" },
   { key: "orders_enabled", label: "訂單管理", description: "訂單查詢、狀態追蹤與訂金尾款管理。" },
@@ -775,6 +917,88 @@ async function applyStoreFeaturePresetHandler(req, res, next) {
 
 router.use(authenticatePlatformAdmin);
 router.use(requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN", "SUPPORT"]));
+
+router.get("/staff-users", async (req, res, next) => {
+  try {
+    const staffUsers = await getPlatformStaffUsers();
+    return res.json({ ok: true, staffUsers });
+  } catch (error) {
+    console.error("[saasAdmin/staffUsers:get] failed", error);
+    return next(error);
+  }
+});
+
+router.patch("/staff-users/:id", requirePlatformRole(["PLATFORM_OWNER", "PLATFORM_ADMIN"]), async (req, res, next) => {
+  try {
+    const staffUserId = n(req.params.id, 0);
+    if (!staffUserId) {
+      return res.status(404).json({ message: "找不到帳號" });
+    }
+
+    const before = await getPlatformStaffUserDetail(staffUserId);
+    if (!before) {
+      return res.status(404).json({ message: "找不到帳號" });
+    }
+
+    const columns = await getStaffUserColumnSet();
+    const hasNameColumn = columns.has("name");
+    const updates = [];
+    const values = [];
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "username")) {
+      const username = normalizeStaffUsername(req.body.username);
+      const [duplicates] = await pool.query(
+        "SELECT id FROM staff_users WHERE username = ? AND id <> ? LIMIT 1",
+        [username, staffUserId]
+      );
+      if (duplicates[0]) {
+        return res.status(409).json({ message: "登入帳號已存在" });
+      }
+      updates.push("username = ?");
+      values.push(username);
+    }
+
+    if (hasNameColumn && Object.prototype.hasOwnProperty.call(req.body || {}, "name")) {
+      updates.push("name = ?");
+      values.push(normalizeStaffDisplayText(req.body.name, "姓名"));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "displayName")) {
+      updates.push("display_name = ?");
+      values.push(normalizeStaffDisplayText(req.body.displayName, "顯示名稱"));
+    } else if (!hasNameColumn && Object.prototype.hasOwnProperty.call(req.body || {}, "name")) {
+      updates.push("display_name = ?");
+      values.push(normalizeStaffDisplayText(req.body.name, "姓名"));
+    }
+
+    if (!updates.length) {
+      return res.json({ ok: true, staffUser: before, updated: false });
+    }
+
+    values.push(staffUserId);
+    await pool.query(`UPDATE staff_users SET ${updates.join(", ")} WHERE id = ? LIMIT 1`, values);
+
+    const after = await getPlatformStaffUserDetail(staffUserId);
+    await recordPlatformAudit(req, {
+      action: "staff_user.update_identity",
+      targetType: "staff_user",
+      targetId: staffUserId,
+      before,
+      after
+    });
+
+    return res.json({ ok: true, staffUser: after, updated: true });
+  } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
+    if (error?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ message: "登入帳號已存在" });
+    }
+    console.error("[saasAdmin/staffUsers:patch] failed", error);
+    return next(error);
+  }
+});
 
 router.get("/companies", async (req, res, next) => {
   try {
