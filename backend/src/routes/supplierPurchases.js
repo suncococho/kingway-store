@@ -1,4 +1,5 @@
 const express = require("express");
+const ExcelJS = require("exceljs");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { requireFeature } = require("../services/storeAccessService");
@@ -110,6 +111,22 @@ function buildPoAccessWhere(context, scope = "all", alias = "spo") {
   }
   if (!clauses.length) return { where: "1 = 0", params: [] };
   return { where: `(${clauses.map((clause) => `(${clause})`).join(" OR ")})`, params };
+}
+
+function buildSupplierReturnAccessWhere(context, alias = "sr") {
+  if (context.isChainStore) return { where: "1 = 0", params: [] };
+  const clauses = [];
+  const params = [];
+  if (context.storeId) {
+    clauses.push(`(${alias}.owner_type = 'STORE' AND ${alias}.owner_store_id = ?)`);
+    params.push(context.storeId);
+  }
+  if (context.writableCompanyIds.length) {
+    clauses.push(`(${alias}.owner_type = 'COMPANY' AND ${alias}.owner_company_id IN (${context.writableCompanyIds.map(() => "?").join(",")}))`);
+    params.push(...context.writableCompanyIds);
+  }
+  if (!clauses.length) return { where: "1 = 0", params: [] };
+  return { where: `(${clauses.join(" OR ")})`, params };
 }
 
 function appendPurchaseDemoExclusion(filters, params) {
@@ -534,6 +551,259 @@ router.get("/monthly-summary", async (req, res, next) => {
       paidPoCount: Number(row.paidPoCount || 0),
       unpaidPoCount: Number(row.unpaidPoCount || 0)
     })));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+function normalizeReportDate(value, fallback) {
+  const text = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  return fallback;
+}
+
+function buildSupplierSettlementSummary(rows) {
+  const supplierMap = new Map();
+  const summary = {
+    purchaseAmount: 0,
+    returnAmount: 0,
+    netAmount: 0,
+    purchaseQuantity: 0,
+    returnQuantity: 0,
+    rowCount: rows.length
+  };
+
+  for (const row of rows) {
+    const current = supplierMap.get(row.supplierId) || {
+      supplierId: row.supplierId,
+      supplierName: row.supplierName,
+      purchaseAmount: 0,
+      returnAmount: 0,
+      netAmount: 0,
+      purchaseQuantity: 0,
+      returnQuantity: 0,
+      rowCount: 0
+    };
+    if (row.type === "PURCHASE_RECEIPT") {
+      summary.purchaseAmount += row.amount;
+      summary.purchaseQuantity += row.quantity;
+      current.purchaseAmount += row.amount;
+      current.purchaseQuantity += row.quantity;
+    } else {
+      summary.returnAmount += row.amount;
+      summary.returnQuantity += row.quantity;
+      current.returnAmount += row.amount;
+      current.returnQuantity += row.quantity;
+    }
+    current.rowCount += 1;
+    current.netAmount = toMoney(current.purchaseAmount - current.returnAmount);
+    supplierMap.set(row.supplierId, current);
+  }
+  summary.purchaseAmount = toMoney(summary.purchaseAmount);
+  summary.returnAmount = toMoney(summary.returnAmount);
+  summary.netAmount = toMoney(summary.purchaseAmount - summary.returnAmount);
+  return {
+    summary,
+    supplierSummary: Array.from(supplierMap.values())
+      .map((row) => ({
+        ...row,
+        purchaseAmount: toMoney(row.purchaseAmount),
+        returnAmount: toMoney(row.returnAmount),
+        netAmount: toMoney(row.netAmount)
+      }))
+      .sort((a, b) => b.netAmount - a.netAmount || a.supplierName.localeCompare(b.supplierName))
+  };
+}
+
+function buildSupplierSettlementWorkbook(report) {
+  const workbook = new ExcelJS.Workbook();
+  const detailSheet = workbook.addWorksheet("供應商月結明細");
+  detailSheet.columns = [
+    { header: "日期", key: "date", width: 14 },
+    { header: "類型", key: "typeLabel", width: 14 },
+    { header: "單號", key: "documentNo", width: 24 },
+    { header: "供應商", key: "supplierName", width: 24 },
+    { header: "SKU", key: "sku", width: 18 },
+    { header: "商品名稱", key: "productName", width: 30 },
+    { header: "數量", key: "quantity", width: 10 },
+    { header: "單價", key: "unitCost", width: 12 },
+    { header: "金額", key: "amount", width: 14 },
+    { header: "正負金額", key: "signedAmount", width: 14 },
+    { header: "狀態", key: "status", width: 18 },
+    { header: "結算狀態", key: "settlementStatus", width: 18 },
+    { header: "備註", key: "note", width: 30 }
+  ];
+  report.rows.forEach((row) => detailSheet.addRow({
+    ...row,
+    typeLabel: row.type === "SUPPLIER_RETURN" ? "退貨" : "入庫"
+  }));
+  detailSheet.getRow(1).font = { bold: true };
+
+  const summarySheet = workbook.addWorksheet("供應商彙總");
+  summarySheet.columns = [
+    { header: "供應商", key: "supplierName", width: 24 },
+    { header: "入庫金額", key: "purchaseAmount", width: 14 },
+    { header: "退貨金額", key: "returnAmount", width: 14 },
+    { header: "淨應付金額", key: "netAmount", width: 14 },
+    { header: "入庫數量", key: "purchaseQuantity", width: 12 },
+    { header: "退貨數量", key: "returnQuantity", width: 12 },
+    { header: "明細筆數", key: "rowCount", width: 12 }
+  ];
+  report.supplierSummary.forEach((row) => summarySheet.addRow(row));
+  summarySheet.getRow(1).font = { bold: true };
+  return workbook;
+}
+
+async function buildSupplierSettlementReport(context, query = {}) {
+  if (context.isChainStore) {
+    throw createError("直營或加盟門市不可查看供應商月結報表", 403);
+  }
+  const fromDate = normalizeReportDate(query.fromDate, `${new Date().toISOString().slice(0, 7)}-01`);
+  const toDate = normalizeReportDate(query.toDate, new Date().toISOString().slice(0, 10));
+  const status = String(query.status || "ALL").trim().toUpperCase();
+  const supplierId = Number(query.supplierId || 0);
+
+  const purchaseAccess = buildPoAccessWhere(context, "all", "spo");
+  const purchaseFilters = [
+    purchaseAccess.where,
+    "spo.status <> 'CANCELED'",
+    "DATE(spr.received_at) >= ?",
+    "DATE(spr.received_at) <= ?"
+  ];
+  const purchaseParams = [...purchaseAccess.params, fromDate, toDate];
+  if (supplierId) {
+    purchaseFilters.push("spo.supplier_id = ?");
+    purchaseParams.push(supplierId);
+  }
+  if (status !== "ALL") {
+    purchaseFilters.push("(spo.status = ? OR spo.payment_status = ?)");
+    purchaseParams.push(status, status);
+  }
+
+  const [purchaseRows] = await pool.query(
+    `
+      SELECT
+        DATE(spr.received_at) AS rowDate,
+        spr.receipt_no AS documentNo,
+        spo.supplier_id AS supplierId,
+        s.name AS supplierName,
+        spoi.sku_snapshot AS sku,
+        spoi.product_name_snapshot AS productName,
+        spri.quantity_received_delta AS quantity,
+        spri.unit_cost AS unitCost,
+        spri.line_received_amount AS amount,
+        spo.status,
+        spo.payment_status AS settlementStatus,
+        COALESCE(spr.note, spoi.note, spo.note) AS note
+      FROM supplier_purchase_receipts spr
+      INNER JOIN supplier_purchase_orders spo ON spo.id = spr.purchase_order_id
+      INNER JOIN suppliers s ON s.id = spo.supplier_id
+      INNER JOIN supplier_purchase_receipt_items spri ON spri.receipt_id = spr.id
+      INNER JOIN supplier_purchase_order_items spoi ON spoi.id = spri.purchase_order_item_id
+      WHERE ${purchaseFilters.join(" AND ")}
+    `,
+    purchaseParams
+  );
+
+  const returnAccess = buildSupplierReturnAccessWhere(context, "sr");
+  const returnFilters = [
+    returnAccess.where,
+    "sr.status IN ('SHIPPED', 'RECEIVED_BY_SUPPLIER', 'SETTLED')",
+    "DATE(COALESCE(sr.shipped_at, sr.return_date, sr.created_at)) >= ?",
+    "DATE(COALESCE(sr.shipped_at, sr.return_date, sr.created_at)) <= ?"
+  ];
+  const returnParams = [...returnAccess.params, fromDate, toDate];
+  if (supplierId) {
+    returnFilters.push("sr.supplier_id = ?");
+    returnParams.push(supplierId);
+  }
+  if (status !== "ALL") {
+    returnFilters.push("sr.status = ?");
+    returnParams.push(status);
+  }
+
+  const [returnRows] = await pool.query(
+    `
+      SELECT
+        DATE(COALESCE(sr.shipped_at, sr.return_date, sr.created_at)) AS rowDate,
+        sr.return_no AS documentNo,
+        sr.supplier_id AS supplierId,
+        s.name AS supplierName,
+        sri.sku,
+        sri.product_name AS productName,
+        sri.quantity,
+        sri.unit_cost AS unitCost,
+        sri.line_amount AS amount,
+        sr.status,
+        sr.status AS settlementStatus,
+        COALESCE(sri.reason, sr.note) AS note
+      FROM supplier_returns sr
+      INNER JOIN suppliers s ON s.id = sr.supplier_id
+      INNER JOIN supplier_return_items sri ON sri.return_id = sr.id
+      WHERE ${returnFilters.join(" AND ")}
+    `,
+    returnParams
+  );
+
+  const rows = [
+    ...purchaseRows.map((row) => {
+      const amount = toMoney(row.amount);
+      return {
+        date: row.rowDate,
+        type: "PURCHASE_RECEIPT",
+        documentNo: row.documentNo,
+        supplierId: Number(row.supplierId),
+        supplierName: row.supplierName || "",
+        sku: row.sku || "",
+        productName: row.productName || "",
+        quantity: Number(row.quantity || 0),
+        unitCost: Number(row.unitCost || 0),
+        amount,
+        signedAmount: amount,
+        status: row.status,
+        settlementStatus: row.settlementStatus,
+        note: row.note || ""
+      };
+    }),
+    ...returnRows.map((row) => {
+      const amount = toMoney(row.amount);
+      return {
+        date: row.rowDate,
+        type: "SUPPLIER_RETURN",
+        documentNo: row.documentNo,
+        supplierId: Number(row.supplierId),
+        supplierName: row.supplierName || "",
+        sku: row.sku || "",
+        productName: row.productName || "",
+        quantity: Number(row.quantity || 0),
+        unitCost: Number(row.unitCost || 0),
+        amount,
+        signedAmount: toMoney(-amount),
+        status: row.status,
+        settlementStatus: row.settlementStatus,
+        note: row.note || ""
+      };
+    })
+  ].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || String(b.documentNo || "").localeCompare(String(a.documentNo || "")));
+
+  const { summary, supplierSummary } = buildSupplierSettlementSummary(rows);
+  return { rows, summary, supplierSummary, filters: { fromDate, toDate } };
+}
+
+router.get("/settlement-report", async (req, res, next) => {
+  try {
+    const context = await resolveContext(req);
+    const report = await buildSupplierSettlementReport(context, req.query);
+    if (String(req.query.export || "").toLowerCase() === "xlsx") {
+      const workbook = buildSupplierSettlementWorkbook(report);
+      const from = report.filters.fromDate.replaceAll("-", "");
+      const to = report.filters.toDate.replaceAll("-", "");
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename=\"kingway_supplier_settlement_report_${from}_${to}.xlsx\"`);
+      await workbook.xlsx.write(res);
+      return res.end();
+    }
+    return res.json(report);
   } catch (error) {
     return next(error);
   }

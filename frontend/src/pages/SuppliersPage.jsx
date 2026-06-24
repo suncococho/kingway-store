@@ -51,6 +51,10 @@ const SUPPLIER_RETURN_EMPTY_FORM = {
   note: ""
 };
 
+function firstDayOfCurrentMonth() {
+  return `${new Date().toISOString().slice(0, 7)}-01`;
+}
+
 function toNumber(value) {
   return Number(value || 0);
 }
@@ -203,6 +207,11 @@ export default function SuppliersPage() {
   const [supplierReturns, setSupplierReturns] = useState([]);
   const [supplierReturnMonthly, setSupplierReturnMonthly] = useState([]);
   const [supplierReturnReport, setSupplierReturnReport] = useState({ rows: [], summary: { rowCount: 0, totalQuantity: 0, totalAmount: 0 } });
+  const [supplierSettlementReport, setSupplierSettlementReport] = useState({
+    rows: [],
+    summary: { purchaseAmount: 0, returnAmount: 0, netAmount: 0, purchaseQuantity: 0, returnQuantity: 0, rowCount: 0 },
+    supplierSummary: []
+  });
   const [excludeDemoData, setExcludeDemoData] = useState(false);
   const [companyInfo, setCompanyInfo] = useState(null);
   const [products, setProducts] = useState([]);
@@ -220,6 +229,12 @@ export default function SuppliersPage() {
     supplierId: "ALL",
     status: "ALL",
     month: new Date().toISOString().slice(0, 7)
+  });
+  const [supplierSettlementFilters, setSupplierSettlementFilters] = useState({
+    fromDate: firstDayOfCurrentMonth(),
+    toDate: new Date().toISOString().slice(0, 10),
+    supplierId: "ALL",
+    status: "ALL"
   });
   const [error, setError] = useState("");
   const [productSearch, setProductSearch] = useState("");
@@ -284,6 +299,17 @@ export default function SuppliersPage() {
         apiRequest(`/supplier-returns/monthly-summary?${returnMonthlyParams.toString()}`).catch(() => []),
         apiRequest(`/supplier-returns/report?${returnParams.toString()}`).catch(() => ({ rows: [], summary: { rowCount: 0, totalQuantity: 0, totalAmount: 0 } }))
       ]);
+      const settlementParams = new URLSearchParams({
+        fromDate: supplierSettlementFilters.fromDate,
+        toDate: supplierSettlementFilters.toDate
+      });
+      if (supplierSettlementFilters.supplierId !== "ALL") settlementParams.set("supplierId", supplierSettlementFilters.supplierId);
+      if (supplierSettlementFilters.status !== "ALL") settlementParams.set("status", supplierSettlementFilters.status);
+      const nextSupplierSettlementReport = await apiRequest(`/supplier-purchases/settlement-report?${settlementParams.toString()}`).catch(() => ({
+        rows: [],
+        summary: { purchaseAmount: 0, returnAmount: 0, netAmount: 0, purchaseQuantity: 0, returnQuantity: 0, rowCount: 0 },
+        supplierSummary: []
+      }));
       setRows(nextRows);
       setMonthly(nextMonthly);
       setPurchaseOrders(nextPurchaseOrders);
@@ -291,6 +317,7 @@ export default function SuppliersPage() {
       setSupplierReturns(nextSupplierReturns);
       setSupplierReturnMonthly(nextSupplierReturnMonthly);
       setSupplierReturnReport(nextSupplierReturnReport);
+      setSupplierSettlementReport(nextSupplierSettlementReport);
       setProducts(nextProducts);
       setSuppliers(nextSuppliers);
       setCompanyInfo(nextCompanyInfo);
@@ -306,6 +333,11 @@ export default function SuppliersPage() {
       setSupplierReturns([]);
       setSupplierReturnMonthly([]);
       setSupplierReturnReport({ rows: [], summary: { rowCount: 0, totalQuantity: 0, totalAmount: 0 } });
+      setSupplierSettlementReport({
+        rows: [],
+        summary: { purchaseAmount: 0, returnAmount: 0, netAmount: 0, purchaseQuantity: 0, returnQuantity: 0, rowCount: 0 },
+        supplierSummary: []
+      });
       setProducts([]);
       setSuppliers([]);
       setError(requestError.message || "供應商資料讀取失敗");
@@ -336,7 +368,7 @@ export default function SuppliersPage() {
 
   useEffect(() => {
     load();
-  }, [supplierScope, purchaseForm.settlementMonth, excludeDemoData, supplierReturnFilters.status, supplierReturnFilters.supplierId, supplierReturnFilters.fromDate, supplierReturnFilters.toDate, supplierReturnFilters.month]);
+  }, [supplierScope, purchaseForm.settlementMonth, excludeDemoData, supplierReturnFilters.status, supplierReturnFilters.supplierId, supplierReturnFilters.fromDate, supplierReturnFilters.toDate, supplierReturnFilters.month, supplierSettlementFilters.fromDate, supplierSettlementFilters.toDate, supplierSettlementFilters.supplierId, supplierSettlementFilters.status]);
 
   useEffect(() => {
     loadSupplierPrices(selectedSupplierId);
@@ -522,6 +554,9 @@ export default function SuppliersPage() {
   }).slice(0, 8);
   const supplierReturnReportRows = Array.isArray(supplierReturnReport.rows) ? supplierReturnReport.rows : [];
   const supplierReturnSummary = supplierReturnReport.summary || { rowCount: 0, totalQuantity: 0, totalAmount: 0 };
+  const supplierSettlementRows = Array.isArray(supplierSettlementReport.rows) ? supplierSettlementReport.rows : [];
+  const supplierSettlementSummary = supplierSettlementReport.summary || { purchaseAmount: 0, returnAmount: 0, netAmount: 0, purchaseQuantity: 0, returnQuantity: 0, rowCount: 0 };
+  const supplierSettlementSupplierSummary = Array.isArray(supplierSettlementReport.supplierSummary) ? supplierSettlementReport.supplierSummary : [];
 
   function resetSupplierForm() {
     setEditingSupplierId(null);
@@ -798,6 +833,44 @@ export default function SuppliersPage() {
     });
   }
 
+  async function downloadSupplierSettlementReport() {
+    const params = new URLSearchParams({
+      fromDate: supplierSettlementFilters.fromDate,
+      toDate: supplierSettlementFilters.toDate,
+      export: "xlsx"
+    });
+    if (supplierSettlementFilters.supplierId !== "ALL") params.set("supplierId", supplierSettlementFilters.supplierId);
+    if (supplierSettlementFilters.status !== "ALL") params.set("status", supplierSettlementFilters.status);
+
+    await runWithProcessing(async () => {
+      const token = getStoredToken();
+      const response = await fetch(`/api/supplier-purchases/settlement-report?${params.toString()}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (!response.ok) {
+        let message = "Excel 下載失敗";
+        try {
+          const errorBody = await response.json();
+          message = errorBody.message || message;
+        } catch (error) {
+          message = await response.text() || message;
+        }
+        throw new Error(message);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `kingway_supplier_settlement_report_${supplierSettlementFilters.fromDate}_${supplierSettlementFilters.toDate}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }, { id: "supplier-settlement-export", label: "供應商月結報表下載中..." }).catch((requestError) => {
+      alert(requestError.message || "Excel 下載失敗");
+    });
+  }
+
   async function receiveRequest(id) {
     const quantity = prompt("請輸入入庫數量", "1");
     if (!quantity) return;
@@ -938,6 +1011,32 @@ export default function SuppliersPage() {
     { key: "totalReceivedAmount", label: "月結應付", render: (row) => formatMoney(row.totalReceivedAmount) },
     { key: "paidAmount", label: "已付款", render: (row) => formatMoney(row.paidAmount) },
     { key: "unpaidAmount", label: "未付款", render: (row) => formatMoney(row.unpaidAmount) }
+  ];
+
+  const supplierSettlementSupplierColumns = [
+    { key: "supplierName", label: "供應商" },
+    { key: "purchaseAmount", label: "入庫金額", render: (row) => formatMoney(row.purchaseAmount) },
+    { key: "returnAmount", label: "退貨金額", render: (row) => formatMoney(row.returnAmount) },
+    { key: "netAmount", label: "淨應付金額", render: (row) => <strong>{formatMoney(row.netAmount)}</strong> },
+    { key: "purchaseQuantity", label: "入庫數量" },
+    { key: "returnQuantity", label: "退貨數量" },
+    { key: "rowCount", label: "明細筆數" }
+  ];
+
+  const supplierSettlementColumns = [
+    { key: "date", label: "日期", render: (row) => formatDate(row.date) },
+    { key: "type", label: "類型", render: (row) => <StatusBadge tone={row.type === "SUPPLIER_RETURN" ? "warning" : "success"}>{row.type === "SUPPLIER_RETURN" ? "退貨" : "入庫"}</StatusBadge> },
+    { key: "documentNo", label: "單號" },
+    { key: "supplierName", label: "供應商" },
+    { key: "sku", label: "SKU" },
+    { key: "productName", label: "商品名稱" },
+    { key: "quantity", label: "數量" },
+    { key: "unitCost", label: "單價", render: (row) => formatMoney(row.unitCost) },
+    { key: "amount", label: "金額", render: (row) => formatMoney(row.amount) },
+    { key: "signedAmount", label: "正負金額", render: (row) => <strong>{row.signedAmount < 0 ? `-${formatMoney(Math.abs(row.signedAmount))}` : formatMoney(row.signedAmount)}</strong> },
+    { key: "status", label: "狀態", render: (row) => row.status || "-" },
+    { key: "settlementStatus", label: "結算狀態", render: (row) => row.settlementStatus || "-" },
+    { key: "note", label: "備註", render: (row) => row.note || "-" }
   ];
 
   const supplierReturnColumns = [
@@ -1085,6 +1184,29 @@ export default function SuppliersPage() {
             <DataTable columns={purchaseColumns} rows={purchaseOrders} emptyText="目前沒有供應商發注單。" cardTitle={(row) => row.poNo} cardDescription={(row) => `${row.supplierName} / ${row.itemSummary || "-"}`} cardBadges={(row) => <StatusBadge tone={row.status === "RECEIVED" ? "success" : "info"}>{getPurchaseStatusLabel(row.status)}</StatusBadge>} />
           </section>
           <section className="content-card section-panel"><div className="section-header"><div><h2>月結應付</h2><p className="muted-text">依入庫金額彙總供應商月結應付與未付款。</p></div></div><DataTable columns={purchaseMonthlyColumns} rows={purchaseMonthly} emptyText="目前沒有新發注月結資料。" cardTitle={(row) => row.supplierName} cardDescription={(row) => `應付 ${formatMoney(row.totalReceivedAmount)} / 未付 ${formatMoney(row.unpaidAmount)}`} /></section>
+          <section className="content-card section-panel">
+            <div className="section-header">
+              <div>
+                <h2>供應商月結報表</h2>
+                <p className="muted-text">整合入庫與退貨明細；淨應付金額 = 入庫金額 - 退貨金額。</p>
+              </div>
+              <button type="button" className="secondary-button" onClick={downloadSupplierSettlementReport} disabled={isProcessing}>{pendingAction?.id === "supplier-settlement-export" ? "下載中..." : "Excel 下載"}</button>
+            </div>
+            <div className="grid-form compact-grid">
+              <label className="form-field"><span>開始日</span><input type="date" value={supplierSettlementFilters.fromDate} onChange={(event) => setSupplierSettlementFilters((current) => ({ ...current, fromDate: event.target.value }))} /></label>
+              <label className="form-field"><span>結束日</span><input type="date" value={supplierSettlementFilters.toDate} onChange={(event) => setSupplierSettlementFilters((current) => ({ ...current, toDate: event.target.value }))} /></label>
+              <label className="form-field"><span>供應商</span><select value={supplierSettlementFilters.supplierId} onChange={(event) => setSupplierSettlementFilters((current) => ({ ...current, supplierId: event.target.value }))}><option value="ALL">全部供應商</option>{supplierReturnSupplierOptions.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></label>
+              <label className="form-field"><span>狀態</span><select value={supplierSettlementFilters.status} onChange={(event) => setSupplierSettlementFilters((current) => ({ ...current, status: event.target.value }))}><option value="ALL">全部</option><option value="RECEIVED">入庫完成</option><option value="PAID">已付款</option><option value="SHIPPED">退貨已出貨</option><option value="RECEIVED_BY_SUPPLIER">供應商已收</option><option value="SETTLED">退貨已結算</option></select></label>
+            </div>
+            <div className="admin-summary-grid">
+              <article className="admin-summary-card"><div className="admin-summary-label">入庫金額</div><div className="admin-summary-value">{formatMoney(supplierSettlementSummary.purchaseAmount)}</div></article>
+              <article className="admin-summary-card"><div className="admin-summary-label">退貨金額</div><div className="admin-summary-value">{formatMoney(supplierSettlementSummary.returnAmount)}</div></article>
+              <article className="admin-summary-card"><div className="admin-summary-label">淨應付金額</div><div className="admin-summary-value">{formatMoney(supplierSettlementSummary.netAmount)}</div></article>
+              <article className="admin-summary-card"><div className="admin-summary-label">明細筆數</div><div className="admin-summary-value">{supplierSettlementSummary.rowCount || supplierSettlementRows.length}</div></article>
+            </div>
+            <DataTable columns={supplierSettlementSupplierColumns} rows={supplierSettlementSupplierSummary} emptyText="目前沒有符合條件的供應商彙總。" cardTitle={(row) => row.supplierName} cardDescription={(row) => `淨應付 ${formatMoney(row.netAmount)} / 明細 ${row.rowCount}`} />
+            <DataTable columns={supplierSettlementColumns} rows={supplierSettlementRows} emptyText="目前沒有符合條件的供應商月結明細。" cardTitle={(row) => row.documentNo} cardDescription={(row) => `${row.supplierName} / ${row.sku} / ${row.type === "SUPPLIER_RETURN" ? "退貨" : "入庫"}`} />
+          </section>
           <section className="content-card section-panel">
             <div className="section-header"><div><h2>篩選條件</h2><p className="muted-text">先縮小期間、供應商、商品與狀態，再查看摘要與交易。</p></div></div>
             <div className="grid-form compact-grid">
