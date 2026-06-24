@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import GlobalProcessingOverlay from "./components/GlobalProcessingOverlay";
 import ProtectedLayout from "./components/ProtectedLayout";
 import { getStoredToken, getStoredUser } from "./lib/auth";
@@ -6,7 +6,6 @@ import { getDefaultRouteForUser } from "./lib/permissions";
 import LoginPage from "./pages/LoginPage";
 import StoreSignupPage from "./pages/StoreSignupPage";
 import PlatformLoginPage, { PlatformAdminPage } from "./pages/PlatformLoginPage";
-import SaasAdminPage from "./pages/SaasAdminPage";
 import SaasStoreFeaturesPage from "./pages/SaasStoreFeaturesPage";
 import PlatformCompaniesPage from "./pages/PlatformCompaniesPage";
 import PlatformOnboardingPage from "./pages/PlatformOnboardingPage";
@@ -52,6 +51,11 @@ import CompanyStoreSettlementsPage from "./pages/CompanyStoreSettlementsPage";
 import StoreReplenishmentRequestsPage from "./pages/StoreReplenishmentRequestsPage";
 import HqReplenishmentRequestsPage from "./pages/HqReplenishmentRequestsPage";
 
+function LegacyStoreFeaturesRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/platform-admin/stores/${id}/features`} replace />;
+}
+
 function App() {
   const token = getStoredToken();
   const user = getStoredUser();
@@ -89,10 +93,10 @@ function App() {
       <Route path="/platform-admin/onboarding" element={<PlatformOnboardingPage />} />
       <Route path="/platform-admin/companies" element={<PlatformCompaniesPage />} />
       <Route path="/platform-admin/stores/:id/features" element={<SaasStoreFeaturesPage />} />
-      <Route path="/saas-admin" element={<SaasAdminPage />} />
-      <Route path="/saas-admin/onboarding" element={<PlatformOnboardingPage />} />
-      <Route path="/saas-admin/companies" element={<PlatformCompaniesPage />} />
-      <Route path="/saas-admin/stores/:id/features" element={<SaasStoreFeaturesPage />} />
+      <Route path="/saas-admin" element={<Navigate to="/platform-admin" replace />} />
+      <Route path="/saas-admin/onboarding" element={<Navigate to="/platform-admin/onboarding" replace />} />
+      <Route path="/saas-admin/companies" element={<Navigate to="/platform-admin/companies" replace />} />
+      <Route path="/saas-admin/stores/:id/features" element={<LegacyStoreFeaturesRedirect />} />
       <Route path="/saas-admin/*" element={<Navigate to="/platform-admin" replace />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/store-signup" element={<StoreSignupPage />} />

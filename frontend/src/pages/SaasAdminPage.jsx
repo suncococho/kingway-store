@@ -400,7 +400,7 @@ function SaasAdminPage() {
       const response = await platformRequest("/saas-admin/stores");
       setData(response);
     } catch (err) {
-      setError(err.message || "載入 SaaS 平台管理資料失敗");
+      setError(err.message || "載入平台管理資料失敗");
     } finally {
       setLoading(false);
     }
@@ -1300,8 +1300,8 @@ function SaasAdminPage() {
   if (!isAdmin) {
     return (
       <div>
-        <PageHeader title="SaaS 平台管理中心" description="僅限平台管理員檢視；此區不是 KINGWAY 台南門市設定。" />
-        <div className="empty-state">沒有 SaaS 管理權限。</div>
+        <PageHeader title="Platform Admin 平台管理中心" description="僅限平台管理員檢視；此區不是 KINGWAY 台南門市設定。" />
+        <div className="empty-state">沒有平台管理權限。</div>
       </div>
     );
   }
@@ -1309,7 +1309,7 @@ function SaasAdminPage() {
   if (loading) {
     return (
       <div>
-        <PageHeader title="SaaS 平台管理中心" description="載入平台租戶店家資料中..." />
+        <PageHeader title="Platform Admin 平台管理中心" description="載入平台租戶店家資料中..." />
       </div>
     );
   }
@@ -1317,7 +1317,7 @@ function SaasAdminPage() {
   if (error) {
     return (
       <div>
-        <PageHeader title="SaaS 平台管理中心" description="平台管理所有租戶店家；此區不是 KINGWAY 台南門市設定。" />
+        <PageHeader title="Platform Admin 平台管理中心" description="平台管理所有租戶店家；此區不是 KINGWAY 台南門市設定。" />
         <div className="empty-state">{error}</div>
       </div>
     );
@@ -1325,7 +1325,7 @@ function SaasAdminPage() {
 
   return (
     <div>
-      <PageHeader title="SaaS 平台管理中心" description="平台層級檢視所有租戶店家、SchemaGuard 狀態與各店家模組入口；KINGWAY 台南是 store_id=1 租戶。" />
+      <PageHeader title="Platform Admin 平台管理中心" description="平台層級檢視所有租戶店家、SchemaGuard 狀態與各店家模組入口；KINGWAY 台南是 store_id=1 租戶。" />
 
       <section className="admin-panel">
         <AdminSectionHeader
@@ -1402,7 +1402,7 @@ function SaasAdminPage() {
       {canCreateStore ? (
         <section className="admin-panel">
           <AdminSectionHeader
-            eyebrow="平台管理"
+          eyebrow="平台管理"
             title="新增租戶店家"
             description="建立新店家、預設功能開關與 owner 帳號。若不輸入密碼，系統會自動產生一次性臨時密碼。"
           />
@@ -1486,7 +1486,7 @@ function SaasAdminPage() {
 
       <section className="admin-panel">
         <AdminSectionHeader
-          eyebrow="SaaS 平台"
+            eyebrow="平台管理"
           title="租戶店家列表"
           description="平台層級檢視租戶店家，可直接開啟店家設定並儲存門市基本資料。"
           badges={

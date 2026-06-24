@@ -217,7 +217,7 @@ function PlatformOnboardingPage() {
   if (!canManage) {
     return (
       <div>
-        <PageHeader title="SaaS 開店設定" description="僅限平台管理員使用。" />
+        <PageHeader title="平台開店設定" description="僅限平台管理員使用。" />
         <div className="empty-state">沒有平台開店權限。</div>
       </div>
     );
@@ -225,7 +225,7 @@ function PlatformOnboardingPage() {
 
   return (
     <div>
-      <PageHeader title="SaaS 開店設定" description="建立個人店家、加盟公司與公司所屬門市，系統會自動建立 owner 帳號與權限。" />
+      <PageHeader title="平台開店設定" description="建立個人店家、加盟公司與公司所屬門市，系統會自動建立 owner 帳號與權限。" />
 
       <section className="admin-panel">
         <AdminSectionHeader

@@ -208,7 +208,7 @@ function SaasStoreFeaturesPage() {
     return (
       <div>
         <PageHeader title="店家功能設定" description="僅限平台管理員檢視。" />
-        <div className="empty-state">沒有 SaaS 管理權限。</div>
+        <div className="empty-state">沒有平台管理權限。</div>
       </div>
     );
   }
@@ -224,7 +224,7 @@ function SaasStoreFeaturesPage() {
   if (error) {
     return (
       <div>
-        <PageHeader title="店家功能設定" description="SaaS 平台的店家功能設定入口。" />
+        <PageHeader title="店家功能設定" description="Platform Admin 的店家功能設定入口。" />
         <div className="empty-state">{error}</div>
       </div>
     );
@@ -232,7 +232,7 @@ function SaasStoreFeaturesPage() {
 
   return (
     <div>
-      <PageHeader title="店家功能設定" description="管理單一店家目前啟用的 SaaS 功能模組。" />
+      <PageHeader title="店家功能設定" description="管理單一店家目前啟用的平台功能模組。" />
 
       <div className="admin-summary-grid dashboard-summary-grid">
         <article className="admin-summary-card">

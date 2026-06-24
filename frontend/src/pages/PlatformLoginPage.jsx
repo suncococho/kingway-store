@@ -38,7 +38,7 @@ function PlatformLoginPage() {
     <div className="login-page">
       <form className="login-card" onSubmit={handleSubmit}>
         <h1>平台管理員登入</h1>
-        <p>請使用 SaaS 本社平台管理員帳號登入。</p>
+        <p>請使用 Platform Admin 平台管理員帳號登入。</p>
         <label className="form-field">
           <span>電子郵件</span>
           <input
@@ -89,7 +89,7 @@ export function PlatformAdminPage() {
     <main className="page-content">
       <div className="compact-actions" style={{ marginBottom: 16 }}>
         <span className="secondary-button">{user?.displayName || user?.email || "平台管理員"}</span>
-        <button type="button" className="secondary-button" onClick={() => navigate("/platform-admin/onboarding")}>SaaS 開店設定</button>
+        <button type="button" className="secondary-button" onClick={() => navigate("/platform-admin/onboarding")}>平台開店設定</button>
         <button type="button" className="secondary-button" onClick={() => navigate("/platform-admin/companies")}>公司 / 品牌</button>
         <button type="button" className="secondary-button" onClick={handleLogout}>登出</button>
       </div>
