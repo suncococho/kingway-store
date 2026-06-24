@@ -195,6 +195,19 @@ async function loadCompanyStore(storeId, relationshipTypes = [], connection = po
   return rows[0] || null;
 }
 
+async function requireChainStoreContext(req, res, next) {
+  try {
+    const store = await loadCompanyStore(req.storeId || req.user?.storeId, ["DIRECT_STORE", "FRANCHISE_STORE"]);
+    if (!store) {
+      return res.status(403).json({ message: "門市請貨僅適用於直營或加盟門市" });
+    }
+    req.chainStoreContext = store;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
 async function requireHqRead(req, companyId, connection = pool) {
   const membership = await loadCompanyMembership(req.user.id, companyId);
   const hqStoreContext = await loadCompanyStore(req.storeId || req.user?.storeId, ["HEADQUARTERS", "WAREHOUSE"], connection);
@@ -494,7 +507,7 @@ async function queryRequests(whereSql, params, query = {}) {
   return rows.map(mapRequest);
 }
 
-router.get("/hq-products", async (req, res, next) => {
+router.get("/hq-products", requireChainStoreContext, async (req, res, next) => {
   try {
     const storeId = Number(req.storeId || req.user?.storeId || 0);
     const q = String(req.query.q || "").trim();
@@ -562,7 +575,7 @@ router.get("/hq-products", async (req, res, next) => {
   }
 });
 
-router.get("/", async (req, res, next) => {
+router.get("/", requireChainStoreContext, async (req, res, next) => {
   try {
     const storeId = Number(req.storeId || req.user?.storeId || 0);
     const requests = await queryRequests("srr.requesting_store_id = ?", [storeId], req.query);
@@ -572,7 +585,7 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-router.post("/", requireStoreRole(["owner", "admin", "staff"]), async (req, res, next) => {
+router.post("/", requireChainStoreContext, requireStoreRole(["owner", "admin", "staff"]), async (req, res, next) => {
   try {
     const storeId = Number(req.storeId || req.user?.storeId || 0);
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
@@ -631,7 +644,7 @@ router.post("/", requireStoreRole(["owner", "admin", "staff"]), async (req, res,
   }
 });
 
-router.post("/:id/submit", requireStoreRole(["owner", "admin", "staff"]), async (req, res, next) => {
+router.post("/:id/submit", requireChainStoreContext, requireStoreRole(["owner", "admin", "staff"]), async (req, res, next) => {
   try {
     const storeId = Number(req.storeId || req.user?.storeId || 0);
     const requestId = Number(req.params.id);
@@ -680,7 +693,7 @@ router.post("/:id/submit", requireStoreRole(["owner", "admin", "staff"]), async 
   }
 });
 
-router.post("/:id/cancel", requireStoreRole(["owner", "admin", "staff"]), async (req, res, next) => {
+router.post("/:id/cancel", requireChainStoreContext, requireStoreRole(["owner", "admin", "staff"]), async (req, res, next) => {
   try {
     const storeId = Number(req.storeId || req.user?.storeId || 0);
     const requestId = Number(req.params.id);

@@ -86,13 +86,31 @@ function isMenuItemVisibleByPermissions(item, permissions, user) {
   return getMenuPermission(permissions, item.menuKey, user).canView;
 }
 
-export function getMobileMenuSectionsForUser(user, features = {}, menuPermissions = null) {
+function isMenuItemVisibleByStoreProfile(item, storeProfile = null) {
+  if (!storeProfile) return true;
+  const path = item.to ? item.to.split("?")[0] : "";
+
+  if (path === "/suppliers") {
+    return storeProfile.canUseSuppliers;
+  }
+  if (path === "/store-replenishment-requests") {
+    return storeProfile.canUseStoreReplenishment;
+  }
+  if (path === "/inbound-transfers") {
+    return storeProfile.canUseInboundTransfers;
+  }
+
+  return true;
+}
+
+export function getMobileMenuSectionsForUser(user, features = {}, menuPermissions = null, storeProfile = null) {
   return mobileMenuSections
     .map((section) => ({
       ...section,
       items: filterMenuItemsForUser(section.items, user)
         .filter((item) => isMenuItemEnabledByFeatures(item, features))
         .filter((item) => isMenuItemVisibleByPermissions(item, menuPermissions, user))
+        .filter((item) => isMenuItemVisibleByStoreProfile(item, storeProfile))
     }))
     .filter((section) => section.items.length > 0);
 }

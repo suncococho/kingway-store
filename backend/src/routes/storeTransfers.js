@@ -90,6 +90,41 @@ async function loadCompanyStore(companyId, storeId, relationshipTypes = []) {
   return rows[0] || null;
 }
 
+async function loadStoreCompanyRelationship(storeId, relationshipTypes = []) {
+  const params = [storeId];
+  let relationshipSql = "";
+  if (relationshipTypes.length) {
+    relationshipSql = ` AND cs.relationship_type IN (${relationshipTypes.map(() => "?").join(",")})`;
+    params.push(...relationshipTypes);
+  }
+  const [rows] = await pool.query(
+    `
+      SELECT cs.company_id AS companyId, cs.store_id AS storeId, cs.relationship_type AS relationshipType
+      FROM company_stores cs
+      WHERE cs.store_id = ?
+        AND cs.status = 'ACTIVE'
+        ${relationshipSql}
+      LIMIT 1
+    `,
+    params
+  );
+  return rows[0] || null;
+}
+
+async function requireInboundStoreType(req, res, next) {
+  try {
+    const storeId = Number(req.storeId || req.user?.storeId || 0);
+    const relationship = await loadStoreCompanyRelationship(storeId, ["DIRECT_STORE", "FRANCHISE_STORE", "HEADQUARTERS", "WAREHOUSE"]);
+    if (!relationship) {
+      return res.status(403).json({ message: "門市入庫不適用於獨立店家" });
+    }
+    req.storeCompanyRelationship = relationship;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
 async function hasHqStoreContext(req, companyId) {
   const storeId = Number(req.storeId || req.user?.storeId || 0);
   if (!storeId) return false;
@@ -681,7 +716,7 @@ router.post("/:transferId/cancel", async (req, res, next) => {
   }
 });
 
-router.get("/inbound", requireStoreScope(), requireStoreRole(["owner", "admin"]), async (req, res, next) => {
+router.get("/inbound", requireStoreScope(), requireStoreRole(["owner", "admin"]), requireInboundStoreType, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `
@@ -749,7 +784,7 @@ router.get("/:transferId", async (req, res, next) => {
   }
 });
 
-router.post("/:transferId/receive", requireStoreScope(), async (req, res, next) => {
+router.post("/:transferId/receive", requireStoreScope(), requireInboundStoreType, async (req, res, next) => {
   try {
     const transferId = Number(req.params.transferId);
     const transfer = await loadTransfer(transferId);

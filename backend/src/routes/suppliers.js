@@ -229,6 +229,7 @@ router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CA
 const requireStoreAdminRole = requireStoreRole(["owner", "admin"]);
 const COMPANY_SUPPLIER_WRITE_ROLES = new Set(["company_owner", "hq_admin", "inventory_manager"]);
 const SUPPLIER_OWNER_TYPES = new Set(["STORE", "COMPANY", "PLATFORM"]);
+const CHAIN_STORE_RELATIONSHIP_TYPES = new Set(["DIRECT_STORE", "FRANCHISE_STORE"]);
 
 function normalizeSupplierPayload(body = {}) {
   return {
@@ -289,6 +290,9 @@ async function resolveSupplierScopeContext(req, connection = pool) {
     [req.user?.id || 0, storeId]
   );
   const companyIds = [...new Set(companyRows.map((row) => Number(row.companyId)).filter(Boolean))];
+  const currentStoreRelationships = companyRows
+    .filter((row) => Number(row.storeId) === storeId)
+    .map((row) => row.relationshipType);
   const writableCompanyIds = [...new Set(companyRows
     .filter((row) => COMPANY_SUPPLIER_WRITE_ROLES.has(row.companyRole))
     .map((row) => Number(row.companyId))
@@ -317,9 +321,27 @@ async function resolveSupplierScopeContext(req, connection = pool) {
     companyIds,
     writableCompanyIds,
     companyStoreIdsByCompany,
+    currentStoreRelationships,
+    isChainStore: currentStoreRelationships.some((role) => CHAIN_STORE_RELATIONSHIP_TYPES.has(role)),
+    isIndependent: currentStoreRelationships.length === 0,
     platformAdmin: isPlatformAdmin(req)
   };
 }
+
+async function requireSupplierStoreType(req, res, next) {
+  try {
+    const context = await resolveSupplierScopeContext(req);
+    if (context.isChainStore) {
+      return res.status(403).json({ message: "直營或加盟門市不使用供應商管理，請使用門市請貨流程" });
+    }
+    req.supplierScopeContext = context;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
+router.use(requireSupplierStoreType);
 
 function supplierOwnerSelectSql(alias = "s") {
   return `

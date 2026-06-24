@@ -8,6 +8,7 @@ const router = express.Router();
 
 const COMPANY_WRITE_ROLES = new Set(["company_owner", "hq_admin", "inventory_manager"]);
 const HQ_STORE_ROLES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
+const CHAIN_STORE_ROLES = new Set(["DIRECT_STORE", "FRANCHISE_STORE"]);
 const OPEN_RECEIVE_STATUSES = new Set(["ORDERED", "PARTIALLY_RECEIVED"]);
 const IDEMPOTENT_RECEIVE_STATUSES = new Set(["ORDERED", "PARTIALLY_RECEIVED", "RECEIVED"]);
 
@@ -72,21 +73,30 @@ async function resolveContext(req, connection = pool) {
     .map((row) => Number(row.companyId))
     .filter(Boolean))];
   const storeRolesByCompany = {};
+  const currentStoreRelationships = [];
   for (const row of companyRows) {
     if (Number(row.storeId) === storeId) {
       storeRolesByCompany[Number(row.companyId)] = row.relationshipType;
+      currentStoreRelationships.push(row.relationshipType);
     }
   }
+  const isChainStore = currentStoreRelationships.some((role) => CHAIN_STORE_ROLES.has(role));
+  const isHqStore = currentStoreRelationships.some((role) => HQ_STORE_ROLES.has(role));
   return {
     storeId,
     staffId: Number(req.user?.id || 0) || null,
     companyIds,
     writableCompanyIds,
-    storeRolesByCompany
+    storeRolesByCompany,
+    currentStoreRelationships,
+    isChainStore,
+    isHqStore,
+    isIndependent: currentStoreRelationships.length === 0
   };
 }
 
 function buildPoAccessWhere(context, scope = "all", alias = "spo") {
+  if (context.isChainStore) return { where: "1 = 0", params: [] };
   const clauses = [];
   const params = [];
   const normalizedScope = String(scope || "all").trim().toLowerCase();
@@ -222,6 +232,9 @@ async function loadSupplier(supplierId, context, connection = pool) {
     throw createError("找不到可用供應商", 404);
   }
   if (supplier.ownerType === "STORE") {
+    if (context.isChainStore) {
+      throw createError("直營或加盟門市不可使用供應商發注，請使用門市請貨流程", 403);
+    }
     if (Number(supplier.ownerStoreId || supplier.storeId) !== Number(context.storeId)) {
       throw createError("沒有此供應商權限", 403);
     }
@@ -235,6 +248,21 @@ async function loadSupplier(supplierId, context, connection = pool) {
   }
   throw createError("平台供應商暫不開放發注", 403);
 }
+
+async function requireSupplierPurchaseStoreType(req, res, next) {
+  try {
+    const context = await resolveContext(req);
+    if (context.isChainStore) {
+      return res.status(403).json({ message: "直營或加盟門市不可使用供應商發注，請使用門市請貨流程" });
+    }
+    req.supplierPurchaseContext = context;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
+router.use(requireSupplierPurchaseStoreType);
 
 async function assertCompanyHqStore(companyId, storeId, connection = pool) {
   const [rows] = await connection.query(

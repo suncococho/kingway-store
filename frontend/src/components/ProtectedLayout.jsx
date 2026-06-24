@@ -8,6 +8,7 @@ import { getStoredUser } from "../lib/auth";
 import { useMenuPermissions } from "../hooks/useMenuPermissions";
 import { canAccessPath, getMenuKeyForPath } from "../lib/menuPermissions";
 import { useStoreAccess } from "../hooks/useStoreAccess";
+import { buildStoreOperationProfile } from "../lib/storeOperationProfile";
 
 const PATH_FEATURE_MAP = {
   "/suppliers": "suppliers",
@@ -27,29 +28,19 @@ const HQ_ONLY_PATHS = new Set([
   "/hq-transfer-report"
 ]);
 
-const HQ_RELATIONSHIP_TYPES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
+const SUPPLIER_PATHS = new Set(["/suppliers"]);
+const STORE_REPLENISHMENT_PATHS = new Set(["/store-replenishment-requests"]);
+const INBOUND_TRANSFER_PATHS = new Set(["/inbound-transfers"]);
 
 function getFeatureForPath(pathname) {
   return PATH_FEATURE_MAP[pathname] || null;
-}
-
-function hasCurrentHqStoreContext(companyResponse, storeId) {
-  const currentStoreId = Number(storeId || 0);
-  if (!currentStoreId) return false;
-  return (companyResponse?.companies || []).some((company) =>
-    (company.stores || []).some(
-      (store) =>
-        Number(store.storeId) === currentStoreId &&
-        HQ_RELATIONSHIP_TYPES.has(store.relationshipType)
-    )
-  );
 }
 
 function ProtectedLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const user = getStoredUser();
-  const [hqContextCheck, setHqContextCheck] = useState({ loading: false, allowed: true });
+  const [storeTypeCheck, setStoreTypeCheck] = useState({ loading: false, allowed: true, message: "" });
   const { permissions: menuPermissions, loading: menuPermissionsLoading } = useMenuPermissions(user);
   const { access: storeAccess } = useStoreAccess(user);
   const impersonationSession = useMemo(() => getImpersonationSession(), [location.pathname, location.search]);
@@ -81,35 +72,52 @@ function ProtectedLayout() {
   }
 
   const shouldShowBanner = Boolean(impersonationSession?.active && !impersonationSession?.expired);
-  const requiresHqContext = HQ_ONLY_PATHS.has(location.pathname);
+  const requiresStoreTypeCheck =
+    HQ_ONLY_PATHS.has(location.pathname) ||
+    SUPPLIER_PATHS.has(location.pathname) ||
+    STORE_REPLENISHMENT_PATHS.has(location.pathname) ||
+    INBOUND_TRANSFER_PATHS.has(location.pathname);
 
   useEffect(() => {
     let active = true;
-    async function checkHqContext() {
-      if (!requiresHqContext) {
-        setHqContextCheck({ loading: false, allowed: true });
+    async function checkStoreType() {
+      if (!requiresStoreTypeCheck) {
+        setStoreTypeCheck({ loading: false, allowed: true, message: "" });
         return;
       }
-      setHqContextCheck({ loading: true, allowed: false });
+      setStoreTypeCheck({ loading: true, allowed: false, message: "" });
       try {
         const response = await apiRequest("/company/me");
         if (active) {
-          setHqContextCheck({
-            loading: false,
-            allowed: hasCurrentHqStoreContext(response, user?.storeId)
-          });
+          const profile = buildStoreOperationProfile(response, user?.storeId);
+          let allowed = true;
+          let message = "";
+          if (HQ_ONLY_PATHS.has(location.pathname)) {
+            allowed = profile.canUseHqFeatures;
+            message = "此功能僅限本部或倉庫帳號使用。";
+          } else if (SUPPLIER_PATHS.has(location.pathname)) {
+            allowed = profile.canUseSuppliers;
+            message = "此功能不適用於直營或加盟門市。";
+          } else if (STORE_REPLENISHMENT_PATHS.has(location.pathname)) {
+            allowed = profile.canUseStoreReplenishment;
+            message = "此功能僅適用於直營或加盟門市。";
+          } else if (INBOUND_TRANSFER_PATHS.has(location.pathname)) {
+            allowed = profile.canUseInboundTransfers;
+            message = "此功能不適用於獨立店家。";
+          }
+          setStoreTypeCheck({ loading: false, allowed, message });
         }
       } catch (_error) {
         if (active) {
-          setHqContextCheck({ loading: false, allowed: false });
+          setStoreTypeCheck({ loading: false, allowed: false, message: "此功能不適用於目前門市類型。" });
         }
       }
     }
-    checkHqContext();
+    checkStoreType();
     return () => {
       active = false;
     };
-  }, [requiresHqContext, location.pathname, user?.id, user?.storeId]);
+  }, [requiresStoreTypeCheck, location.pathname, user?.id, user?.storeId]);
 
   const isPosFullscreen =
     location.pathname === "/pos" &&
@@ -149,15 +157,15 @@ function ProtectedLayout() {
             </div>
           </div>
         ) : null}
-        {isCheckingMenuPermission || hqContextCheck.loading ? (
+        {isCheckingMenuPermission || storeTypeCheck.loading ? (
           <section className="content-card section-panel">
             <div className="empty-state">權限確認中...</div>
           </section>
-        ) : !hasMenuAccess || !hqContextCheck.allowed ? (
+        ) : !hasMenuAccess || !storeTypeCheck.allowed ? (
           <section className="content-card section-panel">
             <div className="empty-state">
               <h2>權限不足</h2>
-              <p>您沒有權限使用此功能</p>
+              <p>{storeTypeCheck.message || "您沒有權限使用此功能"}</p>
             </div>
           </section>
         ) : featureLocked ? (
