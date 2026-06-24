@@ -21,6 +21,9 @@ const EMPTY_FORM = {
   itemNote: ""
 };
 
+const PRODUCT_CANDIDATE_STEP = 10;
+const PRODUCT_API_LIMIT = 50;
+
 function statusTone(status) {
   if (status === "FULFILLED") return "success";
   if (status === "PARTIALLY_FULFILLED" || status === "SUBMITTED") return "warning";
@@ -44,17 +47,25 @@ export default function StoreReplenishmentRequestsPage() {
   const [loading, setLoading] = useState(true);
   const [productsLoading, setProductsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [visibleProductCount, setVisibleProductCount] = useState(PRODUCT_CANDIDATE_STEP);
 
   const selectedProduct = useMemo(
     () => products.find((product) => String(product.hqProductId) === String(form.selectedProductId)) || null,
     [products, form.selectedProductId]
   );
+  const visibleProducts = useMemo(
+    () => products.slice(0, visibleProductCount),
+    [products, visibleProductCount]
+  );
+  const productQueryText = form.productQuery.trim();
+  const hasMoreProducts = visibleProductCount < products.length;
 
   useEffect(() => {
     loadRequests();
   }, []);
 
   useEffect(() => {
+    setVisibleProductCount(PRODUCT_CANDIDATE_STEP);
     const timer = setTimeout(() => {
       loadProducts();
     }, 250);
@@ -215,8 +226,28 @@ export default function StoreReplenishmentRequestsPage() {
           <label className="form-field form-field-wide"><span>品項備註</span><input name="itemNote" value={form.itemNote} onChange={updateForm} /></label>
 
           <div className="form-field-wide stack-list">
+            <div className="empty-state">
+              請輸入 SKU 或商品名稱搜尋本部商品。下方僅顯示符合條件的前幾筆商品，並非全部商品。
+              {productQueryText
+                ? ` 搜尋結果：${products.length} 筆，目前顯示 ${visibleProducts.length} 筆。`
+                : ` 目前顯示本部庫存較高的前 ${Math.min(visibleProductCount, products.length || PRODUCT_CANDIDATE_STEP)} 筆商品。若找不到商品，請輸入 SKU 或商品名稱搜尋。`}
+              {products.length >= PRODUCT_API_LIMIT ? ` API 目前最多回傳前 ${PRODUCT_API_LIMIT} 筆候選，請輸入更完整的 SKU 或商品名稱縮小範圍。` : ""}
+            </div>
+            {products.length ? (
+              <div className="compact-actions">
+                <StatusBadge tone="info">
+                  {productQueryText ? `搜尋結果：${products.length} 筆` : `顯示 ${visibleProducts.length} 筆本部商品候選`}
+                </StatusBadge>
+                {products.length > visibleProducts.length ? (
+                  <StatusBadge tone="warning">僅顯示前 {visibleProducts.length} 筆結果</StatusBadge>
+                ) : (
+                  <StatusBadge tone="success">已顯示全部目前結果</StatusBadge>
+                )}
+              </div>
+            ) : null}
             {productsLoading ? <div className="empty-state">本部商品讀取中...</div> : null}
-            {products.slice(0, 10).map((product) => (
+            {!productsLoading && !products.length ? <div className="empty-state">找不到本部商品，請確認 SKU 或商品名稱。</div> : null}
+            {visibleProducts.map((product) => (
               <button
                 type="button"
                 key={product.hqProductId}
@@ -226,10 +257,22 @@ export default function StoreReplenishmentRequestsPage() {
                 {product.sku} / {product.name} / 本部庫存 {product.hqStock} / 建議結算單價 {money(product.unitCost)} {product.mapped ? "" : " / 門市尚未建立此 SKU"}
               </button>
             ))}
+            {hasMoreProducts ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setVisibleProductCount((current) => current + PRODUCT_CANDIDATE_STEP)}
+              >
+                顯示更多
+              </button>
+            ) : products.length ? (
+              <div className="muted-text">已顯示全部目前結果。</div>
+            ) : null}
           </div>
 
           {selectedProduct ? (
             <div className="field-grid form-field-wide">
+              <div className="field-item"><div className="field-label">狀態</div><div className="field-value">已選擇本部商品</div></div>
               <div className="field-item"><div className="field-label">SKU</div><div className="field-value">{selectedProduct.sku}</div></div>
               <div className="field-item"><div className="field-label">商品名稱</div><div className="field-value">{selectedProduct.name}</div></div>
               <div className="field-item"><div className="field-label">本部庫存</div><div className="field-value">{selectedProduct.hqStock}</div></div>
