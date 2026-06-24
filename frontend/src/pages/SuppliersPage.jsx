@@ -3,7 +3,7 @@ import DataTable from "../components/DataTable";
 import StatusBadge from "../components/StatusBadge";
 import { useProcessingGuard } from "../hooks/useProcessingGuard";
 import { apiRequest } from "../lib/api";
-import { getStoredUser } from "../lib/auth";
+import { getStoredToken, getStoredUser } from "../lib/auth";
 
 const SUPPLIER_EMPTY_FORM = {
   name: "",
@@ -36,6 +36,18 @@ const PURCHASE_EMPTY_FORM = {
   quantityOrdered: 1,
   unitCost: "",
   settlementMonth: new Date().toISOString().slice(0, 7),
+  note: ""
+};
+
+const SUPPLIER_RETURN_EMPTY_FORM = {
+  supplierId: "",
+  productId: "",
+  productSearch: "",
+  returnDate: new Date().toISOString().slice(0, 10),
+  quantity: 1,
+  unitCost: "",
+  reason: "",
+  photoUrl: "",
   note: ""
 };
 
@@ -96,12 +108,32 @@ function getPaymentStatusLabel(status) {
   return labels[status] || status || "-";
 }
 
+function getSupplierReturnStatusLabel(status) {
+  const labels = {
+    DRAFT: "草稿",
+    SUBMITTED: "已送出",
+    APPROVED: "已核准",
+    SHIPPED: "已出貨",
+    RECEIVED_BY_SUPPLIER: "供應商已收",
+    SETTLED: "已結算",
+    CANCELED: "已取消"
+  };
+  return labels[status] || status || "-";
+}
+
 function getStatusTone(status) {
   if (status === "ACTIVE") return "success";
   if (status === "INACTIVE" || status === "REJECTED") return "danger";
   if (status === "PARTIALLY_RECEIVED") return "warning";
   if (status === "RECEIVED" || status === "RETURN_CONFIRMED") return "success";
   return "info";
+}
+
+function getSupplierReturnStatusTone(status) {
+  if (status === "SETTLED" || status === "RECEIVED_BY_SUPPLIER") return "success";
+  if (status === "SHIPPED" || status === "APPROVED" || status === "SUBMITTED") return "info";
+  if (status === "CANCELED") return "danger";
+  return "neutral";
 }
 
 function getScopeLabel(value) {
@@ -168,6 +200,9 @@ export default function SuppliersPage() {
   const [monthly, setMonthly] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [purchaseMonthly, setPurchaseMonthly] = useState([]);
+  const [supplierReturns, setSupplierReturns] = useState([]);
+  const [supplierReturnMonthly, setSupplierReturnMonthly] = useState([]);
+  const [supplierReturnReport, setSupplierReturnReport] = useState({ rows: [], summary: { rowCount: 0, totalQuantity: 0, totalAmount: 0 } });
   const [excludeDemoData, setExcludeDemoData] = useState(false);
   const [companyInfo, setCompanyInfo] = useState(null);
   const [products, setProducts] = useState([]);
@@ -178,6 +213,14 @@ export default function SuppliersPage() {
   const [supplierForm, setSupplierForm] = useState(SUPPLIER_EMPTY_FORM);
   const [priceForm, setPriceForm] = useState(PRICE_EMPTY_FORM);
   const [purchaseForm, setPurchaseForm] = useState(PURCHASE_EMPTY_FORM);
+  const [supplierReturnForm, setSupplierReturnForm] = useState(SUPPLIER_RETURN_EMPTY_FORM);
+  const [supplierReturnFilters, setSupplierReturnFilters] = useState({
+    fromDate: "",
+    toDate: "",
+    supplierId: "ALL",
+    status: "ALL",
+    month: new Date().toISOString().slice(0, 7)
+  });
   const [error, setError] = useState("");
   const [productSearch, setProductSearch] = useState("");
   const [filters, setFilters] = useState({
@@ -229,10 +272,25 @@ export default function SuppliersPage() {
         apiRequest(`/supplier-purchases?${purchaseParams.toString()}`).catch(() => []),
         apiRequest(`/supplier-purchases/monthly-summary?${purchaseMonthlyParams.toString()}`).catch(() => [])
       ]);
+      const returnParams = new URLSearchParams();
+      if (supplierReturnFilters.status !== "ALL") returnParams.set("status", supplierReturnFilters.status);
+      if (supplierReturnFilters.supplierId !== "ALL") returnParams.set("supplierId", supplierReturnFilters.supplierId);
+      if (supplierReturnFilters.fromDate) returnParams.set("fromDate", supplierReturnFilters.fromDate);
+      if (supplierReturnFilters.toDate) returnParams.set("toDate", supplierReturnFilters.toDate);
+      const returnMonthlyParams = new URLSearchParams({ month: supplierReturnFilters.month });
+      if (supplierReturnFilters.supplierId !== "ALL") returnMonthlyParams.set("supplierId", supplierReturnFilters.supplierId);
+      const [nextSupplierReturns, nextSupplierReturnMonthly, nextSupplierReturnReport] = await Promise.all([
+        apiRequest(`/supplier-returns?${returnParams.toString()}`).then((data) => data.returns || data).catch(() => []),
+        apiRequest(`/supplier-returns/monthly-summary?${returnMonthlyParams.toString()}`).catch(() => []),
+        apiRequest(`/supplier-returns/report?${returnParams.toString()}`).catch(() => ({ rows: [], summary: { rowCount: 0, totalQuantity: 0, totalAmount: 0 } }))
+      ]);
       setRows(nextRows);
       setMonthly(nextMonthly);
       setPurchaseOrders(nextPurchaseOrders);
       setPurchaseMonthly(nextPurchaseMonthly);
+      setSupplierReturns(nextSupplierReturns);
+      setSupplierReturnMonthly(nextSupplierReturnMonthly);
+      setSupplierReturnReport(nextSupplierReturnReport);
       setProducts(nextProducts);
       setSuppliers(nextSuppliers);
       setCompanyInfo(nextCompanyInfo);
@@ -245,6 +303,9 @@ export default function SuppliersPage() {
     } catch (requestError) {
       setRows([]);
       setMonthly([]);
+      setSupplierReturns([]);
+      setSupplierReturnMonthly([]);
+      setSupplierReturnReport({ rows: [], summary: { rowCount: 0, totalQuantity: 0, totalAmount: 0 } });
       setProducts([]);
       setSuppliers([]);
       setError(requestError.message || "供應商資料讀取失敗");
@@ -275,7 +336,7 @@ export default function SuppliersPage() {
 
   useEffect(() => {
     load();
-  }, [supplierScope, purchaseForm.settlementMonth, excludeDemoData]);
+  }, [supplierScope, purchaseForm.settlementMonth, excludeDemoData, supplierReturnFilters.status, supplierReturnFilters.supplierId, supplierReturnFilters.fromDate, supplierReturnFilters.toDate, supplierReturnFilters.month]);
 
   useEffect(() => {
     loadSupplierPrices(selectedSupplierId);
@@ -443,6 +504,9 @@ export default function SuppliersPage() {
   const selectedPurchaseSupplier = suppliers.find((supplier) => String(supplier.id) === String(purchaseForm.supplierId));
   const selectedPurchaseSupplierIsCompany = String(selectedPurchaseSupplier?.ownerType || "").toUpperCase() === "COMPANY";
   const selectedPurchaseCompanySupplierBlocked = selectedPurchaseSupplierIsCompany && !canCurrentStoreUseCompanySupplier;
+  const selectedSupplierReturnSupplier = suppliers.find((supplier) => String(supplier.id) === String(supplierReturnForm.supplierId));
+  const selectedSupplierReturnProduct = products.find((product) => Number(product.id) === Number(supplierReturnForm.productId));
+  const supplierReturnOwnerType = String(selectedSupplierReturnSupplier?.ownerType || "STORE").toUpperCase() === "COMPANY" ? "COMPANY" : "STORE";
   const selectedSupplier = suppliers.find((supplier) => String(supplier.id) === String(selectedSupplierId));
   const canEditSelectedSupplier = selectedSupplier ? Boolean(selectedSupplier.canEdit) : false;
   const purchaseProductOptions = products.filter((product) => {
@@ -450,6 +514,14 @@ export default function SuppliersPage() {
     if (!q) return false;
     return String(product.sku || "").toLowerCase().includes(q) || String(product.name || "").toLowerCase().includes(q);
   }).slice(0, 8);
+  const supplierReturnSupplierOptions = suppliers.filter((supplier) => supplier.isActive && supplier.canEdit && String(supplier.ownerType || "").toUpperCase() !== "PLATFORM");
+  const supplierReturnProductOptions = products.filter((product) => {
+    const q = String(supplierReturnForm.productSearch || "").trim().toLowerCase();
+    if (!q) return false;
+    return String(product.sku || "").toLowerCase().includes(q) || String(product.name || "").toLowerCase().includes(q);
+  }).slice(0, 8);
+  const supplierReturnReportRows = Array.isArray(supplierReturnReport.rows) ? supplierReturnReport.rows : [];
+  const supplierReturnSummary = supplierReturnReport.summary || { rowCount: 0, totalQuantity: 0, totalAmount: 0 };
 
   function resetSupplierForm() {
     setEditingSupplierId(null);
@@ -642,6 +714,90 @@ export default function SuppliersPage() {
     });
   }
 
+  async function createSupplierReturn() {
+    if (!supplierReturnForm.supplierId || !supplierReturnForm.productId || Number(supplierReturnForm.quantity || 0) <= 0) {
+      alert("請選擇供應商、商品與退貨數量");
+      return;
+    }
+    await runWithProcessing(async () => {
+      await apiRequest("/supplier-returns", {
+        method: "POST",
+        body: JSON.stringify({
+          ownerType: supplierReturnOwnerType,
+          supplierId: Number(supplierReturnForm.supplierId),
+          returnDate: supplierReturnForm.returnDate || undefined,
+          note: supplierReturnForm.note,
+          items: [{
+            productId: Number(supplierReturnForm.productId),
+            quantity: Number(supplierReturnForm.quantity),
+            unitCost: supplierReturnForm.unitCost === "" ? undefined : Number(supplierReturnForm.unitCost),
+            reason: supplierReturnForm.reason,
+            photoUrl: supplierReturnForm.photoUrl
+          }]
+        })
+      });
+      setSupplierReturnForm((current) => ({
+        ...SUPPLIER_RETURN_EMPTY_FORM,
+        supplierId: current.supplierId,
+        returnDate: current.returnDate
+      }));
+      await load();
+      alert("退貨單已建立，尚未扣除庫存");
+    }, { id: "supplier-return-create", label: "供應商退貨單建立中..." }).catch((requestError) => {
+      alert(requestError.message || "建立退貨單失敗");
+    });
+  }
+
+  async function updateSupplierReturnStatus(row, action, options = {}) {
+    if (options.confirmMessage && !confirm(options.confirmMessage)) return;
+    await runWithProcessing(async () => {
+      await apiRequest(`/supplier-returns/${row.id}/${action}`, { method: "POST", body: JSON.stringify({}) });
+      await load();
+      alert(options.successMessage || "退貨狀態已更新");
+    }, { id: `supplier-return-${action}-${row.id}`, label: "退貨狀態更新中..." }).catch((requestError) => {
+      alert(requestError.message || "退貨狀態更新失敗");
+    });
+  }
+
+  async function downloadSupplierReturnReport() {
+    const params = new URLSearchParams();
+    if (supplierReturnFilters.fromDate) params.set("fromDate", supplierReturnFilters.fromDate);
+    if (supplierReturnFilters.toDate) params.set("toDate", supplierReturnFilters.toDate);
+    if (supplierReturnFilters.supplierId !== "ALL") params.set("supplierId", supplierReturnFilters.supplierId);
+    if (supplierReturnFilters.status !== "ALL") params.set("status", supplierReturnFilters.status);
+    params.set("export", "xlsx");
+
+    await runWithProcessing(async () => {
+      const token = getStoredToken();
+      const response = await fetch(`/api/supplier-returns/report?${params.toString()}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      if (!response.ok) {
+        let message = "Excel 下載失敗";
+        try {
+          const errorBody = await response.json();
+          message = errorBody.message || message;
+        } catch (error) {
+          message = await response.text() || message;
+        }
+        throw new Error(message);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const from = supplierReturnFilters.fromDate || "all";
+      const to = supplierReturnFilters.toDate || "all";
+      link.href = url;
+      link.download = `kingway_supplier_returns_${from}_${to}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }, { id: "supplier-return-export", label: "退貨明細下載中..." }).catch((requestError) => {
+      alert(requestError.message || "Excel 下載失敗");
+    });
+  }
+
   async function receiveRequest(id) {
     const quantity = prompt("請輸入入庫數量", "1");
     if (!quantity) return;
@@ -784,6 +940,52 @@ export default function SuppliersPage() {
     { key: "unpaidAmount", label: "未付款", render: (row) => formatMoney(row.unpaidAmount) }
   ];
 
+  const supplierReturnColumns = [
+    { key: "returnNo", label: "退貨單號" },
+    { key: "supplierName", label: "供應商" },
+    { key: "returnDate", label: "退貨日期", render: (row) => formatDate(row.returnDate || row.createdAt) },
+    { key: "ownerType", label: "範圍", render: (row) => <StatusBadge tone={getScopeTone(row.ownerType)}>{getScopeLabel(row.ownerType)}</StatusBadge> },
+    { key: "status", label: "狀態", render: (row) => <StatusBadge tone={getSupplierReturnStatusTone(row.status)}>{getSupplierReturnStatusLabel(row.status)}</StatusBadge> },
+    { key: "totalAmount", label: "退貨金額", render: (row) => formatMoney(row.totalAmount) },
+    { key: "note", label: "備註", render: (row) => row.note || "-" },
+    {
+      key: "actions",
+      label: "操作",
+      render: (row) => (
+        <div className="action-row compact-actions">
+          {row.status === "DRAFT" ? <button type="button" className="secondary-button" onClick={() => updateSupplierReturnStatus(row, "submit", { successMessage: "退貨單已送出" })} disabled={isProcessing}>送出</button> : null}
+          {row.status === "SUBMITTED" ? <button type="button" className="secondary-button" onClick={() => updateSupplierReturnStatus(row, "approve", { successMessage: "退貨單已核准" })} disabled={isProcessing}>核准</button> : null}
+          {row.status === "APPROVED" ? <button type="button" className="primary-button" onClick={() => updateSupplierReturnStatus(row, "ship", { confirmMessage: "確認退貨出貨後，系統將扣除庫存並建立出庫紀錄。是否繼續？", successMessage: "退貨出貨已確認" })} disabled={isProcessing}>確認退貨出貨</button> : null}
+          {row.status === "SHIPPED" ? <button type="button" className="secondary-button" onClick={() => updateSupplierReturnStatus(row, "mark-received-by-supplier", { successMessage: "已標記供應商已收" })} disabled={isProcessing}>供應商已收</button> : null}
+          {row.status === "RECEIVED_BY_SUPPLIER" ? <button type="button" className="secondary-button" onClick={() => updateSupplierReturnStatus(row, "settle", { confirmMessage: "確認標記為已結算？此操作不會異動庫存。", successMessage: "退貨單已結算" })} disabled={isProcessing}>標記結算</button> : null}
+          {["DRAFT", "SUBMITTED", "APPROVED"].includes(row.status) ? <button type="button" className="secondary-button" onClick={() => updateSupplierReturnStatus(row, "cancel", { confirmMessage: "確認取消此退貨單？", successMessage: "退貨單已取消" })} disabled={isProcessing}>取消</button> : null}
+        </div>
+      )
+    }
+  ];
+
+  const supplierReturnMonthlyColumns = [
+    { key: "supplierName", label: "供應商" },
+    { key: "settlementMonth", label: "月份" },
+    { key: "returnCount", label: "退貨單數" },
+    { key: "totalQuantity", label: "退貨數量" },
+    { key: "returnAmount", label: "退貨金額", render: (row) => formatMoney(row.returnAmount) }
+  ];
+
+  const supplierReturnReportColumns = [
+    { key: "returnDate", label: "日期", render: (row) => formatDate(row.returnDate || row.shippedAt) },
+    { key: "returnNo", label: "退貨單號" },
+    { key: "supplierName", label: "供應商" },
+    { key: "sku", label: "SKU" },
+    { key: "productName", label: "商品名稱" },
+    { key: "quantity", label: "數量" },
+    { key: "unitCost", label: "單價", render: (row) => formatMoney(row.unitCost) },
+    { key: "lineAmount", label: "金額", render: (row) => formatMoney(row.lineAmount) },
+    { key: "status", label: "狀態", render: (row) => <StatusBadge tone={getSupplierReturnStatusTone(row.status)}>{getSupplierReturnStatusLabel(row.status)}</StatusBadge> },
+    { key: "reason", label: "原因", render: (row) => row.reason || "-" },
+    { key: "note", label: "備註", render: (row) => row.note || "-" }
+  ];
+
   return (
     <div className="page-container suppliers-page">
       <div className="page-header">
@@ -800,6 +1002,7 @@ export default function SuppliersPage() {
         <button type="button" className={activeTab === "suppliers" ? "active" : ""} onClick={() => setActiveTab("suppliers")}>供應商資料</button>
         <button type="button" className={activeTab === "prices" ? "active" : ""} onClick={() => setActiveTab("prices")}>商品供應價</button>
         <button type="button" className={activeTab === "requests" ? "active" : ""} onClick={() => setActiveTab("requests")}>發注 / 入庫 / 月結</button>
+        <button type="button" className={activeTab === "returns" ? "active" : ""} onClick={() => setActiveTab("returns")}>退貨管理</button>
       </div>
 
       {activeTab === "suppliers" ? (
@@ -899,6 +1102,72 @@ export default function SuppliersPage() {
           <section className="content-card section-panel"><div className="section-header"><div><h2>交易紀錄</h2><p className="muted-text">發注、入庫、退貨依日期排序，桌機看表格，手機看卡片。</p></div><StatusBadge tone="info">顯示 {filteredRows.length} 筆</StatusBadge></div><DataTable columns={transactionColumns} rows={filteredRows} emptyText="目前沒有符合條件的交易紀錄。" cardTitle={(row) => `#${row.id} ${row.typeLabel}`} cardDescription={(row) => `${row.createdDateLabel} / ${row.supplierName} / ${row.sku}`} cardBadges={(row) => <StatusBadge tone={row.statusTone}>{row.statusLabel}</StatusBadge>} /></section>
           <section className="content-card section-panel"><div className="section-header"><div><h2>建立發注 / 退貨</h2><p className="muted-text">建立供應商交易後，依狀態在交易紀錄中完成入庫或退貨確認。</p></div></div><div className="grid-form compact-grid"><label className="form-field"><span>供應商</span><select value={form.supplierName} onChange={(event) => { setForm((current) => ({ ...current, supplierName: event.target.value, sku: "" })); setProductSearch(""); }}>{supplierOptions.length ? null : <option value="">尚無供應商資料</option>}{supplierOptions.map((supplierName) => <option key={supplierName} value={supplierName}>{supplierName}</option>)}</select></label><label className="form-field"><span>SKU / 商品搜尋</span><input placeholder={form.supplierName ? "搜尋此供應商的 SKU / 商品名稱" : "請先選擇供應商"} value={productSearch || form.sku} disabled={!form.supplierName} onChange={(event) => { setProductSearch(event.target.value); setForm((current) => ({ ...current, sku: event.target.value })); }} /></label><label className="form-field"><span>數量</span><input type="number" min="1" placeholder="數量" value={form.quantity} onChange={(event) => setForm((current) => ({ ...current, quantity: Number(event.target.value) }))} /></label><label className="form-field"><span>類型</span><select value={form.type} onChange={(event) => setForm((current) => ({ ...current, type: event.target.value }))}><option value="PURCHASE_ORDER">發注</option><option value="RETURN">退貨</option></select></label>{selectedProduct ? <div className="field-item form-field-wide"><div className="field-label">已選擇商品</div><div className="field-value">{selectedProduct.sku} / {selectedProduct.name} / 庫存 {selectedProduct.stock}</div></div> : null}{productOptions.length ? <div className="stack-list form-field-wide">{productOptions.map((product) => <button type="button" key={product.id} className="secondary-button" onClick={() => { setForm((current) => ({ ...current, sku: product.sku })); setProductSearch(""); }}>{product.sku} / {product.name} / 庫存 {product.stock}</button>)}</div> : null}<button className="primary-button inline-submit" onClick={createRequest} disabled={isProcessing || !form.supplierName}>{pendingAction?.id === "supplier-create" ? "處理中..." : "建立"}</button></div></section>
           <section className="content-card section-panel"><div className="section-header"><div><h2>月結摘要</h2><p className="muted-text">目前 API 提供當月供應商彙總，作為月結快速參考。</p></div></div><div className="admin-highlight-list">{monthly.map((row) => <div className="metric-row" key={row.supplierName || "none"}><span>{row.supplierName || "-"}</span><strong>發注 {toNumber(row.poQty)} / 入庫 {toNumber(row.receivedQty)} / 退貨 {toNumber(row.returnQty)}</strong></div>)}{!monthly.length ? <div className="empty-state">目前沒有月結資料。</div> : null}</div></section>
+        </>
+      ) : null}
+
+      {activeTab === "returns" ? (
+        <>
+          <section className="content-card section-panel">
+            <div className="section-header">
+              <div>
+                <h2>新增退貨單</h2>
+                <p className="muted-text">退貨單建立、送出與核准不會異動庫存；確認退貨出貨時才會扣除庫存並建立出庫紀錄。</p>
+              </div>
+            </div>
+            <div className="grid-form compact-grid">
+              <label className="form-field">
+                <span>供應商</span>
+                <select value={supplierReturnForm.supplierId} onChange={(event) => setSupplierReturnForm((current) => ({ ...current, supplierId: event.target.value }))}>
+                  <option value="">請選擇供應商</option>
+                  {supplierReturnSupplierOptions.map((supplier) => <option key={supplier.id} value={supplier.id}>{getPurchaseSupplierLabel(supplier)}</option>)}
+                </select>
+              </label>
+              <label className="form-field"><span>退貨日期</span><input type="date" value={supplierReturnForm.returnDate} onChange={(event) => setSupplierReturnForm((current) => ({ ...current, returnDate: event.target.value }))} /></label>
+              <label className="form-field"><span>商品搜尋</span><input value={supplierReturnForm.productSearch} onChange={(event) => setSupplierReturnForm((current) => ({ ...current, productSearch: event.target.value, productId: "" }))} placeholder="輸入 SKU 或商品名稱" /></label>
+              <label className="form-field"><span>數量</span><input type="number" min="1" value={supplierReturnForm.quantity} onChange={(event) => setSupplierReturnForm((current) => ({ ...current, quantity: Number(event.target.value) }))} /></label>
+              <label className="form-field"><span>單價</span><input type="number" min="0" value={supplierReturnForm.unitCost} onChange={(event) => setSupplierReturnForm((current) => ({ ...current, unitCost: event.target.value }))} placeholder="空白則使用供應價或商品成本" /></label>
+              <label className="form-field"><span>照片網址</span><input value={supplierReturnForm.photoUrl} onChange={(event) => setSupplierReturnForm((current) => ({ ...current, photoUrl: event.target.value }))} placeholder="選填" /></label>
+              <label className="form-field form-field-wide"><span>退貨原因</span><input value={supplierReturnForm.reason} onChange={(event) => setSupplierReturnForm((current) => ({ ...current, reason: event.target.value }))} /></label>
+              <label className="form-field form-field-wide"><span>備註</span><input value={supplierReturnForm.note} onChange={(event) => setSupplierReturnForm((current) => ({ ...current, note: event.target.value }))} /></label>
+              {selectedSupplierReturnSupplier ? <div className="field-item form-field-wide"><div className="field-label">退貨範圍</div><div className="field-value">{getPurchaseSupplierLabel(selectedSupplierReturnSupplier)} / {getScopeLabel(supplierReturnOwnerType)}</div></div> : null}
+              {selectedSupplierReturnProduct ? <div className="field-item form-field-wide"><div className="field-label">已選擇商品</div><div className="field-value">{selectedSupplierReturnProduct.sku} / {selectedSupplierReturnProduct.name} / 目前庫存 {selectedSupplierReturnProduct.stock} / 建議單價 {formatMoney(selectedSupplierReturnProduct.costPrice || selectedSupplierReturnProduct.price)}</div></div> : null}
+              {supplierReturnProductOptions.length ? <div className="stack-list form-field-wide">{supplierReturnProductOptions.map((product) => <button type="button" key={product.id} className="secondary-button" onClick={() => setSupplierReturnForm((current) => ({ ...current, productId: product.id, productSearch: `${product.sku} ${product.name}` }))}>{product.sku} / {product.name} / 庫存 {product.stock} / 成本 {formatMoney(product.costPrice || product.price)}</button>)}</div> : null}
+              <button type="button" className="primary-button inline-submit" onClick={createSupplierReturn} disabled={isProcessing || !supplierReturnForm.supplierId || !supplierReturnForm.productId}>{pendingAction?.id === "supplier-return-create" ? "建立中..." : "建立退貨單"}</button>
+            </div>
+          </section>
+
+          <section className="content-card section-panel">
+            <div className="section-header"><div><h2>退貨單列表</h2><p className="muted-text">出貨前可取消；確認退貨出貨後不可取消，後續只標記供應商已收與結算。</p></div><StatusBadge tone="info">{supplierReturns.length} 筆</StatusBadge></div>
+            <div className="grid-form compact-grid">
+              <label className="form-field"><span>開始日</span><input type="date" value={supplierReturnFilters.fromDate} onChange={(event) => setSupplierReturnFilters((current) => ({ ...current, fromDate: event.target.value }))} /></label>
+              <label className="form-field"><span>結束日</span><input type="date" value={supplierReturnFilters.toDate} onChange={(event) => setSupplierReturnFilters((current) => ({ ...current, toDate: event.target.value }))} /></label>
+              <label className="form-field"><span>供應商</span><select value={supplierReturnFilters.supplierId} onChange={(event) => setSupplierReturnFilters((current) => ({ ...current, supplierId: event.target.value }))}><option value="ALL">全部供應商</option>{supplierReturnSupplierOptions.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></label>
+              <label className="form-field"><span>狀態</span><select value={supplierReturnFilters.status} onChange={(event) => setSupplierReturnFilters((current) => ({ ...current, status: event.target.value }))}><option value="ALL">全部</option><option value="DRAFT">草稿</option><option value="SUBMITTED">已送出</option><option value="APPROVED">已核准</option><option value="SHIPPED">已出貨</option><option value="RECEIVED_BY_SUPPLIER">供應商已收</option><option value="SETTLED">已結算</option><option value="CANCELED">已取消</option></select></label>
+            </div>
+            <DataTable columns={supplierReturnColumns} rows={supplierReturns} emptyText="目前沒有供應商退貨單。" cardTitle={(row) => row.returnNo} cardDescription={(row) => `${row.supplierName} / ${formatMoney(row.totalAmount)}`} cardBadges={(row) => <StatusBadge tone={getSupplierReturnStatusTone(row.status)}>{getSupplierReturnStatusLabel(row.status)}</StatusBadge>} />
+          </section>
+
+          <section className="content-card section-panel">
+            <div className="section-header"><div><h2>退貨月結</h2><p className="muted-text">退貨金額會在供應商月結中作為扣抵項目。</p></div></div>
+            <label className="form-field"><span>月份</span><input type="month" value={supplierReturnFilters.month} onChange={(event) => setSupplierReturnFilters((current) => ({ ...current, month: event.target.value }))} /></label>
+            <DataTable columns={supplierReturnMonthlyColumns} rows={supplierReturnMonthly} emptyText="目前沒有退貨月結資料。" cardTitle={(row) => row.supplierName} cardDescription={(row) => `${row.settlementMonth} / ${formatMoney(row.returnAmount)}`} />
+          </section>
+
+          <section className="content-card section-panel">
+            <div className="section-header">
+              <div>
+                <h2>退貨明細報表</h2>
+                <p className="muted-text">依退貨日期、供應商與狀態查詢明細，可下載 Excel。</p>
+              </div>
+              <button type="button" className="secondary-button" onClick={downloadSupplierReturnReport} disabled={isProcessing}>{pendingAction?.id === "supplier-return-export" ? "下載中..." : "Excel 下載"}</button>
+            </div>
+            <div className="admin-summary-grid">
+              <article className="admin-summary-card"><div className="admin-summary-label">明細筆數</div><div className="admin-summary-value">{supplierReturnSummary.rowCount || supplierReturnReportRows.length}</div></article>
+              <article className="admin-summary-card"><div className="admin-summary-label">退貨總數</div><div className="admin-summary-value">{supplierReturnSummary.totalQuantity || 0}</div></article>
+              <article className="admin-summary-card"><div className="admin-summary-label">退貨金額</div><div className="admin-summary-value">{formatMoney(supplierReturnSummary.totalAmount || 0)}</div></article>
+            </div>
+            <DataTable columns={supplierReturnReportColumns} rows={supplierReturnReportRows} emptyText="目前沒有符合條件的退貨明細。" cardTitle={(row) => row.returnNo} cardDescription={(row) => `${row.sku} / ${row.productName} / ${formatMoney(row.lineAmount)}`} cardBadges={(row) => <StatusBadge tone={getSupplierReturnStatusTone(row.status)}>{getSupplierReturnStatusLabel(row.status)}</StatusBadge>} />
+          </section>
         </>
       ) : null}
     </div>
