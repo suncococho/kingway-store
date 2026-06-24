@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import DetailModal from "../components/DetailModal";
@@ -12,9 +12,10 @@ import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
 import { useFetchList } from "../hooks/useFetchList";
 import { API_BASE_URL, apiRequest } from "../lib/api";
-import { clearAuth, getStoredToken } from "../lib/auth";
+import { clearAuth, getStoredToken, getStoredUser } from "../lib/auth";
 import { formatTaipeiDateTime, getCategoryLabel } from "../lib/display";
 import { PRODUCT_CATEGORY_OPTIONS } from "../lib/productCategories";
+import { buildStoreOperationProfile } from "../lib/storeOperationProfile";
 
 const INVENTORY_EXPORT_FILENAME = "KINGWAY_inventory_export.xlsx";
 const INVENTORY_IMPORT_TEMPLATE_FILENAME = "KINGWAY_inventory_import_template.xlsx";
@@ -25,15 +26,6 @@ const movementColumns = [
   { key: "movementType", label: "異動類型" },
   { key: "quantity", label: "數量" },
   { key: "notes", label: "備註" },
-  { key: "createdAtLabel", label: "建立時間" }
-];
-
-const supplierColumns = [
-  { key: "id", label: "單號" },
-  { key: "requestTypeLabel", label: "類型" },
-  { key: "statusLabel", label: "狀態" },
-  { key: "supplierName", label: "供應商" },
-  { key: "itemSummary", label: "品項" },
   { key: "createdAtLabel", label: "建立時間" }
 ];
 
@@ -76,9 +68,10 @@ function normalizeInventoryImageUrl(item) {
 
 function InventoryPage() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const user = getStoredUser();
   const movements = useFetchList("/inventory/movements");
   const products = useFetchList("/products");
-  const supplierRequests = useFetchList("/inventory/supplier-requests");
   const [form, setForm] = useState({
     productId: "",
     type: "IN",
@@ -86,13 +79,7 @@ function InventoryPage() {
     note: ""
   });
   const [movementProductKeyword, setMovementProductKeyword] = useState("");
-  const [supplierForm, setSupplierForm] = useState({
-    requestType: "PURCHASE_ORDER",
-    supplierName: "",
-    productId: "",
-    quantity: "",
-    note: ""
-  });
+  const [canUseSupplierManagement, setCanUseSupplierManagement] = useState(false);
   const [movementFilter, setMovementFilter] = useState("ALL");
   const [inventoryKeyword, setInventoryKeyword] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("ALL");
@@ -110,19 +97,35 @@ function InventoryPage() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const nextSection = params.get("section");
-    if (nextSection && ["OVERVIEW", "IN", "OUT", "ADJUST", "PO", "RETURN"].includes(nextSection)) {
+    if (nextSection && ["OVERVIEW", "IN", "OUT", "ADJUST"].includes(nextSection)) {
       setSection(nextSection);
       if (["IN", "OUT", "ADJUST"].includes(nextSection)) {
         setForm((current) => ({ ...current, type: nextSection }));
       }
-      if (nextSection === "PO") {
-        setSupplierForm((current) => ({ ...current, requestType: "PURCHASE_ORDER" }));
-      }
-      if (nextSection === "RETURN") {
-        setSupplierForm((current) => ({ ...current, requestType: "RETURN" }));
-      }
+    } else if (nextSection === "PO" || nextSection === "RETURN") {
+      setSection("OVERVIEW");
     }
   }, [location.search]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadStoreOperationProfile() {
+      try {
+        const response = await apiRequest("/company/me");
+        if (!active) return;
+        const profile = buildStoreOperationProfile(response, user?.storeId);
+        setCanUseSupplierManagement(profile.canUseSuppliers);
+      } catch (_error) {
+        if (active) {
+          setCanUseSupplierManagement(false);
+        }
+      }
+    }
+    loadStoreOperationProfile();
+    return () => {
+      active = false;
+    };
+  }, [user?.id, user?.storeId]);
 
   const inventoryRows = useMemo(
     () =>
@@ -166,13 +169,9 @@ function InventoryPage() {
   const movementRows = movements.items
     .map((item) => ({ ...item, createdAtLabel: formatTaipeiDateTime(item.createdAt) }))
     .filter((item) => movementFilter === "ALL" || item.movementType === movementFilter);
-  const supplierRequestRows = supplierRequests.items.map((item) => ({
-    ...item,
-    createdAtLabel: formatTaipeiDateTime(item.createdAt)
-  }));
   const selectedProduct = products.items.find((item) => String(item.id) === String(form.productId));
   const detailProduct = inventoryRows.find((item) => item.id === detailProductId) || null;
-  const featureError = movements.error || supplierRequests.error;
+  const featureError = movements.error;
   const movementProductOptions = useMemo(() => {
     const keyword = movementProductKeyword.trim().toLowerCase();
     const sourceRows = keyword
@@ -187,9 +186,7 @@ function InventoryPage() {
     { key: "OVERVIEW", label: "庫存總覽" },
     { key: "IN", label: "入庫" },
     { key: "OUT", label: "出庫" },
-    { key: "ADJUST", label: "調整" },
-    { key: "PO", label: "發注" },
-    { key: "RETURN", label: "退貨" }
+    { key: "ADJUST", label: "調整" }
   ];
 
   const overviewColumns = [
@@ -248,11 +245,6 @@ function InventoryPage() {
     setMovementProductKeyword(`${product.name} ${product.sku}`);
   }
 
-  function handleSupplierChange(event) {
-    const { name, value } = event.target;
-    setSupplierForm((current) => ({ ...current, [name]: value }));
-  }
-
   async function handleSubmit(event) {
     event.preventDefault();
 
@@ -276,54 +268,6 @@ function InventoryPage() {
       movements.refetch();
       products.refetch();
       alert("庫存已更新");
-    } catch (error) {
-      alert(error.message);
-    }
-  }
-
-  async function createSupplierRequest(event) {
-    event.preventDefault();
-    try {
-      await apiRequest("/inventory/supplier-requests", {
-        method: "POST",
-        body: JSON.stringify({
-          requestType: supplierForm.requestType,
-          supplierName: supplierForm.supplierName,
-          note: supplierForm.note,
-          items: [
-            {
-              productId: Number(supplierForm.productId),
-              quantity: Number(supplierForm.quantity),
-              reason: supplierForm.requestType === "RETURN" ? supplierForm.note : null
-            }
-          ]
-        })
-      });
-      setSupplierForm({
-        requestType: "PURCHASE_ORDER",
-        supplierName: "",
-        productId: "",
-        quantity: "",
-        note: ""
-      });
-      supplierRequests.refetch();
-      alert("供應商流程已建立");
-    } catch (error) {
-      alert(error.message);
-    }
-  }
-
-  async function respondSupplierRequest(row, approved) {
-    try {
-      const body = approved
-        ? { approved: true, note: "後台人工確認" }
-        : { approved: false, note: window.prompt("請輸入拒絕原因", "後台人工拒絕") || "後台人工拒絕" };
-      await apiRequest(`/inventory/supplier-requests/${row.id}/respond`, {
-        method: "POST",
-        body: JSON.stringify(body)
-      });
-      supplierRequests.refetch();
-      alert(approved ? "已確認供應商單" : "已拒絕供應商單");
     } catch (error) {
       alert(error.message);
     }
@@ -533,7 +477,7 @@ function InventoryPage() {
         message="處理中"
         description="系統正在處理，請勿重複點擊。"
       />
-      <PageHeader title="庫存管理" description="庫存總覽、異動與供應商流程統一使用 POS 同一套視覺語言與資訊架構。" />
+      <PageHeader title="庫存管理" description="庫存總覽、庫存調整與異動紀錄統一使用 POS 同一套視覺語言與資訊架構。" />
       {featureError ? <div className="empty-state">{featureError}</div> : null}
       <SectionTabs
         items={sectionItems}
@@ -542,12 +486,6 @@ function InventoryPage() {
           setSection(next);
           if (["IN", "OUT", "ADJUST"].includes(next)) {
             setForm((current) => ({ ...current, type: next }));
-          }
-          if (next === "PO") {
-            setSupplierForm((current) => ({ ...current, requestType: "PURCHASE_ORDER" }));
-          }
-          if (next === "RETURN") {
-            setSupplierForm((current) => ({ ...current, requestType: "RETURN" }));
           }
         }}
         label="庫存子功能"
@@ -642,12 +580,25 @@ function InventoryPage() {
                 <div className="admin-summary-value">{lowStockRows.length}</div>
               </article>
               <article className="admin-summary-card">
-                <div className="admin-summary-label">待供應商確認</div>
-                <div className="admin-summary-value">
-                  {supplierRequests.items.filter((item) => item.status === "PENDING_SUPPLIER").length}
-                </div>
+                <div className="admin-summary-label">異動紀錄</div>
+                <div className="admin-summary-value">{movements.items.length}</div>
               </article>
             </div>
+
+            {canUseSupplierManagement ? (
+              <section className="admin-subpanel compact">
+                <AdminSectionHeader
+                  eyebrow="供應商流程"
+                  title="供應商發注與退貨已移至供應商管理"
+                  description="請至供應商管理建立發注、入庫、退貨與月結；庫存管理保留庫存查詢、調整與異動紀錄。"
+                  actions={
+                    <button type="button" className="secondary-button" onClick={() => navigate("/suppliers")}>
+                      前往供應商管理
+                    </button>
+                  }
+                />
+              </section>
+            ) : null}
 
             <FilterBar>
               <label className="form-field">
@@ -857,113 +808,6 @@ function InventoryPage() {
           </section>
         ) : null}
 
-        {["PO", "RETURN"].includes(section) ? (
-          <section className="admin-panel">
-            <AdminSectionHeader
-              eyebrow={section === "PO" ? "發注" : "退貨"}
-              title={section === "PO" ? "供應商發注" : "供應商退貨"}
-              description="保留既有供應商確認流程，統一成與庫存主頁一致的表單、列表與狀態樣式。"
-            />
-
-            <div className="admin-split-grid">
-              <div className="admin-subpanel">
-                <form className="grid-form" onSubmit={createSupplierRequest}>
-                  <label className="form-field">
-                    <span>類型</span>
-                    <select name="requestType" value={supplierForm.requestType} onChange={handleSupplierChange}>
-                      <option value="PURCHASE_ORDER">發注</option>
-                      <option value="RETURN">退貨</option>
-                    </select>
-                  </label>
-                  <label className="form-field">
-                    <span>供應商</span>
-                    <input name="supplierName" value={supplierForm.supplierName} onChange={handleSupplierChange} />
-                  </label>
-                  <label className="form-field">
-                    <span>商品</span>
-
-                    <input
-                      list="supplier-product-list"
-                      name="productId"
-                      value={supplierForm.productId}
-                      onChange={handleSupplierChange}
-                      placeholder="搜尋商品名稱 / SKU"
-                      required
-                    />
-
-                    <datalist id="supplier-product-list">
-                      {products.items.map((product) => (
-                        <option
-                          key={product.id}
-                          value={product.id}
-                          label={`${product.name} (${product.sku})`}
-                        />
-                      ))}
-                    </datalist>
-                  </label>
-                  <label className="form-field">
-                    <span>數量</span>
-                    <input name="quantity" type="number" min="1" value={supplierForm.quantity} onChange={handleSupplierChange} required />
-                  </label>
-                  <label className="form-field form-field-wide">
-                    <span>備註 / 退貨原因</span>
-                    <input name="note" value={supplierForm.note} onChange={handleSupplierChange} />
-                  </label>
-                  <button type="submit" className="primary-button inline-submit">
-                    送出供應商確認
-                  </button>
-                </form>
-              </div>
-
-              <div className="admin-subpanel">
-                <div className="section-title">{section === "PO" ? "發注列表" : "退貨列表"}</div>
-                <DataTable
-                  columns={supplierColumns}
-                  rows={supplierRequestRows.filter((item) =>
-                    section === "PO" ? item.requestType === "PURCHASE_ORDER" : item.requestType === "RETURN"
-                  )}
-                  emptyText={section === "PO" ? "目前沒有發注資料。" : "目前沒有退貨資料。"}
-                  cardTitle={(row) => `${row.requestTypeLabel} #${row.id}`}
-                  cardDescription={(row) => `${row.supplierName || "未填供應商"} / ${row.statusLabel}`}
-                  cardBadges={(row) => (
-                    <StatusBadge tone={row.status === "REJECTED" ? "danger" : row.status === "PENDING_SUPPLIER" ? "warning" : "info"}>
-                      {row.statusLabel}
-                    </StatusBadge>
-                  )}
-                  cardFooter={(row) => (
-                    <div className="field-grid">
-                      <div className="field-item">
-                        <div className="field-label">品項</div>
-                        <div className="field-value">{row.itemSummary || "-"}</div>
-                      </div>
-                      <div className="field-item">
-                        <div className="field-label">建立時間</div>
-                        <div className="field-value">{row.createdAtLabel}</div>
-                      </div>
-                      <div className="field-item">
-                        <div className="field-label">操作</div>
-                        <div className="field-value">
-                          {row.status === "PENDING_SUPPLIER" ? (
-                            <div className="action-row compact-actions">
-                              <button type="button" className="secondary-button" onClick={() => respondSupplierRequest(row, true)}>
-                                確認
-                              </button>
-                              <button type="button" className="secondary-button" onClick={() => respondSupplierRequest(row, false)}>
-                                拒絕
-                              </button>
-                            </div>
-                          ) : (
-                            "-"
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                />
-              </div>
-            </div>
-          </section>
-        ) : null}
       </div>
 
       <DetailModal
