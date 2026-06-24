@@ -4,9 +4,24 @@ import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { API_BASE_URL, apiRequest } from "../lib/api";
-import { getStoredToken } from "../lib/auth";
+import { getStoredToken, getStoredUser } from "../lib/auth";
 
 const HQ_READ_ROLES = new Set(["company_owner", "hq_admin", "finance", "inventory_manager", "viewer"]);
+const HQ_RELATIONSHIP_TYPES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
+
+function getCurrentHqCompany(companyResponse) {
+  const storeId = Number(getStoredUser()?.storeId || 0);
+  if (!storeId) return null;
+  return (companyResponse?.companies || []).find(
+    (company) =>
+      HQ_READ_ROLES.has(company.role) &&
+      (company.stores || []).some(
+        (store) =>
+          Number(store.storeId) === storeId &&
+          HQ_RELATIONSHIP_TYPES.has(store.relationshipType)
+      )
+  ) || null;
+}
 
 function todayText() {
   return new Date().toISOString().slice(0, 10);
@@ -69,10 +84,7 @@ export default function HqTransferReportPage() {
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState("");
 
-  const hqCompany = useMemo(
-    () => (companyInfo?.companies || []).find((company) => HQ_READ_ROLES.has(company.role)) || null,
-    [companyInfo]
-  );
+  const hqCompany = useMemo(() => getCurrentHqCompany(companyInfo), [companyInfo]);
   const targetStores = useMemo(
     () => (hqCompany?.stores || []).filter((store) => ["DIRECT_STORE", "FRANCHISE_STORE"].includes(store.relationshipType)),
     [hqCompany]
@@ -95,7 +107,7 @@ export default function HqTransferReportPage() {
     setLoading(true);
     setError("");
     try {
-      const company = nextCompanyInfo?.companies?.find((item) => HQ_READ_ROLES.has(item.role)) || null;
+      const company = getCurrentHqCompany(nextCompanyInfo);
       if (!company?.id) {
         setRows([]);
         setSummary({ totalQuantityShipped: 0, totalQuantityReceived: 0, totalAmount: 0, rowCount: 0 });

@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import { getImpersonationSession, stopImpersonationSession } from "../lib/auth";
+import { apiRequest } from "../lib/api";
 import { platformRequest } from "../lib/platformAuth";
 import { getStoredUser } from "../lib/auth";
 import { useMenuPermissions } from "../hooks/useMenuPermissions";
@@ -19,14 +20,36 @@ const PATH_FEATURE_MAP = {
   "/headquarters": "headquarters"
 };
 
+const HQ_ONLY_PATHS = new Set([
+  "/headquarters",
+  "/store-transfers",
+  "/hq-replenishment-requests",
+  "/hq-transfer-report"
+]);
+
+const HQ_RELATIONSHIP_TYPES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
+
 function getFeatureForPath(pathname) {
   return PATH_FEATURE_MAP[pathname] || null;
+}
+
+function hasCurrentHqStoreContext(companyResponse, storeId) {
+  const currentStoreId = Number(storeId || 0);
+  if (!currentStoreId) return false;
+  return (companyResponse?.companies || []).some((company) =>
+    (company.stores || []).some(
+      (store) =>
+        Number(store.storeId) === currentStoreId &&
+        HQ_RELATIONSHIP_TYPES.has(store.relationshipType)
+    )
+  );
 }
 
 function ProtectedLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const user = getStoredUser();
+  const [hqContextCheck, setHqContextCheck] = useState({ loading: false, allowed: true });
   const { permissions: menuPermissions, loading: menuPermissionsLoading } = useMenuPermissions(user);
   const { access: storeAccess } = useStoreAccess(user);
   const impersonationSession = useMemo(() => getImpersonationSession(), [location.pathname, location.search]);
@@ -58,6 +81,35 @@ function ProtectedLayout() {
   }
 
   const shouldShowBanner = Boolean(impersonationSession?.active && !impersonationSession?.expired);
+  const requiresHqContext = HQ_ONLY_PATHS.has(location.pathname);
+
+  useEffect(() => {
+    let active = true;
+    async function checkHqContext() {
+      if (!requiresHqContext) {
+        setHqContextCheck({ loading: false, allowed: true });
+        return;
+      }
+      setHqContextCheck({ loading: true, allowed: false });
+      try {
+        const response = await apiRequest("/company/me");
+        if (active) {
+          setHqContextCheck({
+            loading: false,
+            allowed: hasCurrentHqStoreContext(response, user?.storeId)
+          });
+        }
+      } catch (_error) {
+        if (active) {
+          setHqContextCheck({ loading: false, allowed: false });
+        }
+      }
+    }
+    checkHqContext();
+    return () => {
+      active = false;
+    };
+  }, [requiresHqContext, location.pathname, user?.id, user?.storeId]);
 
   const isPosFullscreen =
     location.pathname === "/pos" &&
@@ -97,11 +149,11 @@ function ProtectedLayout() {
             </div>
           </div>
         ) : null}
-        {isCheckingMenuPermission ? (
+        {isCheckingMenuPermission || hqContextCheck.loading ? (
           <section className="content-card section-panel">
             <div className="empty-state">權限確認中...</div>
           </section>
-        ) : !hasMenuAccess ? (
+        ) : !hasMenuAccess || !hqContextCheck.allowed ? (
           <section className="content-card section-panel">
             <div className="empty-state">
               <h2>權限不足</h2>

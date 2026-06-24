@@ -4,8 +4,27 @@ import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
 import StatusBadge from "../components/StatusBadge";
 import { apiRequest } from "../lib/api";
+import { getStoredUser } from "../lib/auth";
 
 const HQ_WRITE_ROLES = new Set(["company_owner", "hq_admin", "inventory_manager"]);
+const HQ_RELATIONSHIP_TYPES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
+
+function getCurrentStoreCompany(companyResponse) {
+  const storeId = Number(getStoredUser()?.storeId || 0);
+  if (!storeId) return null;
+  return (companyResponse?.companies || []).find((company) =>
+    (company.stores || []).some((store) => Number(store.storeId) === storeId)
+  ) || null;
+}
+
+function isCurrentStoreHqContext(company) {
+  const storeId = Number(getStoredUser()?.storeId || 0);
+  return (company?.stores || []).some(
+    (store) =>
+      Number(store.storeId) === storeId &&
+      HQ_RELATIONSHIP_TYPES.has(store.relationshipType)
+  );
+}
 
 function money(value) {
   return `NT$ ${Number(value || 0).toLocaleString()}`;
@@ -47,7 +66,8 @@ export default function CompanyStoreSettlementsPage() {
   const [error, setError] = useState("");
   const [excludeDemoData, setExcludeDemoData] = useState(false);
 
-  const hqCompany = companyInfo?.companies?.[0] || null;
+  const currentCompany = getCurrentStoreCompany(companyInfo);
+  const hqCompany = isCurrentStoreHqContext(currentCompany) ? currentCompany : null;
   const canManage = Boolean(hqCompany && HQ_WRITE_ROLES.has(hqCompany.role));
   const targetStores = useMemo(
     () => (hqCompany?.stores || []).filter((store) => ["DIRECT_STORE", "FRANCHISE_STORE"].includes(store.relationshipType)),
@@ -60,20 +80,22 @@ export default function CompanyStoreSettlementsPage() {
     try {
       const nextCompanyInfo = await apiRequest("/company/me").catch(() => ({ franchiseEnabled: false, companies: [] }));
       setCompanyInfo(nextCompanyInfo);
-      const company = nextCompanyInfo.companies?.[0] || null;
+      const company = getCurrentStoreCompany(nextCompanyInfo);
+      const isHqContext = isCurrentStoreHqContext(company);
+      const reportCompany = isHqContext ? company : null;
       const params = new URLSearchParams();
       params.set("month", month);
-      if (company?.id) params.set("companyId", String(company.id));
-      if (!company?.id) params.set("view", "payable");
-      if (targetStoreId) params.set("targetStoreId", targetStoreId);
+      if (reportCompany?.id) params.set("companyId", String(reportCompany.id));
+      if (!reportCompany?.id) params.set("view", "payable");
+      if (reportCompany?.id && targetStoreId) params.set("targetStoreId", targetStoreId);
       if (excludeDemoData) params.set("excludeDemo", "true");
       const list = await apiRequest(`/company-store-settlements?${params.toString()}`);
       setSettlements(Array.isArray(list.settlements) ? list.settlements : []);
 
       const summaryParams = new URLSearchParams();
       summaryParams.set("month", month);
-      if (company?.id) summaryParams.set("companyId", String(company.id));
-      if (targetStoreId) summaryParams.set("targetStoreId", targetStoreId);
+      if (reportCompany?.id) summaryParams.set("companyId", String(reportCompany.id));
+      if (reportCompany?.id && targetStoreId) summaryParams.set("targetStoreId", targetStoreId);
       if (excludeDemoData) summaryParams.set("excludeDemo", "true");
       const nextSummary = await apiRequest(`/company-store-settlements/monthly-summary?${summaryParams.toString()}`);
       setSummary(Array.isArray(nextSummary.summary) ? nextSummary.summary : []);

@@ -197,7 +197,8 @@ async function loadCompanyStore(storeId, relationshipTypes = [], connection = po
 
 async function requireHqRead(req, companyId, connection = pool) {
   const membership = await loadCompanyMembership(req.user.id, companyId);
-  if (!membership || !HQ_READ_ROLES.has(membership.role)) {
+  const hqStoreContext = await loadCompanyStore(req.storeId || req.user?.storeId, ["HEADQUARTERS", "WAREHOUSE"], connection);
+  if (!membership || !HQ_READ_ROLES.has(membership.role) || Number(hqStoreContext?.companyId || 0) !== Number(companyId)) {
     throw createError("沒有本部請貨管理權限", 403);
   }
   return membership;
@@ -205,7 +206,8 @@ async function requireHqRead(req, companyId, connection = pool) {
 
 async function requireHqWrite(req, companyId, connection = pool) {
   const membership = await loadCompanyMembership(req.user.id, companyId);
-  if (!membership || !HQ_WRITE_ROLES.has(membership.role)) {
+  const hqStoreContext = await loadCompanyStore(req.storeId || req.user?.storeId, ["HEADQUARTERS", "WAREHOUSE"], connection);
+  if (!membership || !HQ_WRITE_ROLES.has(membership.role) || Number(hqStoreContext?.companyId || 0) !== Number(companyId)) {
     throw createError("本部請貨處理權限不足", 403);
   }
   return membership;

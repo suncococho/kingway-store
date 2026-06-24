@@ -1,7 +1,7 @@
 const express = require("express");
 const { pool, withTransaction } = require("../db");
 const { authenticate, requireStoreScope, requireStoreRole } = require("../middleware/auth");
-const { loadCompanyMembership, requireCompanyRole } = require("../middleware/companyAuth");
+const { loadCompanyMembership } = require("../middleware/companyAuth");
 const { requireFeature } = require("../services/storeAccessService");
 const { createError } = require("../utils/errors");
 
@@ -90,6 +90,31 @@ async function loadCompanyStore(companyId, storeId, relationshipTypes = []) {
   return rows[0] || null;
 }
 
+async function hasHqStoreContext(req, companyId) {
+  const storeId = Number(req.storeId || req.user?.storeId || 0);
+  if (!storeId) return false;
+  return Boolean(await loadCompanyStore(companyId, storeId, ["HEADQUARTERS", "WAREHOUSE"]));
+}
+
+function requireHqCompanyRole(roles = []) {
+  const allowedRoles = Array.isArray(roles) ? roles : [roles];
+  return async (req, res, next) => {
+    try {
+      const companyId = Number(req.params.companyId || req.body.companyId || req.query.companyId || 0);
+      const membership = await loadCompanyMembership(req.user.id, companyId);
+      if (!membership || !allowedRoles.includes(membership.role) || !await hasHqStoreContext(req, companyId)) {
+        return res.status(403).json({ message: "總部管理權限不足" });
+      }
+      req.companyId = companyId;
+      req.companyRole = membership.role;
+      req.companyMembership = membership;
+      return next();
+    } catch (error) {
+      return next(error);
+    }
+  };
+}
+
 async function assertCompanyStores(companyId, fromStoreId, toStoreId) {
   const fromStore = await loadCompanyStore(companyId, fromStoreId, ["HEADQUARTERS", "WAREHOUSE"]);
   if (!fromStore) {
@@ -134,7 +159,7 @@ async function canReceiveTransfer(req, transfer) {
     return true;
   }
   const membership = await loadCompanyMembership(req.user.id, transfer.companyId);
-  return Boolean(membership && HQ_WRITE_ROLES.includes(membership.role));
+  return Boolean(membership && HQ_WRITE_ROLES.includes(membership.role) && await hasHqStoreContext(req, transfer.companyId));
 }
 
 async function loadTransfer(transferId, connection = pool) {
@@ -403,7 +428,7 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-router.get("/company/:companyId/products/transfer-candidates", requireCompanyRole(HQ_READ_ROLES), async (req, res, next) => {
+router.get("/company/:companyId/products/transfer-candidates", requireHqCompanyRole(HQ_READ_ROLES), async (req, res, next) => {
   try {
     const companyId = Number(req.params.companyId);
     const fromStoreId = Number(req.query.fromStoreId || 0);
@@ -442,7 +467,7 @@ router.get("/company/:companyId/products/transfer-candidates", requireCompanyRol
   }
 });
 
-router.get("/company/:companyId", requireCompanyRole(HQ_READ_ROLES), async (req, res, next) => {
+router.get("/company/:companyId", requireHqCompanyRole(HQ_READ_ROLES), async (req, res, next) => {
   try {
     const transfers = await queryTransferList("st.company_id = ?", [Number(req.params.companyId)], req.query);
     return res.json({ ok: true, transfers });
@@ -476,7 +501,7 @@ async function createTransferDraft(req, res, next, companyId) {
   }
 }
 
-router.post("/company/:companyId", requireCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
+router.post("/company/:companyId", requireHqCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
   return createTransferDraft(req, res, next, Number(req.params.companyId));
 });
 
@@ -492,7 +517,7 @@ router.post("/", async (req, res, next) => {
     }
     if (!companyId) return res.status(400).json({ message: "請提供有效公司" });
     membership = membership || await loadCompanyMembership(req.user.id, companyId);
-    if (!membership || !HQ_WRITE_ROLES.includes(membership.role)) {
+    if (!membership || !HQ_WRITE_ROLES.includes(membership.role) || !await hasHqStoreContext(req, companyId)) {
       return res.status(403).json({ message: "總部管理權限不足" });
     }
     req.companyId = companyId;
@@ -523,7 +548,7 @@ router.get("/company/:companyId/:transferId", async (req, res, next) => {
   }
 });
 
-router.patch("/company/:companyId/:transferId", requireCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
+router.patch("/company/:companyId/:transferId", requireHqCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
   try {
     const companyId = Number(req.params.companyId);
     const transferId = Number(req.params.transferId);
@@ -605,7 +630,7 @@ async function shipTransfer(req, res, next, companyId, transferId) {
   }
 }
 
-router.post("/company/:companyId/:transferId/ship", requireCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
+router.post("/company/:companyId/:transferId/ship", requireHqCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
   return shipTransfer(req, res, next, Number(req.params.companyId), Number(req.params.transferId));
 });
 
@@ -614,7 +639,7 @@ router.post("/:transferId/ship", async (req, res, next) => {
     const transfer = await loadTransfer(req.params.transferId);
     if (!transfer) return res.status(404).json({ message: "找不到出貨單" });
     const membership = await loadCompanyMembership(req.user.id, transfer.companyId);
-    if (!membership || !HQ_WRITE_ROLES.includes(membership.role)) {
+    if (!membership || !HQ_WRITE_ROLES.includes(membership.role) || !await hasHqStoreContext(req, transfer.companyId)) {
       return res.status(403).json({ message: "總部管理權限不足" });
     }
     return shipTransfer(req, res, next, transfer.companyId, transfer.id);
@@ -638,7 +663,7 @@ async function cancelDraftTransfer(req, res, next, companyId, transferId) {
   }
 }
 
-router.post("/company/:companyId/:transferId/cancel", requireCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
+router.post("/company/:companyId/:transferId/cancel", requireHqCompanyRole(HQ_WRITE_ROLES), async (req, res, next) => {
   return cancelDraftTransfer(req, res, next, Number(req.params.companyId), Number(req.params.transferId));
 });
 
@@ -647,7 +672,7 @@ router.post("/:transferId/cancel", async (req, res, next) => {
     const transfer = await loadTransfer(req.params.transferId);
     if (!transfer) return res.status(404).json({ message: "找不到出貨單" });
     const membership = await loadCompanyMembership(req.user.id, transfer.companyId);
-    if (!membership || !HQ_WRITE_ROLES.includes(membership.role)) {
+    if (!membership || !HQ_WRITE_ROLES.includes(membership.role) || !await hasHqStoreContext(req, transfer.companyId)) {
       return res.status(403).json({ message: "總部管理權限不足" });
     }
     return cancelDraftTransfer(req, res, next, transfer.companyId, transfer.id);

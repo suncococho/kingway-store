@@ -74,11 +74,27 @@ async function hasStoreAdminAccess(staffUserId, storeId, connection = pool) {
 async function loadCompanyContext(req, companyId, connection = pool) {
   const membership = await loadCompanyMembership(req.user.id, companyId);
   const role = membership?.role || "";
+  const storeId = Number(req.storeId || req.user?.storeId || 0);
+  const [hqStoreRows] = storeId
+    ? await connection.query(
+      `
+        SELECT 1
+        FROM company_stores
+        WHERE company_id = ?
+          AND store_id = ?
+          AND status = 'ACTIVE'
+          AND relationship_type IN ('HEADQUARTERS','WAREHOUSE')
+        LIMIT 1
+      `,
+      [companyId, storeId]
+    )
+    : [[]];
+  const isHqStoreContext = Boolean(hqStoreRows[0]);
   return {
     membership,
     role,
-    canHqRead: HQ_READ_ROLES.has(role),
-    canHqWrite: HQ_WRITE_ROLES.has(role)
+    canHqRead: HQ_READ_ROLES.has(role) && isHqStoreContext,
+    canHqWrite: HQ_WRITE_ROLES.has(role) && isHqStoreContext
   };
 }
 
@@ -333,10 +349,12 @@ async function resolveReportCompanyIds(req, requestedCompanyId) {
     "SELECT company_id AS companyId, role FROM company_memberships WHERE staff_user_id = ? AND status = 'ACTIVE'",
     [req.user.id]
   );
-  return memberships
-    .filter((row) => HQ_READ_ROLES.has(row.role))
-    .map((row) => Number(row.companyId))
-    .filter(Boolean);
+  const companyIds = [];
+  for (const row of memberships) {
+    const context = await loadCompanyContext(req, Number(row.companyId));
+    if (context.canHqRead) companyIds.push(Number(row.companyId));
+  }
+  return companyIds.filter(Boolean);
 }
 
 async function queryTransferReportRows(req) {
@@ -517,7 +535,11 @@ router.get("/", async (req, res, next) => {
         "SELECT company_id AS companyId, role FROM company_memberships WHERE staff_user_id = ? AND status = 'ACTIVE'",
         [req.user.id]
       );
-      const hqCompanyIds = memberships.filter((row) => HQ_READ_ROLES.has(row.role)).map((row) => Number(row.companyId));
+      const hqCompanyIds = [];
+      for (const row of memberships) {
+        const context = await loadCompanyContext(req, Number(row.companyId));
+        if (context.canHqRead) hqCompanyIds.push(Number(row.companyId));
+      }
       if (hqCompanyIds.length && view !== "payable") {
         clauses.push(`css.company_id IN (${hqCompanyIds.map(() => "?").join(",")})`);
         params.push(...hqCompanyIds);

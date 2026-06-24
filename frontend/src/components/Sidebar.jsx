@@ -7,6 +7,20 @@ import { useStoreAccess } from "../hooks/useStoreAccess";
 import { useMenuPermissions } from "../hooks/useMenuPermissions";
 import { getMobileMenuSectionsForUser, isMenuItemActive } from "../lib/mobileNavigation";
 
+const HQ_RELATIONSHIP_TYPES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
+
+function hasCurrentHqStoreContext(companyResponse, storeId) {
+  const currentStoreId = Number(storeId || 0);
+  if (!currentStoreId) return false;
+  return (companyResponse?.companies || []).some((company) =>
+    (company.stores || []).some(
+      (store) =>
+        Number(store.storeId) === currentStoreId &&
+        HQ_RELATIONSHIP_TYPES.has(store.relationshipType)
+    )
+  );
+}
+
 function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -23,18 +37,19 @@ function Sidebar() {
     company_store_settlements_enabled: !access?.lockedFeatures?.includes("company_store_settlements"),
     headquarters_enabled: !access?.lockedFeatures?.includes("headquarters")
   };
-  const [companyAccess, setCompanyAccess] = useState({ loaded: false, enabled: false });
+  const [companyAccess, setCompanyAccess] = useState({ loaded: false, enabled: false, isHqStore: false });
   const mobileMenuSections = getMobileMenuSectionsForUser(user, effectiveFeatures, menuPermissions)
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => item.to !== "/saas-admin")
     }))
     .filter((group) => group.items.length > 0);
-  if (companyAccess.enabled && effectiveFeatures.headquarters_enabled !== false) {
+  if (companyAccess.enabled && companyAccess.isHqStore && effectiveFeatures.headquarters_enabled !== false) {
     mobileMenuSections.splice(2, 0, {
       heading: "總部",
       items: [
         { to: "/headquarters", label: "總部管理", description: "公司資料、所屬門市與本部出貨" },
+        { to: "/store-transfers", label: "本部出貨", description: "建立本部出貨單並確認出貨" },
         { to: "/hq-replenishment-requests", label: "本部請貨管理", description: "查看門市請貨並建立本部出貨" },
         { to: "/hq-transfer-report", label: "本部出貨明細", description: "查詢本部批發價、出貨數量與月結狀態" },
         ...(effectiveFeatures.company_store_settlements_enabled !== false
@@ -51,11 +66,15 @@ function Sidebar() {
       try {
         const response = await apiRequest("/company/me");
         if (active) {
-          setCompanyAccess({ loaded: true, enabled: Boolean(response.franchiseEnabled) });
+          setCompanyAccess({
+            loaded: true,
+            enabled: Boolean(response.franchiseEnabled),
+            isHqStore: hasCurrentHqStoreContext(response, user?.storeId)
+          });
         }
       } catch (_error) {
         if (active) {
-          setCompanyAccess({ loaded: true, enabled: false });
+          setCompanyAccess({ loaded: true, enabled: false, isHqStore: false });
         }
       }
     }
