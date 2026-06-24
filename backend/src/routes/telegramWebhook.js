@@ -1000,7 +1000,7 @@ router.post("/webhook", async (req, res) => {
       }
 
       if (Number(coupon.isUsed || 0) || coupon.status === "used") {
-        if (chatId) await sendMessage(chatId, `Google 評論 #${couponId} 已處理過，不能重複核准。`);
+        if (chatId) await sendMessage(chatId, `Google 評論 #${couponId} 已處理過。`);
         return res.json({ ok: true });
       }
 
@@ -1020,71 +1020,20 @@ router.post("/webhook", async (req, res) => {
         return res.json({ ok: true });
       }
 
-      let orderId = coupon.orderId;
-
-      if (!orderId) {
-        const [[latestOrder]] = await pool.query(
-          `
-            SELECT id
-            FROM orders
-            WHERE customer_id = ?
-               OR customer_phone = ?
-            ORDER BY id DESC
-            LIMIT 1
-          `,
-          [coupon.customerId, coupon.customerPhone || ""]
-        );
-        orderId = latestOrder?.id || null;
-      }
-
-      if (!orderId) {
-        if (chatId) await sendMessage(chatId, `找不到可確認 Google 評論 #${couponId} 的訂單。`);
-        return res.json({ ok: true });
-      }
-
-      const amount = Number(coupon.amount || 1500);
-
       await pool.query(
         `
           UPDATE coupons
-          SET status='used',
-              is_used=1,
-              used_at=NOW(),
-              approved_at=NOW(),
-              order_id=?
+          SET status='approved',
+              approved_at=NOW()
           WHERE id=?
         `,
-        [orderId, couponId]
+        [couponId]
       );
-
-      const [applyResult] = await pool.query(
-        `
-          UPDATE orders
-          SET other_discount = COALESCE(other_discount, 0) + ?,
-              total_amount = GREATEST(total_amount - ?, 0),
-              unpaid_balance = GREATEST(unpaid_balance - ?, 0)
-          WHERE id=?
-            AND NOT EXISTS (
-              SELECT 1
-              FROM coupons
-              WHERE order_id = ?
-                AND coupon_type = 'google_review'
-                AND is_used = 1
-                AND id <> ?
-            )
-        `,
-        [amount, amount, amount, orderId, orderId, couponId]
-      );
-
-      if (!applyResult.affectedRows) {
-        if (chatId) await sendMessage(chatId, `此訂單已套用過 Google 評論優惠，不能重複折抵。`);
-        return res.json({ ok: true });
-      }
 
       if (chatId) {
         await sendMessage(
           chatId,
-          `✅ Google 評論 #${couponId} 已確認，對應訂單 #${orderId}。`
+          `✅ Google 評論 #${couponId} 已確認。`
         );
       }
 

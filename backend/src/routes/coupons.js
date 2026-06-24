@@ -21,6 +21,7 @@ const { mapCouponStatusLabel, mapCouponTypeLabel } = require("../utils/displayLa
 const router = express.Router();
 
 function isCouponCampaignEnabled(type) {
+  return false;
   if (process.env.COUPON_CAMPAIGN_ENABLED === "true") return true;
   if (type === "new_friend") return process.env.NEW_FRIEND_COUPON_ENABLED === "true";
   if (type === "google_review") return process.env.GOOGLE_REVIEW_COUPON_ENABLED === "true";
@@ -123,88 +124,29 @@ async function ensureCouponEligibility(customerId, orderId, couponType, requireO
 
 router.post("/issue", requireStoreAdminRole, async (req, res, next) => {
   try {
-    const storeId = req.storeId;
-    const { customerId, orderId, couponType } = req.body;
-    if (!customerId || !orderId || !couponType) {
-      throw createError("customerId、orderId 與 couponType 為必填欄位", 400);
-    }
-
-    if (couponType !== "new_friend") {
-      throw createError("Google 評論請使用評論申請流程", 400);
-    }
-
-    const order = await ensureCouponEligibility(customerId, orderId, couponType, true, storeId);
-    const code = makeCode("NF");
-
-    await pool.query(
-      `
-        INSERT INTO coupons (store_id, code, coupon_type, amount, customer_id, approved_by_staff_id, order_id, status, eligible_category, approved_at)
-        VALUES (?, ?, 'new_friend', 500, ?, ?, ?, 'issued', 'EB', NOW())
-      `,
-      [storeId, code, customerId, req.user.id, orderId]
-    );
-
-    if (order.lineUserId && config.line.channelAccessToken) {
-      await sendLineMessage(config, order.lineUserId, [
-        {
-          type: "text",
-          text: `會員優惠券已建立，券碼：${code}`
-        }
-      ]);
-    }
-
-    return res.status(201).json({ code, amount: 500 });
+    return res.status(410).json({ message: "優惠活動已停止，系統不再建立新優惠紀錄。" });
   } catch (error) {
     return next(error);
   }
 });
 
 router.post("/request-google-review", async (req, res, next) => {
-  if (
-    process.env.COUPON_CAMPAIGN_ENABLED !== "true" &&
-    process.env.GOOGLE_REVIEW_COUPON_ENABLED !== "true"
-  ) {
-    return res.status(403).json({
-      message: "Google 評論優惠活動目前暫停"
-    });
-  }
-
   try {
-    const storeId = req.storeId;
     const { customerId, orderId } = req.body;
     if (!customerId) {
       throw createError("customerId 為必填欄位", 400);
     }
 
-    await ensureCouponEligibility(customerId, orderId || null, "google_review", Boolean(orderId), storeId);
-    const code = makeCode("GR");
-
-    const [result] = await pool.query(
-      `
-        INSERT INTO coupons (store_id, code, coupon_type, amount, customer_id, order_id, status, eligible_category)
-        VALUES (?, ?, 'google_review', 1500, ?, ?, 'pending_approval', 'EB')
-      `,
-      [storeId, code, customerId, orderId || null]
-    );
-
     try {
       await sendInternalTelegram(
-        `🟢 Google 評論待審核\n\n客戶 ID：${customerId}\n訂單 ID：${orderId || "-"}\n優惠券 ID：${result.insertId}\n折抵金額：活動暫停\n\n請確認客戶 Google 評論後核准或拒絕。`,
-        {
-          inline_keyboard: [
-            [
-              { text: "✅ 核准並套用折抵", callback_data: `action=google_review_approve&id=${result.insertId}` },
-              { text: "❌ 拒絕", callback_data: `action=google_review_reject&id=${result.insertId}` }
-            ]
-          ]
-        }
+        `🟢 Google 評論待確認\n\n客戶 ID：${customerId}\n訂單 ID：${orderId || "-"}\n\n請確認客戶 Google 評論。`
       );
     } catch (telegramError) {
       console.error("[google-review telegram notify failed]", telegramError.message);
     }
-    await logWorkflowEvent("google_review_coupon_requested", "COUPON", result.insertId, { customerId, orderId: orderId || null }, req.user.id);
+    await logWorkflowEvent("google_review_submitted", "CUSTOMER", customerId, { orderId: orderId || null, couponIssued: false }, req.user.id);
 
-    return res.status(201).json({ id: result.insertId, code, status: "pending_approval" });
+    return res.status(201).json({ message: "已送出 Google 評論確認" });
   } catch (error) {
     return next(error);
   }
@@ -238,16 +180,12 @@ router.post("/approve-google-review-for-order/:orderId", authorize(["ADMIN", "MA
     }
 
     const coupon = rows[0];
-    const amount = Number(coupon.amount || 1500);
-
     await pool.query(
       `
         UPDATE coupons
         SET approved_by_staff_id = ?,
             approved_at = NOW(),
-            status = 'used',
-            is_used = 1,
-            used_at = NOW(),
+            status = 'approved',
             order_id = ?
         WHERE id = ?
           AND store_id = ?
@@ -256,21 +194,9 @@ router.post("/approve-google-review-for-order/:orderId", authorize(["ADMIN", "MA
       [req.user.id, orderId, coupon.id, storeId, storeId]
     );
 
-    await pool.query(
-      `
-        UPDATE orders
-        SET other_discount = COALESCE(other_discount, 0) + ?,
-            total_amount = GREATEST(total_amount - ?, 0),
-            unpaid_balance = GREATEST(unpaid_balance - ?, 0)
-        WHERE id = ?
-          AND store_id = ?
-      `,
-      [amount, amount, amount, orderId, storeId]
-    );
-
-    await logWorkflowEvent("google_review_discount_applied", "ORDER", orderId, {
+    await logWorkflowEvent("google_review_confirmed", "ORDER", orderId, {
       couponId: coupon.id,
-      amount,
+      couponIssued: false,
       source: "order_edit"
     }, req.user.id);
 
@@ -278,12 +204,12 @@ router.post("/approve-google-review-for-order/:orderId", authorize(["ADMIN", "MA
       await sendLineMessage(config, coupon.lineUserId, [
         {
           type: "text",
-          text: `Google 評論優惠已核准並套用，折抵金額 NT$${amount}。`
+          text: "Google 評論已確認，感謝您的回饋。"
         }
       ]);
     }
 
-    return res.json({ message: "Google 評論優惠已核准並套用至訂單", couponId: coupon.id, amount });
+    return res.json({ message: "Google 評論已確認", couponId: coupon.id });
   } catch (error) {
     return next(error);
   }
@@ -314,7 +240,7 @@ router.post("/approve-google-review/:id", authorize(["ADMIN", "MANAGER"]), requi
         UPDATE coupons
         SET approved_by_staff_id = ?,
             approved_at = NOW(),
-            status = 'issued'
+            status = 'approved'
         WHERE id = ?
           AND store_id = ?
           AND customer_id IN (SELECT id FROM customers WHERE store_id = ?)
@@ -328,7 +254,7 @@ router.post("/approve-google-review/:id", authorize(["ADMIN", "MANAGER"]), requi
       await sendLineMessage(config, rows[0].lineUserId, [
         {
           type: "text",
-          text: `Google 評論已確認，券碼：${rows[0].code}`
+          text: "Google 評論已確認，感謝您的回饋。"
         }
       ]);
     }
@@ -336,11 +262,11 @@ router.post("/approve-google-review/:id", authorize(["ADMIN", "MANAGER"]), requi
     await sendToGroups(["admin", "staff"], [
       {
         type: "text",
-        text: `Google 評論已確認：${rows[0].code}`
+        text: "Google 評論已確認。"
       }
     ]);
 
-    await logWorkflowEvent("google_review_coupon_approved", "COUPON", req.params.id, null, req.user.id);
+    await logWorkflowEvent("google_review_confirmed", "COUPON", req.params.id, { couponIssued: false }, req.user.id);
     return res.json({ message: "Google 評論已確認" });
   } catch (error) {
     return next(error);

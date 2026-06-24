@@ -8,7 +8,6 @@ import PageHeader from "../components/PageHeader";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
 import { useFetchList } from "../hooks/useFetchList";
-import { apiRequest } from "../lib/api";
 import { getCouponStatusLabel, getCouponTypeLabel } from "../lib/display";
 
 function formatAmount(value) {
@@ -17,8 +16,6 @@ function formatAmount(value) {
 
 function CouponsPage() {
   const coupons = useFetchList("/coupons");
-  const [newFriendForm, setNewFriendForm] = useState({ customerId: "", orderId: "" });
-  const [reviewForm, setReviewForm] = useState({ customerId: "", orderId: "" });
   const [tab, setTab] = useState("ALL");
   const [keyword, setKeyword] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("ALL");
@@ -34,76 +31,6 @@ function CouponsPage() {
     { key: "used", label: "已使用" },
     { key: "expired", label: "已失效" }
   ];
-
-  function handleFormChange(setter, name, value) {
-    setter((current) => ({
-      ...current,
-      [name]: value
-    }));
-  }
-
-  async function issueNewFriend(event) {
-    event.preventDefault();
-    try {
-      await apiRequest("/coupons/issue", {
-        method: "POST",
-        body: JSON.stringify({
-          customerId: Number(newFriendForm.customerId),
-          orderId: Number(newFriendForm.orderId),
-          couponType: "new_friend"
-        })
-      });
-      setNewFriendForm({ customerId: "", orderId: "" });
-      coupons.refetch();
-      alert("已發送會員服務");
-    } catch (error) {
-      alert(error.message);
-    }
-  }
-
-  async function requestReviewCoupon(event) {
-    event.preventDefault();
-    try {
-      await apiRequest("/coupons/request-google-review", {
-        method: "POST",
-        body: JSON.stringify({
-          customerId: Number(reviewForm.customerId),
-          orderId: Number(reviewForm.orderId)
-        })
-      });
-      setReviewForm({ customerId: "", orderId: "" });
-      coupons.refetch();
-      alert("已送出 Google 評論申請");
-    } catch (error) {
-      alert(error.message);
-    }
-  }
-
-  async function approveCoupon(id) {
-    try {
-      await apiRequest(`/coupons/approve-google-review/${id}`, {
-        method: "POST",
-        body: JSON.stringify({})
-      });
-      coupons.refetch();
-      alert("優惠券已核准");
-    } catch (error) {
-      alert(error.message);
-    }
-  }
-
-  async function rejectCoupon(id) {
-    try {
-      await apiRequest(`/coupons/reject-google-review/${id}`, {
-        method: "POST",
-        body: JSON.stringify({ reason: "後台人工拒絕" })
-      });
-      coupons.refetch();
-      alert("已拒絕優惠券");
-    } catch (error) {
-      alert(error.message);
-    }
-  }
 
   const rows = useMemo(
     () =>
@@ -198,16 +125,6 @@ function CouponsPage() {
       label: "操作",
       render: (row) => (
         <div className="action-row compact-actions">
-          {row.couponType === "google_review" && !row.approvedByStaffId && row.status === "pending_approval" ? (
-            <>
-              <button type="button" className="secondary-button" onClick={() => approveCoupon(row.id)}>
-                核准發券
-              </button>
-              <button type="button" className="secondary-button" onClick={() => rejectCoupon(row.id)}>
-                拒絕
-              </button>
-            </>
-          ) : null}
           <button type="button" className="secondary-button" onClick={() => openDetail(row)}>
             詳情
           </button>
@@ -219,7 +136,7 @@ function CouponsPage() {
 
   return (
     <div>
-      <PageHeader title="優惠券管理" description="新朋友與 Google 評論都在同一頁管理，狀態與審核一眼可見。" />
+      <PageHeader title="歷史優惠紀錄" description="保留既有紀錄供查詢，系統已停止建立新的優惠紀錄。" />
       {coupons.error ? <div className="empty-state">{coupons.error}</div> : null}
       <SectionTabs items={sectionItems} value={tab} onChange={setTab} label="優惠券子功能" />
       <div className="admin-summary-grid">
@@ -233,44 +150,10 @@ function CouponsPage() {
 
       <section className="content-card form-card">
         <AdminSectionHeader
-          eyebrow="發券操作"
-          title="發送與審核"
-          description="保留既有發券與審核流程，只整理成較清楚的操作區。"
+          eyebrow="停止建立"
+          title="優惠活動已停止"
+          description="此頁僅供查詢既有紀錄；LINE 新朋友與 Google 評論不再建立新優惠紀錄。"
         />
-        <div className="admin-split-grid">
-          <section className="stack-card">
-            <div className="section-title">發送會員服務</div>
-            <form className="grid-form compact-grid" onSubmit={issueNewFriend}>
-              <label className="form-field">
-                <span>客戶 ID</span>
-                <input value={newFriendForm.customerId} onChange={(event) => handleFormChange(setNewFriendForm, "customerId", event.target.value)} />
-              </label>
-              <label className="form-field">
-                <span>訂單 ID</span>
-                <input value={newFriendForm.orderId} onChange={(event) => handleFormChange(setNewFriendForm, "orderId", event.target.value)} />
-              </label>
-              <button type="submit" className="primary-button inline-submit">
-                發送 
-              </button>
-            </form>
-          </section>
-          <section className="stack-card">
-            <div className="section-title">申請 Google 評論</div>
-            <form className="grid-form compact-grid" onSubmit={requestReviewCoupon}>
-              <label className="form-field">
-                <span>客戶 ID</span>
-                <input value={reviewForm.customerId} onChange={(event) => handleFormChange(setReviewForm, "customerId", event.target.value)} />
-              </label>
-              <label className="form-field">
-                <span>訂單 ID</span>
-                <input value={reviewForm.orderId} onChange={(event) => handleFormChange(setReviewForm, "orderId", event.target.value)} />
-              </label>
-              <button type="submit" className="primary-button inline-submit">
-                送出審核
-              </button>
-            </form>
-          </section>
-        </div>
       </section>
       <section className="content-card section-panel">
         <div className="section-header">
@@ -338,16 +221,6 @@ function CouponsPage() {
                 <div className="field-label">操作</div>
                 <div className="field-value">
                   <div className="action-row compact-actions">
-                    {row.couponType === "google_review" && !row.approvedByStaffId && row.status === "pending_approval" ? (
-                      <>
-                        <button type="button" className="secondary-button" onClick={() => approveCoupon(row.id)}>
-                          核准發券
-                        </button>
-                        <button type="button" className="secondary-button" onClick={() => rejectCoupon(row.id)}>
-                          拒絕
-                        </button>
-                      </>
-                    ) : null}
                     <button type="button" className="secondary-button" onClick={() => openDetail(row)}>
                       詳情
                     </button>
@@ -396,16 +269,6 @@ function CouponsPage() {
               </div>
             </section>
             <div className="action-row">
-              {detail.couponType === "google_review" && !detail.approvedByStaffId && detail.status === "pending_approval" ? (
-                <>
-                  <button type="button" className="secondary-button" onClick={() => approveCoupon(detail.id)}>
-                    核准發券
-                  </button>
-                  <button type="button" className="secondary-button" onClick={() => rejectCoupon(detail.id)}>
-                    拒絕
-                  </button>
-                </>
-              ) : null}
               <button type="button" className="secondary-button" onClick={() => setDetail(null)}>
                 關閉
               </button>

@@ -57,9 +57,9 @@ const CUSTOMER_MENU_ITEMS = [
     href: "/line-progress?tab=order"
   },
   {
-    id: "coupon-benefit",
-    label: "專屬優惠",
-    description: "查看您的專屬優惠券",
+    id: "member-service",
+    label: "會員服務",
+    description: "訂單、維修與售後協助",
     href: "/line-coupon"
   }
 ];

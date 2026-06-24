@@ -141,8 +141,8 @@ function LineGoogleReviewPage() {
     <div className="line-customer-page">
       <section className="line-customer-hero">
         <div className="line-customer-brand">KINGWAY</div>
-        <h1>Google 評論優惠</h1>
-        <p>完成 Google 評論後，請回來點擊「我已完成評論」，門市會收到審核通知。</p>
+        <h1>Google 評論確認</h1>
+        <p>完成 Google 評論後，請回來點擊「我已完成評論」，門市將確認您的回饋。</p>
       </section>
 
       {(!customer || !customer.phone) ? (
@@ -191,8 +191,8 @@ function LineGoogleReviewPage() {
 
           {done ? (
         <section className="line-customer-summary">
-          <div className="line-customer-summary-title">已送出審核</div>
-          <p>門市確認 Google 評論後，系統會發放 Google 評論。</p>
+          <div className="line-customer-summary-title">已送出評論紀錄</div>
+          <p>感謝您的評論，門市將確認您的回饋。</p>
         </section>
       ) : (
         <section className="line-customer-summary">

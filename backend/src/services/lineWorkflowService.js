@@ -445,31 +445,6 @@ async function bindPhoneAndIssueNewFriendCoupon(lineUserId, phone, displayName =
       }
     }
 
-    const [duplicate] = await connection.query(
-      `
-        SELECT id, code
-        FROM coupons
-        WHERE customer_id = ?
-          AND coupon_type = 'new_friend'
-          AND store_id = ?
-        LIMIT 1
-      `,
-      [customer.id, storeId]
-    );
-
-    let coupon = duplicate[0] || null;
-    if (!coupon) {
-      const code = makeCode("NF");
-      const [couponResult] = await connection.query(
-        `
-          INSERT INTO coupons (store_id, code, coupon_type, amount, customer_id, status, eligible_category)
-          VALUES (?, ?, 'new_friend', 500, ?, 'issued', 'EB')
-        `,
-        [storeId, code, customer.id]
-      );
-      coupon = { id: couponResult.insertId, code };
-    }
-
     await connection.query(
       `
         INSERT INTO customer_crm_events (customer_id, event_type, stage, note)
@@ -478,8 +453,8 @@ async function bindPhoneAndIssueNewFriendCoupon(lineUserId, phone, displayName =
       [customer.id, `手機綁定：${phone}`]
     );
 
-    await logWorkflowEvent("new_friend_coupon_checked", "CUSTOMER", customer.id, { couponCode: coupon.code }, null, connection);
-    return { customerId: customer.id, couponCode: coupon.code };
+    await logWorkflowEvent("line_phone_bound", "CUSTOMER", customer.id, { couponIssued: false }, null, connection);
+    return { customerId: customer.id, couponCode: null };
   });
 }
 
@@ -750,7 +725,6 @@ async function createPurchaseConfirmationForOrder(orderId, connection = pool, op
 const LINE_KEYWORDS = {
   menu: ["功能", "功能選單", "選單", "開始", "menu", "MENU", "幫助"],
   repair: ["維修預約", "預約維修", "我要維修", "我要預約維修"],
-  coupon: ["領取優惠券", "優惠券", "新朋友優惠", "我的優惠券"],
   orderStatus: ["我的訂單", "訂單查詢", "查詢訂單", "尾款查詢", "查詢尾款", "訂單", "尾款"],
   googleReview: ["Google評論", "Google 評論", "我要評論"],
   purchaseConfirmation: ["購買確認", "購買確認書", "交車確認"],
@@ -1164,7 +1138,6 @@ function buildMapNavigationUrl() {
 function buildCustomerMenuActions() {
   return [
     createMessageAction("維修預約", "維修預約"),
-    createMessageAction("領取優惠券", "優惠券"),
     createMessageAction("Google 評論", "Google 評論"),
     createMessageAction("購買確認書", "購買確認書"),
     createMessageAction("滿意度調查", "滿意度調查"),
@@ -1266,7 +1239,7 @@ function buildSlashHelpMessages(scope = "staff") {
       ]
     : [
         "顧客可用功能：",
-        "維修預約、領取優惠券、Google 評論、購買確認書、滿意度調查、查詢進度、門市資訊、客服協助。",
+        "維修預約、Google 評論、購買確認書、滿意度調查、查詢進度、門市資訊、客服協助。",
         "門市 staff 快速指令僅限門市群組使用：",
         "/pos /quote /product /customer /pending",
         "/stock SKU /in SKU 數量 /out SKU 數量 /set SKU 數量",
@@ -1311,7 +1284,7 @@ function buildSlashPermissionMessages(commandText) {
       [
         `您輸入的是 ${commandText}。`,
         "這是門市 staff 群組快速指令，請在 staff 群組中使用。",
-        "如果您是客戶，請改用維修預約、查詢進度、優惠券、購買確認書或客服協助。"
+        "如果您是客戶，請改用維修預約、查詢進度、購買確認書或客服協助。"
       ],
       [
         createMessageAction("查詢進度", "查詢進度"),
@@ -2194,7 +2167,7 @@ function buildWelcomeMessages() {
       type: "text",
       text: [
         "歡迎加入 KINGWAY 台南。",
-        "請回覆您的手機號碼完成綁定，即可領取新好友  優惠券。",
+        "請回覆您的手機號碼完成綁定，門市可更快協助您查詢訂單、維修與售後服務。",
         "也可以回覆預算、預計購買時間與用途，讓門市更快協助您。"
       ].join("\n")
     }
@@ -2234,11 +2207,11 @@ function buildPhoneBindingMessages() {
   ]);
 }
 
-function buildPhoneBoundMessages(couponCode) {
+function buildPhoneBoundMessages() {
   return withCustomerQuickReply([
     {
       type: "text",
-      text: `手機已綁定。新好友  優惠券已建立，券碼：${couponCode}。此券限電動自行車購買使用。`
+      text: "手機已綁定。您現在可以使用購買預約、維修預約、購買確認書與客服服務。"
     }
   ]);
 }
@@ -2251,14 +2224,13 @@ function buildCouponBindingRequiredMessages() {
         "您好 🎁",
         "使用會員服務前，請先完成手機綁定。",
         "完成綁定後，門市可提供訂單、維修與售後服務。",
-        "此優惠券限購買「電動自行車」時使用。",
         "",
         "如要綁定手機，請直接點下方「綁定手機」或回覆您的手機號碼。"
       ].join("\n")
     }
   ], [
     createMessageAction("綁定手機", "我要綁定手機"),
-    ...buildCustomerMenuActions().filter((action) => action.label !== "領取優惠券")
+    ...buildCustomerMenuActions()
   ]);
 }
 
@@ -2459,18 +2431,16 @@ async function buildCustomerBalanceMessages(lineUserId) {
 }
 
 
-function buildCouponStatusMessages(coupon) {
+function buildCustomerServiceMessages() {
   return withCustomerQuickReply([
     {
       type: "text",
       text: [
-        "您好 🎁",
-        "優惠券：請直接於門市結帳時由人員協助確認。",
         "會員服務：",
-        "- 狀態：目前活動暫停",
-        "- 適用：電動自行車",
-        "- 每位客戶限領一次",
-        coupon ? `目前狀態：${coupon.status}${coupon.code ? ` / 券碼：${coupon.code}` : ""}` : "目前狀態：尚未建立"
+        "- 訂單查詢",
+        "- 維修預約與進度",
+        "- 購買確認書與客服協助",
+        "如需協助，請直接留言給門市。"
       ].join("\n")
     }
   ]);
@@ -2483,8 +2453,7 @@ function buildGoogleReviewEntryMessages() {
       text: [
         "感謝您支持 KINGWAY ⭐",
         "如果您願意幫我們留下 Google 評論，請在 Google 地圖搜尋 KINGWAY 台南門市並完成評論。",
-        "完成後，請再點下方「我已完成評論」，我們會由門市人員確認後發送  優惠券給您。",
-        "此優惠券限購買「電動自行車」時使用。"
+        "完成後，請再點下方「我已完成評論」，門市將確認您的回饋。"
       ].join("\n")
     }
   ], [
@@ -2500,7 +2469,7 @@ function buildGoogleReviewSubmittedMessages() {
       text: [
         "已收到您的通知 ✅",
         "我們會由門市人員確認 Google 評論內容。",
-        "確認完成後，會再透過 LINE 通知您發券結果，請稍候。"
+        "感謝您的回饋。"
       ].join("\n")
     }
   ]);
@@ -2757,7 +2726,7 @@ function buildSupportMessages() {
       type: "text",
       text: [
         "客服協助：請直接在此留言，門市人員會協助您。",
-        "可協助內容：購車建議、維修問題、訂單查詢、優惠券問題。",
+        "可協助內容：購車建議、維修問題、訂單查詢、交車確認。",
         "請直接留言您的需求，我們會盡快回覆您。"
       ].join("\n")
     }
@@ -3256,18 +3225,18 @@ function buildGroupApprovalMessage(type, payload) {
 
   if (type === "google_review") {
     return createFlexMessage(
-      "Google 評論待審核",
-      "Google 評論待審核",
+      "Google 評論待確認",
+      "Google 評論待確認",
       [
         `客戶：${payload.customerName}`,
-        `優惠券 ID：${payload.id}`,
-        "請確認評論後核准或拒絕。"
-      ],
+        payload.id ? `紀錄 ID：${payload.id}` : null,
+        "請確認客戶回饋。"
+      ].filter(Boolean),
       [
-        createPostbackAction("核准發券", "google_review_approve", payload.id),
-        createPostbackAction("拒絕", "google_review_reject", payload.id),
-        createUriAction("前往訂單", buildStaffPageUrl(payload.orderId ? `/orders/${payload.orderId}/edit` : "/customers"))
-      ]
+        payload.id ? createPostbackAction("確認評論", "google_review_approve", payload.id) : null,
+        payload.id ? createPostbackAction("拒絕", "google_review_reject", payload.id) : null,
+        createUriAction("前往客戶", buildStaffPageUrl(payload.orderId ? `/orders/${payload.orderId}/edit` : "/customers"))
+      ].filter(Boolean)
     );
   }
 
@@ -4485,7 +4454,6 @@ async function handleCustomerMessageEvent(event) {
   const needsPhoneBinding =
     matchesKeyword(messageText, LINE_KEYWORDS.menu) ||
     matchesKeyword(messageText, LINE_KEYWORDS.repair) ||
-    matchesKeyword(messageText, LINE_KEYWORDS.coupon) ||
     matchesKeyword(messageText, LINE_KEYWORDS.googleReview) ||
     messageText === "我已完成評論" ||
     matchesKeyword(messageText, LINE_KEYWORDS.purchaseConfirmation) ||
@@ -4504,7 +4472,7 @@ async function handleCustomerMessageEvent(event) {
         withCustomerQuickReply([
           {
             type: "text",
-            text: "歡迎來到 KINGWAY！\n\n您可以在 LINE 選擇車款後進行購買預約，也可以建立維修預約。\n\n請先輸入手機號碼完成綁定，完成後即可使用購買預約、維修預約、優惠券、購買確認書與客服服務。\n\n例：0912345678"
+            text: "歡迎來到 KINGWAY！\n\n您可以在 LINE 選擇車款後進行購買預約，也可以建立維修預約。\n\n請先輸入手機號碼完成綁定，完成後即可使用購買預約、維修預約、購買確認書與客服服務。\n\n例：0912345678"
           }
         ])
       );
@@ -4548,33 +4516,6 @@ async function handleCustomerMessageEvent(event) {
     return true;
   }
 
-  if (matchesKeyword(messageText, LINE_KEYWORDS.coupon)) {
-    if (!customer.phone) {
-      if (event.replyToken) {
-        await replyToLine(event.replyToken, buildCouponBindingRequiredMessages());
-      }
-      return true;
-    }
-
-    const [newFriendCoupons] = await pool.query(
-      `
-        SELECT id, code, status, amount
-        FROM coupons
-        WHERE customer_id = ?
-          AND coupon_type = 'new_friend'
-          AND store_id = ?
-        ORDER BY id DESC
-        LIMIT 1
-      `,
-      [customer.id, customerStoreId]
-    );
-
-    if (event.replyToken) {
-      await replyToLine(event.replyToken, buildCouponStatusMessages(newFriendCoupons[0]));
-    }
-    return true;
-  }
-
   if (matchesKeyword(messageText, LINE_KEYWORDS.googleReview)) {
     if (event.replyToken) {
       await replyToLine(event.replyToken, buildGoogleReviewEntryMessages());
@@ -4604,9 +4545,7 @@ async function handleCustomerMessageEvent(event) {
           withCustomerQuickReply([
             {
               type: "text",
-              text: existingCoupons[0].status === "issued"
-                ? `您已有 Google 評論紀錄，門市會協助確認。`
-                : `您的 Google 評論已送出確認，申請編號 #${existingCoupons[0].id}`
+              text: "您已有 Google 評論紀錄，門市會協助確認。"
             }
           ])
         );
@@ -4614,21 +4553,12 @@ async function handleCustomerMessageEvent(event) {
       return true;
     }
 
-    const code = makeCode("GR");
-    const [result] = await pool.query(
-      `
-        INSERT INTO coupons (store_id, code, coupon_type, amount, customer_id, status, eligible_category)
-          VALUES (?, ?, 'google_review', 1500, ?, 'pending_approval', 'EB')
-      `,
-      [customerStoreId, code, customer.id]
-    );
-
     await sendToGroups(["admin", "staff"], [
       buildGroupApprovalMessage("google_review", {
-        id: result.insertId,
         customerName: customer.name || "LINE 客戶"
       })
     ]);
+    await logWorkflowEvent("google_review_submitted", "CUSTOMER", customer.id, { source: "line_message" }, null);
 
     if (event.replyToken) {
       await replyToLine(event.replyToken, buildGoogleReviewSubmittedMessages());
@@ -4918,7 +4848,7 @@ async function handleLinePostback(event) {
           AND store_id = ?
       `,
       [
-        approved ? "issued" : "rejected",
+        approved ? "approved" : "rejected",
         staffId,
         approved ? new Date() : null,
         approved ? null : new Date(),
@@ -4933,61 +4863,15 @@ async function handleLinePostback(event) {
         {
           type: "text",
           text: approved
-            ? `Google 評論已核准，金額 ，券碼：${rows[0].code}`
+            ? "Google 評論已確認，感謝您的回饋。"
             : "Google 評論這次未通過審核，如有疑問請洽門市人員。"
         }
       ]);
     }
 
 
-    if (approved && rows[0].orderId) {
-      const amount = Number(rows[0].amount || 1500);
-
-      await pool.query(
-        `
-          UPDATE orders
-          SET other_discount = COALESCE(other_discount, 0) + ?,
-              total_amount = GREATEST(total_amount - ?, 0),
-              unpaid_balance = GREATEST(unpaid_balance - ?, 0)
-          WHERE id = ?
-            AND store_id = ?
-        `,
-        [amount, amount, amount, rows[0].orderId, googleReviewStoreId]
-      );
-
-      await pool.query(
-        `
-          UPDATE coupons
-          SET status = 'used',
-              is_used = 1,
-              used_at = NOW()
-          WHERE id = ?
-            AND store_id = ?
-        `,
-        [id, googleReviewStoreId]
-      );
-
-      await pool.query(
-        `
-          UPDATE coupons
-          SET status = 'used',
-              is_used = 1,
-              used_at = NOW()
-          WHERE id = ?
-            AND store_id = ?
-        `,
-        [id, googleReviewStoreId]
-      );
-
-      await logWorkflowEvent("google_review_discount_applied", "ORDER", rows[0].orderId, {
-        couponId: id,
-        amount,
-        source: "line_staff_approve"
-      }, staffId);
-    }
-
     await sendToGroups(["admin", "staff", "daily"], [{ type: "text", text: `Google 評論 #${id} 已${approved ? "核准" : "拒絕"}。` }]);
-    await logWorkflowEvent(approved ? "google_review_coupon_approved" : "google_review_coupon_rejected", "COUPON", id, { source: "line_postback" }, staffId);
+    await logWorkflowEvent(approved ? "google_review_confirmed" : "google_review_rejected", "COUPON", id, { source: "line_postback", couponIssued: false }, staffId);
     if (event.replyToken) {
       await replyToLine(
         event.replyToken,

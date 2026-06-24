@@ -393,7 +393,7 @@ function OrdersPage() {
   async function requestGoogleReviewCoupon() {
     if (!detail?.id) return;
 
-    if (!window.confirm("確認核准 Google 評論優惠並套用  折抵？")) {
+    if (!window.confirm("確認 Google 評論紀錄？")) {
       return;
     }
 
@@ -402,10 +402,10 @@ function OrdersPage() {
         method: "POST"
       });
 
-      alert(data.message || "Google 評論優惠已核准並套用");
+      alert(data.message || "Google 評論已確認");
       window.location.reload();
-    }, { id: `google-review-${detail.id}`, label: "優惠核准中..." }).catch((error) => {
-      alert(error.message || "Google 評論優惠處理失敗");
+    }, { id: `google-review-${detail.id}`, label: "評論確認中..." }).catch((error) => {
+      alert(error.message || "Google 評論確認失敗");
     });
   }
 

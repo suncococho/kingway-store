@@ -8,10 +8,6 @@ const {
 
 const router = express.Router();
 
-function makeGoogleReviewCode(customerId) {
-  return `GR${customerId}${Date.now().toString().slice(-6)}`;
-}
-
 router.get("/customer", async (req, res, next) => {
   try {
     const lineUserId = String(req.query.lineUserId || "").trim();
@@ -34,15 +30,6 @@ router.get("/customer", async (req, res, next) => {
 
 router.post("/request", async (req, res, next) => {
   try {
-    if (
-      process.env.COUPON_CAMPAIGN_ENABLED !== "true" &&
-      process.env.GOOGLE_REVIEW_COUPON_ENABLED !== "true"
-    ) {
-      return res.status(403).json({
-        message: "Google 評論活動目前暫停"
-      });
-    }
-
     const lineUserId = String(req.body.lineUserId || "").trim();
     if (!lineUserId) return res.status(400).json({ message: "缺少 LINE 使用者資料" });
 
@@ -85,8 +72,7 @@ router.post("/request", async (req, res, next) => {
         return res.json({
           ok: true,
           pending: true,
-          couponId: coupon.id,
-          message: `您的 Google 評論已在確認中，申請編號 #${coupon.id}。`
+          message: "您的 Google 評論已在確認中。"
         });
       }
 
@@ -94,8 +80,6 @@ router.post("/request", async (req, res, next) => {
         return res.json({
           ok: true,
           alreadyIssued: true,
-          couponId: coupon.id,
-          code: coupon.code,
           message: `您已有 Google 評論紀錄。`
         });
       }
@@ -121,29 +105,18 @@ router.post("/request", async (req, res, next) => {
     );
 
     const orderId = latestOrder[0]?.id || null;
-    const code = makeGoogleReviewCode(customer.id);
-
-    const [result] = await pool.query(
-      `INSERT INTO coupons
-       (store_id, code, coupon_type, amount, customer_id, order_id, status, eligible_category)
-       VALUES (?, ?, 'google_review', 1500, ?, ?, 'pending_approval', 'EBIKE')`,
-      [storeId, code, customer.id, orderId]
-    );
-
     const deliveryResult = await sendToGroupsWithResult(["admin", "staff", "daily"], [
       buildGroupApprovalMessage("google_review", {
-        id: result.insertId,
         customerName: customer.name || "LINE 客戶",
         customerPhone: customer.phone || null,
-        amount: 1500,
         orderId
       })
     ]);
 
     await logWorkflowEvent(
-      "google_review_coupon_requested",
-      "COUPON",
-      result.insertId,
+      "google_review_submitted",
+      "CUSTOMER",
+      customer.id,
       {
         customerId: customer.id,
         orderId,
@@ -156,7 +129,6 @@ router.post("/request", async (req, res, next) => {
 
     return res.json({
       ok: true,
-      couponId: result.insertId,
       message: "已送出 Google 評論確認，門市確認後會通知您。"
     });
   } catch (error) {

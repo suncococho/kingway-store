@@ -340,12 +340,7 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
     const orderDisplayFinalAmountSql = `
       GREATEST(
         ${orderItemTotalSql}
-        - CASE
-            WHEN ${orderNotesSql} LIKE '%新朋友折扣%'
-              OR ${orderNotesSql} LIKE '%新朋友優惠%'
-              THEN 500
-            ELSE GREATEST(${orderItemTotalSql} - ${orderTotalAmountSql} - ${orderOtherDiscountSql}, 0)
-          END
+        - GREATEST(${orderItemTotalSql} - ${orderTotalAmountSql} - ${orderOtherDiscountSql}, 0)
         - ${orderOtherDiscountSql},
         0
       )
@@ -656,11 +651,7 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
     );
     const itemTotal = items.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
     const otherDiscount = Number(rows[0].otherDiscount || 0);
-    const notes = String(rows[0].notes || "");
-    const couponDiscount =
-      notes.includes("新朋友折扣") || notes.includes("新朋友優惠")
-        ? 500
-        : Math.max(itemTotal - Number(rows[0].totalAmount || 0) - otherDiscount, 0);
+    const couponDiscount = Math.max(itemTotal - Number(rows[0].totalAmount || 0) - otherDiscount, 0);
     const displayFinalAmount = Math.max(itemTotal - couponDiscount - otherDiscount, 0);
 
     return res.json({
@@ -1313,11 +1304,7 @@ router.put("/:id/items", requireOrderManagementFeature, async (req, res, next) =
 
       const depositAmount = Number(payRows[0]?.depositAmount || 0);
       const otherDiscount = Number(payRows[0]?.otherDiscount || 0);
-      const isLineOrderWithNewFriendCoupon =
-        String(payRows[0]?.source || "") === "line_order" &&
-        String(payRows[0]?.notes || "").includes("新朋友折扣");
-
-      const couponDiscount = isLineOrderWithNewFriendCoupon ? 500 : 0;
+      const couponDiscount = 0;
       const payableAmount = Math.max(totalAmount - couponDiscount - otherDiscount, 0);
       const unpaidBalance = Math.max(payableAmount - depositAmount, 0);
       const finalPaymentStatus =

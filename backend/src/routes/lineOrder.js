@@ -632,35 +632,9 @@ router.post("/create", async (req, res, next) => {
         };
       }
 
-      let [couponRows] = await tx.query(
-        `SELECT id, code, amount, status
-         FROM coupons
-         WHERE customer_id = ?
-           AND coupon_type = 'new_friend'
-           AND store_id = ?
-         ORDER BY id DESC
-         LIMIT 1`,
-        [customer.id, storeId]
-      );
-
-      const newFriendCouponEnabled =
-        process.env.COUPON_CAMPAIGN_ENABLED === "true" ||
-        process.env.NEW_FRIEND_COUPON_ENABLED === "true";
-
-      let coupon = newFriendCouponEnabled ? couponRows[0] : null;
-
-      if (newFriendCouponEnabled && !coupon) {
-        const code = `NEW${customer.id}${Date.now().toString().slice(-5)}`;
-        const [couponResult] = await tx.query(
-          `INSERT INTO coupons (store_id, code, coupon_type, amount, customer_id, status, eligible_category)
-           VALUES (?, ?, 'new_friend', 500, ?, 'issued', 'EBIKE')`,
-          [storeId, code, customer.id]
-        );
-        coupon = { id: couponResult.insertId, code, amount: 500, status: "issued" };
-      }
-
       const unitPrice = Number(product.price || 0);
-      const discount = newFriendCouponEnabled && coupon ? Number(coupon.amount || 500) : 0;
+      const coupon = null;
+      const discount = 0;
       const totalAmount = Math.max(unitPrice - discount, 0);
       const orderNo = `LINE-${dayjs().format("YYYYMMDD-HHmmss-SSS")}`;
 
@@ -693,7 +667,7 @@ router.post("/create", async (req, res, next) => {
           customer.phone || phone,
           totalAmount,
           totalAmount,
-          `LINE 自助訂車｜商品：${product.name}｜新朋友折扣：NT$ ${discount}`,
+          `LINE 自助訂車｜商品：${product.name}`,
           staffId
         ]
       );

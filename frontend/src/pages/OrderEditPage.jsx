@@ -95,15 +95,14 @@ function OrderEditPage() {
   const otherDiscount = Number(form?.otherDiscount || 0);
   const depositAmount = Number(form?.depositAmount || 0);
   const hasNewFriendCoupon =
-    String(form?.notes || "").includes("新朋友折扣") ||
-    String(form?.notes || "").includes("新朋友優惠");
+    String(form?.notes || "").includes("新朋友折扣");
   const couponDiscount = hasNewFriendCoupon ? 500 : Math.max(itemTotal - Number(form?.totalAmount || 0) - otherDiscount, 0);
   const payableAmount = Math.max(itemTotal - couponDiscount - otherDiscount, 0);
   const unpaidBalance = Math.max(payableAmount - depositAmount, 0);
 
-  async function requestGoogleReviewCoupon() {
+async function requestGoogleReviewCoupon() {
     if (!form?.customerId) {
-      setError("找不到客戶資料，無法申請 Google 評論券");
+      setError("找不到客戶資料，無法確認 Google 評論");
       return;
     }
 
@@ -112,9 +111,9 @@ function OrderEditPage() {
       await apiRequest(`/coupons/approve-google-review-for-order/${id}`, {
         method: "POST"
       });
-      alert("Google 評論優惠已核准並套用至此訂單。");
+      alert("Google 評論已確認。");
     } catch (e) {
-      setError(e.message || "Google 評論券核准套用失敗");
+      setError(e.message || "Google 評論確認失敗");
     }
   }
 
@@ -544,9 +543,9 @@ function OrderEditPage() {
             <strong>金額說明</strong>
             <ul>
               <li>商品總額：所有商品小計加總</li>
-              <li>會員服務：LINE 新朋友折扣</li>
+              <li>會員服務：既有折扣紀錄</li>
               <li>其他折扣：門市手動折扣</li>
-              <li>訂單應收：商品總額 - 優惠券 - 其他折扣</li>
+              <li>訂單應收：商品總額 - 折扣 - 其他折扣</li>
               <li>剩餘尾款：訂單應收 - 已收訂金</li>
             </ul>
           </section>

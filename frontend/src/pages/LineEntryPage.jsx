@@ -24,14 +24,14 @@ const PAGE_CONTENT = {
     ]
   },
   "/coupon-center": {
-    title: "優惠券服務",
-    description: "請回到 LINE 對話查詢會員服務、Google 評論與使用狀態。",
-    tips: ["若尚未綁定手機，請先在 LINE 回覆手機號碼。", "會員服務限購買電動自行車時使用。"]
+    title: "會員服務",
+    description: "請回到 LINE 對話查詢訂單、維修與售後服務。",
+    tips: ["若尚未綁定手機，請先在 LINE 回覆手機號碼。"]
   },
   "/google-review": {
     title: "Google 評論",
-    description: "完成 Google 評論後，請回到 LINE 對話輸入「我已完成評論」，系統會送門市審核。",
-    tips: ["Google 評論需人工審核後才會發放。"]
+    description: "完成 Google 評論後，請回到 LINE 對話輸入「我已完成評論」，門市將確認您的回饋。",
+    tips: ["感謝您的評論，門市將確認您的回饋。"]
   },
   "/progress": {
     title: "查詢進度",
@@ -46,7 +46,7 @@ const PAGE_CONTENT = {
   "/support": {
     title: "客服協助",
     description: "請回到 LINE 對話直接留言需求、姓名與電話，門市人員會盡快協助您。",
-    tips: ["可留言：維修問題、訂單查詢、優惠券使用、交車確認。"]
+    tips: ["可留言：維修問題、訂單查詢、交車確認。"]
   }
 };
 

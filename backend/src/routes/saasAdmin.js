@@ -290,7 +290,7 @@ const FEATURE_CONFIG = [
   { key: "repairs_enabled", label: "維修管理", description: "維修預約、報價、完修與問卷流程。" },
   { key: "inventory_enabled", label: "庫存管理", description: "商品庫存、異動與低庫存檢視。" },
   { key: "suppliers_enabled", label: "供應商管理", description: "發注、退貨與供應商確認流程。" },
-  { key: "coupons_enabled", label: "優惠券管理", description: "新好友與 Google 評論優惠券管理。" },
+  { key: "coupons_enabled", label: "歷史優惠紀錄", description: "既有優惠紀錄查詢。" },
   { key: "purchase_confirmations_enabled", label: "購買確認書", description: "購買確認書送出、簽名與 PDF 留存。" },
   { key: "line_enabled", label: "LINE 流程", description: "客戶 LINE 綁定、通知與確認按鈕流程。" },
   { key: "telegram_enabled", label: "Telegram 通知", description: "舊通知相容開關；不修改 token 設定。" },

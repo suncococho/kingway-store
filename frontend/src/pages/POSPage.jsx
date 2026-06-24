@@ -336,38 +336,8 @@ function POSPage() {
   }, [activeCart?.customerPhone, activeCart?.customerId, customers]);
 
   useEffect(() => {
-    const phone = String(activeCart?.customerPhone || "").trim();
     setCustomerCoupons([]);
     setCouponLookupMessage("");
-
-    if (!phone || phone.length < 6) return;
-
-    let active = true;
-
-    fetch(`/api/coupons/by-phone/${encodeURIComponent(phone)}`)
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => {
-        if (!active) return;
-
-        const coupons = Array.isArray(data?.coupons) ? data.coupons : [];
-        const usableCoupons = coupons.filter((coupon) =>
-          !Number(coupon.isUsed || 0) &&
-          ["issued", "approved"].includes(String(coupon.status || ""))
-        );
-
-        setCustomerCoupons(usableCoupons);
-
-        if (data?.customer && !usableCoupons.length) {
-          setCouponLookupMessage("此客戶目前沒有可使用優惠券");
-        }
-      })
-      .catch(() => {
-        if (active) setCouponLookupMessage("");
-      });
-
-    return () => {
-      active = false;
-    };
   }, [activeCart?.customerPhone]);
 
 
@@ -954,7 +924,7 @@ function POSPage() {
             </label>
             {customerCoupons.length ? (
               <div className="form-field" style={{ gridColumn: "1 / -1" }}>
-                <span>可使用優惠券</span>
+              <span>既有優惠紀錄</span>
                 <div style={{ display: "grid", gap: 10 }}>
                   {customerCoupons.map((coupon) => (
                     <button
@@ -993,7 +963,7 @@ function POSPage() {
                         setActiveCartField("couponAmount", totalAmount);
                       }}
                     >
-                      {coupon.couponType === "google_review" ? "Google 評論優惠" : "新朋友優惠"}
+                      {coupon.couponType === "google_review" ? "Google 評論紀錄" : "會員服務紀錄"}
                       {" / "}
                       {coupon.code}
                       {" / NT$ "}
@@ -1009,7 +979,7 @@ function POSPage() {
             ) : null}
 
             <label className="form-field">
-              <span>優惠券</span>
+              <span>折扣代碼</span>
               <input
                 value={activeCart?.couponCode || ""}
                 onChange={(event) => setActiveCartField("couponCode", event.target.value)}
@@ -1018,7 +988,7 @@ function POSPage() {
             </label>
 
             <label className="form-field">
-              <span>優惠金額</span>
+              <span>折扣金額</span>
               <input
                 type="number"
                 min="0"
@@ -1259,7 +1229,7 @@ function POSPage() {
             />
           </label>
           <label className="form-field">
-            <span>優惠券</span>
+            <span>折扣代碼</span>
             <input
               value={activeCart?.couponCode || ""}
               onChange={(event) => setActiveCartField("couponCode", event.target.value)}
@@ -1267,7 +1237,7 @@ function POSPage() {
             />
           </label>
           <label className="form-field">
-            <span>優惠金額</span>
+            <span>折扣金額</span>
             <input
               type="number"
               min="0"
