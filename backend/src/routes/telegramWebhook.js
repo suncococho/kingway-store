@@ -190,6 +190,79 @@ async function loadTelegramSupplierUnitCost(supplierId, productId, storeId, fall
   return toMoney(fallbackPrice);
 }
 
+async function createTelegramSupplierReturn(storeId, supplierToken, sku, quantity, reason, chatId, connection) {
+  const { supplier } = await resolveTelegramSupplier(storeId, supplierToken, connection);
+  const product = await loadTelegramPoProduct(storeId, sku, connection);
+  if (!product) {
+    throw new Error(`找不到商品 SKU：${sku}`);
+  }
+
+  const returnQty = Number(quantity);
+  if (!Number.isSafeInteger(returnQty) || returnQty <= 0) {
+    throw new Error("退貨數量不正確");
+  }
+
+  let ownerType = "STORE";
+  let ownerStoreId = storeId;
+  let ownerCompanyId = null;
+  if (supplier.ownerType === "COMPANY") {
+    ownerType = "COMPANY";
+    ownerStoreId = null;
+    ownerCompanyId = Number(supplier.ownerCompanyId);
+  }
+
+  const unitCost = await loadTelegramSupplierUnitCost(
+    supplier.id,
+    product.id,
+    storeId,
+    product.costPrice,
+    product.price,
+    connection
+  );
+  const lineAmount = toMoney(returnQty * unitCost);
+  const returnNo = makeNo("SR");
+
+  const [returnResult] = await connection.query(
+    `
+      INSERT INTO supplier_returns
+        (return_no, owner_type, owner_store_id, owner_company_id, supplier_id, status, return_date, submitted_at, created_by_staff_user_id, note)
+      VALUES (?, ?, ?, ?, ?, 'SUBMITTED', CURDATE(), NOW(), ?, ?)
+    `,
+    [
+      returnNo,
+      ownerType,
+      ownerStoreId,
+      ownerCompanyId,
+      supplier.id,
+      TELEGRAM_SUPPLIER_STAFF_ID,
+      [`Telegram /return chat:${chatId || "-"}`, reason].filter(Boolean).join(" - ")
+    ]
+  );
+
+  const [itemResult] = await connection.query(
+    `
+      INSERT INTO supplier_return_items
+        (return_id, product_id, sku, product_name, quantity, unit_cost, line_amount, reason, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SUBMITTED')
+    `,
+    [returnResult.insertId, product.id, product.sku, product.name, returnQty, unitCost, lineAmount, reason || null]
+  );
+
+  return {
+    returnId: returnResult.insertId,
+    returnItemId: itemResult.insertId,
+    returnNo,
+    supplierName: supplier.name,
+    sku: product.sku,
+    productName: product.name,
+    quantity: returnQty,
+    unitCost,
+    lineAmount,
+    stock: Number(product.stock || 0),
+    status: "SUBMITTED"
+  };
+}
+
 
 async function sendDocument(chatId, filePath, caption = "") {
   try {
@@ -681,6 +754,8 @@ async function handleSupplierHelpCommand(chatId, text) {
     "【換貨 / 退貨】",
     "/return 供應商 SKU 數量 原因",
     "例：/return KINGWAY B-EB-001-S1 1 瑕疵換貨",
+    "/return-done 退貨單號 SKU 數量",
+    "/ret_list",
     "",
     "【入庫】",
     "/receive PO單號 SKU 數量",
@@ -793,6 +868,80 @@ async function handleSupplierPoListCommand(chatId, text, storeId) {
   return true;
 }
 
+async function handleSupplierReturnListCommand(chatId, text, storeId) {
+  const raw = String(text || "").trim();
+  if (!/^\/ret_list(?:\s+\S+)?$/i.test(raw)) return false;
+
+  const parts = raw.split(/\s+/);
+  const supplierFilter = parts[1] || null;
+  const context = await resolveTelegramSupplierContext(storeId);
+  if (context.isChainStore) {
+    await sendMessage(chatId, "直營或加盟門市不可使用供應商退貨，請使用門市請貨流程。");
+    return true;
+  }
+
+  const filters = [];
+  const params = [];
+  const scopeClauses = ["(sr.owner_type = 'STORE' AND sr.owner_store_id = ?)"];
+  const scopeParams = [storeId];
+  if (context.isHqStore && context.companyIds.length) {
+    scopeClauses.push(`(sr.owner_type = 'COMPANY' AND sr.owner_company_id IN (${context.companyIds.map(() => "?").join(",")}))`);
+    scopeParams.push(...context.companyIds);
+  }
+  filters.push(`(${scopeClauses.join(" OR ")})`);
+  if (supplierFilter) {
+    filters.push("s.name = ?");
+    params.push(supplierFilter);
+  }
+
+  const [rows] = await pool.query(
+    `
+      SELECT
+        sr.id,
+        sr.return_no AS returnNo,
+        sr.status,
+        s.name AS supplierName,
+        sri.sku,
+        sri.product_name AS productName,
+        sri.quantity,
+        sri.reason,
+        DATE_FORMAT(COALESCE(sr.submitted_at, sr.created_at), '%Y-%m-%d %H:%i') AS submittedAt
+      FROM supplier_returns sr
+      INNER JOIN supplier_return_items sri
+        ON sri.return_id = sr.id
+      INNER JOIN suppliers s
+        ON s.id = sr.supplier_id
+      WHERE ${filters.join(" AND ")}
+      ORDER BY COALESCE(sr.submitted_at, sr.created_at) DESC, sr.id DESC
+      LIMIT 20
+    `,
+    [...scopeParams, ...params]
+  );
+
+  if (!rows.length) {
+    await sendMessage(chatId, supplierFilter ? `目前沒有 ${supplierFilter} 的新版退貨紀錄。` : "目前沒有新版退貨紀錄。");
+    return true;
+  }
+
+  const lines = [
+    `📦 新供應商退貨紀錄${supplierFilter ? `｜${supplierFilter}` : ""}`,
+    "僅顯示新版 supplier_returns；過去 legacy 退貨保留為歷史紀錄。"
+  ];
+
+  rows.forEach((row) => {
+    lines.push("");
+    lines.push(`${row.returnNo} / ${row.status}`);
+    lines.push(`供應商：${row.supplierName || "-"}`);
+    lines.push(`${row.sku || "-"} / ${row.productName || "-"}`);
+    lines.push(`數量：${Number(row.quantity || 0)}`);
+    if (row.reason) lines.push(`原因：${row.reason}`);
+    lines.push(`日期：${row.submittedAt || "-"}`);
+  });
+
+  await sendMessage(chatId, lines.join("\n"));
+  return true;
+}
+
 
 async function handleSupplierListCommand(chatId, text, storeId) {
   const raw = String(text || "").trim();
@@ -870,77 +1019,163 @@ async function handleSupplierListCommand(chatId, text, storeId) {
 }
 
 async function handleSupplierReturnDoneCommand(chatId, text, storeId) {
-  const match = String(text || "").trim().match(/^\/return-done\s+(\d+)$/i);
-  if (!match) return false;
+  const parts = String(text || "").trim().split(/\s+/);
+  if (!parts.length || !/^\/return-done$/i.test(parts[0])) return false;
 
-  const requestId = Number(match[1]);
+  let returnToken = null;
+  let sku = null;
+  let doneQty = 0;
 
-  const [[reqRow]] = await pool.query(
-    `
-      SELECT sr.id, sr.request_type AS requestType, sr.status
-      FROM supplier_requests sr
-      INNER JOIN supplier_request_items sri ON sri.supplier_request_id = sr.id
-      INNER JOIN products p ON p.id = sri.product_id AND p.store_id = ?
-      WHERE sr.id = ?
-      LIMIT 1
-    `,
-    [storeId, requestId]
-  );
-
-  if (!reqRow) {
-    await sendMessage(chatId, `找不到退貨單 #${requestId}`);
+  if (parts.length === 3) {
+    sku = parts[1];
+    doneQty = Number(parts[2] || 0);
+    if (/^\d+$/.test(sku)) {
+      await sendMessage(chatId, "新版 /return-done 請使用：/return-done 退貨單號 SKU 數量，或 /return-done SKU 數量");
+      return true;
+    }
+  } else if (parts.length >= 4) {
+    returnToken = parts[1];
+    sku = parts[2];
+    doneQty = Number(parts[3] || 0);
+  } else {
+    await sendMessage(chatId, "格式錯誤：/return-done 退貨單號 SKU 數量，或 /return-done SKU 數量");
     return true;
   }
 
-  if (reqRow.requestType !== "RETURN") {
-    await sendMessage(chatId, `#${requestId} 不是退貨單。`);
+  if (!sku || doneQty <= 0) {
+    await sendMessage(chatId, "格式錯誤：/return-done 退貨單號 SKU 數量，或 /return-done SKU 數量");
     return true;
   }
 
-  if (reqRow.status === "RETURN_CONFIRMED") {
-    await sendMessage(chatId, `退貨單 #${requestId} 已確認過，未重複扣庫存。`);
-    return true;
+  try {
+    const result = await withTransaction(async (connection) => {
+      const context = await resolveTelegramSupplierContext(storeId, connection);
+      if (context.isChainStore) {
+        throw new Error("直營或加盟門市不可使用供應商退貨，請使用門市請貨流程。");
+      }
+
+      const where = [
+        "srri.sku = ?",
+        "sr.status IN ('SUBMITTED', 'APPROVED')",
+        "srri.status IN ('SUBMITTED', 'APPROVED')"
+      ];
+      const params = [sku];
+      const returnParams = [];
+
+      const scopeClauses = ["(sr.owner_type = 'STORE' AND sr.owner_store_id = ?)"];
+      const scopeParams = [storeId];
+      if (context.isHqStore && context.companyIds.length) {
+        scopeClauses.push(`(sr.owner_type = 'COMPANY' AND sr.owner_company_id IN (${context.companyIds.map(() => "?").join(",")}))`);
+        scopeParams.push(...context.companyIds);
+      }
+      where.push(`(${scopeClauses.join(" OR ")})`);
+
+      if (returnToken) {
+        if (/^\d+$/.test(returnToken)) {
+          where.push("sr.id = ?");
+          returnParams.push(Number(returnToken));
+        } else {
+          where.push("sr.return_no = ?");
+          returnParams.push(returnToken);
+        }
+      }
+
+      const [matches] = await connection.query(
+        `
+          SELECT
+            sr.id AS returnId,
+            sr.return_no AS returnNo,
+            sr.status,
+            s.name AS supplierName,
+            srri.id AS itemId,
+            srri.product_id AS productId,
+            srri.quantity,
+            srri.inventory_movement_id AS inventoryMovementId,
+            srri.sku,
+            srri.product_name AS productName,
+            p.stock
+          FROM supplier_returns sr
+          INNER JOIN supplier_return_items srri
+            ON srri.return_id = sr.id
+          INNER JOIN products p
+            ON p.id = srri.product_id
+           AND p.store_id = ?
+          INNER JOIN suppliers s
+            ON s.id = sr.supplier_id
+          WHERE ${where.join(" AND ")}
+          ORDER BY sr.submitted_at ASC, sr.created_at ASC, sr.id ASC
+          FOR UPDATE
+        `,
+        [storeId, ...params, ...scopeParams, ...returnParams]
+      );
+
+      if (!matches.length) {
+        throw new Error(returnToken ? `找不到可出貨的退貨單：${returnToken} / ${sku}` : `找不到 SKU ${sku} 的待出貨退貨單`);
+      }
+      if (!returnToken && matches.length > 1) {
+        throw new Error("有多筆待出貨退貨單，請使用 /return-done 退貨單號 SKU 數量");
+      }
+
+      const item = matches[0];
+      if (item.inventoryMovementId) {
+        throw new Error("此退貨單已出貨，不能重複扣庫存");
+      }
+      if (Number(doneQty) !== Number(item.quantity)) {
+        throw new Error(`退貨數量需等於退貨單數量：${item.quantity}`);
+      }
+      if (Number(item.stock || 0) < Number(item.quantity || 0)) {
+        throw new Error(`${item.sku} 庫存不足，無法退貨出庫`);
+      }
+
+      await connection.query(
+        "UPDATE products SET stock = stock - ? WHERE id = ? AND store_id = ?",
+        [item.quantity, item.productId, storeId]
+      );
+      const [movementResult] = await connection.query(
+        `
+          INSERT INTO inventory_movements
+            (store_id, product_id, movement_type, quantity, reference_type, reference_id, created_by, notes)
+          VALUES (?, ?, 'OUT', ?, 'SUPPLIER_RETURN', ?, ?, ?)
+        `,
+        [storeId, item.productId, Math.abs(Number(item.quantity || 0)), item.returnId, TELEGRAM_SUPPLIER_STAFF_ID, `Telegram /return-done ${item.returnNo} / ${item.sku}`]
+      );
+      await connection.query(
+        "UPDATE supplier_return_items SET status = 'SHIPPED', inventory_movement_id = ? WHERE id = ?",
+        [movementResult.insertId, item.itemId]
+      );
+      await connection.query(
+        "UPDATE supplier_returns SET status = 'SHIPPED', shipped_at = NOW() WHERE id = ?",
+        [item.returnId]
+      );
+
+      return {
+        returnNo: item.returnNo,
+        supplierName: item.supplierName,
+        sku: item.sku,
+        productName: item.productName,
+        quantity: Number(item.quantity || 0),
+        stockBefore: Number(item.stock || 0),
+        stockAfter: Number(item.stock || 0) - Number(item.quantity || 0),
+        status: "SHIPPED"
+      };
+    });
+
+    await sendMessage(
+      chatId,
+      [
+        "✅ 供應商退貨出貨已完成",
+        `退貨單號：${result.returnNo}`,
+        `供應商：${result.supplierName || "-"}`,
+        `SKU：${result.sku}`,
+        `商品：${result.productName}`,
+        `退貨數量：${result.quantity}`,
+        `庫存：${result.stockBefore} → ${result.stockAfter}`,
+        `狀態：${result.status}`
+      ].join("\n")
+    );
+  } catch (error) {
+    await sendMessage(chatId, error.message || "供應商退貨出貨失敗");
   }
-
-  const [[item]] = await pool.query(
-    `
-      SELECT sri.id, sri.product_id AS productId, sri.quantity,
-             p.sku, p.name, p.stock
-      FROM supplier_request_items sri
-      JOIN products p ON p.id = sri.product_id AND p.store_id = ?
-      WHERE sri.supplier_request_id = ?
-      LIMIT 1
-    `,
-    [storeId, requestId]
-  );
-
-  if (!item) {
-    await sendMessage(chatId, `退貨單 #${requestId} 沒有商品資料`);
-    return true;
-  }
-
-  await pool.query(
-    `UPDATE products SET stock = GREATEST(stock - ?, 0) WHERE id = ? AND store_id = ?`,
-    [Number(item.quantity || 0), item.productId, storeId]
-  );
-
-  await pool.query(
-    `UPDATE supplier_requests SET status = 'RETURN_CONFIRMED', supplier_responded_at = NOW() WHERE id = ?`,
-    [requestId]
-  );
-
-  await sendMessage(
-    chatId,
-    [
-      "✅ 退貨完成",
-      `單號：#${requestId}`,
-      `SKU：${item.sku}`,
-      `商品：${item.name}`,
-      `退貨數量：${item.quantity}`,
-      `庫存：${Number(item.stock || 0)} → ${Math.max(Number(item.stock || 0) - Number(item.quantity || 0), 0)}`,
-      "狀態：RETURN_CONFIRMED"
-    ].join("\n")
-  );
 
   return true;
 }
@@ -1266,71 +1501,55 @@ async function handleSupplierCommand(chatId, text, storeId) {
     return true;
   }
 
-  let supplierName = "kingway";
-  let skuIndex = 1;
-
-  if (parts.length >= 4 && !parts[1].includes("-")) {
-    supplierName = parts[1];
-    skuIndex = 2;
+  if (parts.length < 4) {
+    await sendMessage(chatId, "新版 /return 需指定供應商：/return 供應商 SKU 數量 原因");
+    return true;
   }
-
-  const sku = parts[skuIndex];
-  const quantity = Number(parts[skuIndex + 1] || 0);
-  const note = parts.slice(skuIndex + 2).join(" ") || null;
-
-  if (!sku || quantity <= 0) {
-    await sendMessage(chatId, "格式錯誤：/po [供應商] SKU 數量 備註 或 /return [供應商] SKU 數量 原因");
+  if (parts.length >= 3 && Number(parts[2]) > 0) {
+    await sendMessage(chatId, "新版 /return 需指定供應商：/return 供應商 SKU 數量 原因");
     return true;
   }
 
-  const [[product]] = await pool.query(
-    `SELECT id, sku, name, stock FROM products WHERE sku = ? AND store_id = ? LIMIT 1`,
-    [sku, storeId]
-  );
+  const supplierToken = parts[1];
+  const sku = parts[2];
+  const quantity = Number(parts[3] || 0);
+  const reason = parts.slice(4).join(" ") || null;
 
-  if (!product) {
-    await sendMessage(chatId, `找不到商品 SKU：${sku}`);
+  if (!supplierToken || !sku || quantity <= 0) {
+    await sendMessage(chatId, "格式錯誤：/return 供應商 SKU 數量 原因");
     return true;
   }
 
-  const requestType = command === "po" ? "PURCHASE_ORDER" : "RETURN";
-  const [requestResult] = await pool.query(
-    `
-      INSERT INTO supplier_requests
-      (request_type, status, supplier_name, note, requested_by_staff_id)
-      VALUES (?, 'PENDING_SUPPLIER', ?, ?, 1)
-    `,
-    [requestType, supplierName, note]
-  );
-
-  await pool.query(
-    `
-      INSERT INTO supplier_request_items
-      (supplier_request_id, product_id, quantity, reason, note)
-      VALUES (?, ?, ?, ?, ?)
-    `,
-    [
-      requestResult.insertId,
-      product.id,
+  try {
+    const result = await withTransaction((connection) => createTelegramSupplierReturn(
+      storeId,
+      supplierToken,
+      sku,
       quantity,
-      command === "return" ? note : null,
-      command === "po" ? note : null
-    ]
-  );
+      reason,
+      chatId,
+      connection
+    ));
 
-  await sendMessage(
-    chatId,
-    [
-      command === "po" ? "✅ 發注單已建立" : "✅ 退貨單已建立",
-      `單號：#${requestResult.insertId}`,
-      `供應商：${supplierName}`,
-      `SKU：${product.sku}`,
-      `商品：${product.name}`,
-      `數量：${quantity}`,
-      `目前庫存：${product.stock}`,
-      note ? `${command === "po" ? "備註" : "原因"}：${note}` : null
-    ].filter(Boolean).join("\n")
-  );
+    await sendMessage(
+      chatId,
+      [
+        "✅ 供應商退貨單已建立",
+        `供應商：${result.supplierName}`,
+        `退貨單號：${result.returnNo}`,
+        `SKU：${result.sku}`,
+        `商品：${result.productName}`,
+        `數量：${result.quantity}`,
+        `單價：NT$ ${Number(result.unitCost || 0).toLocaleString()}`,
+        `小計：NT$ ${Number(result.lineAmount || 0).toLocaleString()}`,
+        `目前庫存：${result.stock}`,
+        reason ? `原因：${reason}` : null,
+        "狀態：已送出"
+      ].filter(Boolean).join("\n")
+    );
+  } catch (error) {
+    await sendMessage(chatId, error.message || "供應商退貨建立失敗");
+  }
 
   return true;
 }
@@ -1389,6 +1608,78 @@ router.post("/webhook", async (req, res) => {
             ? `✅ LINE 訂單 #${orderId} 已確認，等待客戶付款。`
             : `❌ LINE 訂單 #${orderId} 已拒絕。`
         );
+      }
+
+      return res.json({ ok: true });
+    }
+
+    if (callbackQuery?.data && String(callbackQuery.data).startsWith("supplier_return:")) {
+      const parts = String(callbackQuery.data).split(":");
+      const action = parts[1];
+      const returnId = Number(parts[2]);
+      const callbackStoreId = Number(parts[3]);
+      const callbackStoreIdFilter = Number.isSafeInteger(callbackStoreId) && callbackStoreId > 0 ? callbackStoreId : Number(telegramStoreId);
+      const chatId = callbackQuery.message?.chat?.id;
+
+      if (!returnId || !["approve", "reject"].includes(action)) {
+        if (chatId) await sendMessage(chatId, "此退貨按鈕資料無效。");
+        return res.json({ ok: true });
+      }
+
+      try {
+        const result = await withTransaction(async (connection) => {
+          const context = await resolveTelegramSupplierContext(callbackStoreIdFilter, connection);
+          const scopeClauses = ["(sr.owner_type = 'STORE' AND sr.owner_store_id = ?)"];
+          const scopeParams = [callbackStoreIdFilter];
+          if (context.isHqStore && context.companyIds.length) {
+            scopeClauses.push(`(sr.owner_type = 'COMPANY' AND sr.owner_company_id IN (${context.companyIds.map(() => "?").join(",")}))`);
+            scopeParams.push(...context.companyIds);
+          }
+          const [rows] = await connection.query(
+            `
+              SELECT sr.id, sr.return_no AS returnNo, sr.status, s.name AS supplierName
+              FROM supplier_returns sr
+              INNER JOIN suppliers s ON s.id = sr.supplier_id
+              WHERE sr.id = ?
+                AND (${scopeClauses.join(" OR ")})
+              FOR UPDATE
+            `,
+            [returnId, ...scopeParams]
+          );
+          const row = rows[0];
+          if (!row) throw new Error(`找不到退貨單 #${returnId}`);
+          if (!["SUBMITTED", "APPROVED"].includes(row.status)) {
+            throw new Error(`退貨單 ${row.returnNo} 目前狀態不可變更：${row.status}`);
+          }
+
+          const nextStatus = action === "approve" ? "APPROVED" : "CANCELED";
+          if (action === "approve") {
+            await connection.query(
+              "UPDATE supplier_returns SET status = 'APPROVED', approved_at = NOW(), approved_by_staff_user_id = ? WHERE id = ?",
+              [TELEGRAM_SUPPLIER_STAFF_ID, returnId]
+            );
+            await connection.query("UPDATE supplier_return_items SET status = 'APPROVED' WHERE return_id = ?", [returnId]);
+          } else {
+            await connection.query(
+              "UPDATE supplier_returns SET status = 'CANCELED', canceled_at = NOW() WHERE id = ?",
+              [returnId]
+            );
+            await connection.query("UPDATE supplier_return_items SET status = 'CANCELED' WHERE return_id = ?", [returnId]);
+          }
+
+          return { returnNo: row.returnNo, supplierName: row.supplierName, nextStatus };
+        });
+
+        if (chatId) {
+          await sendMessage(
+            chatId,
+            action === "approve"
+              ? `✅ 退貨單 ${result.returnNo} 已核准，請執行 /return-done ${result.returnNo} SKU 數量 完成退貨出貨。`
+              : `❌ 退貨單 ${result.returnNo} 已取消。`
+          );
+        }
+      } catch (error) {
+        if (chatId) await sendMessage(chatId, error.message || "退貨單處理失敗");
       }
 
       return res.json({ ok: true });
@@ -1632,6 +1923,10 @@ router.post("/webhook", async (req, res) => {
     }
 
     if (await handleSupplierPoListCommand(chatId, text, telegramStoreId)) {
+      return res.sendStatus(200);
+    }
+
+    if (await handleSupplierReturnListCommand(chatId, text, telegramStoreId)) {
       return res.sendStatus(200);
     }
 
