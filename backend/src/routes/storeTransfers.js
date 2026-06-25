@@ -7,6 +7,7 @@ const {
   notifyStoreTransferReceived,
   notifyStoreTransferShipped
 } = require("../services/notificationEventService");
+const { createKpiEventOnce } = require("../services/staffKpiService");
 const { createError } = require("../utils/errors");
 
 const router = express.Router();
@@ -604,6 +605,25 @@ router.patch("/company/:companyId/:transferId", requireHqCompanyRole(HQ_WRITE_RO
     });
     const transfer = await loadTransfer(transferId);
     transfer.items = await loadTransferItems(transferId);
+    createKpiEventOnce({
+      companyId: transfer.companyId,
+      storeId: transfer.fromStoreId,
+      staffUserId: req.user.id,
+      eventType: "STORE_TRANSFER_SHIPPED",
+      refType: "STORE_TRANSFER",
+      refId: transfer.id,
+      title: `本部出貨完成：${transfer.transferNo}`,
+      score: 1,
+      occurredAt: transfer.shippedAt,
+      completedAt: transfer.shippedAt,
+      metadata: { toStoreId: transfer.toStoreId, itemCount: transfer.items.length }
+    }).catch((kpiError) => {
+      console.warn("[staff-kpi] transfer shipped KPI event failed", {
+        transferId,
+        transferNo: transfer.transferNo,
+        message: kpiError.message
+      });
+    });
     notifyStoreTransferShipped(transfer).catch((notificationError) => {
       console.warn("[notification-event] STORE_TRANSFER_SHIPPED failed", {
         transferId,
@@ -882,6 +902,25 @@ router.post("/:transferId/receive", requireStoreScope(), requireInboundStoreType
 
     const updated = await loadTransfer(transferId);
     updated.items = await loadTransferItems(transferId);
+    createKpiEventOnce({
+      companyId: updated.companyId,
+      storeId: updated.toStoreId,
+      staffUserId: req.user.id,
+      eventType: "STORE_TRANSFER_RECEIVED",
+      refType: "STORE_TRANSFER",
+      refId: updated.id,
+      title: `門市入庫完成：${updated.transferNo}`,
+      score: 1,
+      occurredAt: updated.receivedAt || new Date(),
+      completedAt: updated.receivedAt || new Date(),
+      metadata: { fromStoreId: updated.fromStoreId, itemCount: updated.items.length }
+    }).catch((kpiError) => {
+      console.warn("[staff-kpi] transfer received KPI event failed", {
+        transferId,
+        transferNo: updated.transferNo,
+        message: kpiError.message
+      });
+    });
     notifyStoreTransferReceived(updated).catch((notificationError) => {
       console.warn("[notification-event] STORE_TRANSFER_RECEIVED failed", {
         transferId,

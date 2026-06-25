@@ -48,6 +48,7 @@ export const PATH_MENU_KEY_MAP = [
   { path: "/staff-attendance", key: "staff" },
   { path: "/attendance", key: "staff" },
   { path: "/kpi", key: "staff" },
+  { path: "/staff-kpi", key: "staff" },
   { path: "/payroll", key: "staff" },
   { path: "/coupons", key: "coupons" },
   { path: "/settings/line", key: "line" },

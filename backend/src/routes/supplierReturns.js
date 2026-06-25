@@ -7,6 +7,7 @@ const {
   notifySupplierReturnCreated,
   notifySupplierReturnShipped
 } = require("../services/notificationEventService");
+const { createKpiEventOnce } = require("../services/staffKpiService");
 
 const router = express.Router();
 
@@ -708,6 +709,27 @@ router.post("/", requireStoreAdminRole, async (req, res, next) => {
 
     const supplierReturn = await loadReturn(returnId, context);
     supplierReturn.items = await loadReturnItems(returnId);
+    createKpiEventOnce({
+      companyId: supplierReturn.ownerCompanyId,
+      storeId: context.storeId,
+      staffUserId: context.staffId,
+      eventType: "SUPPLIER_RETURN_CREATED",
+      refType: "SUPPLIER_RETURN",
+      refId: supplierReturn.id,
+      title: `供應商退貨建立：${supplierReturn.returnNo}`,
+      score: 1,
+      metadata: {
+        supplierId: supplierReturn.supplierId,
+        supplierName: supplierReturn.supplierName,
+        itemCount: supplierReturn.items.length
+      }
+    }).catch((kpiError) => {
+      console.warn("[staff-kpi] supplier return created KPI event failed", {
+        returnId,
+        returnNo: supplierReturn.returnNo,
+        message: kpiError.message
+      });
+    });
     notifySupplierReturnCreated({
       ...supplierReturn,
       storeId: context.storeId
@@ -812,6 +834,29 @@ router.post("/:id/ship", requireStoreAdminRole, async (req, res, next) => {
 
     const supplierReturn = await loadReturn(returnId, context);
     supplierReturn.items = await loadReturnItems(returnId);
+    createKpiEventOnce({
+      companyId: supplierReturn.ownerCompanyId,
+      storeId: context.storeId,
+      staffUserId: context.staffId,
+      eventType: "SUPPLIER_RETURN_SHIPPED",
+      refType: "SUPPLIER_RETURN",
+      refId: supplierReturn.id,
+      title: `供應商退貨出貨：${supplierReturn.returnNo}`,
+      score: 1,
+      occurredAt: supplierReturn.shippedAt || new Date(),
+      completedAt: supplierReturn.shippedAt || new Date(),
+      metadata: {
+        supplierId: supplierReturn.supplierId,
+        supplierName: supplierReturn.supplierName,
+        itemCount: supplierReturn.items.length
+      }
+    }).catch((kpiError) => {
+      console.warn("[staff-kpi] supplier return shipped KPI event failed", {
+        returnId,
+        returnNo: supplierReturn.returnNo,
+        message: kpiError.message
+      });
+    });
     notifySupplierReturnShipped({
       ...supplierReturn,
       storeId: context.storeId

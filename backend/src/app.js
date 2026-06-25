@@ -47,6 +47,7 @@ const lineNotificationSettingsRoutes = require("./routes/lineNotificationSetting
 const salesRoutes = require("./routes/sales");
 const attendanceRoutes = require("./routes/attendance");
 const kpiRoutes = require("./routes/kpi");
+const staffKpiRoutes = require("./routes/staffKpi");
 const payrollRoutes = require("./routes/payroll");
 const settingsRoutes = require("./routes/settings");
 const storeSettingsRoutes = require("./routes/storeSettings");
@@ -548,6 +549,7 @@ app.use("/api/supplier-purchases", supplierPurchaseRoutes);
 app.use("/api/supplier-returns", supplierReturnRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/kpi", kpiRoutes);
+app.use("/api/staff-kpi", staffKpiRoutes);
 app.use("/api/payroll", payrollRoutes);
 app.use("/api/telegram", telegramWebhookRoutes);
 app.use("/api/line", lineRoutes);

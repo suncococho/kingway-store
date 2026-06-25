@@ -1,4 +1,5 @@
 const { pool } = require("../db");
+const { createKpiEventOnce } = require("./staffKpiService");
 
 const HQ_RELATIONSHIP_TYPES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
 const PRIORITY_ORDER = {
@@ -380,7 +381,36 @@ async function updateNotificationStatus(id, context, action, options = {}, conne
     );
   }
 
-  return loadVisibleNotification(notificationId, context, connection);
+  const updated = await loadVisibleNotification(notificationId, context, connection);
+  if (action === "done" && updated) {
+    try {
+      await createKpiEventOnce({
+        companyId: updated.companyId,
+        storeId: updated.storeId || context.storeId,
+        staffUserId: context.staffUserId,
+        eventType: "NOTIFICATION_DONE",
+        refType: "STAFF_NOTIFICATION",
+        refId: updated.id,
+        title: `系統通知完成：${updated.title}`,
+        score: 0.5,
+        occurredAt: updated.doneAt,
+        completedAt: updated.doneAt,
+        metadata: {
+          notificationType: updated.type,
+          priority: updated.priority,
+          sourceRefType: updated.refType,
+          sourceRefId: updated.refId
+        }
+      }, connection);
+    } catch (kpiError) {
+      console.warn("[staff-kpi] notification KPI event failed", {
+        notificationId,
+        message: kpiError.message
+      });
+    }
+  }
+
+  return updated;
 }
 
 module.exports = {

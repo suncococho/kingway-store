@@ -1,5 +1,6 @@
 const { pool } = require("../db");
 const { createNotification } = require("./staffNotificationService");
+const { createKpiEventOnce } = require("./staffKpiService");
 
 const HQ_RELATIONSHIP_TYPES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
 const MANAGER_ROLES = new Set(["ADMIN", "MANAGER"]);
@@ -434,7 +435,49 @@ async function updateInstanceStatus(instanceId, context, action, note = null, co
     `SELECT ${selectInstanceColumns("sti")} FROM staff_task_instances sti WHERE sti.id = ? LIMIT 1`,
     [id]
   );
-  return normalizeInstance(updated[0]);
+  const task = normalizeInstance(updated[0]);
+  try {
+    if (action === "done") {
+      await createKpiEventOnce({
+        companyId: task.companyId || context.companyIds[0] || null,
+        storeId: task.storeId,
+        staffUserId: context.staffUserId,
+        eventType: "DAILY_TASK_DONE",
+        refType: "STAFF_TASK_INSTANCE",
+        refId: task.id,
+        title: `今日任務完成：${task.title}`,
+        score: task.isOverdue ? 1 : 2,
+        occurredAt: task.completedAt,
+        dueAt: task.dueAt,
+        completedAt: task.completedAt,
+        isLate: task.isOverdue,
+        metadata: { category: task.category, priority: task.priority }
+      }, connection);
+    } else if (action === "skip") {
+      await createKpiEventOnce({
+        companyId: task.companyId || context.companyIds[0] || null,
+        storeId: task.storeId,
+        staffUserId: context.staffUserId,
+        eventType: "DAILY_TASK_SKIPPED",
+        refType: "STAFF_TASK_INSTANCE",
+        refId: task.id,
+        title: `今日任務略過：${task.title}`,
+        score: 0,
+        occurredAt: task.skippedAt,
+        dueAt: task.dueAt,
+        completedAt: task.skippedAt,
+        isLate: task.isOverdue,
+        metadata: { category: task.category, priority: task.priority }
+      }, connection);
+    }
+  } catch (kpiError) {
+    console.warn("[staff-kpi] daily task KPI event failed", {
+      taskInstanceId: task.id,
+      action,
+      message: kpiError.message
+    });
+  }
+  return task;
 }
 
 async function getTaskSettings(context, connection = pool) {

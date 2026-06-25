@@ -4,6 +4,7 @@ const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { requireFeature } = require("../services/storeAccessService");
 const { notifySupplierPurchaseOrderCreated } = require("../services/notificationEventService");
+const { createKpiEventOnce } = require("../services/staffKpiService");
 const { buildDemoKeywordCondition, buildDemoExclusionCondition, isExcludeDemoRequested } = require("../utils/demoDataFilter");
 
 const router = express.Router();
@@ -887,6 +888,27 @@ router.post("/", requireStoreAdminRole, async (req, res, next) => {
 
     const purchaseOrder = await loadPurchaseOrder(purchaseOrderId, await resolveContext(req));
     purchaseOrder.items = await loadItems(purchaseOrderId);
+    createKpiEventOnce({
+      companyId: purchaseOrder.companyId,
+      storeId: purchaseOrder.storeId,
+      staffUserId: context.staffId,
+      eventType: "SUPPLIER_PO_CREATED",
+      refType: "SUPPLIER_PURCHASE_ORDER",
+      refId: purchaseOrder.id,
+      title: `供應商發注建立：${purchaseOrder.poNo}`,
+      score: 1,
+      metadata: {
+        supplierId: purchaseOrder.supplierId,
+        supplierName: purchaseOrder.supplierName,
+        itemCount: purchaseOrder.items.length
+      }
+    }).catch((kpiError) => {
+      console.warn("[staff-kpi] supplier PO KPI event failed", {
+        purchaseOrderId,
+        poNo: purchaseOrder.poNo,
+        message: kpiError.message
+      });
+    });
     notifySupplierPurchaseOrderCreated(purchaseOrder).catch((notificationError) => {
       console.warn("[notification-event] SUPPLIER_PURCHASE_ORDER_CREATED failed", {
         purchaseOrderId,

@@ -1,4 +1,5 @@
 const { pool } = require("../db");
+const { createKpiEventOnce } = require("./staffKpiService");
 
 const HQ_RELATIONSHIP_TYPES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
 const CHAIN_RELATIONSHIP_TYPES = new Set(["DIRECT_STORE", "FRANCHISE_STORE"]);
@@ -407,7 +408,34 @@ async function markRead(messageId, context, connection = pool) {
     `,
     [message.id, context.staffUserId, context.storeId]
   );
-  return getMessageById(message.id, context, connection);
+  const updated = await getMessageById(message.id, context, connection);
+  try {
+    await createKpiEventOnce({
+      companyId: updated.companyId,
+      storeId: context.storeId,
+      staffUserId: context.staffUserId,
+      eventType: "INTERNAL_MESSAGE_READ",
+      refType: "INTERNAL_MESSAGE",
+      refId: updated.id,
+      title: `訊息已讀：${updated.title}`,
+      score: 0.2,
+      occurredAt: updated.readAt,
+      completedAt: updated.readAt,
+      metadata: {
+        priority: updated.priority,
+        fromStoreId: updated.fromStoreId,
+        toStoreId: updated.toStoreId,
+        toAllStores: updated.toAllStores
+      }
+    }, connection);
+  } catch (kpiError) {
+    console.warn("[staff-kpi] internal message KPI event failed", {
+      messageId: message.id,
+      staffUserId: context.staffUserId,
+      message: kpiError.message
+    });
+  }
+  return updated;
 }
 
 async function archiveMessage(messageId, context, connection = pool) {
