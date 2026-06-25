@@ -182,6 +182,13 @@ Priority 1:
 - Disable `lineOrder.js` customer "order received" push.
 - Keep POS `LINE_ORDER_CREATED` and customer success page.
 
+Follow-up implementation:
+
+- `backend/src/routes/lineOrder.js` order completion customer push was disabled after this audit.
+- POS `LINE_ORDER_CREATED` notification remains active.
+- Customer-facing order success response remains active.
+- Required customer pushes such as pickup notice, repair quote confirmation, purchase confirmation link, and explicit staff follow-up are unchanged.
+
 Priority 2:
 
 - Add a central customer LINE push policy helper:

@@ -794,34 +794,6 @@ router.post("/create", async (req, res, next) => {
       });
     }
 
-    if (responsePayload?.ok && !responsePayload.reusedExisting) {
-      setImmediate(async () => {
-        try {
-          const { sendLineMessage } = require("../utils/line");
-          const config = require("../config");
-
-          if (
-            responsePayload.customer?.lineUserId &&
-            !String(responsePayload.customer.lineUserId).startsWith("WEB-GUEST-")
-          ) {
-            await sendLineMessage(
-              config,
-              responsePayload.customer.lineUserId,
-              [
-                {
-                  type: "text",
-                  text:
-                    "已收到您的訂單，\n門市將盡快與您聯繫確認。"
-                }
-              ]
-            );
-          }
-        } catch (error) {
-          console.error("[line-order customer notify failed]", error.message);
-        }
-      });
-    }
-
     return res.json(result);
   } catch (error) {
     return next(error);
