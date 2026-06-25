@@ -7,6 +7,10 @@ import {
   markNotificationRead,
   snoozeNotification
 } from "../lib/staffNotificationsApi";
+import {
+  fetchPendingMessages,
+  markMessageRead
+} from "../lib/internalMessagesApi";
 
 const SUPPRESS_KEY = "kingway_staff_notification_popup_suppress";
 const SUPPRESS_MS = 5 * 60 * 1000;
@@ -16,6 +20,13 @@ const PRIORITY_LABELS = {
   NORMAL: "通知",
   IMPORTANT: "重要",
   URGENT: "緊急"
+};
+
+const PRIORITY_RANK = {
+  URGENT: 6,
+  IMPORTANT: 4,
+  NORMAL: 2,
+  LOW: 1
 };
 
 function getPriorityTone(priority) {
@@ -38,32 +49,74 @@ function getSuppressedIds() {
   }
 }
 
-function suppressNotification(id) {
+function getSuppressId(item) {
+  return `${item.kind}:${item.id}`;
+}
+
+function suppressNotification(item) {
   const suppressed = getSuppressedIds();
-  suppressed[String(id)] = Date.now() + SUPPRESS_MS;
+  suppressed[getSuppressId(item)] = Date.now() + SUPPRESS_MS;
   sessionStorage.setItem(SUPPRESS_KEY, JSON.stringify(suppressed));
+}
+
+function normalizeNotificationItem(notification) {
+  return {
+    kind: "NOTIFICATION",
+    id: notification.id,
+    priority: notification.priority,
+    title: notification.title,
+    message: notification.message,
+    targetUrl: notification.targetUrl,
+    createdAt: notification.createdAt,
+    sortRank: (PRIORITY_RANK[notification.priority] || 0) + 0.2,
+    raw: notification
+  };
+}
+
+function normalizeMessageItem(message) {
+  return {
+    kind: "MESSAGE",
+    id: message.id,
+    priority: message.priority,
+    title: message.title,
+    message: message.body || "本部或門市傳來新的訊息，請確認。",
+    targetUrl: `/messages?messageId=${message.id}`,
+    createdAt: message.createdAt,
+    sortRank: PRIORITY_RANK[message.priority] || 0,
+    raw: message
+  };
 }
 
 function StaffNotificationPopup() {
   const navigate = useNavigate();
-  const [notifications, setNotifications] = useState([]);
-  const [activeNotification, setActiveNotification] = useState(null);
+  const [pendingItems, setPendingItems] = useState([]);
+  const [activeItem, setActiveItem] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const visibleNotification = useMemo(() => {
-    if (activeNotification) return activeNotification;
+  const visibleItem = useMemo(() => {
+    if (activeItem) return activeItem;
     const suppressed = getSuppressedIds();
-    return notifications.find((notification) => !suppressed[String(notification.id)]) || null;
-  }, [activeNotification, notifications]);
+    return pendingItems.find((item) => !suppressed[getSuppressId(item)]) || null;
+  }, [activeItem, pendingItems]);
 
   async function loadPending() {
     try {
-      const response = await fetchPendingNotifications();
-      setNotifications(response.notifications || []);
-      setActiveNotification(null);
+      const [notificationResponse, messageResponse] = await Promise.all([
+        fetchPendingNotifications(),
+        fetchPendingMessages()
+      ]);
+      const items = [
+        ...(notificationResponse.notifications || []).map(normalizeNotificationItem),
+        ...(messageResponse.messages || []).map(normalizeMessageItem)
+      ].sort((a, b) => {
+        if (b.sortRank !== a.sortRank) return b.sortRank - a.sortRank;
+        return String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
+      });
+      setPendingItems(items);
+      setActiveItem(null);
     } catch (_error) {
-      setNotifications([]);
-      setActiveNotification(null);
+      setPendingItems([]);
+      setActiveItem(null);
     }
   }
 
@@ -83,12 +136,12 @@ function StaffNotificationPopup() {
   }, []);
 
   useEffect(() => {
-    if (visibleNotification && !activeNotification) {
-      setActiveNotification(visibleNotification);
+    if (visibleItem && !activeItem) {
+      setActiveItem(visibleItem);
     }
-  }, [activeNotification, visibleNotification]);
+  }, [activeItem, visibleItem]);
 
-  if (!activeNotification) {
+  if (!activeItem) {
     return null;
   }
 
@@ -96,23 +149,30 @@ function StaffNotificationPopup() {
     if (busy) return;
     try {
       setBusy(true);
-      if (action === "read") {
-        await markNotificationRead(activeNotification.id);
+      if (activeItem.kind === "MESSAGE") {
+        if (action === "read" || action === "go") {
+          await markMessageRead(activeItem.id);
+        }
+        if (action === "go") {
+          navigate(activeItem.targetUrl || "/messages");
+        }
+      } else if (action === "read") {
+        await markNotificationRead(activeItem.id);
       } else if (action === "done") {
-        await markNotificationDone(activeNotification.id);
+        await markNotificationDone(activeItem.id);
       } else if (action === "snooze") {
-        await snoozeNotification(activeNotification.id, 10);
+        await snoozeNotification(activeItem.id, 10);
       } else if (action === "go") {
-        await markNotificationRead(activeNotification.id);
-        if (activeNotification.targetUrl) {
-          navigate(activeNotification.targetUrl);
+        await markNotificationRead(activeItem.id);
+        if (activeItem.targetUrl) {
+          navigate(activeItem.targetUrl);
         }
       }
-      suppressNotification(activeNotification.id);
-      setActiveNotification(null);
+      suppressNotification(activeItem);
+      setActiveItem(null);
       await loadPending();
     } catch (error) {
-      window.alert(error?.message || "通知處理失敗");
+      window.alert(error?.message || "訊息處理失敗");
     } finally {
       setBusy(false);
     }
@@ -123,31 +183,35 @@ function StaffNotificationPopup() {
       <section className="content-card section-panel" role="dialog" aria-modal="true" aria-labelledby="staff-notification-title" style={{ maxWidth: 560, width: "min(560px, calc(100vw - 32px))" }}>
         <div className="section-heading-row">
           <div>
-            <StatusBadge tone={getPriorityTone(activeNotification.priority)}>
-              {PRIORITY_LABELS[activeNotification.priority] || activeNotification.priority}
+            <StatusBadge tone={getPriorityTone(activeItem.priority)}>
+              {PRIORITY_LABELS[activeItem.priority] || activeItem.priority}
             </StatusBadge>
-            <h2 id="staff-notification-title" style={{ marginTop: 12 }}>新的系統通知</h2>
+            <h2 id="staff-notification-title" style={{ marginTop: 12 }}>
+              {activeItem.kind === "MESSAGE" ? "新的訊息" : "新的系統通知"}
+            </h2>
           </div>
         </div>
         <div className="stacked-list">
           <article className="notice-card">
-            <h3>{activeNotification.title}</h3>
-            {activeNotification.message ? <p>{activeNotification.message}</p> : null}
-            <div className="muted-text">{activeNotification.createdAt ? `建立時間：${activeNotification.createdAt}` : null}</div>
+            <h3>{activeItem.title}</h3>
+            {activeItem.message ? <p>{activeItem.message}</p> : null}
+            <div className="muted-text">{activeItem.createdAt ? `建立時間：${activeItem.createdAt}` : null}</div>
           </article>
         </div>
         <div className="action-row">
-          {activeNotification.targetUrl ? (
+          {activeItem.targetUrl ? (
             <button type="button" className="primary-button" onClick={() => completeAction("go")} disabled={busy}>
-              前往處理
+              {activeItem.kind === "MESSAGE" ? "查看訊息" : "前往處理"}
             </button>
           ) : null}
           <button type="button" className="secondary-button" onClick={() => completeAction("read")} disabled={busy}>
-            已確認
+            {activeItem.kind === "MESSAGE" ? "標記已讀" : "已確認"}
           </button>
-          <button type="button" className="secondary-button" onClick={() => completeAction("done")} disabled={busy}>
-            完成
-          </button>
+          {activeItem.kind === "NOTIFICATION" ? (
+            <button type="button" className="secondary-button" onClick={() => completeAction("done")} disabled={busy}>
+              完成
+            </button>
+          ) : null}
           <button type="button" className="ghost-button" onClick={() => completeAction("snooze")} disabled={busy}>
             稍後提醒
           </button>

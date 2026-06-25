@@ -28,6 +28,7 @@ export const ROLE_LABELS = {
 export const PATH_MENU_KEY_MAP = [
   { path: "/dashboard", key: "dashboard" },
   { path: "/notifications", key: "dashboard" },
+  { path: "/messages", key: "dashboard" },
   { path: "/customer-status", key: "dashboard" },
   { path: "/sales", key: "dashboard" },
   { path: "/pos", key: "pos" },

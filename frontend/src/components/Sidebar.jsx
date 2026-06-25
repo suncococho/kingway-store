@@ -30,7 +30,13 @@ function Sidebar() {
     enabled: false,
     profile: buildStoreOperationProfile(null, user?.storeId)
   });
-  const [unreadSummary, setUnreadSummary] = useState({ notifications: 0, urgent: 0 });
+  const [unreadSummary, setUnreadSummary] = useState({
+    notifications: 0,
+    messages: 0,
+    urgent: 0,
+    urgentNotifications: 0,
+    urgentMessages: 0
+  });
   const mobileMenuSections = getMobileMenuSectionsForUser(user, effectiveFeatures, menuPermissions, companyAccess.profile)
     .map((group) => ({
       ...group,
@@ -89,12 +95,15 @@ function Sidebar() {
         if (active) {
           setUnreadSummary({
             notifications: Number(summary?.notifications || 0),
-            urgent: Number(summary?.urgent || 0)
+            messages: Number(summary?.messages || 0),
+            urgent: Number(summary?.urgent || 0),
+            urgentNotifications: Number(summary?.urgentNotifications || 0),
+            urgentMessages: Number(summary?.urgentMessages || 0)
           });
         }
       } catch (_error) {
         if (active) {
-          setUnreadSummary({ notifications: 0, urgent: 0 });
+          setUnreadSummary({ notifications: 0, messages: 0, urgent: 0, urgentNotifications: 0, urgentMessages: 0 });
         }
       }
     }
@@ -112,7 +121,16 @@ function Sidebar() {
   }
 
   function renderMenuTitle(item) {
-    const count = item.to === "/notifications" ? Number(unreadSummary.notifications || 0) : 0;
+    const count = item.to === "/notifications"
+      ? Number(unreadSummary.notifications || 0)
+      : item.to === "/messages"
+        ? Number(unreadSummary.messages || 0)
+        : 0;
+    const urgent = item.to === "/notifications"
+      ? Number(unreadSummary.urgentNotifications || 0) > 0
+      : item.to === "/messages"
+        ? Number(unreadSummary.urgentMessages || 0) > 0
+        : false;
     return (
       <span className="nav-link-title" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
         <span>{item.label}</span>
@@ -129,7 +147,7 @@ function Sidebar() {
               justifyContent: "center",
               fontSize: 12,
               fontWeight: 700,
-              background: unreadSummary.urgent > 0 ? "#dc2626" : "#2563eb",
+              background: urgent ? "#dc2626" : "#2563eb",
               color: "#fff"
             }}
           >
@@ -242,9 +260,9 @@ function Sidebar() {
                     >
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                         <span>{item.label}</span>
-                        {item.to === "/notifications" && unreadSummary.notifications > 0 ? (
+                        {(item.to === "/notifications" && unreadSummary.notifications > 0) || (item.to === "/messages" && unreadSummary.messages > 0) ? (
                           <span
-                            aria-label={`未讀通知 ${unreadSummary.notifications} 筆`}
+                            aria-label={`未讀${item.to === "/messages" ? "訊息" : "通知"} ${item.to === "/messages" ? unreadSummary.messages : unreadSummary.notifications} 筆`}
                             style={{
                               minWidth: 22,
                               height: 22,
@@ -255,11 +273,11 @@ function Sidebar() {
                               justifyContent: "center",
                               fontSize: 12,
                               fontWeight: 700,
-                              background: unreadSummary.urgent > 0 ? "#dc2626" : "#2563eb",
+                              background: (item.to === "/messages" ? unreadSummary.urgentMessages > 0 : unreadSummary.urgentNotifications > 0) ? "#dc2626" : "#2563eb",
                               color: "#fff"
                             }}
                           >
-                            {unreadSummary.notifications > 99 ? "99+" : unreadSummary.notifications}
+                            {(item.to === "/messages" ? unreadSummary.messages : unreadSummary.notifications) > 99 ? "99+" : (item.to === "/messages" ? unreadSummary.messages : unreadSummary.notifications)}
                           </span>
                         ) : null}
                       </span>

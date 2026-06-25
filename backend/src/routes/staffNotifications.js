@@ -8,6 +8,10 @@ const {
   resolveNotificationContext,
   updateNotificationStatus
 } = require("../services/staffNotificationService");
+const {
+  getUnreadSummary: getMessageUnreadSummary,
+  resolveMessageContext
+} = require("../services/internalMessageService");
 
 const staffNotificationsRouter = express.Router();
 const staffDashboardRouter = express.Router();
@@ -106,8 +110,23 @@ staffNotificationsRouter.post("/test", async (req, res, next) => {
 staffDashboardRouter.get("/unread-summary", async (req, res, next) => {
   try {
     const context = await resolveNotificationContext(req);
-    const summary = await getUnreadSummary(context);
-    res.json(summary);
+    const notificationSummary = await getUnreadSummary(context);
+    let messageSummary = { messages: 0, urgentMessages: 0 };
+    try {
+      const messageContext = await resolveMessageContext(req);
+      messageSummary = await getMessageUnreadSummary(messageContext);
+    } catch (messageError) {
+      if (messageError?.code !== "ER_NO_SUCH_TABLE") {
+        throw messageError;
+      }
+    }
+    res.json({
+      notifications: notificationSummary.notifications,
+      messages: messageSummary.messages,
+      urgent: notificationSummary.urgent + messageSummary.urgentMessages,
+      urgentNotifications: notificationSummary.urgent,
+      urgentMessages: messageSummary.urgentMessages
+    });
   } catch (error) {
     next(error);
   }
