@@ -51,6 +51,7 @@ import CompanyStoreSettlementsPage from "./pages/CompanyStoreSettlementsPage";
 import StoreReplenishmentRequestsPage from "./pages/StoreReplenishmentRequestsPage";
 import HqReplenishmentRequestsPage from "./pages/HqReplenishmentRequestsPage";
 import HqTransferReportPage from "./pages/HqTransferReportPage";
+import NotificationsPage from "./pages/NotificationsPage";
 
 function LegacyStoreFeaturesRedirect() {
   const { id } = useParams();
@@ -104,6 +105,7 @@ function App() {
       <Route path="/" element={<Navigate to={token ? defaultProtectedRoute : "/login"} replace />} />
       <Route element={<ProtectedLayout />}>
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/customer-status" element={<CustomerStatusPage />} />
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/products" element={<ProductsPage />} />

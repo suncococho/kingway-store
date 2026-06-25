@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import Sidebar from "./Sidebar";
+import StaffNotificationPopup from "./StaffNotificationPopup";
 import { getImpersonationSession, stopImpersonationSession } from "../lib/auth";
 import { apiRequest } from "../lib/api";
 import { platformRequest } from "../lib/platformAuth";
@@ -132,6 +133,7 @@ function ProtectedLayout() {
   return (
     <div className={`app-shell ${isPosFullscreen ? "app-shell-pos-fullscreen" : ""}`}>
       {!isPosFullscreen ? <Sidebar /> : null}
+      <StaffNotificationPopup />
 
       <main className={`page-content ${isPosFullscreen ? "page-content-pos-fullscreen" : ""}`}>
         {shouldShowBanner ? (

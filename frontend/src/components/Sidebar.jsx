@@ -7,6 +7,7 @@ import { useStoreAccess } from "../hooks/useStoreAccess";
 import { useMenuPermissions } from "../hooks/useMenuPermissions";
 import { getMobileMenuSectionsForUser, isMenuItemActive } from "../lib/mobileNavigation";
 import { buildStoreOperationProfile } from "../lib/storeOperationProfile";
+import { fetchUnreadSummary } from "../lib/staffNotificationsApi";
 
 function Sidebar() {
   const navigate = useNavigate();
@@ -29,6 +30,7 @@ function Sidebar() {
     enabled: false,
     profile: buildStoreOperationProfile(null, user?.storeId)
   });
+  const [unreadSummary, setUnreadSummary] = useState({ notifications: 0, urgent: 0 });
   const mobileMenuSections = getMobileMenuSectionsForUser(user, effectiveFeatures, menuPermissions, companyAccess.profile)
     .map((group) => ({
       ...group,
@@ -79,9 +81,63 @@ function Sidebar() {
     };
   }, [user?.id, user?.storeId]);
 
+  useEffect(() => {
+    let active = true;
+    async function loadUnreadSummary() {
+      try {
+        const summary = await fetchUnreadSummary();
+        if (active) {
+          setUnreadSummary({
+            notifications: Number(summary?.notifications || 0),
+            urgent: Number(summary?.urgent || 0)
+          });
+        }
+      } catch (_error) {
+        if (active) {
+          setUnreadSummary({ notifications: 0, urgent: 0 });
+        }
+      }
+    }
+    loadUnreadSummary();
+    const timer = window.setInterval(loadUnreadSummary, 30000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [user?.id, user?.storeId]);
+
   function handleLogout() {
     clearAuth();
     navigate("/login", { replace: true });
+  }
+
+  function renderMenuTitle(item) {
+    const count = item.to === "/notifications" ? Number(unreadSummary.notifications || 0) : 0;
+    return (
+      <span className="nav-link-title" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+        <span>{item.label}</span>
+        {count > 0 ? (
+          <span
+            aria-label={`未讀通知 ${count} 筆`}
+            style={{
+              minWidth: 22,
+              height: 22,
+              padding: "0 7px",
+              borderRadius: 999,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 12,
+              fontWeight: 700,
+              background: unreadSummary.urgent > 0 ? "#dc2626" : "#2563eb",
+              color: "#fff"
+            }}
+          >
+            {count > 99 ? "99+" : count}
+          </span>
+        ) : null}
+      </span>
+    );
   }
 
   return (
@@ -112,7 +168,7 @@ function Sidebar() {
                       }
                     >
                       <span className="nav-link-copy">
-                        <span className="nav-link-title">{item.label}</span>
+                        {renderMenuTitle(item)}
                         <span className="nav-link-description">{item.description}</span>
                       </span>
                       <span className="nav-link-chevron">›</span>
@@ -120,7 +176,7 @@ function Sidebar() {
                   ) : (
                     <div key={item.label} className="nav-link nav-link-group nav-link-disabled">
                       <span className="nav-link-copy">
-                        <span className="nav-link-title">{item.label}</span>
+                        {renderMenuTitle(item)}
                         <span className="nav-link-description">{item.description}</span>
                       </span>
                       <span className="nav-link-chevron">›</span>
@@ -184,7 +240,29 @@ function Sidebar() {
                       }
                       onClick={() => setMobileDrawerOpen(false)}
                     >
-                      <span>{item.label}</span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        <span>{item.label}</span>
+                        {item.to === "/notifications" && unreadSummary.notifications > 0 ? (
+                          <span
+                            aria-label={`未讀通知 ${unreadSummary.notifications} 筆`}
+                            style={{
+                              minWidth: 22,
+                              height: 22,
+                              padding: "0 7px",
+                              borderRadius: 999,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 12,
+                              fontWeight: 700,
+                              background: unreadSummary.urgent > 0 ? "#dc2626" : "#2563eb",
+                              color: "#fff"
+                            }}
+                          >
+                            {unreadSummary.notifications > 99 ? "99+" : unreadSummary.notifications}
+                          </span>
+                        ) : null}
+                      </span>
                       <small>{item.description}</small>
                     </NavLink>
                   ))}
