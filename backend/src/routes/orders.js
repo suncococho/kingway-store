@@ -1458,55 +1458,6 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
     });
 
     if (result.becamePaid) {
-      try {
-        const [customerRows] = await pool.query(
-          `
-            SELECT c.line_user_id AS lineUserId,
-                   o.order_no AS orderNo,
-                   EXISTS (
-                     SELECT 1
-                     FROM order_items oi
-                     WHERE oi.order_id = o.id
-                       AND oi.store_id = ?
-                       AND oi.product_category_snapshot IN ('RP', 'REPAIR')
-                   ) AS isRepairOrder
-            FROM orders o
-            LEFT JOIN customers c ON c.id = o.customer_id
-            WHERE o.id = ?
-              AND o.store_id = ?
-            LIMIT 1
-          `,
-          [storeId, orderId, storeId]
-        );
-
-        const customer = customerRows[0];
-
-        if (customer?.lineUserId) {
-          const lineText = customer.isRepairOrder
-            ? [
-                "您的維修費用已完成收款，車輛已完成交付。",
-                `訂單編號：${customer.orderNo}`,
-                "",
-                "感謝您的信任，歡迎再次使用 KINGWAY 維修服務。"
-              ].join("\n")
-            : [
-                "您的尾款已完成收款",
-                `訂單編號：${customer.orderNo}`,
-                "",
-                "我們將為您安排交車與購買確認流程。"
-              ].join("\n");
-
-          await sendLineMessage(config, customer.lineUserId, [
-            {
-              type: "text",
-              text: lineText
-            }
-          ]);
-        }
-      } catch (e) {
-        console.error("[collect-balance line push failed]", e);
-      }
-
       const [repairCheckRows] = await pool.query(
         `
           SELECT EXISTS (

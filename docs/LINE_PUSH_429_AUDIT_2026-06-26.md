@@ -189,6 +189,13 @@ Follow-up implementation:
 - Customer-facing order success response remains active.
 - Required customer pushes such as pickup notice, repair quote confirmation, purchase confirmation link, and explicit staff follow-up are unchanged.
 
+Collect-balance follow-up implementation:
+
+- `backend/src/routes/orders.js` collect-balance "尾款已完成收款" customer push was disabled after production testing showed 429 quota failures.
+- The collect-balance API still updates order balance/payment state.
+- The purchase confirmation link push remains active because it is the customer action link.
+- POS/staff operational notifications and KPI flows are unchanged.
+
 Priority 2:
 
 - Add a central customer LINE push policy helper:
