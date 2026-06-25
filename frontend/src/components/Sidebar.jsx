@@ -33,6 +33,8 @@ function Sidebar() {
   const [unreadSummary, setUnreadSummary] = useState({
     notifications: 0,
     messages: 0,
+    dailyTasks: 0,
+    overdueDailyTasks: 0,
     urgent: 0,
     urgentNotifications: 0,
     urgentMessages: 0
@@ -96,6 +98,8 @@ function Sidebar() {
           setUnreadSummary({
             notifications: Number(summary?.notifications || 0),
             messages: Number(summary?.messages || 0),
+            dailyTasks: Number(summary?.dailyTasks || 0),
+            overdueDailyTasks: Number(summary?.overdueDailyTasks || 0),
             urgent: Number(summary?.urgent || 0),
             urgentNotifications: Number(summary?.urgentNotifications || 0),
             urgentMessages: Number(summary?.urgentMessages || 0)
@@ -103,7 +107,15 @@ function Sidebar() {
         }
       } catch (_error) {
         if (active) {
-          setUnreadSummary({ notifications: 0, messages: 0, urgent: 0, urgentNotifications: 0, urgentMessages: 0 });
+          setUnreadSummary({
+            notifications: 0,
+            messages: 0,
+            dailyTasks: 0,
+            overdueDailyTasks: 0,
+            urgent: 0,
+            urgentNotifications: 0,
+            urgentMessages: 0
+          });
         }
       }
     }
@@ -125,18 +137,22 @@ function Sidebar() {
       ? Number(unreadSummary.notifications || 0)
       : item.to === "/messages"
         ? Number(unreadSummary.messages || 0)
-        : 0;
+        : item.to === "/daily-tasks"
+          ? Number(unreadSummary.dailyTasks || 0)
+          : 0;
     const urgent = item.to === "/notifications"
       ? Number(unreadSummary.urgentNotifications || 0) > 0
       : item.to === "/messages"
         ? Number(unreadSummary.urgentMessages || 0) > 0
-        : false;
+        : item.to === "/daily-tasks"
+          ? Number(unreadSummary.overdueDailyTasks || 0) > 0
+          : false;
     return (
       <span className="nav-link-title" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
         <span>{item.label}</span>
         {count > 0 ? (
           <span
-            aria-label={`未讀通知 ${count} 筆`}
+            aria-label={`待處理 ${count} 筆`}
             style={{
               minWidth: 22,
               height: 22,
@@ -260,9 +276,17 @@ function Sidebar() {
                     >
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                         <span>{item.label}</span>
-                        {(item.to === "/notifications" && unreadSummary.notifications > 0) || (item.to === "/messages" && unreadSummary.messages > 0) ? (
+                        {(item.to === "/notifications" && unreadSummary.notifications > 0)
+                          || (item.to === "/messages" && unreadSummary.messages > 0)
+                          || (item.to === "/daily-tasks" && unreadSummary.dailyTasks > 0) ? (
                           <span
-                            aria-label={`未讀${item.to === "/messages" ? "訊息" : "通知"} ${item.to === "/messages" ? unreadSummary.messages : unreadSummary.notifications} 筆`}
+                            aria-label={`待處理 ${
+                              item.to === "/messages"
+                                ? unreadSummary.messages
+                                : item.to === "/daily-tasks"
+                                  ? unreadSummary.dailyTasks
+                                  : unreadSummary.notifications
+                            } 筆`}
                             style={{
                               minWidth: 22,
                               height: 22,
@@ -273,11 +297,25 @@ function Sidebar() {
                               justifyContent: "center",
                               fontSize: 12,
                               fontWeight: 700,
-                              background: (item.to === "/messages" ? unreadSummary.urgentMessages > 0 : unreadSummary.urgentNotifications > 0) ? "#dc2626" : "#2563eb",
+                              background: (item.to === "/messages"
+                                ? unreadSummary.urgentMessages > 0
+                                : item.to === "/daily-tasks"
+                                  ? unreadSummary.overdueDailyTasks > 0
+                                  : unreadSummary.urgentNotifications > 0) ? "#dc2626" : "#2563eb",
                               color: "#fff"
                             }}
                           >
-                            {(item.to === "/messages" ? unreadSummary.messages : unreadSummary.notifications) > 99 ? "99+" : (item.to === "/messages" ? unreadSummary.messages : unreadSummary.notifications)}
+                            {(item.to === "/messages"
+                              ? unreadSummary.messages
+                              : item.to === "/daily-tasks"
+                                ? unreadSummary.dailyTasks
+                                : unreadSummary.notifications) > 99
+                              ? "99+"
+                              : (item.to === "/messages"
+                                  ? unreadSummary.messages
+                                  : item.to === "/daily-tasks"
+                                    ? unreadSummary.dailyTasks
+                                    : unreadSummary.notifications)}
                           </span>
                         ) : null}
                       </span>

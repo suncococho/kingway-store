@@ -12,6 +12,10 @@ const {
   getUnreadSummary: getMessageUnreadSummary,
   resolveMessageContext
 } = require("../services/internalMessageService");
+const {
+  getDailyTaskSummary,
+  resolveDailyTaskContext
+} = require("../services/dailyStaffTaskService");
 
 const staffNotificationsRouter = express.Router();
 const staffDashboardRouter = express.Router();
@@ -112,6 +116,7 @@ staffDashboardRouter.get("/unread-summary", async (req, res, next) => {
     const context = await resolveNotificationContext(req);
     const notificationSummary = await getUnreadSummary(context);
     let messageSummary = { messages: 0, urgentMessages: 0 };
+    let dailyTaskSummary = { dailyTasks: 0, overdueDailyTasks: 0 };
     try {
       const messageContext = await resolveMessageContext(req);
       messageSummary = await getMessageUnreadSummary(messageContext);
@@ -120,10 +125,20 @@ staffDashboardRouter.get("/unread-summary", async (req, res, next) => {
         throw messageError;
       }
     }
+    try {
+      const dailyTaskContext = await resolveDailyTaskContext(req);
+      dailyTaskSummary = await getDailyTaskSummary(dailyTaskContext, { createNotifications: true });
+    } catch (dailyTaskError) {
+      if (dailyTaskError?.code !== "ER_NO_SUCH_TABLE") {
+        throw dailyTaskError;
+      }
+    }
     res.json({
       notifications: notificationSummary.notifications,
       messages: messageSummary.messages,
-      urgent: notificationSummary.urgent + messageSummary.urgentMessages,
+      dailyTasks: dailyTaskSummary.dailyTasks,
+      overdueDailyTasks: dailyTaskSummary.overdueDailyTasks,
+      urgent: notificationSummary.urgent + messageSummary.urgentMessages + dailyTaskSummary.overdueDailyTasks,
       urgentNotifications: notificationSummary.urgent,
       urgentMessages: messageSummary.urgentMessages
     });

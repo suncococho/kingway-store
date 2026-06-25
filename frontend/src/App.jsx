@@ -53,6 +53,8 @@ import HqReplenishmentRequestsPage from "./pages/HqReplenishmentRequestsPage";
 import HqTransferReportPage from "./pages/HqTransferReportPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import MessagesPage from "./pages/MessagesPage";
+import DailyTasksPage from "./pages/DailyTasksPage";
+import DailyTaskSettingsPage from "./pages/DailyTaskSettingsPage";
 
 function LegacyStoreFeaturesRedirect() {
   const { id } = useParams();
@@ -108,6 +110,7 @@ function App() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/messages" element={<MessagesPage />} />
+        <Route path="/daily-tasks" element={<DailyTasksPage />} />
         <Route path="/customer-status" element={<CustomerStatusPage />} />
         <Route path="/customers" element={<CustomersPage />} />
         <Route path="/products" element={<ProductsPage />} />
@@ -129,6 +132,7 @@ function App() {
         <Route path="/payroll" element={<PayrollPage />} />
         <Route path="/settings/store" element={<StoreSettingsPage />} />
         <Route path="/settings/line" element={<StoreLineSettingsPage />} />
+        <Route path="/settings/daily-tasks" element={<DailyTaskSettingsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/more" element={<MorePage />} />
         <Route path="/trash" element={<TrashPage />} />

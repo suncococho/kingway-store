@@ -31,6 +31,7 @@ export const mobileMenuSections = [
       { to: "/dashboard", label: "首頁", description: "今日待確認與營業摘要", menuKey: "dashboard" },
       { to: "/notifications", label: "通知中心", description: "系統通知、待處理提醒與完成紀錄", menuKey: "dashboard" },
       { to: "/messages", label: "訊息中心", description: "本部與門市訊息、公告與讀取紀錄", menuKey: "dashboard" },
+      { to: "/daily-tasks", label: "今日任務", description: "每日工作檢查、完成與逾期提醒", menuKey: "dashboard" },
       { to: "/sales", label: "銷售報表", description: "銷售統計、商品排行與訂單明細", menuKey: "dashboard" },
       { to: "/pos", label: "POS / 新訂單", description: "快速建立訂單與結帳", menuKey: "pos" },
       { to: "/orders", label: "訂單管理", description: "一般訂單、預約單、維修相關", menuKey: "orders" },
@@ -65,6 +66,7 @@ export const mobileMenuSections = [
     items: [
       { to: "/settings/store", label: "門市設定", description: "門市名稱、地址、營業時間與對外文字", menuKey: "settings" },
       { to: "/settings/line", label: "LINE 設定", description: "LINE OA、Webhook 與 LIFF 安全設定", menuKey: "line" },
+      { to: "/settings/daily-tasks", label: "每日任務設定", description: "設定每日工作項目、期限與優先級", menuKey: "settings" },
       { to: "/settings?section=system", label: "系統設定", description: "LINE 狀態、通知預設與 POS 預設", menuKey: "settings" },
       { to: "/trash", label: "已刪除資料", description: "復原或永久刪除訂單 / 維修單", menuKey: "settings" }
     ]

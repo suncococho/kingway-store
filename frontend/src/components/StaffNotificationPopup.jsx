@@ -145,6 +145,9 @@ function StaffNotificationPopup() {
     return null;
   }
 
+  const isDailyTaskNotification = activeItem.kind === "NOTIFICATION"
+    && String(activeItem.raw?.type || "").startsWith("DAILY_TASK_");
+
   async function completeAction(action) {
     if (busy) return;
     try {
@@ -207,7 +210,7 @@ function StaffNotificationPopup() {
           <button type="button" className="secondary-button" onClick={() => completeAction("read")} disabled={busy}>
             {activeItem.kind === "MESSAGE" ? "標記已讀" : "已確認"}
           </button>
-          {activeItem.kind === "NOTIFICATION" ? (
+          {activeItem.kind === "NOTIFICATION" && !isDailyTaskNotification ? (
             <button type="button" className="secondary-button" onClick={() => completeAction("done")} disabled={busy}>
               完成
             </button>
