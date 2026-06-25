@@ -51,6 +51,7 @@ export const PATH_MENU_KEY_MAP = [
   { path: "/payroll", key: "staff" },
   { path: "/coupons", key: "coupons" },
   { path: "/settings/line", key: "line" },
+  { path: "/settings/line-notifications", key: "settings" },
   { path: "/settings/daily-tasks", key: "settings" },
   { path: "/settings/store", key: "settings" },
   { path: "/settings", key: "settings" },

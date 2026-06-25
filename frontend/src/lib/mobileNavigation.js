@@ -66,6 +66,7 @@ export const mobileMenuSections = [
     items: [
       { to: "/settings/store", label: "門市設定", description: "門市名稱、地址、營業時間與對外文字", menuKey: "settings" },
       { to: "/settings/line", label: "LINE 設定", description: "LINE OA、Webhook 與 LIFF 安全設定", menuKey: "line" },
+      { to: "/settings/line-notifications", label: "LINE 通知設定", description: "員工與供應商 LINE 群組通知目標", menuKey: "settings" },
       { to: "/settings/daily-tasks", label: "每日任務設定", description: "設定每日工作項目、期限與優先級", menuKey: "settings" },
       { to: "/settings?section=system", label: "系統設定", description: "LINE 狀態、通知預設與 POS 預設", menuKey: "settings" },
       { to: "/trash", label: "已刪除資料", description: "復原或永久刪除訂單 / 維修單", menuKey: "settings" }
