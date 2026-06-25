@@ -5,6 +5,9 @@ const { authenticate, authorize, requireStoreScope, requireStoreRole } = require
 const { loadCompanyMembership } = require("../middleware/companyAuth");
 const { requireFeature } = require("../services/storeAccessService");
 const { notifyStoreReplenishmentSubmitted } = require("../services/storeReplenishmentNotificationService");
+const {
+  notifyStoreReplenishmentSubmitted: notifyStoreReplenishmentSubmittedStaff
+} = require("../services/notificationEventService");
 const { createError } = require("../utils/errors");
 
 const router = express.Router();
@@ -681,6 +684,22 @@ router.post("/:id/submit", requireChainStoreContext, requireStoreRole(["owner", 
       note: submittedRequest.note
     }).catch((error) => {
       console.info("[store-replenishment] notify_async_failed", {
+        requestId: submittedRequest.id,
+        requestNo: submittedRequest.requestNo,
+        error: error.message
+      });
+    });
+    notifyStoreReplenishmentSubmittedStaff({
+      requestId: submittedRequest.id,
+      requestNo: submittedRequest.requestNo,
+      companyId: submittedRequest.companyId,
+      storeId: submittedRequest.requestingStoreId,
+      storeCode: submittedRequest.requestingStoreCode,
+      storeName: submittedRequest.requestingStoreName,
+      itemCount: submittedRequest.itemCount,
+      note: submittedRequest.note
+    }).catch((error) => {
+      console.info("[store-replenishment] staff_notification_async_failed", {
         requestId: submittedRequest.id,
         requestNo: submittedRequest.requestNo,
         error: error.message

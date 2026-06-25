@@ -3,6 +3,10 @@ const { pool, withTransaction } = require("../db");
 const { authenticate, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { loadCompanyMembership } = require("../middleware/companyAuth");
 const { requireFeature } = require("../services/storeAccessService");
+const {
+  notifyStoreTransferReceived,
+  notifyStoreTransferShipped
+} = require("../services/notificationEventService");
 const { createError } = require("../utils/errors");
 
 const router = express.Router();
@@ -600,6 +604,13 @@ router.patch("/company/:companyId/:transferId", requireHqCompanyRole(HQ_WRITE_RO
     });
     const transfer = await loadTransfer(transferId);
     transfer.items = await loadTransferItems(transferId);
+    notifyStoreTransferShipped(transfer).catch((notificationError) => {
+      console.warn("[notification-event] STORE_TRANSFER_SHIPPED failed", {
+        transferId,
+        transferNo: transfer.transferNo,
+        message: notificationError.message
+      });
+    });
     return res.json({ ok: true, transfer });
   } catch (error) {
     return next(error);
@@ -871,6 +882,13 @@ router.post("/:transferId/receive", requireStoreScope(), requireInboundStoreType
 
     const updated = await loadTransfer(transferId);
     updated.items = await loadTransferItems(transferId);
+    notifyStoreTransferReceived(updated).catch((notificationError) => {
+      console.warn("[notification-event] STORE_TRANSFER_RECEIVED failed", {
+        transferId,
+        transferNo: updated.transferNo,
+        message: notificationError.message
+      });
+    });
     return res.json({ ok: true, transfer: updated });
   } catch (error) {
     return next(error);

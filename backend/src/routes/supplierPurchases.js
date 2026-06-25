@@ -3,6 +3,7 @@ const ExcelJS = require("exceljs");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { requireFeature } = require("../services/storeAccessService");
+const { notifySupplierPurchaseOrderCreated } = require("../services/notificationEventService");
 const { buildDemoKeywordCondition, buildDemoExclusionCondition, isExcludeDemoRequested } = require("../utils/demoDataFilter");
 
 const router = express.Router();
@@ -886,6 +887,13 @@ router.post("/", requireStoreAdminRole, async (req, res, next) => {
 
     const purchaseOrder = await loadPurchaseOrder(purchaseOrderId, await resolveContext(req));
     purchaseOrder.items = await loadItems(purchaseOrderId);
+    notifySupplierPurchaseOrderCreated(purchaseOrder).catch((notificationError) => {
+      console.warn("[notification-event] SUPPLIER_PURCHASE_ORDER_CREATED failed", {
+        purchaseOrderId,
+        poNo: purchaseOrder.poNo,
+        message: notificationError.message
+      });
+    });
     return res.status(201).json(purchaseOrder);
   } catch (error) {
     return next(error);

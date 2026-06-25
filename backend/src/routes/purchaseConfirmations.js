@@ -31,6 +31,7 @@ const {
   logWorkflowEvent,
   sendToGroups
 } = require("../services/lineWorkflowService");
+const { notifyPurchaseConfirmationSubmitted } = require("../services/notificationEventService");
 
 const router = express.Router();
 const resolvePublicStoreContext = createPublicStoreContextMiddleware({
@@ -962,6 +963,19 @@ router.post("/public/:token", async (req, res, next) => {
     ]);
     await logWorkflowEvent("purchase_confirmation_completed", "PURCHASE_CONFIRMATION", confirmation.id, {
       orderId: confirmation.orderId
+    });
+    notifyPurchaseConfirmationSubmitted({
+      confirmationId: confirmation.id,
+      orderId: confirmation.orderId,
+      orderNo: confirmation.orderNo,
+      customerId: confirmation.customerId,
+      customerName: confirmation.customerName,
+      storeId: tokenRow.storeId
+    }).catch((notificationError) => {
+      console.warn("[notification-event] PURCHASE_CONFIRMATION_SUBMITTED failed", {
+        confirmationId: confirmation.id,
+        message: notificationError.message
+      });
     });
 
     return res.status(201).json({

@@ -3,6 +3,10 @@ const ExcelJS = require("exceljs");
 const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { requireFeature } = require("../services/storeAccessService");
+const {
+  notifySupplierReturnCreated,
+  notifySupplierReturnShipped
+} = require("../services/notificationEventService");
 
 const router = express.Router();
 
@@ -704,6 +708,16 @@ router.post("/", requireStoreAdminRole, async (req, res, next) => {
 
     const supplierReturn = await loadReturn(returnId, context);
     supplierReturn.items = await loadReturnItems(returnId);
+    notifySupplierReturnCreated({
+      ...supplierReturn,
+      storeId: context.storeId
+    }).catch((notificationError) => {
+      console.warn("[notification-event] SUPPLIER_RETURN_CREATED failed", {
+        returnId,
+        returnNo: supplierReturn.returnNo,
+        message: notificationError.message
+      });
+    });
     return res.status(201).json(supplierReturn);
   } catch (error) {
     return next(error);
@@ -798,6 +812,16 @@ router.post("/:id/ship", requireStoreAdminRole, async (req, res, next) => {
 
     const supplierReturn = await loadReturn(returnId, context);
     supplierReturn.items = await loadReturnItems(returnId);
+    notifySupplierReturnShipped({
+      ...supplierReturn,
+      storeId: context.storeId
+    }).catch((notificationError) => {
+      console.warn("[notification-event] SUPPLIER_RETURN_SHIPPED failed", {
+        returnId,
+        returnNo: supplierReturn.returnNo,
+        message: notificationError.message
+      });
+    });
     return res.json(supplierReturn);
   } catch (error) {
     return next(error);

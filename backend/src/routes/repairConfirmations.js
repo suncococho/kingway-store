@@ -19,6 +19,7 @@ const {
 } = require("../services/pdfService");
 const repairConfirmationService = require("../services/repairConfirmationService");
 const repairConfirmationContent = require("../content/repairConfirmationContent.json");
+const { notifyRepairConfirmationSubmitted } = require("../services/notificationEventService");
 
 const router = express.Router();
 const storageRoot = path.join(__dirname, "..", "..", "storage");
@@ -393,6 +394,18 @@ router.post("/public/:token/submit", async (req, res, next) => {
     if (confirmation.alreadyCompleted) {
       return res.json(mapConfirmation(confirmation));
     }
+
+    notifyRepairConfirmationSubmitted({
+      confirmationId: confirmation.id,
+      repairOrderId: confirmation.repairOrderId,
+      storeId: confirmation.storeId,
+      customerName: confirmation.customerName
+    }).catch((notificationError) => {
+      console.warn("[notification-event] REPAIR_CONFIRMATION_SUBMITTED failed", {
+        confirmationId: confirmation.id,
+        message: notificationError.message
+      });
+    });
 
     return res.status(201).json({
       ...mapConfirmation(confirmation),

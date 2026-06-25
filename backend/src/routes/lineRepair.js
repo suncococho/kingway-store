@@ -15,6 +15,7 @@ const {
   resolveLineWorkflowStoreContext
 } = require("../services/lineWorkflowService");
 const { notifyRepairReservationCreated } = require("../services/staffLineNotify");
+const { notifyLineRepairCreated } = require("../services/notificationEventService");
 
 const router = express.Router();
 const resolvePublicStoreContext = createPublicStoreContextMiddleware({
@@ -589,6 +590,22 @@ router.post("/create", async (req, res, next) => {
           });
         }
       }
+
+      notifyLineRepairCreated({
+        repairId: result.repairId,
+        storeId: resolvedStoreId,
+        customerName: result.customer.name || "LINE 客戶",
+        customerPhone: result.customer.phone || null,
+        reservationDate: result.payload.reservationDate,
+        reservationTime: result.payload.reservationTime,
+        bikeModel: result.payload.bikeModel,
+        issueDescription: result.payload.issueDescription
+      }).catch((notificationError) => {
+        console.warn("[notification-event] LINE_REPAIR_CREATED failed", {
+          repairId: result.repairId,
+          message: notificationError.message
+        });
+      });
 
       releaseRepairReservationRequestLock(requestKey);
       return {

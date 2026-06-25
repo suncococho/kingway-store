@@ -6,6 +6,7 @@ const { BOT_NOTIFY, sendTelegramMessage } = require("../services/telegramService
 const { logWorkflowEvent } = require("../services/lineWorkflowService");
 const config = require("../config");
 const { notifyOrderReservationCreated, buildOrderDetailLink } = require("../services/staffLineNotify");
+const { notifyLineOrderCreated } = require("../services/notificationEventService");
 const {
   SOURCE,
   createPublicStoreContextMiddleware,
@@ -734,6 +735,15 @@ router.post("/create", async (req, res, next) => {
 
     if (responsePayload?.ok && !responsePayload.reusedExisting) {
       setImmediate(async () => {
+        await notifyLineOrderCreated({
+          orderId: responsePayload.orderId,
+          orderNo: responsePayload.orderNo,
+          storeId,
+          customerName: responsePayload.customer?.name || "LINE 客戶",
+          productName: responsePayload.product?.name || null,
+          totalAmount: responsePayload.totalAmount || 0
+        });
+
         try {
           const lineOrderNotificationResult = await notifyOrderReservationCreated({
             customerName: responsePayload.customer?.name || "LINE 客戶",
