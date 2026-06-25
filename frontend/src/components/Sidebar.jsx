@@ -40,8 +40,8 @@ function Sidebar() {
       heading: "總部",
       items: [
         { to: "/headquarters", label: "總部管理", description: "公司資料、所屬門市與本部出貨" },
-        { to: "/store-transfers", label: "本部出貨", description: "建立本部出貨單並確認出貨" },
-        { to: "/hq-replenishment-requests", label: "本部請貨管理", description: "查看門市請貨並建立本部出貨" },
+        { to: "/store-transfers", label: "本部出貨", description: "已建立出貨單的實際出貨確認，會扣本部庫存" },
+        { to: "/hq-replenishment-requests", label: "本部請貨管理", description: "查看門市請貨並建立本部出貨單" },
         { to: "/hq-transfer-report", label: "本部出貨明細", description: "查詢本部批發價、出貨數量與月結狀態" },
         ...(effectiveFeatures.company_store_settlements_enabled !== false
           ? [{ to: "/company-store-settlements", label: "本部月結", description: "本部供貨應收與門市應付月結" }]

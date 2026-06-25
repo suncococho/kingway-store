@@ -120,8 +120,8 @@ export default function HqReplenishmentRequestsPage() {
       return;
     }
     const message = shouldShip
-      ? "確認建立並出貨？本部庫存將立即扣除，門市需收到商品後執行門市入庫。"
-      : "確認建立本部出貨單？建立後仍需確認出貨才會扣除本部庫存。";
+      ? "注意：此操作會立即扣除本部庫存。若只是要先建立出貨單，請按『建立本部出貨單（不扣庫存）』。是否仍要繼續？"
+      : "此操作只會建立本部出貨單，不會扣除庫存。建立後如需實際出貨，請至『本部出貨』確認出貨。";
     if (!confirm(message)) return;
 
     const unitCost = Number(unitCostOverrides[item.id] ?? item.unitCost ?? 0);
@@ -176,12 +176,14 @@ export default function HqReplenishmentRequestsPage() {
     {
       key: "actions",
       label: "操作",
-      render: (row) => row.status === "REQUESTED" ? (
+      render: (row) => row.transferId ? (
+        <span className="muted-text">已建立出貨單 #{row.transferId}，請至本部出貨確認出貨</span>
+      ) : row.status === "REQUESTED" ? (
         <div className="action-row compact-actions">
-          <button type="button" className="secondary-button" onClick={() => processItem(row, false)}>建立本部出貨</button>
-          <button type="button" className="primary-button" onClick={() => processItem(row, true)}>建立並確認出貨</button>
+          <button type="button" className="secondary-button" onClick={() => processItem(row, false)}>建立本部出貨單（不扣庫存）</button>
+          <button type="button" className="primary-button" onClick={() => processItem(row, true)}>建立並確認出貨（會扣本部庫存）</button>
         </div>
-      ) : row.transferId ? <span className="muted-text">出貨單 #{row.transferId}</span> : "-"
+      ) : "-"
     }
   ];
 
@@ -201,6 +203,9 @@ export default function HqReplenishmentRequestsPage() {
         description="本部請貨管理用於查看各門市或加盟店的補貨申請。建立出貨單後，門市需於收到商品後至『門市入庫』確認實收數量。"
       />
       {error ? <div className="empty-state">{error}</div> : null}
+      <div className="empty-state">
+        此頁用於處理門市請貨。按下『建立本部出貨單（不扣庫存）』只會建立出貨單，不會扣除庫存；若按下『建立並確認出貨（會扣本部庫存）』，本部庫存會立即扣除。
+      </div>
 
       <section className="content-card section-panel">
         <AdminSectionHeader
@@ -220,7 +225,7 @@ export default function HqReplenishmentRequestsPage() {
       </section>
 
       <section className="content-card section-panel">
-        <AdminSectionHeader eyebrow="請貨單" title="門市請貨申請" description="建立本部出貨不會改變庫存；建立並確認出貨會立即扣除本部庫存。" />
+        <AdminSectionHeader eyebrow="請貨單" title="門市請貨申請" description="建立本部出貨單不會改變庫存；建立並確認出貨會立即扣除本部庫存。" />
         <DataTable
           columns={requestColumns}
           rows={requests}

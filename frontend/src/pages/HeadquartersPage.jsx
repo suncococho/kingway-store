@@ -104,9 +104,16 @@ function HeadquartersPage() {
     { key: "fromStoreName", label: "出貨門市" },
     { key: "toStoreName", label: "收貨門市" },
     { key: "itemSummary", label: "商品" },
+    {
+      key: "note",
+      label: "來源 / 備註",
+      render: (row) => row.note ? (
+        <span>{String(row.note).includes("REQ-") ? `來源：門市請貨 ${row.note}` : row.note}</span>
+      ) : "-"
+    },
     { key: "actions", label: "操作", render: (row) => (
       <div className="action-row compact-actions">
-        {row.status === "DRAFT" && canWriteTransfers ? <button type="button" className="primary-button" onClick={() => shipTransfer(row.id)}>確認出貨</button> : null}
+        {row.status === "DRAFT" && canWriteTransfers ? <button type="button" className="primary-button" onClick={() => shipTransfer(row.id)}>確認出貨（扣本部庫存）</button> : null}
         {row.status === "DRAFT" && canWriteTransfers ? <button type="button" className="secondary-button" onClick={() => cancelTransfer(row.id)}>取消</button> : null}
         {row.status === "SHIPPED" ? <StatusBadge tone="warning">待入庫</StatusBadge> : null}
         {row.status === "RECEIVED" ? <StatusBadge tone="success">已完成入庫</StatusBadge> : null}
@@ -260,7 +267,7 @@ function HeadquartersPage() {
   }
 
   async function shipTransfer(id) {
-    if (!confirm("確認出貨後，本部庫存將立即扣除，是否繼續？")) return;
+    if (!confirm("確認後本部庫存將立即扣除，且此出貨單會進入門市入庫流程。請確認商品、數量與門市無誤後再繼續。")) return;
     try {
       await apiRequest(`/store-transfers/company/${selectedCompany.id}/${id}/ship`, { method: "POST", processingMessage: "出貨處理中" });
       await loadTransfers();
@@ -340,6 +347,9 @@ function HeadquartersPage() {
               title="新增調撥單"
               description="本部出貨用於將高雄本部庫存調撥至直營店或加盟店。出貨後本部庫存會先扣除，門市完成入庫確認後，門市庫存才會增加。"
             />
+            <div className="empty-state">
+              此頁是已建立出貨單的實際出貨確認頁。按下『確認出貨（扣本部庫存）』後，本部庫存會立即扣除。若您要處理門市請貨，請先至『本部請貨管理』建立出貨單。
+            </div>
             {canWriteTransfers ? (
               <form className="grid-form compact-grid" onSubmit={createTransfer}>
                 <label className="form-field"><span>出貨門市</span><select name="fromStoreId" value={transferForm.fromStoreId} onChange={updateTransferForm}>{fromStores.map((store) => <option key={store.storeId} value={store.storeId}>{store.storeName}</option>)}</select></label>
@@ -385,7 +395,7 @@ function HeadquartersPage() {
             ) : <div className="empty-state">此帳號只有總部出貨查詢權限。</div>}
           </section>
           <section className="content-card section-panel">
-            <AdminSectionHeader eyebrow="出貨紀錄" title="本部出貨列表" description={transferLoading ? "讀取中..." : "草稿可出貨或取消，已出貨後由收貨門市入庫確認。"} />
+            <AdminSectionHeader eyebrow="出貨紀錄" title="本部出貨列表" description={transferLoading ? "讀取中..." : "只有草稿出貨單會顯示『確認出貨（扣本部庫存）』；已出貨後由收貨門市入庫確認。"} />
             <DataTable columns={transferColumns} rows={transfers} emptyText="尚無出貨單。" cardTitle={(row) => row.transferNo} cardDescription={(row) => `${row.fromStoreName} -> ${row.toStoreName}`} cardBadges={(row) => <StatusBadge tone={getStatusTone(row.status)}>{STATUS_LABELS[row.status] || row.status}</StatusBadge>} />
           </section>
         </>
