@@ -310,7 +310,7 @@ async function getKpiSummary({ context, query = {}, connection = pool }) {
 
 async function getKpiEvents({ context, query = {}, connection = pool }) {
   const access = buildKpiAccessWhere(context, query, "ske");
-  const limit = Math.min(Math.max(toPositiveInteger(query.limit, 100), 1), 300);
+  const limit = Math.min(Math.max(toPositiveInteger(query.limit, 100), 1), 1000);
   const [rows] = await connection.query(
     `
       SELECT
