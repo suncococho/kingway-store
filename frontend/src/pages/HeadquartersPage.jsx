@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
+import PageHelpButton from "../components/PageHelpButton";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
 import { apiRequest } from "../lib/api";
+import { PAGE_HELP } from "../lib/pageHelpContent";
 
 function getRelationshipLabel(value) {
   const labels = {
@@ -311,6 +313,7 @@ function HeadquartersPage() {
   return (
     <div>
       <PageHeader title="總部管理" description="公司資料、所屬門市與本部出貨。" />
+      <PageHelpButton help={PAGE_HELP.headquartersShipping} />
       <SectionTabs items={tabs} value={activeTab} onChange={setActiveTab} />
 
       {activeTab === "company" ? <section className="content-card section-panel">

@@ -3,11 +3,13 @@ import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import FilterBar from "../components/FilterBar";
 import PageHeader from "../components/PageHeader";
+import PageHelpButton from "../components/PageHelpButton";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
 import { getStoredToken, getStoredUser } from "../lib/auth";
 import { formatTaipeiDateTime } from "../lib/display";
 import { createEvaluationNote, fetchEvaluationNotes } from "../lib/staffEvaluationsApi";
+import { PAGE_HELP } from "../lib/pageHelpContent";
 import {
   fetchStaffKpiEvents,
   fetchStaffKpiSummary,
@@ -180,6 +182,7 @@ function StaffKpiPage() {
         title="員工KPI / 評價"
         description="此頁為工作處理紀錄與參考統計，不會自動決定薪資或最終人事評價。"
       />
+      <PageHelpButton help={PAGE_HELP.staffKpi} />
       {error ? <div className="empty-state">{error}</div> : null}
       <FilterBar>
         <label className="form-field">

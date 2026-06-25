@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
+import PageHelpButton from "../components/PageHelpButton";
 import StatusBadge from "../components/StatusBadge";
 import { apiRequest } from "../lib/api";
+import { PAGE_HELP } from "../lib/pageHelpContent";
 
 const STATUS_LABELS = {
   SHIPPED: "待入庫",
@@ -114,6 +116,7 @@ function InboundTransfersPage() {
   return (
     <div>
       <PageHeader title="門市入庫確認" description="門市入庫確認用於確認實際收到的本部出貨商品。確認後門市庫存才會增加。" />
+      <PageHelpButton help={PAGE_HELP.inboundTransfers} />
       {error ? <div className="empty-state">{error}</div> : null}
       <section className="content-card section-panel">
         <AdminSectionHeader eyebrow="待入庫" title="入庫單列表" description={loading ? "讀取中..." : "只顯示已出貨且尚未完全入庫的資料。"} />

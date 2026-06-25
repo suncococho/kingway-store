@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
+import PageHelpButton from "../components/PageHelpButton";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
+import { PAGE_HELP } from "../lib/pageHelpContent";
 import {
   createInternalMessage,
   fetchMessageRecipients,
@@ -192,6 +194,7 @@ function MessagesPage() {
   return (
     <div className="page-stack">
       <PageHeader title="訊息中心" description="本部與門市之間的直接訊息、公告與讀取紀錄。" />
+      <PageHelpButton help={PAGE_HELP.messages} />
 
       <section className="content-card section-panel">
         <div className="section-heading-row">

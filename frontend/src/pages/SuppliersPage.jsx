@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import DataTable from "../components/DataTable";
+import PageHelpButton from "../components/PageHelpButton";
 import StatusBadge from "../components/StatusBadge";
 import { useProcessingGuard } from "../hooks/useProcessingGuard";
 import { apiRequest } from "../lib/api";
 import { getStoredToken, getStoredUser } from "../lib/auth";
+import { PAGE_HELP } from "../lib/pageHelpContent";
 
 const SUPPLIER_EMPTY_FORM = {
   name: "",
@@ -1092,7 +1094,10 @@ export default function SuppliersPage() {
           <h1>供應商管理</h1>
           <p>管理供應商資料、商品供應價，並保留既有發注、退貨與月結流程。</p>
         </div>
-        <button className="primary-button" onClick={refreshWithProcessing} disabled={isProcessing}>{pendingAction?.id === "supplier-refresh" ? "處理中..." : "重新整理"}</button>
+        <div className="page-header-actions">
+          <PageHelpButton help={PAGE_HELP.suppliers} />
+          <button className="primary-button" onClick={refreshWithProcessing} disabled={isProcessing}>{pendingAction?.id === "supplier-refresh" ? "處理中..." : "重新整理"}</button>
+        </div>
       </div>
 
       {error ? <div className="empty-state">{error}</div> : null}

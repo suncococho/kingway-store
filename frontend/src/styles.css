@@ -876,6 +876,99 @@ textarea:focus-visible,
   overflow-wrap: anywhere;
 }
 
+.page-help-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: -8px 0 14px;
+}
+
+.page-help-button {
+  min-height: 38px;
+}
+
+.page-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.page-header-actions .page-help-toolbar {
+  margin: 0;
+}
+
+.page-help-modal {
+  width: min(720px, 100%);
+}
+
+.page-help-section + .page-help-section {
+  margin-top: 18px;
+}
+
+.page-help-section h3 {
+  margin: 0 0 10px;
+  color: var(--text-strong);
+}
+
+.page-help-section ol,
+.page-help-section ul {
+  margin: 0;
+  padding-left: 22px;
+  color: var(--text);
+  line-height: 1.8;
+}
+
+.page-help-warning {
+  border-radius: 14px;
+  border: 1px solid rgba(245, 158, 11, 0.38);
+  background: rgba(255, 251, 235, 0.78);
+  padding: 14px 16px;
+}
+
+.admin-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 20px;
+  border-top: 1px solid rgba(226, 232, 240, 0.92);
+}
+
+.manual-section-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.manual-section-card {
+  position: relative;
+  min-height: 190px;
+}
+
+.manual-section-card h2 {
+  margin: 0 0 10px;
+  color: var(--text-strong);
+}
+
+.manual-section-card p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.75;
+}
+
+.manual-section-index {
+  margin-bottom: 12px;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 800;
+}
+
 .pos-quick-actions {
   display: flex;
   flex-wrap: wrap;

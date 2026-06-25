@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
+import PageHelpButton from "../components/PageHelpButton";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
+import { PAGE_HELP } from "../lib/pageHelpContent";
 import {
   fetchNotifications,
   markNotificationDone,
@@ -169,6 +171,7 @@ function NotificationsPage() {
         title="通知中心"
         description="集中查看 POS 系統通知、待處理提醒與已完成紀錄。"
       />
+      <PageHelpButton help={PAGE_HELP.notifications} />
 
       <section className="content-card section-panel">
         <SectionTabs items={TABS} value={tab} onChange={setTab} />

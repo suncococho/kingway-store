@@ -4,6 +4,7 @@ import ActionModal from "../components/ActionModal";
 import DataTable from "../components/DataTable";
 import FilterBar from "../components/FilterBar";
 import PageHeader from "../components/PageHeader";
+import PageHelpButton from "../components/PageHelpButton";
 import ProcessingOverlay from "../components/ProcessingOverlay";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
@@ -12,6 +13,7 @@ import { useProcessingGuard } from "../hooks/useProcessingGuard";
 import { getStoredUser } from "../lib/auth";
 import { API_BASE_URL, apiRequest } from "../lib/api";
 import { formatTaipeiDate, getRepairStatusLabel } from "../lib/display";
+import { PAGE_HELP } from "../lib/pageHelpContent";
 
 function getReservationStatusLabel(status) {
   const labels = {
@@ -707,6 +709,7 @@ function RepairsPage() {
       
 
       <PageHeader title="維修管理" description="依照建立、檢查、報價、等待同意、維修、通知取車的 SOP 處理。" />
+      <PageHelpButton help={PAGE_HELP.repairs} />
       {repairs.error ? <div className="empty-state">{repairs.error}</div> : null}
       <section className="content-card sop-overview">
         <div className="sop-step-list">

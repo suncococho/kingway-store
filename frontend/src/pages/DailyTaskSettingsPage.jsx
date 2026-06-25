@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
+import PageHelpButton from "../components/PageHelpButton";
 import StatusBadge from "../components/StatusBadge";
 import {
   createTaskSetting,
@@ -8,6 +9,7 @@ import {
   seedDefaultTasks,
   updateTaskSetting
 } from "../lib/dailyStaffTasksApi";
+import { PAGE_HELP } from "../lib/pageHelpContent";
 
 const CATEGORY_OPTIONS = ["OPENING", "MIDDAY", "CLOSING", "CUSTOMER", "INVENTORY", "SAFETY", "GENERAL"];
 const PRIORITY_OPTIONS = ["LOW", "NORMAL", "IMPORTANT", "URGENT"];
@@ -150,6 +152,7 @@ function DailyTaskSettingsPage() {
         title="每日任務設定"
         description="設定每日工作檢查項目、期限與優先級。今日任務會記錄完成人與完成時間。"
       />
+      <PageHelpButton help={PAGE_HELP.dailyTaskSettings} />
 
       <section className="content-card section-panel">
         <div className="section-heading-row">

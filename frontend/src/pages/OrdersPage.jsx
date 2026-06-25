@@ -7,6 +7,7 @@ import DetailModal from "../components/DetailModal";
 import FilterBar from "../components/FilterBar";
 import FilterChips from "../components/FilterChips";
 import PageHeader from "../components/PageHeader";
+import PageHelpButton from "../components/PageHelpButton";
 import ProcessingOverlay from "../components/ProcessingOverlay";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
@@ -14,6 +15,7 @@ import { useFetchList } from "../hooks/useFetchList";
 import { useProcessingGuard } from "../hooks/useProcessingGuard";
 import { apiRequest } from "../lib/api";
 import { formatTaipeiDate, formatTaipeiDateTime, getFinalPaymentStatusLabel, getOrderStatusLabel, getPaymentMethodLabel, getRepairStatusLabel } from "../lib/display";
+import { PAGE_HELP } from "../lib/pageHelpContent";
 
 function formatAmount(value) {
   return `NT$${Number(value || 0).toFixed(0)}`;
@@ -851,6 +853,7 @@ if (!window.confirm(
         title="訂單管理"
         description="主列表只保留門市訂單核心資訊，詳情放在同頁 modal，避免把資料庫欄位直接攤平。"
       />
+      <PageHelpButton help={PAGE_HELP.orders} />
       <SectionTabs items={sectionItems} value={tab} onChange={changeTab} label="訂單子功能" />
       <div className="admin-summary-grid">
         {summaryCards.map((card) => (

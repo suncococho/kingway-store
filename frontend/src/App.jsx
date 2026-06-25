@@ -57,6 +57,7 @@ import MessagesPage from "./pages/MessagesPage";
 import DailyTasksPage from "./pages/DailyTasksPage";
 import DailyTaskSettingsPage from "./pages/DailyTaskSettingsPage";
 import LineNotificationSettingsPage from "./pages/LineNotificationSettingsPage";
+import SystemManualPage from "./pages/SystemManualPage";
 
 function LegacyStoreFeaturesRedirect() {
   const { id } = useParams();
@@ -135,6 +136,7 @@ function App() {
         <Route path="/payroll" element={<PayrollPage />} />
         <Route path="/settings/store" element={<StoreSettingsPage />} />
         <Route path="/settings/line" element={<StoreLineSettingsPage />} />
+        <Route path="/settings/manual" element={<SystemManualPage />} />
         <Route path="/settings/daily-tasks" element={<DailyTaskSettingsPage />} />
         <Route path="/settings/line-notifications" element={<LineNotificationSettingsPage />} />
         <Route path="/settings" element={<SettingsPage />} />

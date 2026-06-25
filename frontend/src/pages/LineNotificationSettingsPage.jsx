@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
+import PageHelpButton from "../components/PageHelpButton";
 import StatusBadge from "../components/StatusBadge";
 import {
   fetchStoreLineNotificationSettings,
@@ -10,6 +11,7 @@ import {
   updateStoreLineNotificationSettings,
   updateSupplierLineNotificationSettings
 } from "../lib/lineNotificationSettingsApi";
+import { PAGE_HELP } from "../lib/pageHelpContent";
 
 const STAFF_EVENT_FIELDS = [
   ["notifyOrderReservation", "LINE 訂單預約"],
@@ -267,6 +269,7 @@ function LineNotificationSettingsPage() {
         title="LINE 通知設定"
         description="設定員工 LINE 群組與供應商 LINE 群組。此階段測試通知採 dry-run，不會實際發送 LINE。"
       />
+      <PageHelpButton help={PAGE_HELP.lineNotifications} />
 
       <section className="content-card section-panel">
         <div className="section-heading-row">

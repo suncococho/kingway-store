@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
+import PageHelpButton from "../components/PageHelpButton";
 import StatusBadge from "../components/StatusBadge";
 import { apiRequest } from "../lib/api";
+import { PAGE_HELP } from "../lib/pageHelpContent";
 
 const STATUS_LABELS = {
   DRAFT: "草稿",
@@ -215,6 +217,7 @@ export default function StoreReplenishmentRequestsPage() {
         title="門市請貨"
         description="門市請貨用於向本部申請補貨。送出後，本部會確認庫存並建立出貨單；門市收到商品後，請至『門市入庫』確認實收數量。"
       />
+      <PageHelpButton help={PAGE_HELP.storeReplenishment} />
       {error ? <div className="empty-state">{error}</div> : null}
 
       <section className="content-card section-panel">

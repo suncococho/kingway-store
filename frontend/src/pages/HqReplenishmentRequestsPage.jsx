@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import AdminSectionHeader from "../components/AdminSectionHeader";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
+import PageHelpButton from "../components/PageHelpButton";
 import StatusBadge from "../components/StatusBadge";
 import { apiRequest } from "../lib/api";
+import { PAGE_HELP } from "../lib/pageHelpContent";
 
 const HQ_WRITE_ROLES = new Set(["company_owner", "hq_admin", "inventory_manager"]);
 
@@ -191,6 +193,7 @@ export default function HqReplenishmentRequestsPage() {
     return (
       <div>
         <PageHeader title="本部請貨管理" description="本部請貨管理用於查看各門市或加盟店的補貨申請。" />
+        <PageHelpButton help={PAGE_HELP.hqReplenishment} />
         <div className="empty-state">此帳號沒有本部請貨管理權限。</div>
       </div>
     );
@@ -202,6 +205,7 @@ export default function HqReplenishmentRequestsPage() {
         title="本部請貨管理"
         description="本部請貨管理用於查看各門市或加盟店的補貨申請。建立出貨單後，門市需於收到商品後至『門市入庫』確認實收數量。"
       />
+      <PageHelpButton help={PAGE_HELP.hqReplenishment} />
       {error ? <div className="empty-state">{error}</div> : null}
       <div className="empty-state">
         此頁用於處理門市請貨。按下『建立本部出貨單（不扣庫存）』只會建立出貨單，不會扣除庫存；若按下『建立並確認出貨（會扣本部庫存）』，本部庫存會立即扣除。

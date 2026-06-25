@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
+import PageHelpButton from "../components/PageHelpButton";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
 import { fetchTodayTasks, markTaskDone, skipTask } from "../lib/dailyStaffTasksApi";
+import { PAGE_HELP } from "../lib/pageHelpContent";
 
 const CATEGORY_TABS = [
   { key: "ALL", label: "全部" },
@@ -188,6 +190,7 @@ function DailyTasksPage() {
         title="今日任務"
         description="確認每日工作檢查項目，完成時間與處理人會保留給後續 KPI / 評價統計。"
       />
+      <PageHelpButton help={PAGE_HELP.dailyTasks} />
 
       <section className="summary-grid">
         <SummaryCard label="任務日期" value={taskDate || "-"} />
