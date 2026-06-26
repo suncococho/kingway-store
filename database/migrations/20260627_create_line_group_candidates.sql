@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS line_group_candidates (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  line_group_id VARCHAR(255) NOT NULL,
+  group_type_hint ENUM('UNKNOWN','STAFF_GROUP','SUPPLIER_GROUP') NOT NULL DEFAULT 'UNKNOWN',
+  source_type VARCHAR(50) NULL,
+  last_message_text VARCHAR(255) NULL,
+  display_name VARCHAR(255) NULL,
+  linked_store_id BIGINT NULL,
+  linked_supplier_id BIGINT NULL,
+  status ENUM('NEW','LINKED','IGNORED') NOT NULL DEFAULT 'NEW',
+  detected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_line_group_candidates_group (line_group_id),
+  KEY idx_line_group_candidates_status (status, last_seen_at),
+  KEY idx_line_group_candidates_hint (group_type_hint, status),
+  KEY idx_line_group_candidates_store (linked_store_id),
+  KEY idx_line_group_candidates_supplier (linked_supplier_id)
+);

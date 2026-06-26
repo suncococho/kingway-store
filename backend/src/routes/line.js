@@ -5,6 +5,13 @@ const config = require("../config");
 const { authenticate, authorize } = require("../middleware/auth");
 const { verifyLineSignature, sendLineReply } = require("../utils/line");
 const { resolveStoreLineCredentials } = require("../services/storeLineSettingsService");
+const {
+  detectGroupTypeHint,
+  getEventGroupId,
+  maskLineId,
+  shouldCaptureGroupCandidate,
+  upsertLineGroupCandidate
+} = require("../services/lineGroupCandidateService");
 const { sendDailyReport } = require("../services/reportService");
 const { logKpi } = require("../services/kpiService");
 const {
@@ -375,12 +382,62 @@ router.post("/webhook", async (req, res, next) => {
         eventType: event.type,
         eventKey: claimResult.eventKey,
         sourceType,
-        userId: event.source?.userId || null,
-        groupId: event.source?.groupId || null,
-        roomId: event.source?.roomId || null,
+        lineUserIdMasked: maskLineId(event.source?.userId),
+        lineGroupIdMasked: maskLineId(event.source?.groupId),
+        lineRoomIdMasked: maskLineId(event.source?.roomId),
         messageType: event.message?.type || null,
         messageText
       });
+
+      if (
+        event.type === "message" &&
+        (sourceType === "group" || sourceType === "room") &&
+        messageText &&
+        shouldCaptureGroupCandidate(messageText)
+      ) {
+        const lineGroupId = getEventGroupId(event.source || {});
+        const hint = detectGroupTypeHint(messageText);
+        try {
+          const candidate = await upsertLineGroupCandidate({
+            groupId: lineGroupId,
+            sourceType,
+            messageText,
+            hint
+          });
+          console.log("[line:webhook] group candidate detected", {
+            sourceType,
+            groupIdMasked: maskLineId(lineGroupId),
+            candidateId: candidate?.id || null,
+            hint: candidate?.groupTypeHint || hint
+          });
+        } catch (error) {
+          console.warn("[line:webhook] group candidate save failed", {
+            sourceType,
+            groupIdMasked: maskLineId(lineGroupId),
+            code: error.code || null,
+            message: error.message
+          });
+        }
+
+        if (event.replyToken) {
+          try {
+            await replyToLine(event.replyToken, [
+              {
+                type: "text",
+                text: "已收到 KINGWAY 群組登錄訊息，請到 POS 系統設定連結此群組。"
+              }
+            ]);
+          } catch (error) {
+            console.warn("[line:webhook] group candidate reply failed", {
+              sourceType,
+              groupIdMasked: maskLineId(lineGroupId),
+              code: error.code || null,
+              message: error.message
+            });
+          }
+        }
+        continue;
+      }
 
       if (event.type === "follow" && event.source.userId) {
         await findOrCreateLineCustomer(event.source.userId);

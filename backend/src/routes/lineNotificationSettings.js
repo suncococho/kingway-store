@@ -1,6 +1,13 @@
 const express = require("express");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const {
+  ignoreCandidate,
+  linkCandidateToStore,
+  linkCandidateToSupplier,
+  listCandidates,
+  maskLineId
+} = require("../services/lineGroupCandidateService");
+const {
   disableStoreNotificationSetting,
   disableSupplierNotificationSetting,
   dryRunStoreNotification,
@@ -55,6 +62,64 @@ router.get("/suppliers", async (req, res, next) => {
     const context = await resolveLineNotificationContext(req);
     const settings = await getSupplierNotificationSettings(context, req.query);
     res.json({ settings, canManageSettings: context.canManageSettings });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/group-candidates", async (req, res, next) => {
+  try {
+    const context = await resolveLineNotificationContext(req);
+    const candidates = await listCandidates(context, req.query || {});
+    res.json({ candidates, canManageSettings: context.canManageSettings });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/group-candidates/:id/ignore", async (req, res, next) => {
+  try {
+    const context = await resolveLineNotificationContext(req);
+    const result = await ignoreCandidate(context, req.params.id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/group-candidates/:id/link-store", async (req, res, next) => {
+  try {
+    const context = await resolveLineNotificationContext(req);
+    const result = await linkCandidateToStore(context, req.params.id, req.body || {});
+    res.json({
+      ok: true,
+      candidate: result.candidate,
+      setting: result.setting ? {
+        ...result.setting,
+        targetId: undefined,
+        targetIdMasked: maskLineId(result.setting.targetId)
+      } : null,
+      targetPreview: maskLineId(result.setting?.targetId)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/group-candidates/:id/link-supplier", async (req, res, next) => {
+  try {
+    const context = await resolveLineNotificationContext(req);
+    const result = await linkCandidateToSupplier(context, req.params.id, req.body || {});
+    res.json({
+      ok: true,
+      candidate: result.candidate,
+      setting: result.setting ? {
+        ...result.setting,
+        lineGroupId: undefined,
+        lineGroupIdMasked: maskLineId(result.setting.lineGroupId)
+      } : null,
+      targetPreview: maskLineId(result.setting?.lineGroupId)
+    });
   } catch (error) {
     next(error);
   }

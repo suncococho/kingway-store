@@ -4,8 +4,12 @@ import PageHeader from "../components/PageHeader";
 import PageHelpButton from "../components/PageHelpButton";
 import StatusBadge from "../components/StatusBadge";
 import {
+  fetchLineGroupCandidates,
   fetchStoreLineNotificationSettings,
   fetchSupplierLineNotificationSettings,
+  ignoreLineGroupCandidate,
+  linkLineGroupCandidateToStore,
+  linkLineGroupCandidateToSupplier,
   testStoreLineNotification,
   testSupplierLineNotification,
   updateStoreLineNotificationSettings,
@@ -24,6 +28,17 @@ const STAFF_EVENT_FIELDS = [
   ["notifyDailyTasks", "每日任務提醒"],
   ["notifyInternalMessages", "訊息中心提醒"]
 ];
+
+const GROUP_HINT_LABELS = {
+  UNKNOWN: "未分類",
+  STAFF_GROUP: "員工群組",
+  SUPPLIER_GROUP: "供應商群組"
+};
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  return String(value).replace("T", " ").slice(0, 19);
+}
 
 function defaultStoreForm(setting = null) {
   return {
@@ -68,13 +83,17 @@ function PreviewBox({ preview }) {
 function LineNotificationSettingsPage() {
   const [storeSettings, setStoreSettings] = useState([]);
   const [supplierSettings, setSupplierSettings] = useState([]);
+  const [groupCandidates, setGroupCandidates] = useState([]);
   const [canManageStoreSettings, setCanManageStoreSettings] = useState(false);
   const [canManageSupplierSettings, setCanManageSupplierSettings] = useState(false);
+  const [canManageGroupCandidates, setCanManageGroupCandidates] = useState(false);
   const [storeForm, setStoreForm] = useState(defaultStoreForm());
   const [supplierForms, setSupplierForms] = useState({});
+  const [candidateSupplierSelections, setCandidateSupplierSelections] = useState({});
   const [preview, setPreview] = useState(null);
   const [loading, setLoading] = useState(false);
   const [supplierError, setSupplierError] = useState("");
+  const [candidateError, setCandidateError] = useState("");
   const [error, setError] = useState("");
   const [busyKey, setBusyKey] = useState("");
 
@@ -106,6 +125,17 @@ function LineNotificationSettingsPage() {
       setCanManageSupplierSettings(false);
       setSupplierError(err?.status === 403 ? "目前門市類型不使用供應商 LINE 群組設定。" : (err?.message || "供應商 LINE 設定載入失敗"));
     }
+
+    try {
+      setCandidateError("");
+      const candidateResponse = await fetchLineGroupCandidates();
+      setGroupCandidates(candidateResponse.candidates || []);
+      setCanManageGroupCandidates(Boolean(candidateResponse.canManageSettings));
+    } catch (err) {
+      setGroupCandidates([]);
+      setCanManageGroupCandidates(false);
+      setCandidateError(err?.message || "LINE 群組候選清單載入失敗");
+    }
   }
 
   useEffect(() => {
@@ -125,6 +155,73 @@ function LineNotificationSettingsPage() {
         [key]: value
       }
     }));
+  }
+
+  function updateCandidateSupplier(candidateId, supplierId) {
+    setCandidateSupplierSelections((current) => ({ ...current, [candidateId]: supplierId }));
+  }
+
+  async function linkCandidateStore(candidate) {
+    try {
+      setBusyKey("candidate-store-" + candidate.id);
+      await linkLineGroupCandidateToStore(candidate.id, {
+        channelType: "LINE",
+        purpose: "STAFF_GROUP",
+        enabled: true,
+        notifyOrderReservation: true,
+        notifyRepairReservation: true,
+        notifyPurchaseConfirmation: true,
+        notifyRepairConfirmation: true,
+        notifyReplenishment: true,
+        notifyTransfer: true,
+        notifyInbound: true,
+        notifyDailyTasks: true,
+        notifyInternalMessages: true
+      });
+      await loadSettings();
+      window.alert("已連結為員工 LINE 群組");
+    } catch (err) {
+      window.alert(err?.message || "連結員工 LINE 群組失敗");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  async function linkCandidateSupplier(candidate) {
+    const supplierId = candidateSupplierSelections[candidate.id];
+    if (!supplierId) {
+      window.alert("請先選擇供應商");
+      return;
+    }
+    try {
+      setBusyKey("candidate-supplier-" + candidate.id);
+      await linkLineGroupCandidateToSupplier(candidate.id, {
+        supplierId,
+        enabled: true,
+        notifyPurchaseOrder: true,
+        notifyReturn: true,
+        notifySettlement: false
+      });
+      await loadSettings();
+      window.alert("已連結為供應商 LINE 群組");
+    } catch (err) {
+      window.alert(err?.message || "連結供應商 LINE 群組失敗");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  async function ignoreCandidate(candidate) {
+    try {
+      setBusyKey("candidate-ignore-" + candidate.id);
+      await ignoreLineGroupCandidate(candidate.id);
+      await loadSettings();
+      window.alert("已忽略 LINE 群組候選");
+    } catch (err) {
+      window.alert(err?.message || "忽略 LINE 群組候選失敗");
+    } finally {
+      setBusyKey("");
+    }
   }
 
   async function saveStoreSettings(event) {
@@ -155,7 +252,7 @@ function LineNotificationSettingsPage() {
 
   async function saveSupplierSettings(row) {
     try {
-      setBusyKey(`supplier-save-${row.supplierId}`);
+      setBusyKey("supplier-save-" + row.supplierId);
       await updateSupplierLineNotificationSettings(row.supplierId, supplierForms[row.supplierId] || defaultSupplierForm(row));
       await loadSettings();
       window.alert("供應商 LINE 群組設定已儲存");
@@ -168,7 +265,7 @@ function LineNotificationSettingsPage() {
 
   async function testSupplierSettings(row) {
     try {
-      setBusyKey(`supplier-test-${row.supplierId}`);
+      setBusyKey("supplier-test-" + row.supplierId);
       const result = await testSupplierLineNotification(row.supplierId, supplierForms[row.supplierId] || defaultSupplierForm(row));
       setPreview(result);
     } catch (err) {
@@ -177,6 +274,58 @@ function LineNotificationSettingsPage() {
       setBusyKey("");
     }
   }
+
+  const candidateColumns = useMemo(() => [
+    {
+      key: "lineGroupIdMasked",
+      label: "群組 ID",
+      render: (row) => <strong>{row.lineGroupIdMasked || "-"}</strong>
+    },
+    {
+      key: "groupTypeHint",
+      label: "類型",
+      render: (row) => <StatusBadge tone={row.groupTypeHint === "SUPPLIER_GROUP" ? "warning" : row.groupTypeHint === "STAFF_GROUP" ? "info" : "neutral"}>{GROUP_HINT_LABELS[row.groupTypeHint] || row.groupTypeHint}</StatusBadge>
+    },
+    {
+      key: "lastMessageText",
+      label: "最後訊息",
+      render: (row) => <span>{row.lastMessageText || "-"}</span>
+    },
+    {
+      key: "lastSeenAt",
+      label: "最後偵測",
+      render: (row) => <span className="muted-text">{formatDateTime(row.lastSeenAt)}</span>
+    },
+    {
+      key: "supplierLink",
+      label: "供應商連結",
+      render: (row) => (
+        <select value={candidateSupplierSelections[row.id] || ""} onChange={(event) => updateCandidateSupplier(row.id, event.target.value)} disabled={!canManageGroupCandidates || !canManageSupplierSettings || !supplierSettings.length}>
+          <option value="">選擇供應商</option>
+          {supplierSettings.map((supplier) => (
+            <option key={supplier.supplierId} value={supplier.supplierId}>{supplier.supplierName}</option>
+          ))}
+        </select>
+      )
+    },
+    {
+      key: "actions",
+      label: "操作",
+      render: (row) => (
+        <div className="table-actions">
+          <button type="button" className="primary-button" onClick={() => linkCandidateStore(row)} disabled={!canManageGroupCandidates || busyKey === "candidate-store-" + row.id}>
+            設為員工群組
+          </button>
+          <button type="button" className="secondary-button" onClick={() => linkCandidateSupplier(row)} disabled={!canManageGroupCandidates || !canManageSupplierSettings || !candidateSupplierSelections[row.id] || busyKey === "candidate-supplier-" + row.id}>
+            連結供應商
+          </button>
+          <button type="button" className="ghost-button" onClick={() => ignoreCandidate(row)} disabled={!canManageGroupCandidates || busyKey === "candidate-ignore-" + row.id}>
+            忽略
+          </button>
+        </div>
+      )
+    }
+  ], [busyKey, canManageGroupCandidates, canManageSupplierSettings, candidateSupplierSelections, supplierSettings]);
 
   const supplierColumns = useMemo(() => [
     {
@@ -252,10 +401,10 @@ function LineNotificationSettingsPage() {
       label: "操作",
       render: (row) => (
         <div className="table-actions">
-          <button type="button" className="primary-button" onClick={() => saveSupplierSettings(row)} disabled={!canManageSupplierSettings || busyKey === `supplier-save-${row.supplierId}`}>
+          <button type="button" className="primary-button" onClick={() => saveSupplierSettings(row)} disabled={!canManageSupplierSettings || busyKey === "supplier-save-" + row.supplierId}>
             儲存
           </button>
-          <button type="button" className="secondary-button" onClick={() => testSupplierSettings(row)} disabled={busyKey === `supplier-test-${row.supplierId}`}>
+          <button type="button" className="secondary-button" onClick={() => testSupplierSettings(row)} disabled={busyKey === "supplier-test-" + row.supplierId}>
             測試
           </button>
         </div>
@@ -317,6 +466,26 @@ function LineNotificationSettingsPage() {
       </section>
 
       <PreviewBox preview={preview} />
+
+      <section className="content-card section-panel">
+        <div className="section-heading-row">
+          <div>
+            <h2>LINE 群組候選清單</h2>
+            <p className="muted-text">請先將 KINGWAY LINE Bot 加入群組，並在群組內輸入：KINGWAY 登錄。系統會在此顯示候選群組。</p>
+          </div>
+          <StatusBadge tone="info">{groupCandidates.length} 筆</StatusBadge>
+        </div>
+        {candidateError ? <div className="alert alert-warning">{candidateError}</div> : null}
+        <DataTable
+          rows={groupCandidates}
+          columns={candidateColumns}
+          emptyText="目前沒有新的 LINE 群組候選。"
+          cardTitle={(row) => row.lineGroupIdMasked || "-"}
+          cardDescription={(row) => (GROUP_HINT_LABELS[row.groupTypeHint] || row.groupTypeHint) + " / " + formatDateTime(row.lastSeenAt)}
+          cardBadges={(row) => <StatusBadge tone={row.groupTypeHint === "SUPPLIER_GROUP" ? "warning" : row.groupTypeHint === "STAFF_GROUP" ? "info" : "neutral"}>{GROUP_HINT_LABELS[row.groupTypeHint] || row.groupTypeHint}</StatusBadge>}
+          cardFooter={(row) => candidateColumns.find((column) => column.key === "actions").render(row)}
+        />
+      </section>
 
       <section className="content-card section-panel">
         <div className="section-heading-row">
