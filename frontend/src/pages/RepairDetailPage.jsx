@@ -32,6 +32,25 @@ function formatCurrency(value) {
   return `NT$${Number(value || 0).toFixed(0)}`;
 }
 
+function formatFileSize(size) {
+  const bytes = Number(size || 0);
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${bytes} B`;
+}
+
+function isVideoAttachment(item) {
+  return String(item?.fileType || "").toLowerCase() === "video" || String(item?.mimeType || "").startsWith("video/");
+}
+
+function getAttachmentLabel(item) {
+  return isVideoAttachment(item) ? "影片" : "圖片";
+}
+
 function normalizeQuoteItem(item) {
   const quantity = Number(item?.quantity || 0);
   const unitPrice = Number(item?.unitPrice !== undefined ? item.unitPrice : item?.price || 0);
@@ -749,6 +768,44 @@ function RepairDetailPage() {
       : repairConfirmationStatus === "PENDING"
         ? "待顧客現場確認車輛狀態後完成簽名。"
         : repairConfirmationBlockReason || "系統將在維修完成且付款完成後自動發送維修確認書。";
+  const attachmentRows = Array.isArray(detail.attachments) ? detail.attachments : [];
+  const repairAttachmentsPanel = (
+    <section className="content-card">
+      <div className="section-header">
+        <div>
+          <h2>客戶附件</h2>
+          <p className="muted-text">顧客在 LINE 維修預約上傳的照片 / 影片。</p>
+        </div>
+        <StatusBadge tone={attachmentRows.length ? "info" : "neutral"}>{attachmentRows.length ? `${attachmentRows.length} 個檔案` : "無附件"}</StatusBadge>
+      </div>
+      {attachmentRows.length ? (
+        <div className="repair-attachment-grid">
+          {attachmentRows.map((item) => (
+            <div className="repair-attachment-card" key={item.id || item.publicUrl}>
+              <div className="repair-attachment-preview">
+                {isVideoAttachment(item) ? (
+                  <video src={item.publicUrl} controls preload="metadata" />
+                ) : (
+                  <a href={item.publicUrl} target="_blank" rel="noreferrer">
+                    <img src={item.publicUrl} alt={item.originalName || "維修附件"} loading="lazy" />
+                  </a>
+                )}
+              </div>
+              <div className="repair-attachment-meta">
+                <StatusBadge tone={isVideoAttachment(item) ? "warning" : "info"}>{getAttachmentLabel(item)}</StatusBadge>
+                <strong>{item.originalName || "附件"}</strong>
+                <span>{formatFileSize(item.fileSize)}</span>
+                <a href={item.publicUrl} target="_blank" rel="noreferrer">開啟檔案</a>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">目前沒有客戶上傳的照片或影片。</div>
+      )}
+    </section>
+  );
+
   const repairConfirmationPanel = (
     <section className="content-card">
       <div className="section-header">
@@ -851,6 +908,8 @@ function RepairDetailPage() {
         </section>
 
         {repairConfirmationPanel}
+
+        {repairAttachmentsPanel}
 
         {detailsOpen ? (
           <section className="content-card">
@@ -974,6 +1033,8 @@ function RepairDetailPage() {
       </section>
 
       {repairConfirmationPanel}
+
+      {repairAttachmentsPanel}
 
       <div className="page-grid">
         <div className="page-grid-main">

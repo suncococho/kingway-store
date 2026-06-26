@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import liff from "@line/liff";
-import { apiRequest } from "../lib/api";
+import { apiRequest, apiUploadFile } from "../lib/api";
 import { resolveLineContext } from "../lib/lineContext";
 import LinePhoneBindGate from "./LinePhoneBindGate";
 import {
@@ -21,6 +21,21 @@ const LEGACY_STORE_CONTEXT = {
 
 const REPAIR_WARRANTY_VERSION = "KINGWAY_REPAIR_WARRANTY_V2026_06";
 const REPAIR_WARRANTY_ERROR_MESSAGE = "請先確認保固維修範圍說明";
+const MAX_REPAIR_ATTACHMENTS = 5;
+const IMAGE_SIZE_LIMIT = 10 * 1024 * 1024;
+const VIDEO_SIZE_LIMIT = 80 * 1024 * 1024;
+const ALLOWED_REPAIR_ATTACHMENT_TYPES = new Map([
+  ["image/jpeg", { label: "圖片", maxSize: IMAGE_SIZE_LIMIT }],
+  ["image/png", { label: "圖片", maxSize: IMAGE_SIZE_LIMIT }],
+  ["image/webp", { label: "圖片", maxSize: IMAGE_SIZE_LIMIT }],
+  ["image/heic", { label: "圖片", maxSize: IMAGE_SIZE_LIMIT }],
+  ["image/heif", { label: "圖片", maxSize: IMAGE_SIZE_LIMIT }],
+  ["video/mp4", { label: "影片", maxSize: VIDEO_SIZE_LIMIT }],
+  ["video/quicktime", { label: "影片", maxSize: VIDEO_SIZE_LIMIT }],
+  ["video/webm", { label: "影片", maxSize: VIDEO_SIZE_LIMIT }]
+]);
+const REPAIR_ATTACHMENT_ACCEPT = Array.from(ALLOWED_REPAIR_ATTACHMENT_TYPES.keys()).join(",");
+
 
 const WARRANTY_APPLIES_ITEMS = [
   "交車日起一年內，於正常使用情況下發生之非人為製造缺陷。",
@@ -61,6 +76,52 @@ function isPlaceholderCustomerName(value) {
   return !normalized || normalized === "LINE 客戶" || normalized === "LINE Customer";
 }
 
+function formatFileSize(size) {
+  const bytes = Number(size || 0);
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${bytes} B`;
+}
+
+function inferRepairAttachmentMimeType(file) {
+  const explicitType = String(file?.type || "").toLowerCase();
+  if (explicitType) {
+    return explicitType;
+  }
+  const name = String(file?.name || "").toLowerCase();
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".heic")) return "image/heic";
+  if (name.endsWith(".heif")) return "image/heif";
+  if (name.endsWith(".mp4")) return "video/mp4";
+  if (name.endsWith(".mov") || name.endsWith(".qt")) return "video/quicktime";
+  if (name.endsWith(".webm")) return "video/webm";
+  return "";
+}
+
+function validateRepairAttachmentFiles(files) {
+  if (files.length > MAX_REPAIR_ATTACHMENTS) {
+    return `最多可上傳 ${MAX_REPAIR_ATTACHMENTS} 個檔案。`;
+  }
+
+  for (const file of files) {
+    const rule = ALLOWED_REPAIR_ATTACHMENT_TYPES.get(inferRepairAttachmentMimeType(file));
+    if (!rule) {
+      return "請上傳 JPG、PNG、WEBP、HEIC、HEIF、MP4、MOV 或 WEBM 檔案。";
+    }
+    if (Number(file.size || 0) > rule.maxSize) {
+      return rule.label === "圖片" ? "圖片不可超過 10MB。" : "影片不可超過 80MB。";
+    }
+  }
+
+  return "";
+}
+
 function resolveDisplayName(profileName, customerName) {
   const normalizedProfile = normalizeText(profileName);
   if (normalizedProfile) {
@@ -93,6 +154,8 @@ function LineRepairRequestPage() {
   const [done, setDone] = useState(false);
   const [submitResult, setSubmitResult] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [attachments, setAttachments] = useState([]);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const submitLockRef = useRef(false);
   const [lineContextFailureReason, setLineContextFailureReason] = useState("");
   const [lineInClient, setLineInClient] = useState(false);
@@ -233,6 +296,46 @@ function LineRepairRequestPage() {
     setForm((current) => ({ ...current, [name]: value }));
   }
 
+  function updateAttachments(event) {
+    const files = Array.from(event.target.files || []);
+    const validationError = validateRepairAttachmentFiles(files);
+    if (validationError) {
+      setError(validationError);
+      event.target.value = "";
+      setAttachments([]);
+      return;
+    }
+    setError("");
+    setAttachments(files);
+  }
+
+  async function uploadRepairAttachments(repairId) {
+    if (!attachments.length) {
+      return [];
+    }
+
+    setUploadingAttachments(true);
+    try {
+      const storeQuery = storeContext.isExplicitStore
+        ? `&store=${encodeURIComponent(storeContext.storeCode)}`
+        : "";
+      const uploaded = [];
+      for (const file of attachments) {
+        const response = await apiUploadFile(
+          `/line-repair/${repairId}/attachments?lineUserId=${encodeURIComponent(lineUserId)}${storeQuery}` ,
+          file,
+          { "X-Line-User-Id": lineUserId, "Content-Type": inferRepairAttachmentMimeType(file) }
+        );
+        uploaded.push(response?.attachment || response);
+      }
+      return uploaded;
+    } finally {
+      setUploadingAttachments(false);
+    }
+  }
+
+
+
   async function submit(event) {
     event.preventDefault();
 
@@ -291,7 +394,21 @@ function LineRepairRequestPage() {
         })
       });
 
-      setSubmitResult(data || {});
+      let uploadedAttachments = [];
+      let attachmentUploadError = "";
+      if (attachments.length && data?.repairId) {
+        try {
+          uploadedAttachments = await uploadRepairAttachments(data.repairId);
+        } catch (uploadError) {
+          attachmentUploadError = uploadError.message || "附件上傳失敗，維修預約已建立，請聯繫門市補傳。";
+        }
+      }
+
+      setSubmitResult({
+        ...(data || {}),
+        uploadedAttachments,
+        attachmentUploadError
+        });
       setDone(true);
     } catch (err) {
       setError(err.message || "送出失敗");
@@ -326,6 +443,12 @@ function LineRepairRequestPage() {
               : "門市收到後會確認內容，並透過 LINE 或電話與您聯繫。"}
             {submitResult?.repairId ? ` 維修單號：${submitResult.repairId}` : ""}
           </p>
+          {submitResult?.uploadedAttachments?.length ? (
+            <p>已上傳 {submitResult.uploadedAttachments.length} 個照片 / 影片附件。</p>
+          ) : null}
+          {submitResult?.attachmentUploadError ? (
+            <div className="error-banner">{submitResult.attachmentUploadError}</div>
+          ) : null}
         </section>
         <button className="line-customer-close" onClick={() => liff.isInClient() ? liff.closeWindow() : window.location.href = "/line-customer"}>
           關閉
@@ -397,7 +520,7 @@ function LineRepairRequestPage() {
           {submitting ? (
             <section className="line-customer-summary">
               <div className="line-customer-summary-title">正在送出維修預約，請不要重複點擊</div>
-              <div>送出中，請稍候...</div>
+              <div>{uploadingAttachments ? "附件上傳中，請稍候..." : "送出中，請稍候..."}</div>
             </section>
           ) : null}
 
@@ -416,6 +539,22 @@ function LineRepairRequestPage() {
           <span>問題描述</span>
           <textarea rows="5" value={form.issueDescription} onChange={(e) => update("issueDescription", e.target.value)} placeholder="請描述故障情況，例如無法啟動、煞車異音、電池問題、控制器問題等" disabled={submitting} />
         </label>
+
+        <label className="form-field">
+          <span>照片 / 影片附件（選填，最多 5 個）</span>
+          <input type="file" accept={REPAIR_ATTACHMENT_ACCEPT} multiple onChange={updateAttachments} disabled={submitting || uploadingAttachments} />
+        </label>
+        {attachments.length ? (
+          <div className="line-attachment-list">
+            {attachments.map((file) => (
+              <div className="line-attachment-item" key={`${file.name}-${file.size}-${file.lastModified}` }>
+                <span>{inferRepairAttachmentMimeType(file).startsWith("video/") ? "影片" : "圖片"}</span>
+                <strong>{file.name}</strong>
+                <small>{formatFileSize(file.size)}</small>
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         <div className="line-warranty-terms">
           <div className="line-customer-summary-title">保固維修範圍確認</div>
@@ -459,7 +598,7 @@ function LineRepairRequestPage() {
         </div>
 
         <button className="line-customer-close" type="submit" disabled={submitting || !form.repairWarrantyAccepted}>
-          {submitting ? "送出中，請稍候..." : "送出維修預約"}
+          {uploadingAttachments ? "附件上傳中..." : submitting ? "送出中，請稍候..." : "送出維修預約"}
         </button>
           </form>
         </>

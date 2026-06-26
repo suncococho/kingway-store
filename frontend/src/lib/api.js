@@ -144,6 +144,63 @@ async function executeApiRequest(path, options = {}, method = "GET", releaseWrit
   }
 }
 
+export async function apiUploadFile(path, file, extraHeaders = {}) {
+  const lockKey = `POST:${path}:${file?.name || "file"}:${file?.size || 0}`;
+  if (writeLocks.has(lockKey)) {
+    return writeLocks.get(lockKey);
+  }
+
+  const releaseWriteProcessing = beginWriteProcessing({
+    message: "檔案上傳中",
+    description: "照片或影片正在上傳，請勿重複送出。"
+  });
+  const uploadPromise = executeApiUploadFile(path, file, extraHeaders, releaseWriteProcessing);
+  writeLocks.set(lockKey, uploadPromise);
+  uploadPromise.finally(() => {
+    if (writeLocks.get(lockKey) === uploadPromise) {
+      writeLocks.delete(lockKey);
+    }
+  }).catch(() => {});
+
+  return uploadPromise;
+}
+
+async function executeApiUploadFile(path, file, extraHeaders = {}, releaseWriteProcessing) {
+  const token = getStoredToken();
+  const headers = {
+    "Content-Type": file.type || "application/octet-stream",
+    "X-File-Name": file.name || "upload-file",
+    ...extraHeaders
+  };
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers,
+      body: file
+    });
+    const data = await parseJson(response);
+    if (!response.ok) {
+      if (response.status === 401) {
+        clearAuth();
+      }
+
+      const error = new Error(data.message || "檔案上傳失敗");
+      error.status = response.status;
+      error.data = data;
+      throw error;
+    }
+
+    return data;
+  } finally {
+    releaseWriteProcessing();
+  }
+}
+
 export async function apiUploadImage(path, file) {
   const lockKey = `POST:${path}:${file?.name || "image"}:${file?.size || 0}`;
   if (writeLocks.has(lockKey)) {

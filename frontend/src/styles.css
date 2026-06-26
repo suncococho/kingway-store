@@ -5168,3 +5168,77 @@ button:hover {
     min-height: 180px;
   }
 }
+
+.line-attachment-list,
+.repair-attachment-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.line-attachment-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.line-attachment-item span {
+  font-weight: 700;
+  color: #163b7a;
+}
+
+.line-attachment-item strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.line-attachment-item small {
+  color: #64748b;
+}
+
+.repair-attachment-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.repair-attachment-card {
+  border: 1px solid #d9e1ea;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.repair-attachment-preview {
+  aspect-ratio: 4 / 3;
+  background: #f8fafc;
+}
+
+.repair-attachment-preview img,
+.repair-attachment-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.repair-attachment-meta {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.repair-attachment-meta strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.repair-attachment-meta span,
+.repair-attachment-meta a {
+  color: #64748b;
+  font-size: 14px;
+}

@@ -353,6 +353,7 @@ function RepairsPage() {
         estimateStatusLabel: item.customerEstimateResponseLabel || getEstimateStatusLabel(item),
         completionNoticeLabel: item.completedAt ? "已通知" : "未通知",
         surveyLabel: item.surveyId ? "已填問卷" : "未填問卷",
+        attachmentCount: Number(item.attachmentCount || 0),
         repairConfirmationStatus: item.repairConfirmationStatus || "NOT_SENT",
         repairConfirmationLabel: getRepairConfirmationStatusLabel(item.repairConfirmationStatus),
         repairConfirmationLink: item.repairConfirmationLink || "",
@@ -610,6 +611,7 @@ function RepairsPage() {
           <StatusBadge tone={row.surveyId ? "info" : "neutral"}>{row.surveyLabel}</StatusBadge>
           <StatusBadge tone={getQuoteConfirmationTone(row.quoteConfirmationStatus)}>{row.quoteConfirmationLabel}</StatusBadge>
           <StatusBadge tone={getRepairConfirmationTone(row.repairConfirmationStatus)}>{row.repairConfirmationLabel}</StatusBadge>
+          {row.attachmentCount ? <StatusBadge tone="info">附件 {row.attachmentCount}</StatusBadge> : null}
         </div>
       ),
       mobileHidden: true
@@ -821,7 +823,7 @@ function RepairsPage() {
             </label>
             <div className="field-item">
               <div className="field-label">照片</div>
-              <div className="field-value">目前維持既有維修流程，若系統支援照片會在詳情中處理。</div>
+              <div className="field-value">LINE 客戶上傳的照片 / 影片會顯示在維修詳情。現場建立可先於問題描述補充。 </div>
             </div>
             </>
             ) : null}
@@ -887,6 +889,7 @@ function RepairsPage() {
                 <StatusBadge tone={row.completedAt ? "success" : "neutral"}>{row.completionNoticeLabel}</StatusBadge>
                 <StatusBadge tone={row.surveyId ? "info" : "neutral"}>{row.surveyLabel}</StatusBadge>
                 <StatusBadge tone={getRepairConfirmationTone(row.repairConfirmationStatus)}>{row.repairConfirmationLabel}</StatusBadge>
+                {row.attachmentCount ? <StatusBadge tone="info">附件 {row.attachmentCount}</StatusBadge> : null}
               </>
             )}
             cardFooter={(row) => (

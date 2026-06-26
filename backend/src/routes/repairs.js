@@ -10,6 +10,7 @@ const config = require("../config");
 const { mapRepairStatusLabel, mapOrderStatusLabel, mapCategoryLabel } = require("../utils/displayLabels");
 const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
 const { applyRepairReservationDecision, isLineCustomerType, normalizeCustomerType } = require("../services/repairReservationService");
+const { listRepairAttachments } = require("../services/repairAttachmentService");
 const {
   isStaffLineNotifySuppressed,
   notifyRepairReservationCreated
@@ -192,6 +193,7 @@ router.get("/",  async (req, res, next) => {
           rc.pdf_path AS repairConfirmationPdfPath,
           qcs.created_at AS quoteConfirmationSentAt,
           qcf.created_at AS quoteConfirmationFailedAt,
+          COALESCE(ra.attachment_count, 0) AS attachmentCount,
           ${selectColumn(repairColumns, "ro", "created_at", "createdAt")}
         FROM repair_orders ro
         INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ?
@@ -209,6 +211,11 @@ router.get("/",  async (req, res, next) => {
           WHERE action = 'quote_confirmation_send_failed'
           GROUP BY repair_order_id
         ) qcf ON qcf.repair_order_id = ro.id
+        LEFT JOIN (
+          SELECT store_id, repair_order_id, COUNT(*) AS attachment_count
+          FROM repair_order_attachments
+          GROUP BY store_id, repair_order_id
+        ) ra ON ra.repair_order_id = ro.id AND ra.store_id = ro.store_id
         WHERE ro.deleted_at IS NULL
         ORDER BY ro.id DESC
       `;
@@ -541,6 +548,7 @@ router.get("/:id",  async (req, res, next) => {
       [req.params.id]
     );
 
+    const attachments = await listRepairAttachments(req.params.id, storeId);
     const normalizedStatus = normalizeRepairLifecycleStatus({
       repairSource: "REPAIR_ORDER",
       reservationStatus: rows[0].reservation_status,
@@ -571,7 +579,9 @@ router.get("/:id",  async (req, res, next) => {
               ? "客戶尚未回覆"
               : "尚未送出報價",
       logs,
-      surveys
+      surveys,
+      attachments,
+      attachmentCount: attachments.length
     });
   } catch (error) {
     return next(error);

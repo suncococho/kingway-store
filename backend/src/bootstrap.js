@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { pool } = require("./db");
 const { seedDefaultSettings } = require("./services/settingsService");
+const { ensureRepairOrderAttachmentsSchema } = require("./services/repairAttachmentService");
 const { hashPassword, verifyPassword } = require("./utils/passwords");
 
 function readOptionalEnvFile(fileName) {
@@ -759,6 +760,8 @@ async function ensureV2Schema() {
     )
   `);
 
+  await ensureRepairOrderAttachmentsSchema();
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS telegram_chat_sessions (
       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -805,6 +808,7 @@ async function ensureV2Schema() {
 
 function ensureStorageDirectories() {
   fs.mkdirSync(path.join(__dirname, "..", "storage", "pdfs"), { recursive: true });
+  fs.mkdirSync(path.join(__dirname, "..", "storage", "repair-attachments"), { recursive: true });
 }
 
 module.exports = {

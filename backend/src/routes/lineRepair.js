@@ -16,6 +16,7 @@ const {
 } = require("../services/lineWorkflowService");
 const { notifyRepairReservationCreated } = require("../services/staffLineNotify");
 const { notifyLineRepairCreated } = require("../services/notificationEventService");
+const { saveRepairAttachment } = require("../services/repairAttachmentService");
 
 const router = express.Router();
 const resolvePublicStoreContext = createPublicStoreContextMiddleware({
@@ -287,6 +288,91 @@ router.get("/customer", async (req, res, next) => {
     return next(error);
   }
 });
+
+router.post(
+  "/:repairId/attachments",
+  express.raw({
+    type: [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/heic",
+      "image/heif",
+      "video/mp4",
+      "video/quicktime",
+      "video/webm"
+    ],
+    limit: "80mb"
+  }),
+  async (req, res, next) => {
+    try {
+      const repairId = Number(req.params.repairId);
+      const lineUserId = String(req.query.lineUserId || req.headers["x-line-user-id"] || "").trim();
+      const originalName = String(req.headers["x-file-name"] || "repair-attachment").trim();
+
+      if (!Number.isSafeInteger(repairId) || repairId <= 0) {
+        return res.status(400).json({ message: "維修單編號不正確" });
+      }
+
+      if (!lineUserId) {
+        return res.status(400).json({ message: "缺少 LINE 使用者資料" });
+      }
+
+      const storeContext = await resolveLineRepairStoreContext(req, lineUserId, "line_repair_attachment_upload");
+      if (!storeContext.ok) {
+        return res.status(storeContext.status).json({ message: storeContext.message });
+      }
+
+      const [rows] = await pool.query(
+        [
+          "SELECT ro.id, ro.store_id AS storeId, c.line_user_id AS lineUserId",
+          "FROM repair_orders ro",
+          "INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id",
+          "WHERE ro.id = ?",
+          "AND ro.store_id = ?",
+          "AND c.line_user_id = ?",
+          "AND ro.deleted_at IS NULL",
+          "LIMIT 1"
+        ].join(" "),
+        [repairId, storeContext.storeId, lineUserId]
+      );
+
+      if (!rows[0]) {
+        return res.status(404).json({ message: "找不到可上傳附件的維修單" });
+      }
+
+      const attachment = await saveRepairAttachment({
+        storeId: storeContext.storeId,
+        repairOrderId: repairId,
+        uploadedBy: "customer",
+        originalName,
+        contentType: req.headers["content-type"],
+        buffer: req.body
+      });
+
+      await pool.query(
+        [
+          "INSERT INTO repair_logs (repair_order_id, action, note)",
+          "VALUES (?, 'customer_attachment_uploaded', ?)"
+        ].join(" "),
+        [
+          repairId,
+          JSON.stringify({
+            source: "line_repair_page",
+            attachmentId: attachment.id,
+            fileType: attachment.fileType,
+            mimeType: attachment.mimeType,
+            fileSize: attachment.fileSize
+          })
+        ]
+      );
+
+      return res.status(201).json({ ok: true, attachment });
+    } catch (error) {
+      return next(error);
+    }
+  }
+);
 
 async function handleLineProgressQuoteResponse(req, res, next, approved) {
   try {
