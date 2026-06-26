@@ -2104,6 +2104,52 @@ textarea:focus-visible,
   z-index: 40;
 }
 
+.staff-popup-panel {
+  position: relative;
+  width: min(560px, calc(100vw - 32px));
+  max-width: 560px;
+  padding-right: 56px;
+}
+
+.staff-popup-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 22px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.staff-popup-close:hover:not(:disabled),
+.staff-popup-close:focus-visible {
+  background: #f1f5f9;
+  border-color: rgba(59, 130, 246, 0.35);
+  color: #163b7a;
+}
+
+.staff-popup-close:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.staff-popup-action-note {
+  flex: 1 1 100%;
+  align-self: center;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .admin-modal {
   width: min(1080px, 100%);
   max-height: 92vh;

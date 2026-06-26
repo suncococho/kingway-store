@@ -13,7 +13,8 @@ import {
 } from "../lib/internalMessagesApi";
 
 const SUPPRESS_KEY = "kingway_staff_notification_popup_suppress";
-const SUPPRESS_MS = 5 * 60 * 1000;
+const ACTION_SUPPRESS_MS = 5 * 60 * 1000;
+const CLOSE_SUPPRESS_MS = 30 * 60 * 1000;
 
 const PRIORITY_LABELS = {
   LOW: "一般",
@@ -53,9 +54,9 @@ function getSuppressId(item) {
   return `${item.kind}:${item.id}`;
 }
 
-function suppressNotification(item) {
+function suppressNotification(item, durationMs = ACTION_SUPPRESS_MS) {
   const suppressed = getSuppressedIds();
-  suppressed[getSuppressId(item)] = Date.now() + SUPPRESS_MS;
+  suppressed[getSuppressId(item)] = Date.now() + durationMs;
   sessionStorage.setItem(SUPPRESS_KEY, JSON.stringify(suppressed));
 }
 
@@ -148,6 +149,12 @@ function StaffNotificationPopup() {
   const isDailyTaskNotification = activeItem.kind === "NOTIFICATION"
     && String(activeItem.raw?.type || "").startsWith("DAILY_TASK_");
 
+  function closeOnly() {
+    if (busy || !activeItem) return;
+    suppressNotification(activeItem, CLOSE_SUPPRESS_MS);
+    setActiveItem(null);
+  }
+
   async function completeAction(action) {
     if (busy) return;
     try {
@@ -183,7 +190,17 @@ function StaffNotificationPopup() {
 
   return (
     <div className="admin-modal-backdrop" role="presentation">
-      <section className="content-card section-panel" role="dialog" aria-modal="true" aria-labelledby="staff-notification-title" style={{ maxWidth: 560, width: "min(560px, calc(100vw - 32px))" }}>
+      <section className="content-card section-panel staff-popup-panel" role="dialog" aria-modal="true" aria-labelledby="staff-notification-title">
+        <button
+          type="button"
+          className="staff-popup-close"
+          onClick={closeOnly}
+          disabled={busy}
+          aria-label="關閉提醒"
+          title="只關閉此提醒，不會標記完成。"
+        >
+          ×
+        </button>
         <div className="section-heading-row">
           <div>
             <StatusBadge tone={getPriorityTone(activeItem.priority)}>
@@ -202,6 +219,7 @@ function StaffNotificationPopup() {
           </article>
         </div>
         <div className="action-row">
+          <div className="staff-popup-action-note">只關閉此提醒，不會標記完成。</div>
           {activeItem.targetUrl ? (
             <button type="button" className="primary-button" onClick={() => completeAction("go")} disabled={busy}>
               {activeItem.kind === "MESSAGE" ? "查看訊息" : "前往處理"}
@@ -217,6 +235,9 @@ function StaffNotificationPopup() {
           ) : null}
           <button type="button" className="ghost-button" onClick={() => completeAction("snooze")} disabled={busy}>
             稍後提醒
+          </button>
+          <button type="button" className="ghost-button" onClick={closeOnly} disabled={busy} title="只關閉此提醒，不會標記完成。">
+            關閉
           </button>
         </div>
       </section>
