@@ -2,7 +2,6 @@ const fs = require("fs");
 const path = require("path");
 const { pool } = require("./db");
 const { seedDefaultSettings } = require("./services/settingsService");
-const { ensureRepairOrderAttachmentsSchema } = require("./services/repairAttachmentService");
 const { hashPassword, verifyPassword } = require("./utils/passwords");
 
 function readOptionalEnvFile(fileName) {
@@ -760,7 +759,6 @@ async function ensureV2Schema() {
     )
   `);
 
-  await ensureRepairOrderAttachmentsSchema();
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS telegram_chat_sessions (
