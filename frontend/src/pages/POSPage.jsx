@@ -910,8 +910,8 @@ function POSPage() {
                 <option value="CASH">現金</option>
                 <option value="CARD">信用卡</option>
                 <option value="LINE_PAY">LINE Pay</option>
-                <option value="TRANSFER">轉帳</option>
-                <option value="OTHER">其他</option>
+                <option value="TRANSFER">匯款</option>
+                <option value="OTHER">無卡分期</option>
               </select>
             </label>
             <label className="form-field">

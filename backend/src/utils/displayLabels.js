@@ -1,4 +1,5 @@
 const { PRODUCT_CATEGORY_LABELS } = require("./productCategories");
+const { PAYMENT_METHOD_LABELS, mapPaymentMethodLabel } = require("./paymentMethods");
 
 const CATEGORY_LABELS = {
   ...PRODUCT_CATEGORY_LABELS,
@@ -15,14 +16,6 @@ const CATEGORY_LABELS = {
   TY: "玩具",
   HG: "車把握把腳踏",
   LC: "鎖具快充"
-};
-
-const PAYMENT_METHOD_LABELS = {
-  CASH: "現金",
-  CARD: "刷卡",
-  LINE_PAY: "LINE Pay",
-  TRANSFER: "轉帳",
-  OTHER: "其他"
 };
 
 const ORDER_STATUS_LABELS = {
@@ -93,10 +86,6 @@ const SUPPLIER_REQUEST_STATUS_LABELS = {
 
 function mapCategoryLabel(category) {
   return CATEGORY_LABELS[category] || category || null;
-}
-
-function mapPaymentMethodLabel(method) {
-  return PAYMENT_METHOD_LABELS[method] || method || null;
 }
 
 function mapOrderStatusLabel(status) {

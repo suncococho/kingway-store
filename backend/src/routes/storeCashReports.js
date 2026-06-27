@@ -1,5 +1,6 @@
 const express = require("express");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { getCashReferenceForDate } = require("../services/orderPaymentRecordService");
 const {
   getCashReportByDate,
   getCashReports,
@@ -36,6 +37,16 @@ router.get("/today", async (req, res, next) => {
       req.query?.reportDate || getTaipeiToday()
     );
     res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/reference", async (req, res, next) => {
+  try {
+    const context = await resolveCashReportContext(req);
+    const reference = await getCashReferenceForDate(context, req.query || {});
+    res.json({ reference });
   } catch (error) {
     next(error);
   }

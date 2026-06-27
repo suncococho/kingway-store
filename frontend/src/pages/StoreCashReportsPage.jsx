@@ -4,6 +4,7 @@ import PageHeader from "../components/PageHeader";
 import PageHelpButton from "../components/PageHelpButton";
 import StatusBadge from "../components/StatusBadge";
 import {
+  fetchCashReportReference,
   fetchCashReportSummary,
   fetchCashReports,
   fetchTodayCashReport,
@@ -108,6 +109,7 @@ function StoreCashReportsPage() {
     storeId: ""
   });
   const [summary, setSummary] = useState(null);
+  const [cashReference, setCashReference] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -147,13 +149,16 @@ function StoreCashReportsPage() {
       setLoading(true);
       setError("");
       const response = await fetchTodayCashReport({ reportDate, storeId });
+      const referenceResponse = await fetchCashReportReference({ reportDate, storeId: storeId || response.currentStoreId || "" });
       const report = response.report || null;
       setCurrentReport(report);
       setStores(response.stores || []);
       setCanViewAllStores(Boolean(response.canViewAllStores));
       setCurrentStoreId(response.currentStoreId || "");
       setForm(formFromReport(report, reportDate, storeId || response.currentStoreId || ""));
+      setCashReference(referenceResponse.reference || null);
     } catch (err) {
+      setCashReference(null);
       setError(err?.message || "現金日報載入失敗");
     } finally {
       setLoading(false);
@@ -301,6 +306,22 @@ function StoreCashReportsPage() {
       </section>
 
       {error ? <div className="alert alert-error">{error}</div> : null}
+
+      <section className="content-card section-panel">
+        <div className="section-heading-row">
+          <div>
+            <h2>系統參考金額</h2>
+            <p className="muted-text">依訂單收款紀錄提供當日現金參考值，不會自動覆蓋現金日報輸入內容。</p>
+          </div>
+          <StatusBadge tone="info">參考值</StatusBadge>
+        </div>
+        <div className="summary-grid">
+          <div className="summary-card"><div className="summary-label">訂單現金收款參考</div><div className="summary-value">{money(cashReference?.orderCashAmount)}</div></div>
+          <div className="summary-card"><div className="summary-label">預約金現金參考</div><div className="summary-value">{money(cashReference?.reservationDepositCashAmount)}</div></div>
+          <div className="summary-card"><div className="summary-label">當日全額現金參考</div><div className="summary-value">{money(cashReference?.sameDayFullCashAmount)}</div></div>
+          <div className="summary-card"><div className="summary-label">現金未收款參考</div><div className="summary-value">{money(cashReference?.cashReceivableAmount)}</div></div>
+        </div>
+      </section>
 
       <section className="content-card section-panel">
         <div className="section-heading-row">

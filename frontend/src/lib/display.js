@@ -1,4 +1,5 @@
 import { PRODUCT_CATEGORY_LABELS } from "./productCategories";
+export { PAYMENT_METHOD_LABELS, getPaymentMethodLabel } from "./paymentMethods";
 
 export const CATEGORY_LABELS = {
   ...PRODUCT_CATEGORY_LABELS,
@@ -15,14 +16,6 @@ export const CATEGORY_LABELS = {
   TY: "玩具",
   HG: "車把握把腳踏",
   LC: "鎖具快充"
-};
-
-export const PAYMENT_METHOD_LABELS = {
-  CASH: "現金",
-  CARD: "刷卡",
-  LINE_PAY: "LINE Pay",
-  TRANSFER: "轉帳",
-  OTHER: "其他"
 };
 
 export const ORDER_STATUS_LABELS = {
@@ -163,10 +156,6 @@ export const SUPPLIER_REQUEST_STATUS_LABELS = {
 
 export function getCategoryLabel(category) {
   return CATEGORY_LABELS[category] || category || "-";
-}
-
-export function getPaymentMethodLabel(method) {
-  return PAYMENT_METHOD_LABELS[method] || method || "-";
 }
 
 export function getOrderStatusLabel(status) {

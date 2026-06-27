@@ -437,7 +437,7 @@ async function requestGoogleReviewCoupon() {
                 <option value="CARD">刷卡</option>
                 <option value="TRANSFER">匯款</option>
                 <option value="LINE_PAY">LINE Pay</option>
-                <option value="OTHER">其他</option>
+                <option value="OTHER">無卡分期</option>
               </select>
             </div>
 

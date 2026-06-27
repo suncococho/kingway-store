@@ -29,6 +29,12 @@ const {
 const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
 const { sendOrderCreationNotification } = require("../services/telegramService");
 const { createOrReuseRepairConfirmationForPaidOrder } = require("../services/repairConfirmationService");
+const {
+  createOrderPaymentRecord,
+  getCompanyIdForStore,
+  getPaymentRecordsForOrder,
+  normalizePaymentCompletionPayload
+} = require("../services/orderPaymentRecordService");
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -429,6 +435,12 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
           ${selectColumn(orderColumns, "o", "unpaid_balance", "unpaidBalance", "0")},
           ${selectColumn(orderColumns, "o", "final_payment_status", "finalPaymentStatus", "'PAID'")},
           ${selectColumn(orderColumns, "o", "final_paid_at", "finalPaidAt")},
+          ${selectColumn(orderColumns, "o", "final_payment_method", "finalPaymentMethod")},
+          ${selectColumn(orderColumns, "o", "final_payment_received_amount", "finalPaymentReceivedAmount")},
+          ${selectColumn(orderColumns, "o", "final_payment_note", "finalPaymentNote")},
+          ${selectColumn(orderColumns, "o", "final_payment_completed_by_staff_user_id", "finalPaymentCompletedByStaffUserId")},
+          ${selectColumn(orderColumns, "o", "final_payment_completed_at", "finalPaymentCompletedAt")},
+          paid_staff.display_name AS finalPaymentCompletedByName,
           ${selectColumn(orderColumns, "o", "purchase_confirmation_sent_at", "purchaseConfirmationSentAt")},
           ${selectColumn(orderColumns, "o", "handover_confirmed_at", "handoverConfirmedAt")},
           ${selectColumn(orderColumns, "o", "notes", "notes")},
@@ -441,6 +453,7 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN staff_users s ON s.id = o.created_by
+        LEFT JOIN staff_users paid_staff ON paid_staff.id = o.final_payment_completed_by_staff_user_id
         WHERE o.store_id = ?
           AND o.deleted_at IS NULL
         ORDER BY o.id DESC
@@ -454,6 +467,7 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
         ...row,
         isRepairOrder: Boolean(row.isRepairOrder),
         paymentMethodLabel: mapPaymentMethodLabel(row.paymentMethod),
+        finalPaymentMethodLabel: mapPaymentMethodLabel(row.finalPaymentMethod || row.paymentMethod),
         statusLabel: mapOrderStatusLabel(row.status),
         finalPaymentStatusLabel: mapFinalPaymentStatusLabel(row.finalPaymentStatus),
         repairStatusLabel: mapRepairStatusLabel(row.repairStatus)
@@ -609,6 +623,12 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
           COALESCE(o.other_discount, 0) AS otherDiscount,
           o.final_payment_status AS finalPaymentStatus,
           o.final_paid_at AS finalPaidAt,
+          o.final_payment_method AS finalPaymentMethod,
+          o.final_payment_received_amount AS finalPaymentReceivedAmount,
+          o.final_payment_note AS finalPaymentNote,
+          o.final_payment_completed_by_staff_user_id AS finalPaymentCompletedByStaffUserId,
+          o.final_payment_completed_at AS finalPaymentCompletedAt,
+          paid_staff.display_name AS finalPaymentCompletedByName,
           o.purchase_confirmation_sent_at AS purchaseConfirmationSentAt,
           o.handover_confirmed_at AS handoverConfirmedAt,
           o.notes,
@@ -620,6 +640,7 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN staff_users s ON s.id = o.created_by
+        LEFT JOIN staff_users paid_staff ON paid_staff.id = o.final_payment_completed_by_staff_user_id
         WHERE o.id = ?
           AND o.store_id = ?
         LIMIT 1
@@ -653,12 +674,16 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
     const otherDiscount = Number(rows[0].otherDiscount || 0);
     const couponDiscount = Math.max(itemTotal - Number(rows[0].totalAmount || 0) - otherDiscount, 0);
     const displayFinalAmount = Math.max(itemTotal - couponDiscount - otherDiscount, 0);
+    const paymentRecords = await getPaymentRecordsForOrder(orderId, storeId);
 
     return res.json({
       ...rows[0],
       itemTotal,
       displayFinalAmount,
       repairStatusLabel: mapRepairStatusLabel(rows[0].repairStatus),
+      paymentMethodLabel: mapPaymentMethodLabel(rows[0].paymentMethod),
+      finalPaymentMethodLabel: mapPaymentMethodLabel(rows[0].finalPaymentMethod || rows[0].paymentMethod),
+      paymentRecords,
       items
     });
   } catch (error) {
@@ -1171,6 +1196,12 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
           COALESCE(o.other_discount, 0) AS otherDiscount,
           o.final_payment_status AS finalPaymentStatus,
           o.final_paid_at AS finalPaidAt,
+          o.final_payment_method AS finalPaymentMethod,
+          o.final_payment_received_amount AS finalPaymentReceivedAmount,
+          o.final_payment_note AS finalPaymentNote,
+          o.final_payment_completed_by_staff_user_id AS finalPaymentCompletedByStaffUserId,
+          o.final_payment_completed_at AS finalPaymentCompletedAt,
+          paid_staff.display_name AS finalPaymentCompletedByName,
           o.purchase_confirmation_sent_at AS purchaseConfirmationSentAt,
           o.handover_confirmed_at AS handoverConfirmedAt,
           o.notes,
@@ -1182,6 +1213,7 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN staff_users s ON s.id = o.created_by
+        LEFT JOIN staff_users paid_staff ON paid_staff.id = o.final_payment_completed_by_staff_user_id
         WHERE o.id = ?
           AND o.store_id = ?
         LIMIT 1
@@ -1191,6 +1223,8 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
 
     return res.json({
       ...updated[0],
+      paymentMethodLabel: mapPaymentMethodLabel(updated[0]?.paymentMethod),
+      finalPaymentMethodLabel: mapPaymentMethodLabel(updated[0]?.finalPaymentMethod || updated[0]?.paymentMethod),
       repairConfirmation,
       repairConfirmationWarning
     });
@@ -1369,15 +1403,30 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
   try {
     const orderId = Number(req.params.id);
     const storeId = req.storeId;
-    const amount = Number(req.body.amount || 0);
-    if (!orderId || amount <= 0) {
-      throw createError("請提供有效的補收金額", 400);
+    const staffUserId = Number(req.user?.id || 0);
+    if (!orderId) {
+      throw createError("找不到訂單", 404);
     }
+    if (!staffUserId) {
+      throw createError("請重新登入後再處理收款", 401);
+    }
+
+    const paymentPayload = normalizePaymentCompletionPayload(req.body || {});
 
     const result = await withTransaction(async (connection) => {
       const [rows] = await connection.query(
         `
-          SELECT id, order_no AS orderNo, customer_type AS customerType, unpaid_balance AS unpaidBalance
+          SELECT id,
+                 order_no AS orderNo,
+                 customer_id AS customerId,
+                 customer_type AS customerType,
+                 total_amount AS totalAmount,
+                 deposit_amount AS depositAmount,
+                 is_reservation_order AS isReservationOrder,
+                 unpaid_balance AS unpaidBalance,
+                 final_payment_status AS finalPaymentStatus,
+                 payment_method AS paymentMethod,
+                 notes
           FROM orders
           WHERE id = ?
             AND store_id = ?
@@ -1388,28 +1437,113 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
 
       const order = rows[0];
       if (!order) {
+        const [scopeRows] = await connection.query(
+          "SELECT store_id AS storeId FROM orders WHERE id = ? LIMIT 1",
+          [orderId]
+        );
+        if (scopeRows[0]) {
+          throw createError("無權限處理其他門市訂單", 403);
+        }
         throw createError("找不到訂單", 404);
       }
 
-      const nextBalance = Math.max(Number(order.unpaidBalance || 0) - amount, 0);
-      const nextStatus = nextBalance === 0 ? "PAID" : "PARTIAL";
+      const unpaidBalance = Math.max(Number(order.unpaidBalance || 0), 0);
+      if (unpaidBalance <= 0) {
+        throw createError("此訂單目前已結清，不需要補收尾款。", 400);
+      }
+
+      const unpaidCents = Math.round(unpaidBalance * 100);
+      if (paymentPayload.receivedAmountCents < unpaidCents) {
+        throw createError("實收金額不可小於未收尾款", 400);
+      }
+
+      const inferredStage = req.body?.paymentStage || req.body?.payment_stage
+        ? paymentPayload.paymentStage
+        : Number(order.depositAmount || 0) > 0 || Number(order.isReservationOrder || 0) === 1
+          ? "BALANCE"
+          : "FULL_PAYMENT";
+      const nextBalance = 0;
+      const nextStatus = "PAID";
+      const companyId = await getCompanyIdForStore(storeId, connection);
 
       await connection.query(
         `
           UPDATE orders
           SET unpaid_balance = ?,
               final_payment_status = ?,
-              final_paid_at = CASE WHEN ? = 'PAID' THEN NOW() ELSE final_paid_at END
+              final_paid_at = NOW(),
+              payment_method = ?,
+              notes = COALESCE(?, notes),
+              final_payment_method = ?,
+              final_payment_received_amount = ?,
+              final_payment_note = ?,
+              final_payment_completed_by_staff_user_id = ?,
+              final_payment_completed_at = NOW()
           WHERE id = ?
             AND store_id = ?
         `,
-        [nextBalance, nextStatus, nextStatus, orderId, storeId]
+        [
+          nextBalance,
+          nextStatus,
+          paymentPayload.paymentMethod,
+          paymentPayload.note,
+          paymentPayload.paymentMethod,
+          paymentPayload.receivedAmount,
+          paymentPayload.note,
+          staffUserId,
+          orderId,
+          storeId
+        ]
+      );
+
+      const paymentRecordId = await createOrderPaymentRecord(connection, {
+        companyId,
+        storeId,
+        orderId,
+        paymentStage: inferredStage,
+        paymentMethod: paymentPayload.paymentMethod,
+        receivedAmount: paymentPayload.receivedAmount,
+        note: paymentPayload.note,
+        staffUserId
+      });
+
+      await connection.query(
+        `
+          INSERT INTO order_payment_events (
+            order_id,
+            customer_id,
+            payment_kind,
+            amount,
+            unpaid_balance_after,
+            note,
+            source,
+            created_by_staff_id,
+            meta_json
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, JSON_OBJECT('paymentMethod', ?, 'paymentRecordId', ?))
+        `,
+        [
+          orderId,
+          order.customerId || null,
+          inferredStage,
+          paymentPayload.receivedAmount,
+          nextBalance,
+          paymentPayload.note,
+          "collect_balance",
+          staffUserId,
+          paymentPayload.paymentMethod,
+          paymentRecordId
+        ]
       );
 
       await logWorkflowEvent("order_balance_collected", "ORDER", orderId, {
-        amount,
+        amount: Number(paymentPayload.receivedAmount),
+        paymentMethod: paymentPayload.paymentMethod,
+        paymentMethodLabel: mapPaymentMethodLabel(paymentPayload.paymentMethod),
+        paymentStage: inferredStage,
+        paymentRecordId,
         unpaidBalance: nextBalance
-      }, req.user.id, connection);
+      }, staffUserId, connection);
 
       const [typeRows] = await connection.query(
         `
@@ -1444,6 +1578,13 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
         customerType: normalizeCustomerType(order.customerType),
         unpaidBalance: nextBalance,
         finalPaymentStatus: nextStatus,
+        paymentMethod: paymentPayload.paymentMethod,
+        paymentMethodLabel: mapPaymentMethodLabel(paymentPayload.paymentMethod),
+        receivedAmount: paymentPayload.receivedAmount,
+        paymentNote: paymentPayload.note,
+        paymentStage: inferredStage,
+        paymentRecordId,
+        receivedByStaffUserId: staffUserId,
         isRepairOrder: Boolean(orderType.isRepairOrder),
         becamePaid:
           nextBalance === 0 &&
@@ -1501,22 +1642,31 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
     }
 
     if (isLineCustomerType(result.customerType)) {
-      await sendToGroupsWithResult(["admin", "staff"], [
-        {
-          type: "text",
-          text: [
-            "尾款已完成",
-            `訂單 ${result.orderNo} 已補收尾款。`,
-            `完款狀態：${mapFinalPaymentStatusLabel(result.finalPaymentStatus)}`,
-            "",
-            "交車待確認，請由現場人員完成交車確認。"
-          ].join("\n"),
-          actions: [
-            { type: "postback", label: "確認交車", data: `action=tg_crm_handover&id=${orderId}` },
-            { type: "uri", label: "前往訂單", uri: `${config.frontendBaseUrl}/orders` }
-          ]
-        }
-      ]);
+      try {
+        await sendToGroupsWithResult(["admin", "staff"], [
+          {
+            type: "text",
+            text: [
+              "尾款已完成",
+              `訂單 ${result.orderNo} 已補收尾款。`,
+              `付款方式：${result.paymentMethodLabel}`,
+              `實收金額：NT$ ${Number(result.receivedAmount || 0).toLocaleString()}`,
+              `完款狀態：${mapFinalPaymentStatusLabel(result.finalPaymentStatus)}`,
+              "",
+              "交車待確認，請由現場人員完成交車確認。"
+            ].join("\n"),
+            actions: [
+              { type: "postback", label: "確認交車", data: `action=tg_crm_handover&id=${orderId}` },
+              { type: "uri", label: "前往訂單", uri: `${config.frontendBaseUrl}/orders` }
+            ]
+          }
+        ]);
+      } catch (notificationError) {
+        console.warn("collect-balance staff group notification failed", {
+          orderId,
+          message: notificationError.message
+        });
+      }
     }
 
     return res.json({
@@ -1529,7 +1679,6 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
     return next(error);
   }
 });
-
 
 async function createKingwayAutoPurchaseOrderOnHandover(orderId, storeId, staffId = 1) {
   const autoNote = `AUTO_FROM_HANDOVER_ORDER:${orderId}｜交車確認自動發注`;

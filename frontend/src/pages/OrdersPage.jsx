@@ -16,6 +16,7 @@ import { useProcessingGuard } from "../hooks/useProcessingGuard";
 import { apiRequest } from "../lib/api";
 import { formatTaipeiDate, formatTaipeiDateTime, getFinalPaymentStatusLabel, getOrderStatusLabel, getPaymentMethodLabel, getRepairStatusLabel } from "../lib/display";
 import { PAGE_HELP } from "../lib/pageHelpContent";
+import { PAYMENT_METHOD_OPTIONS } from "../lib/paymentMethods";
 
 function formatAmount(value) {
   return `NT$${Number(value || 0).toFixed(0)}`;
@@ -140,6 +141,7 @@ function OrdersPage() {
   const [systemInfoOpen, setSystemInfoOpen] = useState(false);
   const [warningModal, setWarningModal] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
+  const [paymentModal, setPaymentModal] = useState(null);
   const [toastMessage, setToastMessage] = useState("");
   const { isProcessing, pendingAction, runWithProcessing } = useProcessingGuard();
 
@@ -260,7 +262,11 @@ function OrdersPage() {
     return latest?.createdAt ? `最後更新：${formatTaipeiDateTime(latest.createdAt)}` : "最後更新：-";
   }, [rows]);
 
-  async function collectBalance(row) {
+  function inferPaymentStage(row) {
+    return Number(row?.depositAmount || 0) > 0 || row?.isReservationOrder ? "BALANCE" : "FULL_PAYMENT";
+  }
+
+  function openPaymentModal(row) {
     const amount = Number(row.unpaidBalance || 0);
 
     if (amount <= 0) {
@@ -268,15 +274,69 @@ function OrdersPage() {
       return;
     }
 
+    setPaymentModal({
+      order: row,
+      paymentMethod: row.finalPaymentMethod || row.paymentMethod || "CASH",
+      receivedAmount: String(amount),
+      note: row.finalPaymentNote || "",
+      error: ""
+    });
+  }
+
+  function updatePaymentModal(key, value) {
+    setPaymentModal((current) => current ? { ...current, [key]: value, error: "" } : current);
+  }
+
+  async function submitPaymentModal(event) {
+    event.preventDefault();
+    if (!paymentModal?.order) return;
+
+    const order = paymentModal.order;
+    const expectedAmount = Number(order.unpaidBalance || 0);
+    const receivedAmount = Number(paymentModal.receivedAmount || 0);
+    if (!paymentModal.paymentMethod) {
+      setPaymentModal((current) => ({ ...current, error: "請選擇付款方式" }));
+      return;
+    }
+    if (!Number.isFinite(receivedAmount) || receivedAmount < 0) {
+      setPaymentModal((current) => ({ ...current, error: "實際收款金額不可為負數" }));
+      return;
+    }
+    if (receivedAmount < expectedAmount) {
+      setPaymentModal((current) => ({ ...current, error: "實收金額不可小於未收尾款" }));
+      return;
+    }
+    if (receivedAmount > expectedAmount && !window.confirm("實收金額高於未收尾款，確認仍要完成收款？")) {
+      return;
+    }
+
     await runWithProcessing(async () => {
-      await apiRequest(`/orders/${row.id}/collect-balance`, {
+      const data = await apiRequest(`/orders/${order.id}/collect-balance`, {
         method: "POST",
-        body: JSON.stringify({ amount })
+        body: JSON.stringify({
+          paymentMethod: paymentModal.paymentMethod,
+          receivedAmount,
+          note: paymentModal.note,
+          paymentStage: inferPaymentStage(order)
+        })
       });
       await refetch();
+      setDetail((current) => current && current.id === order.id ? {
+        ...current,
+        unpaidBalance: 0,
+        finalPaymentStatus: "PAID",
+        finalPaymentStatusLabel: data.finalPaymentStatusLabel || "已完款",
+        finalPaymentMethod: data.paymentMethod,
+        finalPaymentMethodLabel: data.paymentMethodLabel,
+        finalPaymentReceivedAmount: data.receivedAmount,
+        finalPaymentNote: data.paymentNote,
+        finalPaymentCompletedByStaffUserId: data.receivedByStaffUserId,
+        finalPaymentCompletedAt: new Date().toISOString()
+      } : current);
+      setPaymentModal(null);
       alert("已完成付款");
-    }, { id: `order-payment-${row.id}`, label: "付款處理中..." }).catch((error) => {
-      alert(error.message);
+    }, { id: `order-payment-${order.id}`, label: "付款處理中..." }).catch((error) => {
+      setPaymentModal((current) => current ? { ...current, error: error.message || "付款處理失敗" } : current);
     });
   }
 
@@ -298,12 +358,7 @@ function OrdersPage() {
       setWarningModal({ title: "不需完成付款", message: "此訂單目前已結清，不需要補收尾款。" });
       return;
     }
-    setConfirmModal({
-      title: "完成付款",
-      message: "確認要補收尾款並更新付款狀態嗎？",
-      confirmText: "完成付款",
-      action: () => collectBalance(row)
-    });
+    openPaymentModal(row);
   }
 
   function requestHandover(row) {
@@ -1120,7 +1175,45 @@ if (!window.confirm(
                 <div className="field-item"><div className="field-label">完款狀態</div><div className="field-value"><StatusBadge tone={detail.finalPaymentStatus === "PAID" ? "success" : "warning"}>{detail.finalPaymentStatusLabel}</StatusBadge></div></div>
                 <div className="field-item"><div className="field-label">訂金</div><div className="field-value">{formatAmount(detail.depositAmount)}</div></div>
                 <div className="field-item"><div className="field-label">尾款</div><div className="field-value">{formatAmount(detail.unpaidBalance)}</div></div>
+                <div className="field-item"><div className="field-label">收款人員</div><div className="field-value">{detail.finalPaymentCompletedByName || "-"}</div></div>
+                <div className="field-item"><div className="field-label">收款時間</div><div className="field-value">{detail.finalPaymentCompletedAt ? formatTaipeiDateTime(detail.finalPaymentCompletedAt) : "-"}</div></div>
+                <div className="field-item"><div className="field-label">實收金額</div><div className="field-value">{detail.finalPaymentReceivedAmount ? formatAmount(detail.finalPaymentReceivedAmount) : "-"}</div></div>
+                <div className="field-item"><div className="field-label">實際付款方式</div><div className="field-value">{detail.finalPaymentMethodLabel || detail.paymentMethodLabel || "-"}</div></div>
+                <div className="field-item field-item-wide"><div className="field-label">收款備註</div><div className="field-value">{detail.finalPaymentNote || "-"}</div></div>
               </div>
+            </section>
+            <section className="stack-card">
+              <div className="section-title">收款紀錄</div>
+              {Array.isArray(detail.paymentRecords) && detail.paymentRecords.length ? (
+                <div className="table-scroll">
+                  <table className="data-table compact-table">
+                    <thead>
+                      <tr>
+                        <th>時間</th>
+                        <th>方式</th>
+                        <th>階段</th>
+                        <th>金額</th>
+                        <th>人員</th>
+                        <th>備註</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail.paymentRecords.map((record) => (
+                        <tr key={record.id}>
+                          <td>{formatTaipeiDateTime(record.receivedAt)}</td>
+                          <td>{record.paymentMethodLabel}</td>
+                          <td>{record.paymentStage}</td>
+                          <td>{formatAmount(record.receivedAmount)}</td>
+                          <td>{record.receivedByName || "-"}</td>
+                          <td>{record.note || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="empty-state">尚無收款紀錄。</div>
+              )}
             </section>
             <section className="stack-card">
               <div className="section-title">購買確認書狀態</div>
@@ -1162,7 +1255,7 @@ if (!window.confirm(
                 <form className="grid-form compact-grid" onSubmit={saveOrderDetail}>
                   <label className="form-field"><span>客戶姓名</span><input value={detailForm.customerName} onChange={(event) => setDetailForm((current) => ({ ...current, customerName: event.target.value }))} /></label>
                   <label className="form-field"><span>客戶電話</span><input value={detailForm.customerPhone} onChange={(event) => setDetailForm((current) => ({ ...current, customerPhone: event.target.value }))} /></label>
-                  <label className="form-field"><span>付款方式</span><select value={detailForm.paymentMethod} onChange={(event) => setDetailForm((current) => ({ ...current, paymentMethod: event.target.value }))}><option value="CASH">現金</option><option value="CARD">刷卡</option><option value="LINE_PAY">LINE Pay</option><option value="TRANSFER">轉帳</option><option value="OTHER">其他</option></select></label>
+                  <label className="form-field"><span>付款方式</span><select value={detailForm.paymentMethod} onChange={(event) => setDetailForm((current) => ({ ...current, paymentMethod: event.target.value }))}><option value="CASH">現金</option><option value="CARD">刷卡</option><option value="LINE_PAY">LINE Pay</option><option value="TRANSFER">匯款</option><option value="OTHER">無卡分期</option></select></label>
                   <label className="form-field"><span>預約單</span><select value={detailForm.isReservationOrder ? "1" : "0"} onChange={(event) => setDetailForm((current) => ({ ...current, isReservationOrder: event.target.value === "1" }))}><option value="0">一般訂單</option><option value="1">預約訂單</option></select></label>
                   <label className="form-field"><span>訂金</span><input type="number" min="0" value={detailForm.depositAmount} onChange={(event) => setDetailForm((current) => ({ ...current, depositAmount: event.target.value }))} /></label>
                   <label className="form-field"><span>未付款金額</span><input type="number" min="0" value={detailForm.unpaidBalance} onChange={(event) => setDetailForm((current) => ({ ...current, unpaidBalance: event.target.value }))} /></label>
@@ -1175,6 +1268,65 @@ if (!window.confirm(
             </div>
         ) : null}
       </DetailModal>
+      {paymentModal ? (
+        <div className="admin-modal-backdrop" role="presentation">
+          <section className="admin-modal" role="dialog" aria-modal="true" aria-label="付款完成確認">
+            <div className="admin-modal-header">
+              <div>
+                <h2>付款完成確認</h2>
+                <p>此操作會記錄處理人員與時間。</p>
+              </div>
+              <button type="button" className="icon-button" aria-label="關閉" onClick={() => setPaymentModal(null)}>×</button>
+            </div>
+            <form className="grid-form compact-grid" onSubmit={submitPaymentModal}>
+              <div className="field-item">
+                <div className="field-label">訂單編號</div>
+                <div className="field-value">{paymentModal.order.orderNo || `#${paymentModal.order.id}`}</div>
+              </div>
+              <div className="field-item">
+                <div className="field-label">客戶</div>
+                <div className="field-value">{paymentModal.order.customerName || paymentModal.order.customerNameSnapshot || "-"}</div>
+              </div>
+              <div className="field-item">
+                <div className="field-label">訂單總額</div>
+                <div className="field-value">{formatOrderFinalAmount(paymentModal.order)}</div>
+              </div>
+              <div className="field-item">
+                <div className="field-label">未收尾款</div>
+                <div className="field-value">{formatAmount(paymentModal.order.unpaidBalance)}</div>
+              </div>
+              <label className="form-field">
+                <span>請選擇付款方式</span>
+                <select value={paymentModal.paymentMethod} onChange={(event) => updatePaymentModal("paymentMethod", event.target.value)} required>
+                  <option value="">請選擇</option>
+                  {PAYMENT_METHOD_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="form-field">
+                <span>實際收款金額</span>
+                <input type="number" min="0" step="0.01" value={paymentModal.receivedAmount} onChange={(event) => updatePaymentModal("receivedAmount", event.target.value)} required />
+              </label>
+              <label className="form-field form-field-wide">
+                <span>既有訂單備註</span>
+                <textarea value={paymentModal.order.notes || ""} readOnly rows={2} />
+              </label>
+              <label className="form-field form-field-wide">
+                <span>收款備註</span>
+                <textarea value={paymentModal.note} onChange={(event) => updatePaymentModal("note", event.target.value)} rows={3} placeholder="可輸入收款說明、無卡分期資訊或其他備註" />
+              </label>
+              {paymentModal.error ? <div className="alert alert-error form-field-wide">{paymentModal.error}</div> : null}
+              <div className="form-actions form-field-wide">
+                <button type="button" className="secondary-button" onClick={() => setPaymentModal(null)}>取消</button>
+                <button type="submit" className="primary-button" disabled={isProcessing}>
+                  {pendingAction?.id === `order-payment-${paymentModal.order.id}` ? "處理中..." : "確認收款"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
       <ActionModal
         open={Boolean(warningModal)}
         tone="warning"

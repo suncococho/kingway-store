@@ -142,7 +142,7 @@ function DashboardPage() {
       setCollectingOrderId(Number(row.id));
       await apiRequest(`/orders/${row.id}/collect-balance`, {
         method: "POST",
-        body: JSON.stringify({ amount })
+        body: JSON.stringify({ amount, receivedAmount: amount, paymentMethod: row.paymentMethod || "CASH", note: "Dashboard 確認收款" })
       });
       await loadSummary();
       orders.refetch();

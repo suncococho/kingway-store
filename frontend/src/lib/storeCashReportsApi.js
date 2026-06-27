@@ -23,6 +23,10 @@ export function fetchCashReportSummary(filters = {}) {
   return apiRequest(`/store-cash-reports/summary${buildQuery(filters)}`);
 }
 
+export function fetchCashReportReference(filters = {}) {
+  return apiRequest(`/store-cash-reports/reference${buildQuery(filters)}`);
+}
+
 export function saveCashReport(payload) {
   return apiRequest("/store-cash-reports", {
     method: "POST",
