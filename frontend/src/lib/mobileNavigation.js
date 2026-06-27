@@ -70,6 +70,7 @@ export const mobileMenuSections = [
       { to: "/settings/store", label: "門市設定", description: "門市名稱、地址、營業時間與對外文字", menuKey: "settings" },
       { to: "/settings/manual", label: "系統使用手冊", description: "KINGWAY 操作流程、注意事項與常見錯誤", menuKey: "dashboard" },
       { to: "/settings/line", label: "LINE 設定", description: "LINE OA、Webhook 與 LIFF 安全設定", menuKey: "line" },
+      { to: "/settings/line-channels", label: "LINE Channel 管理", description: "各門市 LINE 官方帳號、Messaging API Channel 與 dry-run 測試", menuKey: "settings" },
       { to: "/settings/line-notifications", label: "LINE 通知設定", description: "員工與供應商 LINE 群組通知目標", menuKey: "settings" },
       { to: "/settings/daily-tasks", label: "每日任務設定", description: "設定每日工作項目、期限與優先級", menuKey: "settings" },
       { to: "/settings?section=system", label: "系統設定", description: "LINE 狀態、通知預設與 POS 預設", menuKey: "settings" },

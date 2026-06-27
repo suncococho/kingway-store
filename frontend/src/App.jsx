@@ -33,6 +33,7 @@ import MorePage from "./pages/MorePage";
 import SettingsPage from "./pages/SettingsPage";
 import StoreSettingsPage from "./pages/StoreSettingsPage";
 import StoreLineSettingsPage from "./pages/StoreLineSettingsPage";
+import StoreLineChannelsPage from "./pages/StoreLineChannelsPage";
 import StoreCashReportsPage from "./pages/StoreCashReportsPage";
 import StoreVisitRecordsPage from "./pages/StoreVisitRecordsPage";
 import StoreTransfersPage from "./pages/StoreTransfersPage";
@@ -140,6 +141,7 @@ function App() {
         <Route path="/payroll" element={<PayrollPage />} />
         <Route path="/settings/store" element={<StoreSettingsPage />} />
         <Route path="/settings/line" element={<StoreLineSettingsPage />} />
+        <Route path="/settings/line-channels" element={<StoreLineChannelsPage />} />
         <Route path="/settings/manual" element={<SystemManualPage />} />
         <Route path="/settings/daily-tasks" element={<DailyTaskSettingsPage />} />
         <Route path="/settings/line-notifications" element={<LineNotificationSettingsPage />} />

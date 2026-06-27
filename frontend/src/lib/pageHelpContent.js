@@ -47,6 +47,12 @@ export const PAGE_HELP = {
     steps: ["填入員工 LINE 群組 ID", "設定需要通知的事件", "供應商依門市與供應商分別設定 groupId", "測試時確認 dry-run 結果"],
     warnings: ["請確認 groupId 正確。不要將客戶個人 LINE ID 填入供應商群組欄位。"]
   },
+  storeLineChannels: {
+    title: "LINE Channel 管理使用說明",
+    description: "此頁用於管理各門市 LINE 官方帳號與 Messaging API Channel。直營店可由本部管理，加盟或獨立門市可管理自己的 Channel 設定。",
+    steps: ["選擇門市與 Ownership Type", "填入 LINE OA、Basic ID、Channel ID 與 webhook path", "只輸入 secret ref / token ref，不輸入原文", "按 Dry-run 測試確認設定完整性"],
+    warnings: ["請勿輸入 LINE Access Token 或 Channel Secret 原文。系統只保存 secret ref / token ref。Dry-run 測試不會呼叫 LINE API，也不會發送訊息。"]
+  },
   staffKpi: {
     title: "KPI / 評價使用說明",
     description: "此頁顯示員工處理通知、每日任務、訊息、出貨入庫、供應商作業與來店紀錄建立、LINE 加好友、後續追蹤的參考統計。",
