@@ -1,6 +1,10 @@
 const { pool } = require("../db");
+const { createKpiEventOnce } = require("./staffKpiService");
+const { createNotification } = require("./staffNotificationService");
 
 const HQ_RELATIONSHIP_TYPES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
+const VISIT_RECORD_REF_TYPE = "STORE_VISIT_RECORD";
+const FOLLOW_UP_NOTIFICATION_TYPE = "STORE_VISIT_FOLLOW_UP_REQUIRED";
 const VISIT_RESULTS = new Set([
   "INTERESTED",
   "TEST_RIDE",
@@ -94,6 +98,115 @@ function maskLineIdentifier(value) {
   if (text.length <= 4) return `${text.slice(0, 1)}***`;
   if (text.length <= 10) return `${text.slice(0, 3)}***${text.slice(-2)}`;
   return `${text.slice(0, 6)}***${text.slice(-4)}`;
+}
+
+function maskPhone(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const compact = text.replace(/[\s-]/g, "");
+  if (compact.length <= 4) return `${compact.slice(0, 1)}***`;
+  return `${compact.slice(0, 4)}***${compact.slice(-3)}`;
+}
+
+function previewText(value, maxLength = 80) {
+  const text = String(value || "").trim().replace(/\s+/g, " ");
+  if (!text) return "";
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function getRecordValue(record = {}, camelKey, snakeKey) {
+  return record[camelKey] ?? record[snakeKey];
+}
+
+function getRecordBoolean(record = {}, camelKey, snakeKey) {
+  const value = getRecordValue(record, camelKey, snakeKey);
+  return value === true || value === 1 || value === "1" || String(value || "").toLowerCase() === "true";
+}
+
+function shouldRequireFollowUp(record = {}) {
+  return String(getRecordValue(record, "visitResult", "visit_result") || "").toUpperCase() === "NEED_FOLLOW_UP" || getRecordBoolean(record, "followUpRequired", "follow_up_required");
+}
+
+function buildVisitRecordMetadata(record = {}) {
+  return {
+    visitResult: getRecordValue(record, "visitResult", "visit_result") || null,
+    lineFriendAdded: getRecordBoolean(record, "lineFriendAdded", "line_friend_added"),
+    followUpRequired: shouldRequireFollowUp(record),
+    interestedVehicle: getRecordValue(record, "interestedVehicle", "interested_vehicle") || null,
+    visitDate: formatDateValue(getRecordValue(record, "visitDate", "visit_date")),
+    visitTime: formatTimeValue(getRecordValue(record, "visitTime", "visit_time")) || null
+  };
+}
+
+function buildFollowUpNotificationMessage(record = {}) {
+  const customerName = getRecordValue(record, "customerName", "customer_name") || "來店客戶";
+  const vehicle = getRecordValue(record, "interestedVehicle", "interested_vehicle") || "感興趣車款";
+  const parts = [`來店客戶 ${customerName} 對 ${vehicle} 有興趣，請安排後續聯繫。`];
+  const phone = maskPhone(getRecordValue(record, "customerPhone", "customer_phone"));
+  if (phone) parts.push(`電話：${phone}`);
+  const followUpAt = formatDateTimeValue(getRecordValue(record, "followUpAt", "follow_up_at"));
+  if (followUpAt) parts.push(`預計追蹤時間：${followUpAt}`);
+  const note = previewText(getRecordValue(record, "note", "note"));
+  if (note) parts.push(`備註：${note}`);
+  return parts.join("\n");
+}
+
+async function logVisitKpiEvent(record = {}, eventType, title, score, connection = pool) {
+  const staffUserId = toPositiveInteger(getRecordValue(record, "updatedByStaffUserId", "updated_by_staff_user_id")) || toPositiveInteger(getRecordValue(record, "createdByStaffUserId", "created_by_staff_user_id"));
+  const refId = toPositiveInteger(getRecordValue(record, "id", "id"));
+  if (!staffUserId || !refId) return null;
+
+  return createKpiEventOnce({
+    companyId: toPositiveInteger(getRecordValue(record, "companyId", "company_id")),
+    storeId: toPositiveInteger(getRecordValue(record, "storeId", "store_id")),
+    staffUserId,
+    eventType,
+    refType: VISIT_RECORD_REF_TYPE,
+    refId,
+    title,
+    score,
+    metadata: buildVisitRecordMetadata(record)
+  }, connection);
+}
+
+async function logVisitKpiEventsForCreate(record = {}, connection = pool) {
+  await logVisitKpiEvent(record, "STORE_VISIT_CREATED", "建立來店紀錄", 0.5, connection);
+  if (getRecordBoolean(record, "lineFriendAdded", "line_friend_added")) {
+    await logVisitKpiEvent(record, "STORE_VISIT_LINE_FRIEND_ADDED", "來店客戶加入 LINE", 1, connection);
+  }
+  if (shouldRequireFollowUp(record)) {
+    await logVisitKpiEvent(record, "STORE_VISIT_FOLLOW_UP_REQUIRED", "來店客戶需追蹤", 0.5, connection);
+  }
+}
+
+async function logVisitKpiEventsForUpdate(existing = {}, updated = {}, connection = pool) {
+  await logVisitKpiEvent(updated, "STORE_VISIT_UPDATED", "更新來店紀錄", 0.2, connection);
+  if (!getRecordBoolean(existing, "lineFriendAdded", "line_friend_added") && getRecordBoolean(updated, "lineFriendAdded", "line_friend_added")) {
+    await logVisitKpiEvent(updated, "STORE_VISIT_LINE_FRIEND_ADDED", "來店客戶加入 LINE", 1, connection);
+  }
+  if (!shouldRequireFollowUp(existing) && shouldRequireFollowUp(updated)) {
+    await logVisitKpiEvent(updated, "STORE_VISIT_FOLLOW_UP_REQUIRED", "來店客戶需追蹤", 0.5, connection);
+  }
+}
+
+async function createFollowUpNotification(record = {}, connection = pool) {
+  if (!shouldRequireFollowUp(record)) return null;
+  const refId = toPositiveInteger(getRecordValue(record, "id", "id"));
+  const storeId = toPositiveInteger(getRecordValue(record, "storeId", "store_id"));
+  if (!refId || !storeId) return null;
+
+  return createNotification({
+    companyId: toPositiveInteger(getRecordValue(record, "companyId", "company_id")),
+    storeId,
+    type: FOLLOW_UP_NOTIFICATION_TYPE,
+    title: "來店客戶需追蹤",
+    message: buildFollowUpNotificationMessage(record),
+    targetUrl: "/store-visit-records",
+    refType: VISIT_RECORD_REF_TYPE,
+    refId,
+    priority: "IMPORTANT",
+    dueAt: formatDateTimeValue(getRecordValue(record, "followUpAt", "follow_up_at"))
+  }, connection);
 }
 
 function normalizeVisitResult(value) {
@@ -322,60 +435,74 @@ async function fetchVisitRecordById(connection, id, forUpdate = false) {
 async function createVisitRecord(context, payload = {}) {
   const normalized = validateVisitRecordPayload(payload);
   const targetStoreId = resolveWritableStoreId(context, payload.storeId || payload.store_id);
-  const companyId = await getCompanyIdForStore(targetStoreId);
-  const [result] = await pool.query(
-    `
-      INSERT INTO store_visit_records (
-        company_id,
-        store_id,
-        visit_date,
-        visit_time,
-        visited_at,
-        visitor_count,
-        customer_name,
-        customer_phone,
-        line_friend_added,
-        line_identifier,
-        line_display_name,
-        interested_vehicle,
-        interested_product_id,
-        interested_product_sku,
-        visit_result,
-        follow_up_required,
-        follow_up_at,
-        note,
-        created_by_staff_user_id,
-        updated_by_staff_user_id
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-    [
-      companyId,
-      targetStoreId,
-      normalized.visitDate,
-      normalized.visitTime,
-      normalized.visitedAt,
-      normalized.visitorCount,
-      normalized.customerName,
-      normalized.customerPhone,
-      normalized.lineFriendAdded,
-      normalized.lineIdentifier,
-      normalized.lineDisplayName,
-      normalized.interestedVehicle,
-      normalized.interestedProductId,
-      normalized.interestedProductSku,
-      normalized.visitResult,
-      normalized.followUpRequired,
-      normalized.followUpAt,
-      normalized.note,
-      context.staffUserId,
-      context.staffUserId
-    ]
-  );
-  const row = await fetchVisitRecordById(pool, result.insertId);
-  return { record: normalizeVisitRecord(row, { includeSensitive: true }), created: true, id: Number(result.insertId) };
-}
+  const connection = await pool.getConnection();
 
+  try {
+    await connection.beginTransaction();
+    const companyId = await getCompanyIdForStore(targetStoreId, connection);
+    const [result] = await connection.query(
+      `
+        INSERT INTO store_visit_records (
+          company_id,
+          store_id,
+          visit_date,
+          visit_time,
+          visited_at,
+          visitor_count,
+          customer_name,
+          customer_phone,
+          line_friend_added,
+          line_identifier,
+          line_display_name,
+          interested_vehicle,
+          interested_product_id,
+          interested_product_sku,
+          visit_result,
+          follow_up_required,
+          follow_up_at,
+          note,
+          created_by_staff_user_id,
+          updated_by_staff_user_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        companyId,
+        targetStoreId,
+        normalized.visitDate,
+        normalized.visitTime,
+        normalized.visitedAt,
+        normalized.visitorCount,
+        normalized.customerName,
+        normalized.customerPhone,
+        normalized.lineFriendAdded,
+        normalized.lineIdentifier,
+        normalized.lineDisplayName,
+        normalized.interestedVehicle,
+        normalized.interestedProductId,
+        normalized.interestedProductSku,
+        normalized.visitResult,
+        normalized.followUpRequired,
+        normalized.followUpAt,
+        normalized.note,
+        context.staffUserId,
+        context.staffUserId
+      ]
+    );
+    const row = await fetchVisitRecordById(connection, result.insertId);
+    await logVisitKpiEventsForCreate(row, connection);
+    if (shouldRequireFollowUp(row)) {
+      await createFollowUpNotification(row, connection);
+    }
+    await connection.commit();
+    return { record: normalizeVisitRecord(row, { includeSensitive: true }), created: true, id: Number(result.insertId) };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
 async function updateVisitRecord(context, id, payload = {}) {
   const recordId = toPositiveInteger(id);
   if (!recordId) throw createError("找不到來店紀錄", 404);
@@ -442,8 +569,12 @@ async function updateVisitRecord(context, id, payload = {}) {
       ]
     );
 
+    const updated = await fetchVisitRecordById(connection, recordId);
+    await logVisitKpiEventsForUpdate(existing, updated, connection);
+    if (!shouldRequireFollowUp(existing) && shouldRequireFollowUp(updated)) {
+      await createFollowUpNotification(updated, connection);
+    }
     await connection.commit();
-    const updated = await fetchVisitRecordById(pool, recordId);
     return { record: normalizeVisitRecord(updated, { includeSensitive: true }), updated: true };
   } catch (error) {
     await connection.rollback();

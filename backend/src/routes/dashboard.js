@@ -238,6 +238,22 @@ router.get("/summary", async (req, res, next) => {
 
     const pendingTasks = await getPendingTaskCounts(storeId);
 
+    const [[visitSummaryRow]] = await pool.query(
+      `
+        SELECT
+          COUNT(*) AS todayVisitRecordsCount,
+          COALESCE(SUM(visitor_count), 0) AS todayVisitorCount,
+          COALESCE(SUM(CASE WHEN line_friend_added = 1 THEN 1 ELSE 0 END), 0) AS todayLineFriendAddedCount,
+          COALESCE(SUM(CASE WHEN follow_up_required = 1 THEN 1 ELSE 0 END), 0) AS todayFollowUpRequiredCount,
+          COALESCE(SUM(CASE WHEN visit_result = 'PURCHASED' THEN 1 ELSE 0 END), 0) AS todayPurchasedCount,
+          COALESCE(SUM(CASE WHEN visit_result = 'NEED_FOLLOW_UP' THEN 1 ELSE 0 END), 0) AS todayNeedFollowUpCount
+        FROM store_visit_records
+        WHERE store_id = ?
+          AND visit_date = CURRENT_DATE()
+      `,
+      [storeId]
+    );
+
     return res.json({
       totals: {
         customers: Number(totals.customers || 0),
@@ -249,6 +265,14 @@ router.get("/summary", async (req, res, next) => {
         supplierRequestsPending: Number(totals.supplierRequestsPending || 0)
       },
       pendingTasks,
+      visitSummary: {
+        todayVisitRecordsCount: Number(visitSummaryRow?.todayVisitRecordsCount || 0),
+        todayVisitorCount: Number(visitSummaryRow?.todayVisitorCount || 0),
+        todayLineFriendAddedCount: Number(visitSummaryRow?.todayLineFriendAddedCount || 0),
+        todayFollowUpRequiredCount: Number(visitSummaryRow?.todayFollowUpRequiredCount || 0),
+        todayPurchasedCount: Number(visitSummaryRow?.todayPurchasedCount || 0),
+        todayNeedFollowUpCount: Number(visitSummaryRow?.todayNeedFollowUpCount || 0)
+      },
       pendingBikeDeliveries: pendingBikeDeliveries.map((row) => ({
         ...row,
         totalAmount: Number(row.totalAmount || 0),

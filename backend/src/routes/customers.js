@@ -395,6 +395,7 @@ router.patch("/:id", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res
 router.get("/:id/detail", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, next) => {
   try {
     const id = Number(req.params.id);
+    const storeId = req.storeId;
     const [[customer]] = await pool.query(
       `
         SELECT
@@ -420,8 +421,9 @@ router.get("/:id/detail", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req
           created_at AS createdAt
         FROM customers
         WHERE id = ?
+          AND store_id = ?
       `,
-      [id]
+      [id, storeId]
     );
 
     if (!customer) {
@@ -525,6 +527,35 @@ router.get("/:id/detail", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req
       [id]
     );
 
+    const normalizedCustomerPhone = normalizePhone(customer.phone);
+    const [visitRecords] = normalizedCustomerPhone
+      ? await pool.query(
+        `
+          SELECT
+            r.id,
+            r.visit_date AS visitDate,
+            r.visit_time AS visitTime,
+            r.visitor_count AS visitorCount,
+            r.line_friend_added AS lineFriendAdded,
+            r.interested_vehicle AS interestedVehicle,
+            r.visit_result AS visitResult,
+            r.follow_up_required AS followUpRequired,
+            r.follow_up_at AS followUpAt,
+            r.note,
+            r.created_at AS createdAt,
+            COALESCE(created_staff.display_name, created_staff.username) AS createdByName
+          FROM store_visit_records r
+          LEFT JOIN staff_users created_staff
+            ON created_staff.id = r.created_by_staff_user_id
+          WHERE r.store_id = ?
+            AND REPLACE(REPLACE(REPLACE(COALESCE(r.customer_phone, ''), '-', ''), ' ', ''), '\t', '') = ?
+          ORDER BY r.visit_date DESC, r.visit_time DESC, r.id DESC
+          LIMIT 5
+        `,
+        [storeId, normalizedCustomerPhone]
+      )
+      : [[]];
+
     return res.json({
       customer,
       orders,
@@ -539,6 +570,7 @@ router.get("/:id/detail", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req
       })),
       crmEvents,
       followUps,
+      visitRecords,
       timeline: timeline.map((item) => ({
         ...item,
         payload: item.payload ? (() => {

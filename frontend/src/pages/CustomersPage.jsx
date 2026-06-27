@@ -70,6 +70,21 @@ function getCustomerTier(visitCount) {
   return "";
 }
 
+const VISIT_RESULT_LABELS = {
+  INTERESTED: "有興趣",
+  TEST_RIDE: "試乘",
+  QUOTE_REQUESTED: "已報價",
+  RESERVED: "已預約",
+  PURCHASED: "已購買",
+  NEED_FOLLOW_UP: "需追蹤",
+  NO_PURCHASE: "未購買",
+  OTHER: "其他"
+};
+
+function getVisitResultLabel(value) {
+  return VISIT_RESULT_LABELS[String(value || "").toUpperCase()] || value || "-";
+}
+
 function CustomersPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { items, loading, error, refetch } = useFetchList("/customers");
@@ -654,6 +669,7 @@ function CustomersPage() {
 
   const detailSurveyRows = detail?.surveys || [];
   const detailConfirmationRows = detail?.confirmations || [];
+  const detailVisitRows = detail?.visitRecords || [];
   const detailSummaryCards = detail
     ? [
         { label: "LINE 綁定", value: detail.customer.lineUserId ? "已綁定" : "未綁定" },
@@ -1128,6 +1144,30 @@ function CustomersPage() {
                 </div>
               </section>
             </div>
+
+            <section className="stack-card">
+              <div className="section-title">來店紀錄</div>
+              {detailVisitRows.length ? (
+                <div className="stack-list">
+                  {detailVisitRows.map((record) => (
+                    <div key={record.id} className="log-row">
+                      <div>
+                        <strong>{formatTaipeiDate(record.visitDate)} {record.visitTime || ""}</strong>
+                        <div>{record.interestedVehicle || "未填興趣車款"}</div>
+                        <div className="muted-text">
+                          {getVisitResultLabel(record.visitResult)} / {record.lineFriendAdded ? "已加 LINE" : "未加 LINE"}
+                          {record.followUpRequired ? " / 需追蹤" : ""}
+                        </div>
+                        {record.note ? <div className="muted-text">{record.note}</div> : null}
+                      </div>
+                      <div className="muted-text">建立人員：{record.createdByName || "-"}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state">目前沒有電話相符的來店紀錄。</div>
+              )}
+            </section>
 
             <div className="admin-split-grid">
               <section className="stack-card">

@@ -60,6 +60,7 @@ function DashboardPage() {
   const pendingPaymentCount = Number(summary?.pendingPaymentCount || pendingPaymentOrders.length || 0);
   const pendingPaymentAmount = Number(summary?.pendingPaymentAmount || 0);
   const pendingTotalCount = pendingBikeDeliveryCount + pendingRepairPickupCount + pendingPaymentCount;
+  const visitSummary = summary?.visitSummary || {};
 
   useEffect(() => {
     const current = searchParams.get("tab") || "OVERVIEW";
@@ -164,6 +165,10 @@ function DashboardPage() {
   ];
 
   const summaryCards = [
+    { label: "今日來店件數", value: visitSummary.todayVisitRecordsCount ?? 0 },
+    { label: "今日來店人數", value: visitSummary.todayVisitorCount ?? 0 },
+    { label: "今日 LINE 加好友", value: visitSummary.todayLineFriendAddedCount ?? 0 },
+    { label: "今日需追蹤", value: visitSummary.todayFollowUpRequiredCount ?? 0 },
     { label: "待交車訂單", value: pendingBikeDeliveryCount },
     { label: "待取車維修", value: pendingRepairPickupCount },
     {
