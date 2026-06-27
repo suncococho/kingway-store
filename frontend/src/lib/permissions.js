@@ -1,4 +1,4 @@
-const CASHIER_ALLOWED_ROUTES = ["/pos", "/products", "/repairs", "/inventory", "/suppliers", "/customers"];
+const CASHIER_ALLOWED_ROUTES = ["/pos", "/products", "/repairs", "/inventory", "/suppliers", "/customers", "/store-cash-reports"];
 const CASHIER_ALLOWED_PERMISSIONS = ["POS", "PRODUCTS", "REPAIRS", "INVENTORY"];
 
 function normalizeRole(role) {

@@ -33,6 +33,7 @@ export const mobileMenuSections = [
       { to: "/notifications", label: "通知中心", description: "系統通知、待處理提醒與完成紀錄", menuKey: "dashboard" },
       { to: "/messages", label: "訊息中心", description: "本部與門市訊息、公告與讀取紀錄", menuKey: "dashboard" },
       { to: "/daily-tasks", label: "今日任務", description: "每日工作檢查、完成與逾期提醒", menuKey: "dashboard" },
+      { to: "/store-cash-reports", label: "現金日報", description: "營業金盤點與每日現金收款紀錄", menuKey: "dashboard" },
       { to: "/sales", label: "銷售報表", description: "銷售統計、商品排行與訂單明細", menuKey: "dashboard" },
       { to: "/pos", label: "POS / 新訂單", description: "快速建立訂單與結帳", menuKey: "pos" },
       { to: "/orders", label: "訂單管理", description: "一般訂單、預約單、維修相關", menuKey: "orders" },
