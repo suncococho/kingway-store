@@ -44,6 +44,7 @@ const { staffNotificationsRouter, staffDashboardRouter } = require("./routes/sta
 const internalMessageRoutes = require("./routes/internalMessages");
 const dailyStaffTaskRoutes = require("./routes/dailyStaffTasks");
 const storeCashReportRoutes = require("./routes/storeCashReports");
+const storeVisitRecordRoutes = require("./routes/storeVisitRecords");
 const lineNotificationSettingsRoutes = require("./routes/lineNotificationSettings");
 const salesRoutes = require("./routes/sales");
 const attendanceRoutes = require("./routes/attendance");
@@ -536,6 +537,7 @@ app.use("/api/staff-dashboard", staffDashboardRouter);
 app.use("/api/internal-messages", internalMessageRoutes);
 app.use("/api/daily-staff-tasks", dailyStaffTaskRoutes);
 app.use("/api/store-cash-reports", storeCashReportRoutes);
+app.use("/api/store-visit-records", storeVisitRecordRoutes);
 app.use("/api/line-notification-settings", lineNotificationSettingsRoutes);
 app.use("/api/staff", staffRoutes);
 app.use("/api/customers", customerRoutes);

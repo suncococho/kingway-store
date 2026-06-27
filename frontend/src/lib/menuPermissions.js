@@ -31,6 +31,7 @@ export const PATH_MENU_KEY_MAP = [
   { path: "/messages", key: "dashboard" },
   { path: "/daily-tasks", key: "dashboard" },
   { path: "/store-cash-reports", key: "dashboard" },
+  { path: "/store-visit-records", key: "dashboard" },
   { path: "/customer-status", key: "dashboard" },
   { path: "/sales", key: "dashboard" },
   { path: "/pos", key: "pos" },
