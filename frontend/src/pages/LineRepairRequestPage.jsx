@@ -21,6 +21,16 @@ const LEGACY_STORE_CONTEXT = {
 
 const REPAIR_WARRANTY_VERSION = "KINGWAY_REPAIR_WARRANTY_V2026_06";
 const REPAIR_WARRANTY_ERROR_MESSAGE = "請先確認保固維修範圍說明";
+const REPAIR_RESERVATION_SLOT_EXPIRED_MESSAGE = "選擇的預約時段已經過去，請重新選擇未來時段。";
+const REPAIR_DUPLICATE_REUSED_MESSAGE = "已存在相同時段的維修預約，系統已使用既有預約紀錄。";
+const REPAIR_CREATED_MESSAGE = "維修預約已建立。";
+const REPAIR_RESERVATION_TIME_SLOTS = [
+  { label: "14:00-15:00", value: "14:00" },
+  { label: "15:00-16:00", value: "15:00" },
+  { label: "16:00-17:00", value: "16:00" },
+  { label: "18:00-19:00", value: "18:00" },
+  { label: "19:00-20:00", value: "19:00" }
+];
 const MAX_REPAIR_ATTACHMENTS = 5;
 const IMAGE_SIZE_LIMIT = 10 * 1024 * 1024;
 const VIDEO_SIZE_LIMIT = 80 * 1024 * 1024;
@@ -69,6 +79,38 @@ function buildCustomerOaName(response, fallbackStoreName) {
 
 function normalizeText(value) {
   return String(value || "").trim();
+}
+
+function formatTaipeiDate(now = new Date()) {
+  const taipei = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const year = taipei.getUTCFullYear();
+  const month = String(taipei.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(taipei.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeReservationTime(value) {
+  const match = String(value || "").trim().match(/^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
+  return match ? `${match[1]}:${match[2]}` : "";
+}
+
+function buildTaipeiReservationDateTime(date, time) {
+  const normalizedDate = String(date || "").trim();
+  const normalizedTime = normalizeReservationTime(time);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate) || !normalizedTime) {
+    return null;
+  }
+  const value = new Date(`${normalizedDate}T${normalizedTime}:00+08:00`);
+  return Number.isNaN(value.getTime()) ? null : value;
+}
+
+function isPastReservationSlot(date, time, now = new Date()) {
+  const reservationAt = buildTaipeiReservationDateTime(date, time);
+  return reservationAt ? reservationAt.getTime() < now.getTime() : false;
+}
+
+function isTimeSlotDisabled(date, time) {
+  return Boolean(date) && isPastReservationSlot(date, time);
 }
 
 function isPlaceholderCustomerName(value) {
@@ -147,6 +189,7 @@ function LineRepairRequestPage() {
   const [form, setForm] = useState({
     bikeModel: "",
     reservationDate: "",
+    reservationTime: "",
     issueDescription: "",
     repairWarrantyAccepted: false
   });
@@ -293,7 +336,13 @@ function LineRepairRequestPage() {
   }, []);
 
   function update(name, value) {
-    setForm((current) => ({ ...current, [name]: value }));
+    setForm((current) => {
+      const next = { ...current, [name]: value };
+      if (name === "reservationDate" && next.reservationTime && isPastReservationSlot(value, next.reservationTime)) {
+        next.reservationTime = "";
+      }
+      return next;
+    });
   }
 
   function updateAttachments(event) {
@@ -368,6 +417,27 @@ function LineRepairRequestPage() {
       return;
     }
 
+    if (!form.reservationDate) {
+      setError("請選擇希望到店日期。");
+      setSubmitting(false);
+      submitLockRef.current = false;
+      return;
+    }
+
+    if (!form.reservationTime) {
+      setError("請選擇希望到店時間。");
+      setSubmitting(false);
+      submitLockRef.current = false;
+      return;
+    }
+
+    if (isPastReservationSlot(form.reservationDate, form.reservationTime)) {
+      setError(REPAIR_RESERVATION_SLOT_EXPIRED_MESSAGE);
+      setSubmitting(false);
+      submitLockRef.current = false;
+      return;
+    }
+
     if (!form.repairWarrantyAccepted) {
       setError(REPAIR_WARRANTY_ERROR_MESSAGE);
       setSubmitting(false);
@@ -386,6 +456,7 @@ function LineRepairRequestPage() {
           displayName: profileName,
           bikeModel: form.bikeModel,
           reservationDate: form.reservationDate || null,
+          reservationTime: form.reservationTime || null,
           issueDescription: form.issueDescription,
           warrantyTermsAccepted: true,
           repairWarrantyAccepted: true,
@@ -396,7 +467,7 @@ function LineRepairRequestPage() {
 
       let uploadedAttachments = [];
       let attachmentUploadError = "";
-      if (attachments.length && data?.repairId) {
+      if (attachments.length && data?.repairId && !data?.reusedExisting && !data?.duplicate) {
         try {
           uploadedAttachments = await uploadRepairAttachments(data.repairId);
         } catch (uploadError) {
@@ -439,8 +510,8 @@ function LineRepairRequestPage() {
           <h1>維修預約已送出</h1>
           <p>
             {submitResult?.duplicate || submitResult?.reusedExisting
-              ? "維修預約已建立，請勿重複送出。"
-              : "門市收到後會確認內容，並透過 LINE 或電話與您聯繫。"}
+              ? (submitResult?.message || REPAIR_DUPLICATE_REUSED_MESSAGE)
+              : (submitResult?.message || REPAIR_CREATED_MESSAGE)}
             {submitResult?.repairId ? ` 維修單號：${submitResult.repairId}` : ""}
           </p>
           {submitResult?.uploadedAttachments?.length ? (
@@ -532,7 +603,25 @@ function LineRepairRequestPage() {
 
         <label className="form-field">
           <span>希望到店日期</span>
-          <input type="date" value={form.reservationDate} onChange={(e) => update("reservationDate", e.target.value)} disabled={submitting} />
+          <input type="date" min={formatTaipeiDate()} value={form.reservationDate} onChange={(e) => update("reservationDate", e.target.value)} disabled={submitting} />
+        </label>
+
+        <label className="form-field">
+          <span>希望到店時間</span>
+          <select value={form.reservationTime} onChange={(e) => update("reservationTime", e.target.value)} disabled={submitting || !form.reservationDate}>
+            <option value="">請選擇時間</option>
+            {REPAIR_RESERVATION_TIME_SLOTS.map((slot) => {
+              const disabled = isTimeSlotDisabled(form.reservationDate, slot.value);
+              return (
+                <option key={slot.value} value={slot.value} disabled={disabled}>
+                  {slot.label}{disabled ? "（已過）" : ""}
+                </option>
+              );
+            })}
+          </select>
+          {form.reservationDate && REPAIR_RESERVATION_TIME_SLOTS.every((slot) => isTimeSlotDisabled(form.reservationDate, slot.value)) ? (
+            <small className="muted-text">今日可預約時段已過，請選擇其他日期。</small>
+          ) : null}
         </label>
 
         <label className="form-field">

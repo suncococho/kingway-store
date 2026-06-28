@@ -9,7 +9,11 @@ const {
   sendLineMessage: sendLinePushMessage
 } = require("../utils/line");
 const { createError } = require("../utils/errors");
-const { validateRepairReservationDate } = require("./repairService");
+const {
+  assertFutureRepairReservationSlot,
+  normalizeRepairReservationTime,
+  validateRepairReservationDate
+} = require("./repairService");
 const { getPublicStoreSettings } = require("./settingsService");
 const { sendInternalTelegram } = require("./telegramService");
 const { applyRepairReservationDecision, notifyRepairCustomer } = require("./repairReservationService");
@@ -2924,6 +2928,8 @@ async function createRepairReservationFromSession(lineUserId, options = {}) {
     }
 
     const reservationDay = validateRepairReservationDate(payload.reservationDate);
+    const reservationTime = normalizeRepairReservationTime(payload.reservationTime || "14:00");
+    assertFutureRepairReservationSlot(payload.reservationDate, reservationTime);
 
     const [[duplicateReservation]] = await connection.query(
       `
@@ -2933,13 +2939,13 @@ async function createRepairReservationFromSession(lineUserId, options = {}) {
           AND customer_id = ?
           AND reservation_date = ?
           AND COALESCE(reservation_time, '') = COALESCE(?, '')
+          AND LOWER(TRIM(COALESCE(bike_model, ''))) = LOWER(TRIM(?))
+          AND LOWER(TRIM(COALESCE(issue_description, ''))) = LOWER(TRIM(?))
           AND status IN (
             'reserved',
             'checking',
             'estimate_pending_approval',
-            'quoted',
-            'waiting_customer_confirm',
-            'customer_confirmed',
+            'estimate_approved',
             'repairing',
             'completed_waiting_pickup'
           )
@@ -2950,7 +2956,9 @@ async function createRepairReservationFromSession(lineUserId, options = {}) {
         resolvedStoreId,
         customer.id,
         payload.reservationDate,
-        payload.reservationTime || ""
+        reservationTime,
+        normalizeText(payload.bikeModel),
+        normalizeText(payload.issueDescription)
       ]
     );
 
@@ -2963,6 +2971,7 @@ async function createRepairReservationFromSession(lineUserId, options = {}) {
         customer,
         payload: {
           ...payload,
+          reservationTime,
           reservationDay
         }
       };
@@ -2982,7 +2991,7 @@ async function createRepairReservationFromSession(lineUserId, options = {}) {
         payload.issueDescription,
         payload.reservationDate,
         reservationDay,
-        payload.reservationTime
+        reservationTime
       ]
     );
 
@@ -3001,6 +3010,7 @@ async function createRepairReservationFromSession(lineUserId, options = {}) {
       customer,
       payload: {
         ...payload,
+        reservationTime,
         reservationDay
       }
     };

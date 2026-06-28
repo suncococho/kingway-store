@@ -96,6 +96,42 @@ function normalizeStoreCode(value) {
   return code;
 }
 
+function sanitizeRouteForAudit(value) {
+  const raw = String(value || "");
+  if (!raw || !raw.includes("?")) {
+    return raw;
+  }
+
+  const [path, query] = raw.split("?", 2);
+  const params = new URLSearchParams(query || "");
+  const sensitiveKeys = new Set([
+    "lineuserid",
+    "line_user_id",
+    "userid",
+    "user_id",
+    "groupid",
+    "group_id",
+    "roomid",
+    "room_id",
+    "token",
+    "accesstoken",
+    "access_token",
+    "secret",
+    "signature",
+    "authorization"
+  ]);
+
+  for (const key of Array.from(params.keys())) {
+    const normalizedKey = key.replace(/[-.]/g, "_").toLowerCase();
+    if (sensitiveKeys.has(normalizedKey)) {
+      params.set(key, "[masked]");
+    }
+  }
+
+  const sanitized = params.toString();
+  return sanitized ? path + "?" + sanitized : path;
+}
+
 function createEmptyContext(req, options = {}) {
   return {
     storeId: null,
@@ -115,7 +151,7 @@ function createEmptyContext(req, options = {}) {
     warnings: [],
     warningMetadata: [],
     audit: {
-      route: req.originalUrl || req.url || "",
+      route: sanitizeRouteForAudit(req.originalUrl || req.url || ""),
       method: req.method || "",
       source: SOURCE.UNRESOLVED,
       sourceResolved: false,
@@ -830,7 +866,7 @@ async function resolveByLegacyKingwayFallback(req, options, context) {
   });
 
   console.warn("[public-store-resolver] legacy KINGWAY fallback used", {
-    route: req.originalUrl || req.url || "",
+    route: sanitizeRouteForAudit(req.originalUrl || req.url || ""),
     method: req.method || "",
     storeId: fallbackStoreId,
     sourceResolved: resolved.sourceResolved,

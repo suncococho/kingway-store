@@ -17,6 +17,14 @@ const {
 const { notifyRepairReservationCreated } = require("../services/staffLineNotify");
 const { notifyLineRepairCreated } = require("../services/notificationEventService");
 const { saveRepairAttachment } = require("../services/repairAttachmentService");
+const {
+  REPAIR_RESERVATION_SLOT_EXPIRED_CODE,
+  REPAIR_RESERVATION_SLOT_EXPIRED_MESSAGE,
+  assertFutureRepairReservationSlot,
+  formatTaipeiDate,
+  normalizeRepairReservationDateValue,
+  normalizeRepairReservationTime
+} = require("../services/repairService");
 
 const router = express.Router();
 const resolvePublicStoreContext = createPublicStoreContextMiddleware({
@@ -30,7 +38,6 @@ const resolvePublicStoreContext = createPublicStoreContextMiddleware({
 
 const REPAIR_RESERVATION_FLOW = "repair_reservation";
 const REPAIR_RESERVATION_DUPLICATE_WINDOW_MS = 10 * 1000;
-const REPAIR_RESERVATION_DB_DUPLICATE_WINDOW_MINUTES = 10;
 const REPAIR_WARRANTY_TERMS_VERSION = "KINGWAY_REPAIR_WARRANTY_V2026_06";
 const REPAIR_WARRANTY_TERMS_ERROR_MESSAGE = "請先確認保固維修範圍說明";
 const recentRepairReservationRequests = new Map();
@@ -144,7 +151,9 @@ async function findRecentDuplicateRepairReservation({
   storeId,
   lineUserId,
   bikeModel,
-  issueDescription
+  issueDescription,
+  reservationDate,
+  reservationTime
 }) {
   const normalizedLineUserId = normalizeText(lineUserId);
   if (!normalizedLineUserId) {
@@ -167,9 +176,17 @@ async function findRecentDuplicateRepairReservation({
       LEFT JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
       WHERE ro.store_id = ?
         AND ro.deleted_at IS NULL
-        AND COALESCE(ro.status, '') <> 'canceled'
+        AND ro.status IN (
+          'reserved',
+          'checking',
+          'estimate_pending_approval',
+          'estimate_approved',
+          'repairing',
+          'completed_waiting_pickup'
+        )
         AND (ro.source = 'LINE' OR ro.customer_type = 'LINE')
-        AND ro.created_at >= DATE_SUB(NOW(), INTERVAL ? MINUTE)
+        AND ro.reservation_date = ?
+        AND COALESCE(ro.reservation_time, '') = COALESCE(?, '')
         AND c.line_user_id = ?
         AND LOWER(TRIM(COALESCE(ro.bike_model, ''))) = LOWER(TRIM(?))
         AND LOWER(TRIM(COALESCE(ro.issue_description, ''))) = LOWER(TRIM(?))
@@ -178,7 +195,8 @@ async function findRecentDuplicateRepairReservation({
     `,
     [
       storeId,
-      REPAIR_RESERVATION_DB_DUPLICATE_WINDOW_MINUTES,
+      reservationDate,
+      reservationTime || "",
       normalizedLineUserId,
       normalizeText(bikeModel),
       normalizeText(issueDescription)
@@ -482,8 +500,8 @@ router.post("/create", async (req, res, next) => {
     const displayName = String(req.body.displayName || "").trim();
     const bikeModel = String(req.body.bikeModel || "").trim();
     const issueDescription = String(req.body.issueDescription || "").trim();
-    const reservationDate = req.body.reservationDate || dayjs().format("YYYY-MM-DD");
-    const reservationTime = String(req.body.reservationTime || "13:00").trim();
+    const reservationDate = normalizeRepairReservationDateValue(req.body.reservationDate || formatTaipeiDate());
+    const reservationTime = normalizeRepairReservationTime(req.body.reservationTime || "14:00");
     const warrantyTermsAccepted = req.body.warrantyTermsAccepted === true || req.body.repairWarrantyAccepted === true;
     const warrantyTermsAcceptedAt = new Date().toISOString();
 
@@ -498,6 +516,8 @@ router.post("/create", async (req, res, next) => {
     if (!warrantyTermsAccepted) {
       return res.status(400).json({ message: REPAIR_WARRANTY_TERMS_ERROR_MESSAGE });
     }
+
+    assertFutureRepairReservationSlot(reservationDate, reservationTime);
 
     const storeContext = await resolveLineRepairStoreContext(req, lineUserId, "line_repair_page_create");
     if (!storeContext.ok) {
@@ -526,7 +546,9 @@ router.post("/create", async (req, res, next) => {
           storeId: resolvedStoreId,
           lineUserId,
           bikeModel,
-          issueDescription
+          issueDescription,
+          reservationDate,
+          reservationTime
         });
 
         if (duplicateReservation) {
@@ -535,7 +557,7 @@ router.post("/create", async (req, res, next) => {
             ok: true,
             reusedExisting: true,
             duplicate: true,
-            message: "維修預約已建立，請勿重複送出。",
+            message: "已存在相同時段的維修預約，已使用既有預約紀錄。",
             repairId: duplicateReservation.repairId,
             reservationDay: getReservationDay(duplicateReservation.reservationDate || reservationDate)
           };
@@ -588,7 +610,7 @@ router.post("/create", async (req, res, next) => {
           ok: true,
           reusedExisting: true,
           duplicate: true,
-          message: "維修預約已建立，請勿重複送出。",
+          message: "已存在相同時段的維修預約，已使用既有預約紀錄。",
           repairId: result.repairId,
           reservationDay: getReservationDay(reservationDate)
         };
@@ -696,6 +718,9 @@ router.post("/create", async (req, res, next) => {
       releaseRepairReservationRequestLock(requestKey);
       return {
         ok: true,
+        reusedExisting: false,
+        duplicate: false,
+        message: "維修預約已建立。",
         repairId: result.repairId,
         reservationDay: getReservationDay(reservationDate)
       };
@@ -707,6 +732,13 @@ router.post("/create", async (req, res, next) => {
       throw createError;
     }
   } catch (error) {
+    if (error?.code === REPAIR_RESERVATION_SLOT_EXPIRED_CODE) {
+      return res.status(400).json({
+        ok: false,
+        code: REPAIR_RESERVATION_SLOT_EXPIRED_CODE,
+        message: REPAIR_RESERVATION_SLOT_EXPIRED_MESSAGE
+      });
+    }
     return next(error);
   }
 });
