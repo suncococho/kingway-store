@@ -7,7 +7,7 @@ import { apiRequest } from "../lib/api";
 import { platformRequest } from "../lib/platformAuth";
 import { getStoredUser } from "../lib/auth";
 import { useMenuPermissions } from "../hooks/useMenuPermissions";
-import { canAccessPath, getMenuKeyForPath } from "../lib/menuPermissions";
+import { canAccessPath, getMenuKeyForPath, getMenuPermission } from "../lib/menuPermissions";
 import { useStoreAccess } from "../hooks/useStoreAccess";
 import { buildStoreOperationProfile } from "../lib/storeOperationProfile";
 
@@ -100,7 +100,7 @@ function ProtectedLayout() {
             allowed = profile.canUseSuppliers;
             message = "此功能不適用於直營或加盟門市。";
           } else if (STORE_REPLENISHMENT_PATHS.has(location.pathname)) {
-            allowed = profile.canUseStoreReplenishment;
+            allowed = profile.canUseStoreReplenishment || getMenuPermission(menuPermissions, "store_replenishment_requests", user).canAccess;
             message = "此功能僅適用於直營或加盟門市。";
           } else if (INBOUND_TRANSFER_PATHS.has(location.pathname)) {
             allowed = profile.canUseInboundTransfers;
@@ -118,7 +118,7 @@ function ProtectedLayout() {
     return () => {
       active = false;
     };
-  }, [requiresStoreTypeCheck, location.pathname, user?.id, user?.storeId]);
+  }, [requiresStoreTypeCheck, location.pathname, user?.id, user?.storeId, menuPermissions]);
 
   const isPosFullscreen =
     location.pathname === "/pos" &&

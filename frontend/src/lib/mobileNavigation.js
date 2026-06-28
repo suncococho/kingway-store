@@ -1,5 +1,5 @@
 import { filterMenuItemsForUser } from "./permissions";
-import { getMenuPermission } from "./menuPermissions";
+import { getMenuPermission, isOwnerUser } from "./menuPermissions";
 
 const FEATURE_ROUTE_MAP = {
   "/sales": "sales_dashboard_enabled",
@@ -93,7 +93,15 @@ function isMenuItemVisibleByPermissions(item, permissions, user) {
   if (!item.menuKey) {
     return true;
   }
+  if (item.to?.split("?")[0] === "/inventory" && !canUseInventoryMain(user)) {
+    return false;
+  }
   return getMenuPermission(permissions, item.menuKey, user).canView;
+}
+
+function canUseInventoryMain(user) {
+  const role = String(user?.role || "").trim().toUpperCase();
+  return isOwnerUser(user) || ["ADMIN", "MANAGER", "INVENTORY"].includes(role);
 }
 
 function isMenuItemVisibleByStoreProfile(item, storeProfile = null) {
@@ -104,7 +112,7 @@ function isMenuItemVisibleByStoreProfile(item, storeProfile = null) {
     return storeProfile.canUseSuppliers;
   }
   if (path === "/store-replenishment-requests") {
-    return storeProfile.canUseStoreReplenishment;
+    return true;
   }
   if (path === "/inbound-transfers") {
     return storeProfile.canUseInboundTransfers;
