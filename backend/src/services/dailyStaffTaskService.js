@@ -70,6 +70,12 @@ function getTaipeiDateString(date = new Date()) {
   }).format(date);
 }
 
+function normalizeDateString(value) {
+  if (!value) return "";
+  if (value instanceof Date) return getTaipeiDateString(value);
+  return String(value).slice(0, 10);
+}
+
 function buildDueAt(taskDate, dueTime) {
   const normalizedTime = normalizeTime(dueTime);
   return normalizedTime ? `${taskDate} ${normalizedTime}` : null;
@@ -364,12 +370,17 @@ async function updateInstanceStatus(instanceId, context, action, note = null, co
   }
 
   const [rows] = await connection.query(
-    `SELECT id, status FROM staff_task_instances WHERE id = ? AND store_id = ? LIMIT 1`,
+    `SELECT id, status, task_date AS taskDate FROM staff_task_instances WHERE id = ? AND store_id = ? LIMIT 1`,
     [id, context.storeId]
   );
   if (!rows[0]) {
     const error = new Error("任務不存在或無權限");
     error.statusCode = 404;
+    throw error;
+  }
+  if (normalizeDateString(rows[0].taskDate) !== getTaipeiDateString()) {
+    const error = new Error("此每日任務已過期，請處理今日任務");
+    error.statusCode = 409;
     throw error;
   }
 

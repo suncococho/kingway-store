@@ -26,6 +26,63 @@ function normalizePriority(value) {
   return Object.prototype.hasOwnProperty.call(PRIORITY_ORDER, priority) ? priority : "NORMAL";
 }
 
+function getTaipeiDateString(date = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(date);
+}
+
+function buildCurrentDailyTaskFilter(alias = "sn", taskDate = getTaipeiDateString()) {
+  return {
+    clause: `
+      (
+        NOT (
+          COALESCE(${alias}.type, '') LIKE 'DAILY_TASK%'
+          OR COALESCE(${alias}.ref_type, '') = 'STAFF_TASK_INSTANCE'
+          OR COALESCE(${alias}.target_url, '') LIKE '%daily-tasks%'
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM staff_task_instances sti_current_day
+          WHERE sti_current_day.id = ${alias}.ref_id
+            AND sti_current_day.store_id = ${alias}.store_id
+            AND sti_current_day.task_date = ?
+          LIMIT 1
+        )
+      )
+    `,
+    params: [taskDate]
+  };
+}
+
+function isDailyTaskNotification(notification = {}) {
+  return String(notification.type || "").toUpperCase().startsWith("DAILY_TASK")
+    || String(notification.refType || "").toUpperCase() === "STAFF_TASK_INSTANCE"
+    || String(notification.targetUrl || "").includes("daily-tasks");
+}
+
+async function isCurrentDailyTaskNotification(notification, connection = pool) {
+  if (!isDailyTaskNotification(notification)) return true;
+  if (String(notification.refType || "").toUpperCase() !== "STAFF_TASK_INSTANCE" || !notification.refId) {
+    return false;
+  }
+  const [rows] = await connection.query(
+    `
+      SELECT id
+      FROM staff_task_instances
+      WHERE id = ?
+        AND store_id = ?
+        AND task_date = ?
+      LIMIT 1
+    `,
+    [notification.refId, notification.storeId, getTaipeiDateString()]
+  );
+  return Boolean(rows[0]);
+}
+
 function normalizeNotification(row = {}) {
   return {
     id: Number(row.id),
@@ -211,6 +268,9 @@ function buildListFilters(query = {}) {
   const status = normalizeStatus(query.status);
   if (status === "PENDING") {
     clauses.push("(sn.status = 'UNREAD' OR (sn.status = 'SNOOZED' AND (sn.snoozed_until IS NULL OR sn.snoozed_until <= NOW())))");
+    const currentDailyTask = buildCurrentDailyTaskFilter("sn");
+    clauses.push(currentDailyTask.clause);
+    params.push(...currentDailyTask.params);
   } else if (["UNREAD", "READ", "DONE", "DISMISSED", "SNOOZED"].includes(status)) {
     clauses.push("sn.status = ?");
     params.push(status);
@@ -242,6 +302,7 @@ function buildListFilters(query = {}) {
 
 async function getPendingNotifications(context, options = {}, connection = pool) {
   const visible = buildVisibleWhere(context);
+  const currentDailyTask = buildCurrentDailyTaskFilter("sn");
   const limit = Math.min(Math.max(toPositiveInteger(options.limit, 5), 1), 20);
   const [rows] = await connection.query(
     `
@@ -249,10 +310,11 @@ async function getPendingNotifications(context, options = {}, connection = pool)
       FROM staff_notifications sn
       WHERE ${visible.where}
         AND (sn.status = 'UNREAD' OR (sn.status = 'SNOOZED' AND (sn.snoozed_until IS NULL OR sn.snoozed_until <= NOW())))
+        AND ${currentDailyTask.clause}
       ORDER BY FIELD(sn.priority, 'URGENT', 'IMPORTANT', 'NORMAL', 'LOW'), sn.created_at ASC
       LIMIT ?
     `,
-    [...visible.params, limit]
+    [...visible.params, ...currentDailyTask.params, limit]
   );
   return rows.map(normalizeNotification);
 }
@@ -278,6 +340,7 @@ async function getNotifications(context, query = {}, connection = pool) {
 
 async function getUnreadSummary(context, connection = pool) {
   const visible = buildVisibleWhere(context);
+  const currentDailyTask = buildCurrentDailyTaskFilter("sn");
   const [[summary]] = await connection.query(
     `
       SELECT
@@ -286,8 +349,9 @@ async function getUnreadSummary(context, connection = pool) {
       FROM staff_notifications sn
       WHERE ${visible.where}
         AND (sn.status = 'UNREAD' OR (sn.status = 'SNOOZED' AND (sn.snoozed_until IS NULL OR sn.snoozed_until <= NOW())))
+        AND ${currentDailyTask.clause}
     `,
-    visible.params
+    [...visible.params, ...currentDailyTask.params]
   );
 
   return {
@@ -340,6 +404,14 @@ async function updateNotificationStatus(id, context, action, options = {}, conne
       [context.staffUserId, notificationId]
     );
   } else if (action === "done") {
+    if (isDailyTaskNotification(notification)) {
+      const isCurrent = await isCurrentDailyTaskNotification(notification, connection);
+      if (!isCurrent) {
+        const error = new Error("此每日任務已過期，請處理今日任務");
+        error.statusCode = 409;
+        throw error;
+      }
+    }
     await connection.query(
       `
         UPDATE staff_notifications

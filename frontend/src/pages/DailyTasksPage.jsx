@@ -191,6 +191,9 @@ function DailyTasksPage() {
         description="確認每日工作檢查項目，完成時間與處理人會保留給後續 KPI / 評價統計。"
       />
       <PageHelpButton help={PAGE_HELP.dailyTasks} />
+      <div className="alert alert-info">
+        每日任務僅顯示今日項目，未完成的過去任務可於紀錄中查看。
+      </div>
 
       <section className="summary-grid">
         <SummaryCard label="任務日期" value={taskDate || "-"} />
