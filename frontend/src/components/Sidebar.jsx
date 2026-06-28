@@ -9,6 +9,19 @@ import { getMobileMenuSectionsForUser, isMenuItemActive } from "../lib/mobileNav
 import { buildStoreOperationProfile } from "../lib/storeOperationProfile";
 import { fetchUnreadSummary } from "../lib/staffNotificationsApi";
 
+const PENDING_STORE_OPERATION_PROFILE = {
+  relationshipType: null,
+  isHqStore: false,
+  isChainStore: false,
+  isIndependent: false,
+  canUseSuppliers: false,
+  canUseStoreReplenishment: false,
+  canUseInboundTransfers: false,
+  canUseHqFeatures: false,
+  company: null,
+  store: null
+};
+
 function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -28,7 +41,7 @@ function Sidebar() {
   const [companyAccess, setCompanyAccess] = useState({
     loaded: false,
     enabled: false,
-    profile: buildStoreOperationProfile(null, user?.storeId)
+    profile: PENDING_STORE_OPERATION_PROFILE
   });
   const [unreadSummary, setUnreadSummary] = useState({
     notifications: 0,
@@ -78,7 +91,7 @@ function Sidebar() {
           setCompanyAccess({
             loaded: true,
             enabled: false,
-            profile: buildStoreOperationProfile(null, user?.storeId)
+            profile: PENDING_STORE_OPERATION_PROFILE
           });
         }
       }

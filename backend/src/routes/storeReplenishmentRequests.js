@@ -448,6 +448,41 @@ async function shipTransfer(connection, transferId, staffUserId) {
   );
 }
 
+function notifySubmittedRequestAsync(submittedRequest) {
+  notifyStoreReplenishmentSubmitted({
+    requestId: submittedRequest.id,
+    requestNo: submittedRequest.requestNo,
+    companyId: submittedRequest.companyId,
+    storeId: submittedRequest.requestingStoreId,
+    storeCode: submittedRequest.requestingStoreCode,
+    storeName: submittedRequest.requestingStoreName,
+    itemCount: submittedRequest.itemCount,
+    note: submittedRequest.note
+  }).catch((error) => {
+    console.info("[store-replenishment] notify_async_failed", {
+      requestId: submittedRequest.id,
+      requestNo: submittedRequest.requestNo,
+      error: error.message
+    });
+  });
+  notifyStoreReplenishmentSubmittedStaff({
+    requestId: submittedRequest.id,
+    requestNo: submittedRequest.requestNo,
+    companyId: submittedRequest.companyId,
+    storeId: submittedRequest.requestingStoreId,
+    storeCode: submittedRequest.requestingStoreCode,
+    storeName: submittedRequest.requestingStoreName,
+    itemCount: submittedRequest.itemCount,
+    note: submittedRequest.note
+  }).catch((error) => {
+    console.info("[store-replenishment] staff_notification_async_failed", {
+      requestId: submittedRequest.id,
+      requestNo: submittedRequest.requestNo,
+      error: error.message
+    });
+  });
+}
+
 async function queryRequests(whereSql, params, query = {}) {
   const filters = [];
   const nextParams = [...params];
@@ -592,6 +627,7 @@ router.post("/", requireChainStoreContext, requireStoreRole(["owner", "admin", "
   try {
     const storeId = Number(req.storeId || req.user?.storeId || 0);
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const submitNow = req.body?.submitNow === true || req.body?.submit_now === true;
     if (!items.length) throw createError("請至少加入一個請貨商品", 400);
 
     const requestId = await withTransaction(async (connection) => {
@@ -637,10 +673,21 @@ router.post("/", requireChainStoreContext, requireStoreRole(["owner", "admin", "
           ]
         );
       }
+
+      if (submitNow) {
+        await connection.query(
+          "UPDATE store_replenishment_requests SET status = 'SUBMITTED', submitted_at = NOW() WHERE id = ?",
+          [insertResult.insertId]
+        );
+      }
+
       return insertResult.insertId;
     });
 
     const request = await loadRequestWithItems(requestId);
+    if (request?.status === "SUBMITTED") {
+      notifySubmittedRequestAsync(request);
+    }
     return res.status(201).json({ ok: true, request });
   } catch (error) {
     return next(error);
@@ -673,38 +720,7 @@ router.post("/:id/submit", requireChainStoreContext, requireStoreRole(["owner", 
       return loadRequestWithItems(requestId, connection);
     });
 
-    notifyStoreReplenishmentSubmitted({
-      requestId: submittedRequest.id,
-      requestNo: submittedRequest.requestNo,
-      companyId: submittedRequest.companyId,
-      storeId: submittedRequest.requestingStoreId,
-      storeCode: submittedRequest.requestingStoreCode,
-      storeName: submittedRequest.requestingStoreName,
-      itemCount: submittedRequest.itemCount,
-      note: submittedRequest.note
-    }).catch((error) => {
-      console.info("[store-replenishment] notify_async_failed", {
-        requestId: submittedRequest.id,
-        requestNo: submittedRequest.requestNo,
-        error: error.message
-      });
-    });
-    notifyStoreReplenishmentSubmittedStaff({
-      requestId: submittedRequest.id,
-      requestNo: submittedRequest.requestNo,
-      companyId: submittedRequest.companyId,
-      storeId: submittedRequest.requestingStoreId,
-      storeCode: submittedRequest.requestingStoreCode,
-      storeName: submittedRequest.requestingStoreName,
-      itemCount: submittedRequest.itemCount,
-      note: submittedRequest.note
-    }).catch((error) => {
-      console.info("[store-replenishment] staff_notification_async_failed", {
-        requestId: submittedRequest.id,
-        requestNo: submittedRequest.requestNo,
-        error: error.message
-      });
-    });
+    notifySubmittedRequestAsync(submittedRequest);
 
     return res.json({ ok: true, request: submittedRequest });
   } catch (error) {

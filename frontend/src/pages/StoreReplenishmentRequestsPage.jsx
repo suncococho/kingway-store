@@ -60,6 +60,8 @@ export default function StoreReplenishmentRequestsPage() {
     [products, visibleProductCount]
   );
   const productQueryText = form.productQuery.trim();
+  const quantityNumber = Number(form.quantity || 0);
+  const canSubmitRequest = Boolean(selectedProduct) && Number.isSafeInteger(quantityNumber) && quantityNumber > 0 && !loading;
   const hasMoreProducts = visibleProductCount < products.length;
 
   useEffect(() => {
@@ -139,6 +141,7 @@ export default function StoreReplenishmentRequestsPage() {
       const response = await apiRequest("/store-replenishment-requests", {
         method: "POST",
         body: JSON.stringify({
+          submitNow: true,
           note: form.note || null,
           items: [{
             hqProductId: Number(selectedProduct.hqProductId),
@@ -146,11 +149,12 @@ export default function StoreReplenishmentRequestsPage() {
             note: form.itemNote || null
           }]
         }),
-        processingMessage: "建立請貨單中"
+        processingMessage: "送出本部請貨中"
       });
       setForm(EMPTY_FORM);
       setSelectedRequest(response.request);
       await loadRequests();
+      alert(response.request?.status === "SUBMITTED" ? "本部請貨已送出" : "請貨單已建立");
     } catch (requestError) {
       alert(requestError.message || "建立請貨單失敗");
     }
@@ -221,8 +225,9 @@ export default function StoreReplenishmentRequestsPage() {
       {error ? <div className="empty-state">{error}</div> : null}
 
       <section className="content-card section-panel">
-        <AdminSectionHeader eyebrow="新增請貨單" title="選擇本部商品" description="請貨單建立後為草稿，送出後才會通知本部處理。" />
+        <AdminSectionHeader eyebrow="新增請貨單" title="選擇本部商品" description="門市請貨是向本部申請補貨，不需要選擇供應商。商品與數量確認後即可送出本部請貨。" />
         <form className="grid-form compact-grid" onSubmit={createRequest}>
+          <div className="empty-state form-field-wide">門市請貨是向本部申請補貨，不需要選擇供應商。</div>
           <label className="form-field"><span>商品搜尋</span><input name="productQuery" value={form.productQuery} onChange={updateForm} placeholder="SKU / 商品名稱" /></label>
           <label className="form-field"><span>申請數量</span><input name="quantity" type="number" min="1" value={form.quantity} onChange={updateForm} /></label>
           <label className="form-field form-field-wide"><span>請貨備註</span><input name="note" value={form.note} onChange={updateForm} /></label>
@@ -284,7 +289,7 @@ export default function StoreReplenishmentRequestsPage() {
           ) : null}
 
           <div className="action-row form-field-wide">
-            <button type="submit" className="primary-button">新增請貨單</button>
+            <button type="submit" className="primary-button" disabled={!canSubmitRequest}>送出本部請貨</button>
           </div>
         </form>
       </section>
