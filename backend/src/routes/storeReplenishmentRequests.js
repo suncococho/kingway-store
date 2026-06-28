@@ -4,6 +4,7 @@ const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope, requireStoreRole } = require("../middleware/auth");
 const { loadCompanyMembership } = require("../middleware/companyAuth");
 const { requireFeature } = require("../services/storeAccessService");
+const { resolveMenuPermissions } = require("../services/menuPermissionService");
 const { notifyStoreReplenishmentSubmitted } = require("../services/storeReplenishmentNotificationService");
 const {
   notifyStoreReplenishmentSubmitted: notifyStoreReplenishmentSubmittedStaff
@@ -205,6 +206,23 @@ async function requireChainStoreContext(req, res, next) {
       return res.status(403).json({ message: "門市請貨僅適用於直營或加盟門市" });
     }
     req.chainStoreContext = store;
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function requireStoreReplenishmentMenuAccess(req, res, next) {
+  try {
+    const permissions = await resolveMenuPermissions(pool, {
+      storeId: Number(req.storeId || req.user?.storeId || 0),
+      staffUserId: Number(req.user?.id || 0),
+      staffRole: req.user?.role,
+      storeRole: req.storeRole || req.user?.storeRole
+    });
+    if (!permissions.store_replenishment_requests?.canAccess) {
+      return res.status(403).json({ message: "沒有門市請貨權限" });
+    }
     return next();
   } catch (error) {
     return next(error);
@@ -545,7 +563,7 @@ async function queryRequests(whereSql, params, query = {}) {
   return rows.map(mapRequest);
 }
 
-router.get("/hq-products", requireChainStoreContext, async (req, res, next) => {
+router.get("/hq-products", requireChainStoreContext, requireStoreReplenishmentMenuAccess, async (req, res, next) => {
   try {
     const storeId = Number(req.storeId || req.user?.storeId || 0);
     const q = String(req.query.q || "").trim();
@@ -613,7 +631,7 @@ router.get("/hq-products", requireChainStoreContext, async (req, res, next) => {
   }
 });
 
-router.get("/", requireChainStoreContext, async (req, res, next) => {
+router.get("/", requireChainStoreContext, requireStoreReplenishmentMenuAccess, async (req, res, next) => {
   try {
     const storeId = Number(req.storeId || req.user?.storeId || 0);
     const requests = await queryRequests("srr.requesting_store_id = ?", [storeId], req.query);
@@ -623,7 +641,7 @@ router.get("/", requireChainStoreContext, async (req, res, next) => {
   }
 });
 
-router.post("/", requireChainStoreContext, requireStoreRole(["owner", "admin", "staff"]), async (req, res, next) => {
+router.post("/", requireChainStoreContext, requireStoreReplenishmentMenuAccess, requireStoreRole(["owner", "admin", "staff"]), async (req, res, next) => {
   try {
     const storeId = Number(req.storeId || req.user?.storeId || 0);
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
@@ -694,7 +712,7 @@ router.post("/", requireChainStoreContext, requireStoreRole(["owner", "admin", "
   }
 });
 
-router.post("/:id/submit", requireChainStoreContext, requireStoreRole(["owner", "admin", "staff"]), async (req, res, next) => {
+router.post("/:id/submit", requireChainStoreContext, requireStoreReplenishmentMenuAccess, requireStoreRole(["owner", "admin", "staff"]), async (req, res, next) => {
   try {
     const storeId = Number(req.storeId || req.user?.storeId || 0);
     const requestId = Number(req.params.id);
@@ -728,7 +746,7 @@ router.post("/:id/submit", requireChainStoreContext, requireStoreRole(["owner", 
   }
 });
 
-router.post("/:id/cancel", requireChainStoreContext, requireStoreRole(["owner", "admin", "staff"]), async (req, res, next) => {
+router.post("/:id/cancel", requireChainStoreContext, requireStoreReplenishmentMenuAccess, requireStoreRole(["owner", "admin", "staff"]), async (req, res, next) => {
   try {
     const storeId = Number(req.storeId || req.user?.storeId || 0);
     const requestId = Number(req.params.id);
@@ -838,7 +856,17 @@ router.get("/:id", async (req, res, next) => {
     if (!request) throw createError("找不到請貨單", 404);
     const storeId = Number(req.storeId || req.user?.storeId || 0);
     const membership = await loadCompanyMembership(req.user.id, request.companyId);
-    if (Number(request.requestingStoreId) !== storeId && !membership) {
+    if (Number(request.requestingStoreId) === storeId) {
+      const permissions = await resolveMenuPermissions(pool, {
+        storeId,
+        staffUserId: Number(req.user?.id || 0),
+        staffRole: req.user?.role,
+        storeRole: req.storeRole || req.user?.storeRole
+      });
+      if (!permissions.store_replenishment_requests?.canAccess) {
+        throw createError("沒有門市請貨權限", 403);
+      }
+    } else if (!membership) {
       throw createError("沒有請貨單權限", 403);
     }
     return res.json({ ok: true, request });

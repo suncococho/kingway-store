@@ -658,7 +658,10 @@ function StaffPage() {
                   <tbody>
                     {MENU_CATALOG.map((item) => (
                       <tr key={item.key}>
-                        <td>{item.label}</td>
+                        <td>
+                          <div>{item.label}</div>
+                          {item.description ? <div className="muted-text">{item.description}</div> : null}
+                        </td>
                         <td>
                           <input
                             type="checkbox"
@@ -682,6 +685,7 @@ function StaffPage() {
                 {MENU_CATALOG.map((item) => (
                   <article key={item.key} className="data-card">
                     <div className="data-card-title">{item.label}</div>
+                    {item.description ? <div className="muted-text">{item.description}</div> : null}
                     <label className="checklist-item">
                       <input
                         type="checkbox"
@@ -740,7 +744,10 @@ function StaffPage() {
                   <tbody>
                     {MENU_CATALOG.map((item) => (
                       <tr key={item.key}>
-                        <td>{item.label}</td>
+                        <td>
+                          <div>{item.label}</div>
+                          {item.description ? <div className="muted-text">{item.description}</div> : null}
+                        </td>
                         <td>
                           <select
                             value={overrideSelectValue(userPermissionDraft[item.key]?.canView)}
@@ -772,6 +779,7 @@ function StaffPage() {
                 {MENU_CATALOG.map((item) => (
                   <article key={item.key} className="data-card">
                     <div className="data-card-title">{item.label}</div>
+                    {item.description ? <div className="muted-text">{item.description}</div> : null}
                     <label className="form-field">
                       <span>顯示選單</span>
                       <select

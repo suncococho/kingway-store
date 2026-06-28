@@ -13,6 +13,7 @@ const MENU_CATALOG = [
   { key: "coupons", label: "優惠券" },
   { key: "line", label: "LINE 管理" },
   { key: "settings", label: "系統設定" },
+  { key: "store_replenishment_requests", label: "門市請貨", description: "向本部申請補貨，不需要選擇供應商", preparedOnly: true },
   { key: "store_transfers", label: "門市調撥", preparedOnly: true },
   { key: "inbound_transfers", label: "門市入庫確認", preparedOnly: true }
 ];
@@ -35,6 +36,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     coupons: allow(),
     line: allow(),
     settings: allow(),
+    store_replenishment_requests: allow(),
     store_transfers: allow(),
     inbound_transfers: allow()
   },
@@ -59,6 +61,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     products: allow(),
     inventory: allow(),
     suppliers: allow(),
+    store_replenishment_requests: allow(),
     store_transfers: allow(),
     inbound_transfers: allow()
   }

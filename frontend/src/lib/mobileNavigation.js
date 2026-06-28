@@ -47,7 +47,7 @@ export const mobileMenuSections = [
     items: [
       { to: "/products", label: "商品管理", description: "商品、SKU、圖片與批次操作", menuKey: "products" },
       { to: "/inventory", label: "庫存管理", description: "異動、警戒值與供應商流程", menuKey: "inventory" },
-      { to: "/store-replenishment-requests", label: "門市請貨", description: "向本部申請補貨，送出後由本部出貨", menuKey: "inbound_transfers" },
+      { to: "/store-replenishment-requests", label: "門市請貨", description: "向本部申請補貨，不需要選擇供應商", menuKey: "store_replenishment_requests" },
       { to: "/inbound-transfers", label: "門市入庫", description: "確認本部出貨到店的實收數量", menuKey: "inbound_transfers" },
       { to: "/suppliers", label: "供應商管理", description: "供應商資料、商品供應價、發注與退貨", menuKey: "suppliers" },
       { to: "/coupons", label: "優惠券", description: "發券、審核與使用狀態", menuKey: "coupons" },
