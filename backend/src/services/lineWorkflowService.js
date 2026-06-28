@@ -9,6 +9,7 @@ const {
   sendLineMessage: sendLinePushMessage
 } = require("../utils/line");
 const { createError } = require("../utils/errors");
+const { sanitizeLogObject } = require("../utils/logSanitizer");
 const {
   assertFutureRepairReservationSlot,
   normalizeRepairReservationTime,
@@ -1018,9 +1019,9 @@ function buildRepairEstimateCustomerMessages(repairInfo, payload) {
 }
 
 async function getStaffUserByLineUserId(lineUserId, connection = pool) {
-  console.log("[line:slash] getStaffUserByLineUserId:start", {
+  console.log("[line:slash] getStaffUserByLineUserId:start", sanitizeLogObject({
     lineUserId: lineUserId || null
-  });
+  }));
   const [rows] = await connection.query(
     `
       SELECT id, display_name AS name, role, COALESCE(store_id, 0) AS storeId
@@ -1031,11 +1032,11 @@ async function getStaffUserByLineUserId(lineUserId, connection = pool) {
     [lineUserId]
   );
 
-  console.log("[line:slash] getStaffUserByLineUserId:done", {
+  console.log("[line:slash] getStaffUserByLineUserId:done", sanitizeLogObject({
     lineUserId: lineUserId || null,
     found: Boolean(rows[0]),
     staffUserId: rows[0]?.id || null
-  });
+  }));
   return rows[0] || null;
 }
 
@@ -1083,16 +1084,16 @@ async function getRepairOrderForQuotation(repairId, connection = pool, storeId =
 async function getAuthorizedStaffGroupBySource(event, connection = pool) {
   const sourceType = event.source?.type;
   const sourceId = sourceType === "group" ? event.source?.groupId : sourceType === "room" ? event.source?.roomId : null;
-  console.log("[line:slash] getAuthorizedStaffGroupBySource:start", {
+  console.log("[line:slash] getAuthorizedStaffGroupBySource:start", sanitizeLogObject({
     sourceType,
     sourceId: sourceId || null
-  });
+  }));
 
   if (!sourceId || (sourceType !== "group" && sourceType !== "room")) {
-    console.log("[line:slash] getAuthorizedStaffGroupBySource:skip", {
+    console.log("[line:slash] getAuthorizedStaffGroupBySource:skip", sanitizeLogObject({
       sourceType,
       sourceId: sourceId || null
-    });
+    }));
     return null;
   }
 
@@ -1109,12 +1110,12 @@ async function getAuthorizedStaffGroupBySource(event, connection = pool) {
     [sourceId]
   );
 
-  console.log("[line:slash] getAuthorizedStaffGroupBySource:done", {
+  console.log("[line:slash] getAuthorizedStaffGroupBySource:done", sanitizeLogObject({
     sourceId,
     found: Boolean(rows[0]),
     staffGroupId: rows[0]?.id || null,
     registrationType: rows[0]?.registrationType || null
-  });
+  }));
   return rows[0] || null;
 }
 
@@ -1303,13 +1304,13 @@ function buildSlashPermissionMessages(commandText) {
 async function handleLineSlashCommand(event) {
   const messageText = event.message?.type === "text" ? event.message.text.trim() : "";
   const sourceType = event.source?.type;
-  console.log("[line:slash] entry", {
+  console.log("[line:slash] entry", sanitizeLogObject({
     sourceType,
     userId: event.source?.userId || null,
     groupId: event.source?.groupId || null,
     roomId: event.source?.roomId || null,
     messageText
-  });
+  }));
 
   try {
     if (!messageText) {
@@ -1332,19 +1333,19 @@ async function handleLineSlashCommand(event) {
     const isGroupContext = sourceType === "group" || sourceType === "room";
     const isCustomerContext = sourceType === "user";
 
-    console.log("[line:slash] lookup staffUser:start", {
+    console.log("[line:slash] lookup staffUser:start", sanitizeLogObject({
       userId: event.source?.userId || null
-    });
+    }));
     const staffUser = event.source?.userId ? await getStaffUserByLineUserId(event.source.userId) : null;
     console.log("[line:slash] lookup staffUser:done", {
       staffUserId: staffUser?.id || null
     });
 
-    console.log("[line:slash] lookup staffGroup:start", {
+    console.log("[line:slash] lookup staffGroup:start", sanitizeLogObject({
       isGroupContext,
       groupId: event.source?.groupId || null,
       roomId: event.source?.roomId || null
-    });
+    }));
     const staffGroup = isGroupContext ? await getAuthorizedStaffGroupBySource(event) : null;
     console.log("[line:slash] lookup staffGroup:done", {
       staffGroupId: staffGroup?.id || null,
@@ -1565,11 +1566,12 @@ function requireScopedStoreId(value, label = "line workflow store scope") {
 
 async function logLegacyLineWorkflowStoreFallback(reason, payload = {}, connection = pool) {
   const logPayload = { reason, fallbackStoreId: 1, ...payload };
-  console.warn("[line:store-scope] legacy fallback", logPayload);
+  const sanitizedLogPayload = sanitizeLogObject(logPayload);
+  console.warn("[line:store-scope] legacy fallback", sanitizedLogPayload);
   try {
-    await logWorkflowEvent("line_workflow_legacy_store_fallback", "STORE", 1, logPayload, null, connection);
+    await logWorkflowEvent("line_workflow_legacy_store_fallback", "STORE", 1, sanitizedLogPayload, null, connection);
   } catch (error) {
-    console.warn("[line:store-scope] fallback log failed", { reason, error: error?.message || String(error) });
+    console.warn("[line:store-scope] fallback log failed", sanitizeLogObject({ reason, error: error?.message || String(error) }));
   }
 }
 
@@ -1858,11 +1860,11 @@ async function handleStaffOperationalCommand(event) {
   const lineUserId = event.source?.userId;
   const messageText = event.message?.type === "text" ? event.message.text.trim() : "";
   const sourceType = event.source?.type;
-  console.log("[line:staff] entry", {
+  console.log("[line:staff] entry", sanitizeLogObject({
     sourceType,
     lineUserId: lineUserId || null,
     messageText
-  });
+  }));
   if (!messageText || (sourceType !== "group" && sourceType !== "room")) {
     console.log("[line:staff] skip invalid-context", {
       sourceType,
@@ -1874,10 +1876,10 @@ async function handleStaffOperationalCommand(event) {
   const staffUser = await getStaffUserByLineUserId(lineUserId);
   const staffGroup = await getAuthorizedStaffGroupBySource(event);
   if (!staffUser && !staffGroup) {
-    console.log("[line:staff] skip no-staff-access", {
+    console.log("[line:staff] skip no-staff-access", sanitizeLogObject({
       lineUserId: lineUserId || null,
       messageText
-    });
+    }));
     return false;
   }
 
@@ -3610,7 +3612,7 @@ async function replyToLine(replyToken, messages, options = {}) {
       return;
     }
 
-    console.log("[line:reply] before send", {
+    console.log("[line:reply] before send", sanitizeLogObject({
       replyTokenPreview: replyToken ? String(replyToken).slice(0, 12) : null,
       messageCount: Array.isArray(messages) ? messages.length : 0,
       messageTypes: Array.isArray(messages) ? messages.map((message) => message?.type || "unknown") : [],
@@ -3623,7 +3625,7 @@ async function replyToLine(replyToken, messages, options = {}) {
           }))
         : [],
       context: resolvedOptions.context
-    });
+    }));
 
     const response = await fetch("https://api.line.me/v2/bot/message/reply", {
       method: "POST",
@@ -3654,10 +3656,10 @@ async function replyToLine(replyToken, messages, options = {}) {
       replyTokenPreview: replyToken ? String(replyToken).slice(0, 12) : null
     });
   } catch (error) {
-    console.log("[line:reply] caught error", {
+    console.log("[line:reply] caught error", sanitizeLogObject({
       message: error.message,
       stack: error.stack
-    });
+    }));
     throw error;
   }
 }

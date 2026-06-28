@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const config = require("../config");
+const { sanitizeLogObject, sanitizeRouteForLog } = require("./logSanitizer");
 
 const SOURCE = {
   SIGNED_TOKEN: "signed_token",
@@ -96,42 +97,6 @@ function normalizeStoreCode(value) {
   return code;
 }
 
-function sanitizeRouteForAudit(value) {
-  const raw = String(value || "");
-  if (!raw || !raw.includes("?")) {
-    return raw;
-  }
-
-  const [path, query] = raw.split("?", 2);
-  const params = new URLSearchParams(query || "");
-  const sensitiveKeys = new Set([
-    "lineuserid",
-    "line_user_id",
-    "userid",
-    "user_id",
-    "groupid",
-    "group_id",
-    "roomid",
-    "room_id",
-    "token",
-    "accesstoken",
-    "access_token",
-    "secret",
-    "signature",
-    "authorization"
-  ]);
-
-  for (const key of Array.from(params.keys())) {
-    const normalizedKey = key.replace(/[-.]/g, "_").toLowerCase();
-    if (sensitiveKeys.has(normalizedKey)) {
-      params.set(key, "[masked]");
-    }
-  }
-
-  const sanitized = params.toString();
-  return sanitized ? path + "?" + sanitized : path;
-}
-
 function createEmptyContext(req, options = {}) {
   return {
     storeId: null,
@@ -151,7 +116,7 @@ function createEmptyContext(req, options = {}) {
     warnings: [],
     warningMetadata: [],
     audit: {
-      route: sanitizeRouteForAudit(req.originalUrl || req.url || ""),
+      route: sanitizeRouteForLog(req.originalUrl || req.url || ""),
       method: req.method || "",
       source: SOURCE.UNRESOLVED,
       sourceResolved: false,
@@ -467,13 +432,13 @@ async function resolveLineWebhookChannelContext(req, options = {}) {
       reason,
       ...details
     };
-    logger.warn?.("[line:webhook:resolver] unresolved", {
+    logger.warn?.("[line:webhook:resolver] unresolved", sanitizeLogObject({
       route: failed.audit.route,
       method: failed.audit.method,
       reason,
       status,
       webhookPathTokenHash: tokenHash
-    });
+    }));
     return failed;
   }
 
@@ -568,7 +533,7 @@ async function resolveLineWebhookChannelContext(req, options = {}) {
     signatureVerified: false
   });
 
-  logger.info?.("[line:webhook:resolver] resolved", {
+  logger.info?.("[line:webhook:resolver] resolved", sanitizeLogObject({
     route: resolved.audit.route,
     method: resolved.audit.method,
     storeId: resolved.storeId,
@@ -576,7 +541,7 @@ async function resolveLineWebhookChannelContext(req, options = {}) {
     lineChannelId: resolved.lineChannelId,
     webhookPathTokenHash: resolved.webhookPathTokenHash,
     mode: "signature_pending"
-  });
+  }));
 
   return resolved;
 }
@@ -865,14 +830,14 @@ async function resolveByLegacyKingwayFallback(req, options, context) {
     ]
   });
 
-  console.warn("[public-store-resolver] legacy KINGWAY fallback used", {
-    route: sanitizeRouteForAudit(req.originalUrl || req.url || ""),
+  console.warn("[public-store-resolver] legacy KINGWAY fallback used", sanitizeLogObject({
+    route: sanitizeRouteForLog(req.originalUrl || req.url || ""),
     method: req.method || "",
     storeId: fallbackStoreId,
     sourceResolved: resolved.sourceResolved,
     warning: warningMetadata,
     ignoredClientStoreId: resolved.audit.ignoredClientStoreId
-  });
+  }));
 
   return resolved;
 }
@@ -893,12 +858,12 @@ function logResolvedContext(context, options = {}) {
   };
 
   if (context.legacyFallbackUsed) {
-    logger.warn?.("[public-store-resolver] resolved with fallback", payload);
+    logger.warn?.("[public-store-resolver] resolved with fallback", sanitizeLogObject(payload));
     return;
   }
 
   if (options.logResolved !== false) {
-    logger.info?.("[public-store-resolver] resolved", payload);
+    logger.info?.("[public-store-resolver] resolved", sanitizeLogObject(payload));
   }
 }
 

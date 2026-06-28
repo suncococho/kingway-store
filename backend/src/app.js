@@ -62,6 +62,7 @@ const { sendDailyReport, TAIPEI_TZ } = require("./services/reportService");
 const { authenticate, authorize, requireStoreScope } = require("./middleware/auth");
 const { logWorkflowEvent } = require("./services/lineWorkflowService");
 const { buildOrderDetailLink, notifyPaymentInquiryCreated } = require("./services/staffLineNotify");
+const { sanitizeLogObject } = require("./utils/logSanitizer");
 
 const app = express();
 const JSON_BODY_LIMIT = "5mb";
@@ -484,11 +485,11 @@ app.post("/api/line/profile-name", async (req, res, next) => {
       [displayName, displayName, lineUserId]
     );
 
-    console.log("[line-profile-name]", {
+    console.log("[line-profile-name]", sanitizeLogObject({
       lineUserId,
       updatedRows: Number(result?.affectedRows || 0),
       changedRows: Number(result?.changedRows || 0)
-    });
+    }));
 
     return res.json({ ok: true });
   } catch (error) {
