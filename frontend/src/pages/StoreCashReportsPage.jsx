@@ -13,18 +13,18 @@ import {
 import { PAGE_HELP } from "../lib/pageHelpContent";
 
 const COUNT_FIELDS = [
-  ["count1000", "NT$1000"],
-  ["count100", "NT$100"],
-  ["count50", "NT$50"],
-  ["count10", "NT$10"],
-  ["count1", "NT$1"]
+  ["count1000", "NT$1000", 1000],
+  ["count100", "NT$100", 100],
+  ["count50", "NT$50", 50],
+  ["count10", "NT$10", 10],
+  ["count1", "NT$1", 1]
 ];
 
 const MONEY_FIELDS = [
   ["orderCashAmount", "訂單現金收款"],
   ["reservationDepositCashAmount", "預約金現金"],
-  ["cashReceivableAmount", "現金未收款"],
-  ["sameDayFullCashAmount", "當日全額現金"]
+  ["sameDayFullCashAmount", "當日全額現金"],
+  ["cashReceivableAmount", "現金未收款"]
 ];
 
 function todayText() {
@@ -92,8 +92,24 @@ function calculateCashInflow(form) {
     numberValue(form.sameDayFullCashAmount);
 }
 
+function calculateReferenceCash(reference) {
+  return numberValue(reference?.orderCashAmount) +
+    numberValue(reference?.reservationDepositCashAmount) +
+    numberValue(reference?.sameDayFullCashAmount);
+}
+
 function StaffName({ value }) {
   return <span>{value || "-"}</span>;
+}
+
+function SummaryCard({ label, value, note }) {
+  return (
+    <article className="summary-card operation-summary-card">
+      <div className="summary-label">{label}</div>
+      <div className="summary-value">{value}</div>
+      {note ? <div className="muted-text compact-note">{note}</div> : null}
+    </article>
+  );
 }
 
 function StoreCashReportsPage() {
@@ -122,6 +138,7 @@ function StoreCashReportsPage() {
 
   const operatingTotal = useMemo(() => calculateOperatingTotal(form), [form]);
   const cashInflow = useMemo(() => calculateCashInflow(form), [form]);
+  const referenceCash = useMemo(() => calculateReferenceCash(cashReference), [cashReference]);
 
   function updateForm(key, value) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -254,13 +271,12 @@ function StoreCashReportsPage() {
     { key: "reportDate", label: "日期" },
     { key: "storeName", label: "門市", render: (row) => row.storeName || `#${row.storeId}` },
     { key: "operatingCashTotal", label: "營業金總額", render: (row) => money(row.operatingCashTotal) },
-    { key: "orderCashAmount", label: "訂單現金收款", render: (row) => money(row.orderCashAmount) },
-    { key: "reservationDepositCashAmount", label: "預約金現金", render: (row) => money(row.reservationDepositCashAmount) },
+    { key: "totalCashInflow", label: "現金收入合計", render: (row) => money(row.totalCashInflow) },
     { key: "cashReceivableAmount", label: "現金未收款", render: (row) => money(row.cashReceivableAmount) },
-    { key: "sameDayFullCashAmount", label: "當日全額現金", render: (row) => money(row.sameDayFullCashAmount) },
     { key: "createdByName", label: "建立人員", render: (row) => <StaffName value={row.createdByName} /> },
     { key: "updatedByName", label: "最後修改人員", render: (row) => <StaffName value={row.updatedByName} /> },
     { key: "updatedAt", label: "修改時間", render: (row) => row.updatedAt || "-" },
+    { key: "status", label: "狀態", render: (row) => <StatusBadge tone={row.requiresPassword ? "warning" : "success"}>{row.requiresPassword ? "需密碼修改" : "可直接修改"}</StatusBadge> },
     {
       key: "actions",
       label: "操作",
@@ -279,54 +295,42 @@ function StoreCashReportsPage() {
     : "尚未建立，儲存後會記錄建立人員與最後修改人員";
 
   return (
-    <div className="page-stack">
+    <div className="page-stack operation-page">
       <PageHeader
         title="門市現金日報"
         description="每日記錄門市營業金、訂單現金收款、預約金、現金未收款與當日全額現金。"
       />
       <PageHelpButton help={PAGE_HELP.storeCashReports} />
 
-      <section className="summary-grid">
-        <div className="summary-card">
-          <div className="summary-label">營業金總額</div>
-          <div className="summary-value">{money(operatingTotal)}</div>
-        </div>
-        <div className="summary-card">
-          <div className="summary-label">現金收入合計</div>
-          <div className="summary-value">{money(cashInflow)}</div>
-        </div>
-        <div className="summary-card">
-          <div className="summary-label">目前狀態</div>
-          <div className="summary-value" style={{ fontSize: 18 }}>{currentReport?.id ? "已建立" : "未建立"}</div>
-        </div>
-        <div className="summary-card">
-          <div className="summary-label">修改限制</div>
-          <div className="summary-value" style={{ fontSize: 16 }}>{currentReport?.requiresPassword ? "需密碼" : "可修改"}</div>
-        </div>
+      <section className="summary-grid operation-summary-grid" aria-label="現金日報摘要">
+        <SummaryCard label="營業金總額" value={money(operatingTotal)} note="依面額盤點自動計算" />
+        <SummaryCard label="現金收入合計" value={money(cashInflow)} note="訂單現金 + 預約金 + 當日全額現金" />
+        <SummaryCard label="系統參考現金" value={money(referenceCash)} note="僅供參考，請以實際盤點為準" />
+        <SummaryCard label="現金未收款" value={money(form.cashReceivableAmount)} note="需後續追蹤收款" />
       </section>
 
       {error ? <div className="alert alert-error">{error}</div> : null}
 
-      <section className="content-card section-panel">
+      <section className="content-card section-panel operation-section-card">
         <div className="section-heading-row">
           <div>
             <h2>系統參考金額</h2>
-            <p className="muted-text">依訂單收款紀錄提供當日現金參考值，不會自動覆蓋現金日報輸入內容。</p>
+            <p className="muted-text">依 order_payment_records 與訂單收款紀錄提供當日現金參考值，不會自動覆蓋現金日報輸入內容。僅供參考，請以實際盤點為準。</p>
           </div>
           <StatusBadge tone="info">參考值</StatusBadge>
         </div>
-        <div className="summary-grid">
-          <div className="summary-card"><div className="summary-label">訂單現金收款參考</div><div className="summary-value">{money(cashReference?.orderCashAmount)}</div></div>
-          <div className="summary-card"><div className="summary-label">預約金現金參考</div><div className="summary-value">{money(cashReference?.reservationDepositCashAmount)}</div></div>
-          <div className="summary-card"><div className="summary-label">當日全額現金參考</div><div className="summary-value">{money(cashReference?.sameDayFullCashAmount)}</div></div>
-          <div className="summary-card"><div className="summary-label">現金未收款參考</div><div className="summary-value">{money(cashReference?.cashReceivableAmount)}</div></div>
+        <div className="summary-grid operation-summary-grid compact-summary-grid">
+          <SummaryCard label="訂單現金收款參考" value={money(cashReference?.orderCashAmount)} />
+          <SummaryCard label="預約金現金參考" value={money(cashReference?.reservationDepositCashAmount)} />
+          <SummaryCard label="當日全額現金參考" value={money(cashReference?.sameDayFullCashAmount)} />
+          <SummaryCard label="現金未收款參考" value={money(cashReference?.cashReceivableAmount)} />
         </div>
       </section>
 
-      <section className="content-card section-panel">
+      <section className="content-card section-panel operation-section-card">
         <div className="section-heading-row">
           <div>
-            <h2>今日輸入</h2>
+            <h2>日報輸入</h2>
             <p className="muted-text">{editMessage}。此修改將記錄修改人員與時間。</p>
           </div>
           <StatusBadge tone={currentReport?.requiresPassword ? "warning" : "success"}>
@@ -334,62 +338,78 @@ function StoreCashReportsPage() {
           </StatusBadge>
         </div>
 
-        <form className="form-grid" onSubmit={handleSave}>
-          <label>
-            日期
-            <input type="date" value={form.reportDate} onChange={(event) => handleDateChange(event.target.value)} required />
-          </label>
-          {canViewAllStores ? (
-            <label>
-              門市
-              <select value={form.storeId || currentStoreId || ""} onChange={(event) => handleStoreChange(event.target.value)}>
-                {stores.map((store) => (
-                  <option key={store.id} value={store.id}>{store.name}</option>
+        <form className="operation-form" onSubmit={handleSave}>
+          <div className="operation-fieldset">
+            <div className="operation-fieldset-title">日期 / 門市</div>
+            <div className="operation-field-grid compact-operation-grid">
+              <label>
+                日期
+                <input type="date" value={form.reportDate} onChange={(event) => handleDateChange(event.target.value)} required />
+              </label>
+              {canViewAllStores ? (
+                <label>
+                  門市
+                  <select value={form.storeId || currentStoreId || ""} onChange={(event) => handleStoreChange(event.target.value)}>
+                    {stores.map((store) => (
+                      <option key={store.id} value={store.id}>{store.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="operation-two-column">
+            <section className="operation-fieldset">
+              <div className="operation-fieldset-title">營業金盤點</div>
+              <div className="denomination-grid">
+                {COUNT_FIELDS.map(([key, label, value]) => {
+                  const count = numberValue(form[key]);
+                  return (
+                    <label className="denomination-row" key={key}>
+                      <span>{label}</span>
+                      <input type="number" min="0" step="1" value={form[key]} onChange={(event) => updateForm(key, event.target.value)} />
+                      <strong>{value.toLocaleString("zh-TW")} × {count || 0} = {money(value * count)}</strong>
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="operation-total-row">
+                <span>營業金總額</span>
+                <strong>{money(operatingTotal)}</strong>
+              </div>
+            </section>
+
+            <section className="operation-fieldset">
+              <div className="operation-fieldset-title">現金收款</div>
+              <div className="operation-field-grid single-column-grid">
+                {MONEY_FIELDS.map(([key, label]) => (
+                  <label key={key}>
+                    {label}
+                    <input type="number" min="0" step="0.01" value={form[key]} onChange={(event) => updateForm(key, event.target.value)} />
+                  </label>
                 ))}
-              </select>
-            </label>
-          ) : null}
-
-          <div className="form-grid-full">
-            <h3>營業金盤點</h3>
-          </div>
-          {COUNT_FIELDS.map(([key, label]) => (
-            <label key={key}>
-              {label} 數量
-              <input type="number" min="0" step="1" value={form[key]} onChange={(event) => updateForm(key, event.target.value)} />
-            </label>
-          ))}
-          <div className="summary-card">
-            <div className="summary-label">營業金總額</div>
-            <div className="summary-value">{money(operatingTotal)}</div>
+              </div>
+              <div className="operation-total-row">
+                <span>現金收入合計</span>
+                <strong>{money(cashInflow)}</strong>
+              </div>
+            </section>
           </div>
 
-          <div className="form-grid-full">
-            <h3>現金項目</h3>
-          </div>
-          {MONEY_FIELDS.map(([key, label]) => (
-            <label key={key}>
-              {label}
-              <input type="number" min="0" step="0.01" value={form[key]} onChange={(event) => updateForm(key, event.target.value)} />
-            </label>
-          ))}
-          <div className="summary-card">
-            <div className="summary-label">現金收入合計</div>
-            <div className="summary-value">{money(cashInflow)}</div>
-          </div>
-          <label className="form-grid-full">
-            備註
+          <label className="operation-fieldset">
+            <span className="operation-fieldset-title">備註</span>
             <textarea value={form.note} onChange={(event) => updateForm("note", event.target.value)} rows={3} />
           </label>
 
           {currentReport?.id ? (
-            <div className="form-grid-full muted-text">
+            <div className="muted-text compact-note">
               建立人員：{currentReport.createdByName || "-"} / 最後修改人員：{currentReport.updatedByName || "-"}
               {currentReport.lateEditApprovedByName ? ` / 逾時確認：${currentReport.lateEditApprovedByName}` : ""}
             </div>
           ) : null}
 
-          <div className="form-actions form-grid-full">
+          <div className="form-actions">
             <button type="submit" className="primary-button" disabled={saving || loading}>
               儲存今日現金日報
             </button>
@@ -397,14 +417,14 @@ function StoreCashReportsPage() {
         </form>
       </section>
 
-      <section className="content-card section-panel">
+      <section className="content-card section-panel operation-section-card">
         <div className="section-heading-row">
           <div>
             <h2>日期別列表</h2>
             <p className="muted-text">依日期查看現金日報，並可載入既有資料進行修改。</p>
           </div>
         </div>
-        <form className="form-grid" onSubmit={applyFilters}>
+        <form className="form-grid filter-grid" onSubmit={applyFilters}>
           <label>
             開始日期
             <input type="date" value={filters.startDate} onChange={(event) => setFilters((current) => ({ ...current, startDate: event.target.value }))} />
@@ -429,10 +449,10 @@ function StoreCashReportsPage() {
           </div>
         </form>
         {summary ? (
-          <div className="summary-grid">
-            <div className="summary-card"><div className="summary-label">筆數</div><div className="summary-value">{summary.reportCount || 0}</div></div>
-            <div className="summary-card"><div className="summary-label">營業金總額</div><div className="summary-value">{money(summary.operatingCashTotal)}</div></div>
-            <div className="summary-card"><div className="summary-label">現金收入合計</div><div className="summary-value">{money(summary.totalCashInflow)}</div></div>
+          <div className="summary-grid operation-summary-grid compact-summary-grid">
+            <SummaryCard label="筆數" value={summary.reportCount || 0} />
+            <SummaryCard label="營業金總額" value={money(summary.operatingCashTotal)} />
+            <SummaryCard label="現金收入合計" value={money(summary.totalCashInflow)} />
           </div>
         ) : null}
         <DataTable
@@ -440,7 +460,7 @@ function StoreCashReportsPage() {
           columns={columns}
           emptyText="目前沒有現金日報。"
           cardTitle={(row) => `${row.reportDate} / ${row.storeName || `#${row.storeId}`}`}
-          cardDescription={(row) => `營業金 ${money(row.operatingCashTotal)} / 現金收入 ${money(row.totalCashInflow)}`}
+          cardDescription={(row) => `營業金 ${money(row.operatingCashTotal)} / 現金收入 ${money(row.totalCashInflow)} / 未收 ${money(row.cashReceivableAmount)}`}
           cardBadges={(row) => (
             <StatusBadge tone={row.requiresPassword ? "warning" : "success"}>
               {row.requiresPassword ? "需密碼修改" : "可直接修改"}

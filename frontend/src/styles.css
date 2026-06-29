@@ -5288,3 +5288,156 @@ button:hover {
   color: #64748b;
   font-size: 14px;
 }
+
+/* Store operation pages: visit records and cash reports */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.summary-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.summary-label {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.summary-value {
+  margin-top: 8px;
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--text-strong);
+  line-height: 1.15;
+}
+
+.operation-page .content-card {
+  border-radius: 8px;
+}
+
+.operation-summary-grid {
+  align-items: stretch;
+}
+
+.operation-summary-card {
+  min-height: 116px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.compact-summary-grid {
+  margin-top: 14px;
+  margin-bottom: 14px;
+}
+
+.compact-note {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.operation-section-card {
+  gap: 16px;
+}
+
+.operation-form {
+  display: grid;
+  gap: 16px;
+}
+
+.operation-fieldset {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f8fafc;
+  display: grid;
+  gap: 12px;
+}
+
+.operation-fieldset-title {
+  color: #334155;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.operation-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.compact-operation-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 260px));
+}
+
+.single-column-grid {
+  grid-template-columns: 1fr;
+}
+
+.operation-checkbox {
+  min-height: 44px;
+  align-self: end;
+}
+
+.operation-two-column {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.denomination-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.denomination-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.7fr) minmax(90px, 0.8fr) minmax(130px, 1.2fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.denomination-row strong,
+.operation-total-row strong {
+  color: var(--text-strong);
+  font-size: 15px;
+}
+
+.operation-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 12px;
+  font-weight: 800;
+}
+
+.filter-grid {
+  align-items: end;
+}
+
+@media (max-width: 720px) {
+  .operation-two-column {
+    grid-template-columns: 1fr;
+  }
+
+  .denomination-row {
+    grid-template-columns: 1fr;
+  }
+
+  .compact-operation-grid {
+    grid-template-columns: 1fr;
+  }
+}

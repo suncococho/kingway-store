@@ -86,6 +86,16 @@ function compactText(value, maxLength = 28) {
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
 }
 
+function SummaryCard({ label, value, note }) {
+  return (
+    <article className="summary-card operation-summary-card">
+      <div className="summary-label">{label}</div>
+      <div className="summary-value">{value}</div>
+      {note ? <div className="muted-text compact-note">{note}</div> : null}
+    </article>
+  );
+}
+
 function StoreVisitRecordsPage() {
   const [form, setForm] = useState(defaultForm());
   const [editing, setEditing] = useState(null);
@@ -102,6 +112,7 @@ function StoreVisitRecordsPage() {
     keyword: ""
   });
   const [summary, setSummary] = useState(null);
+  const [todaySummary, setTodaySummary] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -114,15 +125,18 @@ function StoreVisitRecordsPage() {
     try {
       setLoading(true);
       setError("");
-      const [listResponse, summaryResponse] = await Promise.all([
+      const today = todayText();
+      const [listResponse, summaryResponse, todaySummaryResponse] = await Promise.all([
         fetchVisitRecords(nextFilters),
-        fetchVisitRecordSummary(nextFilters)
+        fetchVisitRecordSummary(nextFilters),
+        fetchVisitRecordSummary({ ...nextFilters, startDate: today, endDate: today })
       ]);
       setRecords(listResponse.records || []);
       setStores(listResponse.stores || []);
       setCanViewAllStores(Boolean(listResponse.canViewAllStores));
       setCurrentStoreId(listResponse.currentStoreId || "");
       setSummary(summaryResponse.summary || null);
+      setTodaySummary(todaySummaryResponse.summary || null);
       setForm((current) => ({
         ...current,
         storeId: current.storeId || listResponse.currentStoreId || ""
@@ -211,8 +225,8 @@ function StoreVisitRecordsPage() {
     { key: "visitorCount", label: "人數" },
     { key: "lineFriendAdded", label: "LINE 好友", render: (row) => row.lineFriendAdded ? <StatusBadge tone="success">已加</StatusBadge> : <StatusBadge tone="muted">未加</StatusBadge> },
     { key: "lineInfo", label: "LINE ID / LINE 名稱", render: (row) => row.lineDisplayName || row.lineIdentifierMasked || "-" },
-    { key: "interestedVehicle", label: "興趣車款", render: (row) => row.interestedVehicle || row.interestedProductSku || "-" },
-    { key: "visitResult", label: "結果", render: (row) => VISIT_RESULT_LABELS[row.visitResult] || row.visitResult },
+    { key: "interestedVehicle", label: "感興趣車款", render: (row) => row.interestedVehicle || row.interestedProductSku || "-" },
+    { key: "visitResult", label: "來店結果", render: (row) => <StatusBadge tone={row.followUpRequired ? "warning" : "info"}>{VISIT_RESULT_LABELS[row.visitResult] || row.visitResult}</StatusBadge> },
     { key: "note", label: "備註", render: (row) => compactText(row.note) },
     { key: "createdByName", label: "建立人員", render: (row) => row.createdByName || "-" },
     { key: "updatedByName", label: "最後修改人員", render: (row) => row.updatedByName || "-" },
@@ -231,7 +245,7 @@ function StoreVisitRecordsPage() {
   const editingForm = editing ? formFromRecord(editing, currentStoreId) : null;
 
   return (
-    <div className="page-stack">
+    <div className="page-stack operation-page">
       <PageHeader
         title="門市來店紀錄"
         description="記錄每日來店客戶、人數、LINE 加好友狀態、感興趣車款與後續追蹤。"
@@ -240,18 +254,18 @@ function StoreVisitRecordsPage() {
 
       {error ? <div className="alert alert-error">{error}</div> : null}
 
-      <section className="summary-grid">
-        <div className="summary-card"><div className="summary-label">來店筆數</div><div className="summary-value">{summary?.totalVisits || 0}</div></div>
-        <div className="summary-card"><div className="summary-label">來店人數</div><div className="summary-value">{summary?.totalVisitorCount || 0}</div></div>
-        <div className="summary-card"><div className="summary-label">LINE 好友新增</div><div className="summary-value">{summary?.lineFriendAddedCount || 0}</div></div>
-        <div className="summary-card"><div className="summary-label">需追蹤</div><div className="summary-value">{summary?.followUpRequiredCount || 0}</div></div>
+      <section className="summary-grid operation-summary-grid" aria-label="今日來店摘要">
+        <SummaryCard label="今日來店件數" value={todaySummary?.totalVisits || 0} note="今日新增紀錄" />
+        <SummaryCard label="今日來店人數" value={todaySummary?.totalVisitorCount || 0} note="visitor_count 合計" />
+        <SummaryCard label="今日 LINE 加好友" value={todaySummary?.lineFriendAddedCount || 0} note="已勾選 LINE 加好友" />
+        <SummaryCard label="今日需追蹤" value={todaySummary?.followUpRequiredCount || 0} note="已標記後續追蹤" />
       </section>
 
-      <section className="content-card section-panel">
+      <section className="content-card section-panel operation-section-card">
         <div className="section-heading-row">
           <div>
             <h2>新增來店紀錄</h2>
-            <p className="muted-text">LINE ID / LINE 名稱屬於個人資料，列表僅顯示遮蔽後資訊。</p>
+            <p className="muted-text">輸入來店時間、人數、感興趣車款與來店結果。LINE ID / LINE 名稱屬於個人資料，列表僅顯示遮蔽後資訊。</p>
           </div>
           <StatusBadge tone="info">門市紀錄</StatusBadge>
         </div>
@@ -266,14 +280,14 @@ function StoreVisitRecordsPage() {
         />
       </section>
 
-      <section className="content-card section-panel">
+      <section className="content-card section-panel operation-section-card">
         <div className="section-heading-row">
           <div>
-            <h2>日期別列表</h2>
-            <p className="muted-text">依日期、門市、來店結果與關鍵字查詢來店紀錄。</p>
+            <h2>來店紀錄查詢</h2>
+            <p className="muted-text">依日期、門市、來店結果、LINE 好友與關鍵字查詢。下方摘要依目前篩選期間計算。</p>
           </div>
         </div>
-        <form className="form-grid" onSubmit={applyFilters}>
+        <form className="form-grid filter-grid" onSubmit={applyFilters}>
           <label>
             開始日期
             <input type="date" value={filters.startDate} onChange={(event) => setFilters((current) => ({ ...current, startDate: event.target.value }))} />
@@ -314,25 +328,35 @@ function StoreVisitRecordsPage() {
             <button type="submit" className="secondary-button" disabled={loading}>查詢</button>
           </div>
         </form>
+
+        <div className="summary-grid operation-summary-grid compact-summary-grid">
+          <SummaryCard label="篩選來店件數" value={summary?.totalVisits || 0} />
+          <SummaryCard label="篩選來店人數" value={summary?.totalVisitorCount || 0} />
+          <SummaryCard label="篩選 LINE 加好友" value={summary?.lineFriendAddedCount || 0} />
+          <SummaryCard label="篩選需追蹤" value={summary?.followUpRequiredCount || 0} />
+        </div>
+
         <DataTable
           rows={records}
           columns={columns}
           emptyText="目前沒有來店紀錄。"
-          cardTitle={(row) => `${row.visitDate} ${row.visitTime?.slice(0, 5) || ""}`}
-          cardDescription={(row) => `${row.customerName || row.customerPhone || "未留名"} / ${VISIT_RESULT_LABELS[row.visitResult] || row.visitResult}`}
+          cardTitle={(row) => `${row.visitDate} ${row.visitTime?.slice(0, 5) || ""} / ${row.visitorCount || 0} 人`}
+          cardDescription={(row) => `${row.interestedVehicle || row.interestedProductSku || "未記錄車款"} / ${VISIT_RESULT_LABELS[row.visitResult] || row.visitResult}`}
           cardBadges={(row) => row.followUpRequired ? <StatusBadge tone="warning">需追蹤</StatusBadge> : <StatusBadge tone="info">{row.visitorCount} 人</StatusBadge>}
         />
       </section>
 
       {summary?.topVehicles?.length ? (
-        <section className="content-card section-panel">
-          <h2>興趣車款 Top 5</h2>
-          <div className="summary-grid">
+        <section className="content-card section-panel operation-section-card">
+          <div className="section-heading-row">
+            <div>
+              <h2>感興趣車款 Top 5</h2>
+              <p className="muted-text">依目前篩選期間統計，供每日追蹤與 21:00 營運報告參考。</p>
+            </div>
+          </div>
+          <div className="summary-grid operation-summary-grid">
             {summary.topVehicles.map((item) => (
-              <div className="summary-card" key={item.interestedVehicle}>
-                <div className="summary-label">{item.interestedVehicle}</div>
-                <div className="summary-value">{item.count}</div>
-              </div>
+              <SummaryCard key={item.interestedVehicle} label={item.interestedVehicle} value={item.count} />
             ))}
           </div>
         </section>
@@ -368,70 +392,88 @@ function StoreVisitRecordsPage() {
 
 function VisitRecordForm({ form, stores, canViewAllStores, saving, submitLabel, onSubmit, onChange }) {
   return (
-    <form className="form-grid" onSubmit={onSubmit}>
-      <label>
-        來店日期
-        <input type="date" value={form.visitDate} onChange={(event) => onChange("visitDate", event.target.value)} required />
-      </label>
-      <label>
-        來店時間
-        <input type="time" value={form.visitTime} onChange={(event) => onChange("visitTime", event.target.value)} />
-      </label>
-      {canViewAllStores ? (
-        <label>
-          門市
-          <select value={form.storeId || ""} onChange={(event) => onChange("storeId", event.target.value)}>
-            {stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
-          </select>
-        </label>
-      ) : null}
-      <label>
-        來店人數
-        <input type="number" min="1" step="1" value={form.visitorCount} onChange={(event) => onChange("visitorCount", event.target.value)} required />
-      </label>
-      <label>
-        客戶名
-        <input value={form.customerName} onChange={(event) => onChange("customerName", event.target.value)} placeholder="可不填" />
-      </label>
-      <label>
-        電話
-        <input value={form.customerPhone} onChange={(event) => onChange("customerPhone", event.target.value)} placeholder="可不填" />
-      </label>
-      <label className="checkbox-field">
-        <input type="checkbox" checked={Boolean(form.lineFriendAdded)} onChange={(event) => onChange("lineFriendAdded", event.target.checked)} />
-        LINE 已加好友
-      </label>
-      <label>
-        LINE ID / LINE 名稱
-        <input value={form.lineIdentifier} onChange={(event) => onChange("lineIdentifier", event.target.value)} placeholder="客戶提供的 LINE ID 或名稱" />
-      </label>
-      <label>
-        LINE 顯示名稱
-        <input value={form.lineDisplayName} onChange={(event) => onChange("lineDisplayName", event.target.value)} placeholder="可不填" />
-      </label>
-      <label>
-        興趣車款
-        <input value={form.interestedVehicle} onChange={(event) => onChange("interestedVehicle", event.target.value)} placeholder="例如 SHARK / 車款 / SKU" />
-      </label>
-      <label>
-        來店結果
-        <select value={form.visitResult} onChange={(event) => onChange("visitResult", event.target.value)}>
-          {VISIT_RESULT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select>
-      </label>
-      <label className="checkbox-field">
-        <input type="checkbox" checked={Boolean(form.followUpRequired)} onChange={(event) => onChange("followUpRequired", event.target.checked)} />
-        需追蹤
-      </label>
-      <label>
-        追蹤時間
-        <input type="datetime-local" value={form.followUpAt} onChange={(event) => onChange("followUpAt", event.target.value)} />
-      </label>
-      <label className="form-grid-full">
-        備註
+    <form className="operation-form" onSubmit={onSubmit}>
+      <div className="operation-fieldset">
+        <div className="operation-fieldset-title">日期 / 時間</div>
+        <div className="operation-field-grid">
+          <label>
+            來店日期
+            <input type="date" value={form.visitDate} onChange={(event) => onChange("visitDate", event.target.value)} required />
+          </label>
+          <label>
+            來店時間
+            <input type="time" value={form.visitTime} onChange={(event) => onChange("visitTime", event.target.value)} />
+          </label>
+          {canViewAllStores ? (
+            <label>
+              門市
+              <select value={form.storeId || ""} onChange={(event) => onChange("storeId", event.target.value)}>
+                {stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+              </select>
+            </label>
+          ) : null}
+          <label>
+            來店人數
+            <input type="number" min="1" step="1" value={form.visitorCount} onChange={(event) => onChange("visitorCount", event.target.value)} required />
+          </label>
+        </div>
+      </div>
+
+      <div className="operation-fieldset">
+        <div className="operation-fieldset-title">客戶 / LINE</div>
+        <div className="operation-field-grid">
+          <label>
+            客戶姓名
+            <input value={form.customerName} onChange={(event) => onChange("customerName", event.target.value)} placeholder="可不填" />
+          </label>
+          <label>
+            電話
+            <input value={form.customerPhone} onChange={(event) => onChange("customerPhone", event.target.value)} placeholder="可不填" />
+          </label>
+          <label className="checkbox-field operation-checkbox">
+            <input type="checkbox" checked={Boolean(form.lineFriendAdded)} onChange={(event) => onChange("lineFriendAdded", event.target.checked)} />
+            LINE 已加好友
+          </label>
+          <label>
+            LINE ID / LINE 名稱
+            <input value={form.lineIdentifier} onChange={(event) => onChange("lineIdentifier", event.target.value)} placeholder="客戶提供的 LINE ID 或名稱" />
+          </label>
+          <label>
+            LINE 顯示名稱
+            <input value={form.lineDisplayName} onChange={(event) => onChange("lineDisplayName", event.target.value)} placeholder="可不填" />
+          </label>
+        </div>
+      </div>
+
+      <div className="operation-fieldset">
+        <div className="operation-fieldset-title">感興趣車款 / 來店結果</div>
+        <div className="operation-field-grid">
+          <label>
+            感興趣車款
+            <input value={form.interestedVehicle} onChange={(event) => onChange("interestedVehicle", event.target.value)} placeholder="例如 SHARK / 車款 / SKU" />
+          </label>
+          <label>
+            來店結果
+            <select value={form.visitResult} onChange={(event) => onChange("visitResult", event.target.value)}>
+              {VISIT_RESULT_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>
+          <label className="checkbox-field operation-checkbox">
+            <input type="checkbox" checked={Boolean(form.followUpRequired)} onChange={(event) => onChange("followUpRequired", event.target.checked)} />
+            需追蹤
+          </label>
+          <label>
+            追蹤時間
+            <input type="datetime-local" value={form.followUpAt} onChange={(event) => onChange("followUpAt", event.target.value)} />
+          </label>
+        </div>
+      </div>
+
+      <label className="operation-fieldset">
+        <span className="operation-fieldset-title">備註</span>
         <textarea value={form.note} onChange={(event) => onChange("note", event.target.value)} rows={3} />
       </label>
-      <div className="form-actions form-grid-full">
+      <div className="form-actions">
         <button type="submit" className="primary-button" disabled={saving}>{submitLabel}</button>
       </div>
     </form>
