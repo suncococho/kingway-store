@@ -14,10 +14,32 @@ const router = express.Router();
 const HQ_WRITE_ROLES = ["company_owner", "hq_admin", "inventory_manager"];
 const HQ_READ_ROLES = ["company_owner", "hq_admin", "finance", "inventory_manager", "viewer"];
 const OPEN_STATUSES = ["SHIPPED", "PARTIALLY_RECEIVED", "DISCREPANCY"];
+const INBOUND_ALREADY_FULLY_RECEIVED = "INBOUND_ALREADY_FULLY_RECEIVED";
+const INBOUND_CUMULATIVE_NOT_INCREASED = "INBOUND_CUMULATIVE_NOT_INCREASED";
+const INBOUND_CUMULATIVE_EXCEEDS_SHIPPED = "INBOUND_CUMULATIVE_EXCEEDS_SHIPPED";
+const INBOUND_CUMULATIVE_BELOW_RECEIVED = "INBOUND_CUMULATIVE_BELOW_RECEIVED";
+const INBOUND_CUMULATIVE_INVALID = "INBOUND_CUMULATIVE_INVALID";
+const INBOUND_DELTA_INVALID = "INBOUND_DELTA_INVALID";
 
 function toNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function createInboundError(message, statusCode = 400, code = null) {
+  const error = createError(message, statusCode);
+  if (code) {
+    error.code = code;
+  }
+  return error;
+}
+
+function isInboundError(error) {
+  return typeof error?.code === "string" && error.code.startsWith("INBOUND_");
+}
+
+function inboundFailure(code, message, statusCode = 400) {
+  return { ok: false, code, message, statusCode };
 }
 
 function makeTransferNo() {
@@ -764,6 +786,7 @@ router.get("/inbound", requireStoreScope(), requireStoreRole(["owner", "admin"])
           fs.name AS fromStoreName,
           ts.name AS toStoreName,
           GROUP_CONCAT(CONCAT(sti.sku_snapshot, ' x', sti.quantity_shipped, IF(sti.quantity_received > 0, CONCAT(' / 已入庫 ', sti.quantity_received), '')) ORDER BY sti.id SEPARATOR '；') AS itemSummary,
+          SUM(GREATEST(COALESCE(sti.quantity_shipped, 0) - COALESCE(sti.quantity_received, 0), 0)) AS remainingQuantity,
           st.created_at AS createdAt,
           st.updated_at AS updatedAt
         FROM store_transfers st
@@ -786,6 +809,7 @@ router.get("/inbound", requireStoreScope(), requireStoreRole(["owner", "admin"])
           ts.name,
           st.created_at,
           st.updated_at
+        HAVING SUM(GREATEST(COALESCE(sti.quantity_shipped, 0) - COALESCE(sti.quantity_received, 0), 0)) > 0
         ORDER BY st.shipped_at DESC, st.id DESC
       `,
       [req.storeId]
@@ -824,23 +848,39 @@ router.post("/:transferId/receive", requireStoreScope(), requireInboundStoreType
       return res.status(403).json({ message: "沒有入庫確認權限" });
     }
     if (transfer.status === "RECEIVED") {
-      return res.status(409).json({ message: "此出貨單已完成入庫" });
+      return res.status(409).json({
+        ok: false,
+        code: INBOUND_ALREADY_FULLY_RECEIVED,
+        message: "此商品已全數入庫，無需再次確認。"
+      });
     }
     if (!OPEN_STATUSES.includes(transfer.status)) {
       return res.status(409).json({ message: "此出貨單目前不可入庫" });
     }
 
-    await withTransaction(async (connection) => {
+    const receiveResult = await withTransaction(async (connection) => {
       const [transferRows] = await connection.query("SELECT * FROM store_transfers WHERE id = ? FOR UPDATE", [transferId]);
       const lockedTransfer = transferRows[0];
       if (!lockedTransfer || lockedTransfer.status === "RECEIVED" || !OPEN_STATUSES.includes(lockedTransfer.status)) {
-        throw createError("此出貨單目前不可入庫", 409);
+        throw createInboundError("此出貨單目前不可入庫", 409, INBOUND_ALREADY_FULLY_RECEIVED);
       }
 
       const receiveItems = Array.isArray(req.body.items) ? req.body.items : [];
       if (!receiveItems.length) throw createError("請輸入入庫數量", 400);
       const receiveById = new Map(receiveItems.map((item) => [Number(item.itemId || item.id), item]));
       const [items] = await connection.query("SELECT * FROM store_transfer_items WHERE transfer_id = ? FOR UPDATE", [transferId]);
+      if (!items.length) throw createError("出貨單沒有商品", 400);
+
+      const alreadyFullyReceived = items.every((item) => Number(item.quantity_received || 0) >= Number(item.quantity_shipped || 0));
+      if (alreadyFullyReceived) {
+        if (lockedTransfer.status !== "RECEIVED") {
+          await connection.query(
+            "UPDATE store_transfers SET status = 'RECEIVED', received_at = COALESCE(received_at, NOW()), received_by_staff_id = COALESCE(received_by_staff_id, ?), note = COALESCE(?, note) WHERE id = ?",
+            [req.user.id, req.body.note || null, transferId]
+          );
+        }
+        return inboundFailure(INBOUND_ALREADY_FULLY_RECEIVED, "此商品已全數入庫，無需再次確認。", 409);
+      }
 
       let totalReceived = 0;
       let totalShipped = 0;
@@ -853,14 +893,20 @@ router.post("/:transferId/receive", requireStoreScope(), requireInboundStoreType
         if (input) {
           if (input.quantityReceived !== undefined) {
             const nextReceived = Number(input.quantityReceived);
-            if (!Number.isSafeInteger(nextReceived) || nextReceived < currentReceived || nextReceived > shipped) {
-              throw createError("入庫累計數量不正確", 400);
+            if (!Number.isSafeInteger(nextReceived)) {
+              throw createInboundError("入庫累計數量不正確", 400, INBOUND_CUMULATIVE_INVALID);
+            }
+            if (nextReceived < currentReceived) {
+              throw createInboundError("新的累計入庫數量不可小於目前已入庫數量。", 400, INBOUND_CUMULATIVE_BELOW_RECEIVED);
+            }
+            if (nextReceived > shipped) {
+              throw createInboundError("累計入庫數量不可超過出貨數量。", 400, INBOUND_CUMULATIVE_EXCEEDS_SHIPPED);
             }
             delta = nextReceived - currentReceived;
           } else {
             delta = Number(input.receiveQuantity || input.delta || 0);
             if (!Number.isSafeInteger(delta) || delta < 0 || currentReceived + delta > shipped) {
-              throw createError("本次入庫數量不正確", 400);
+              throw createInboundError("本次入庫數量不正確", 400, INBOUND_DELTA_INVALID);
             }
           }
         }
@@ -892,13 +938,26 @@ router.post("/:transferId/receive", requireStoreScope(), requireInboundStoreType
 
       const discrepancyConfirmed = Boolean(req.body.discrepancyConfirmed);
       const nextStatus = totalReceived >= totalShipped ? "RECEIVED" : (discrepancyConfirmed ? "DISCREPANCY" : "PARTIALLY_RECEIVED");
-      if (changed || nextStatus !== lockedTransfer.status) {
+      const statusWillChange = nextStatus !== lockedTransfer.status;
+      if (!changed && !statusWillChange) {
+        throw createInboundError("新的累計入庫數量必須大於目前已入庫數量。", 400, INBOUND_CUMULATIVE_NOT_INCREASED);
+      }
+      if (changed || statusWillChange) {
         await connection.query(
           "UPDATE store_transfers SET status = ?, received_at = IF(? = 'RECEIVED', NOW(), received_at), received_by_staff_id = ?, note = COALESCE(?, note) WHERE id = ?",
           [nextStatus, nextStatus, req.user.id, req.body.note || null, transferId]
         );
       }
+      return { ok: true };
     });
+
+    if (receiveResult?.ok === false) {
+      return res.status(receiveResult.statusCode || 400).json({
+        ok: false,
+        code: receiveResult.code,
+        message: receiveResult.message
+      });
+    }
 
     const updated = await loadTransfer(transferId);
     updated.items = await loadTransferItems(transferId);
@@ -930,6 +989,13 @@ router.post("/:transferId/receive", requireStoreScope(), requireInboundStoreType
     });
     return res.json({ ok: true, transfer: updated });
   } catch (error) {
+    if (isInboundError(error)) {
+      return res.status(error.statusCode || 400).json({
+        ok: false,
+        code: error.code,
+        message: error.message
+      });
+    }
     return next(error);
   }
 });

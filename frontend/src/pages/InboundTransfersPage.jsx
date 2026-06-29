@@ -20,6 +20,53 @@ function getStatusTone(status) {
   return "warning";
 }
 
+function toSafeQuantity(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getInboundQuantities(item) {
+  const shipped = toSafeQuantity(item.quantityShipped);
+  const received = toSafeQuantity(item.quantityReceived);
+  const remaining = Math.max(shipped - received, 0);
+  return {
+    shipped,
+    received,
+    remaining,
+    fullyReceived: remaining <= 0
+  };
+}
+
+function isTransferFullyReceived(transfer) {
+  const items = Array.isArray(transfer?.items) ? transfer.items : [];
+  return items.length > 0 && items.every((item) => getInboundQuantities(item).fullyReceived);
+}
+
+function hasReceivableIncrease(transfer, receiveForm) {
+  const items = Array.isArray(transfer?.items) ? transfer.items : [];
+  return items.some((item) => {
+    const { shipped, received, remaining } = getInboundQuantities(item);
+    const nextReceived = toSafeQuantity(receiveForm[item.id] ?? received);
+    return remaining > 0 && nextReceived > received && nextReceived <= shipped;
+  });
+}
+
+function getInboundErrorMessage(error) {
+  if (error?.data?.code === "INBOUND_ALREADY_FULLY_RECEIVED") {
+    return "此商品已全數入庫，無需再次確認。";
+  }
+  if (error?.data?.code === "INBOUND_CUMULATIVE_NOT_INCREASED") {
+    return "新的累計入庫數量必須大於目前已入庫數量。";
+  }
+  if (error?.data?.code === "INBOUND_CUMULATIVE_EXCEEDS_SHIPPED") {
+    return "累計入庫數量不可超過出貨數量。";
+  }
+  if (error?.data?.code === "INBOUND_CUMULATIVE_BELOW_RECEIVED") {
+    return "新的累計入庫數量不可小於目前已入庫數量。";
+  }
+  return error?.message || "入庫確認失敗";
+}
+
 function InboundTransfersPage() {
   const [transfers, setTransfers] = useState([]);
   const [selectedTransfer, setSelectedTransfer] = useState(null);
@@ -69,26 +116,34 @@ function InboundTransfersPage() {
   async function confirmReceive(event) {
     event.preventDefault();
     if (!selectedTransfer) return;
-    for (const item of selectedTransfer.items || []) {
-      const nextReceived = Number(receiveForm[item.id] || 0);
-      const currentReceived = Number(item.quantityReceived || 0);
-      const shipped = Number(item.quantityShipped || 0);
-      if (nextReceived > shipped) {
-        alert("入庫數量不可超過出貨數量");
-        return;
-      }
-      if (nextReceived < currentReceived) {
-        alert("入庫累計數量不可小於已入庫數量");
-        return;
-      }
-    }
-    const items = (selectedTransfer.items || [])
-      .map((item) => ({ itemId: item.id, quantityReceived: Number(receiveForm[item.id] || 0) }));
-    const hasIncrease = (selectedTransfer.items || []).some((item) => Number(receiveForm[item.id] || 0) > Number(item.quantityReceived || 0));
-    if (!hasIncrease) {
-      alert("請輸入新的累計入庫數量");
+    if (isTransferFullyReceived(selectedTransfer)) {
+      alert("此出貨單已全數入庫，無需再次確認。");
       return;
     }
+
+    let hasIncrease = false;
+    for (const item of selectedTransfer.items || []) {
+      const nextReceived = toSafeQuantity(receiveForm[item.id] ?? item.quantityReceived);
+      const { shipped, received, remaining } = getInboundQuantities(item);
+      if (nextReceived > shipped) {
+        alert("累計入庫數量不可超過出貨數量。");
+        return;
+      }
+      if (nextReceived < received) {
+        alert("新的累計入庫數量不可小於目前已入庫數量。");
+        return;
+      }
+      if (remaining > 0 && nextReceived > received) {
+        hasIncrease = true;
+      }
+    }
+
+    if (!hasIncrease && !discrepancyConfirmed) {
+      alert("新的累計入庫數量必須大於目前已入庫數量。");
+      return;
+    }
+    const items = (selectedTransfer.items || [])
+      .map((item) => ({ itemId: item.id, quantityReceived: toSafeQuantity(receiveForm[item.id] ?? item.quantityReceived) }));
     if (!confirm("確認入庫後，門市庫存將增加，請確認實收數量正確。")) return;
 
     try {
@@ -101,9 +156,12 @@ function InboundTransfersPage() {
       setReceiveForm(Object.fromEntries((response.transfer.items || []).map((item) => [item.id, Number(item.quantityReceived || 0)])));
       await loadInbound();
     } catch (requestError) {
-      alert(requestError.message || "入庫確認失敗");
+      alert(getInboundErrorMessage(requestError));
     }
   }
+
+  const selectedTransferFullyReceived = isTransferFullyReceived(selectedTransfer);
+  const canConfirmReceive = hasReceivableIncrease(selectedTransfer, receiveForm) || (!selectedTransferFullyReceived && discrepancyConfirmed);
 
   const columns = [
     { key: "transferNo", label: "出貨單號" },
@@ -125,27 +183,49 @@ function InboundTransfersPage() {
 
       {selectedTransfer ? (
         <section className="content-card section-panel">
-          <AdminSectionHeader eyebrow="確認入庫" title={selectedTransfer.transferNo} description={`${selectedTransfer.fromStoreName} -> ${selectedTransfer.toStoreName}`} badges={<StatusBadge tone={getStatusTone(selectedTransfer.status)}>{STATUS_LABELS[selectedTransfer.status] || selectedTransfer.status}</StatusBadge>} />
+          <AdminSectionHeader
+            eyebrow="確認入庫"
+            title={selectedTransfer.transferNo}
+            description={`${selectedTransfer.fromStoreName} -> ${selectedTransfer.toStoreName}`}
+            badges={(
+              <>
+                <StatusBadge tone={getStatusTone(selectedTransfer.status)}>{STATUS_LABELS[selectedTransfer.status] || selectedTransfer.status}</StatusBadge>
+                {selectedTransferFullyReceived ? <StatusBadge tone="success">已完成入庫</StatusBadge> : null}
+              </>
+            )}
+          />
+          {selectedTransferFullyReceived ? <div className="empty-state">此出貨單已全數入庫。</div> : null}
           <form onSubmit={confirmReceive}>
             <div className="stack-list">
               {(selectedTransfer.items || []).map((item) => {
-                const currentReceived = Number(item.quantityReceived || 0);
-                const remaining = Math.max(Number(item.quantityShipped || 0) - currentReceived, 0);
+                const { shipped, received, remaining, fullyReceived } = getInboundQuantities(item);
                 return (
                   <div className="field-item" key={item.id}>
-                    <div className="field-label">{item.sku} / {item.productName}</div>
-                    <div className="field-value">出貨數量 {item.quantityShipped} / 已入庫數量 {item.quantityReceived} / 尚待 {remaining}</div>
-                    <div className="field-label">本次確認後累計入庫數量，不可超過出貨數量。</div>
-                    <input type="number" min={currentReceived} max={item.quantityShipped} value={receiveForm[item.id] ?? currentReceived} onChange={(event) => updateReceiveQuantity(item.id, event.target.value)} />
+                    <div className="field-label">
+                      {item.sku} / {item.productName}
+                      {fullyReceived ? <StatusBadge tone="success">已全數入庫</StatusBadge> : null}
+                    </div>
+                    <div className="field-value">出貨數量 {shipped} / 已入庫數量 {received} / 尚待 {remaining}</div>
+                    <div className="field-label">{fullyReceived ? "此商品已全數入庫，無需再次確認。" : "本次確認後累計入庫數量，不可超過出貨數量。"}</div>
+                    <input
+                      type="number"
+                      min={received}
+                      max={shipped}
+                      value={receiveForm[item.id] ?? received}
+                      disabled={fullyReceived}
+                      onChange={(event) => updateReceiveQuantity(item.id, event.target.value)}
+                    />
                   </div>
                 );
               })}
             </div>
             <div className="grid-form compact-grid">
-              <label className="form-field form-field-wide"><span>差異備註</span><input value={note} onChange={(event) => setNote(event.target.value)} /></label>
-              <label className="checkbox-field form-field-wide"><input type="checkbox" checked={discrepancyConfirmed} onChange={(event) => setDiscrepancyConfirmed(event.target.checked)} /> 確認差異，不再等待剩餘數量</label>
+              <label className="form-field form-field-wide"><span>差異備註</span><input value={note} disabled={selectedTransferFullyReceived} onChange={(event) => setNote(event.target.value)} /></label>
+              <label className="checkbox-field form-field-wide"><input type="checkbox" checked={discrepancyConfirmed} disabled={selectedTransferFullyReceived} onChange={(event) => setDiscrepancyConfirmed(event.target.checked)} /> 確認差異，不再等待剩餘數量</label>
             </div>
-            <div className="action-row"><button type="submit" className="primary-button">確認入庫</button></div>
+            <div className="action-row">
+              <button type="submit" className="primary-button" disabled={selectedTransferFullyReceived || !canConfirmReceive}>{selectedTransferFullyReceived ? "已完成入庫" : "確認入庫"}</button>
+            </div>
           </form>
         </section>
       ) : null}
