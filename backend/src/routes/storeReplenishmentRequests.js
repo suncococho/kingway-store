@@ -10,6 +10,7 @@ const {
   notifyStoreReplenishmentSubmitted: notifyStoreReplenishmentSubmittedStaff
 } = require("../services/notificationEventService");
 const { createError } = require("../utils/errors");
+const { canViewSensitiveCost } = require("../utils/roleAccess");
 
 const router = express.Router();
 
@@ -63,8 +64,8 @@ function mapRequest(row) {
   };
 }
 
-function mapItem(row) {
-  return {
+function mapItem(row, options = {}) {
+  const payload = {
     id: Number(row.id),
     requestId: Number(row.requestId),
     hqProductId: Number(row.hqProductId),
@@ -73,7 +74,6 @@ function mapItem(row) {
     targetStoreProductId: row.targetStoreProductId === null ? null : Number(row.targetStoreProductId),
     quantityRequested: Number(row.quantityRequested || 0),
     quantityFulfilled: Number(row.quantityFulfilled || 0),
-    unitCost: Number(row.unitCost || 0),
     status: row.status,
     transferId: row.transferId === null ? null : Number(row.transferId),
     transferItemId: row.transferItemId === null ? null : Number(row.transferItemId),
@@ -83,6 +83,10 @@ function mapItem(row) {
     createdAt: row.createdAt || null,
     updatedAt: row.updatedAt || null
   };
+  if (options.includeSensitiveCost) {
+    payload.unitCost = Number(row.unitCost || 0);
+  }
+  return payload;
 }
 
 async function loadRequest(requestId, connection = pool) {
@@ -134,7 +138,7 @@ async function loadRequest(requestId, connection = pool) {
   return rows[0] ? mapRequest(rows[0]) : null;
 }
 
-async function loadRequestItems(requestId, connection = pool) {
+async function loadRequestItems(requestId, connection = pool, options = {}) {
   const [rows] = await connection.query(
     `
       SELECT
@@ -163,13 +167,13 @@ async function loadRequestItems(requestId, connection = pool) {
     `,
     [requestId]
   );
-  return rows.map(mapItem);
+  return rows.map((row) => mapItem(row, options));
 }
 
-async function loadRequestWithItems(requestId, connection = pool) {
+async function loadRequestWithItems(requestId, connection = pool, options = {}) {
   const request = await loadRequest(requestId, connection);
   if (!request) return null;
-  request.items = await loadRequestItems(request.id, connection);
+  request.items = await loadRequestItems(request.id, connection, options);
   return request;
 }
 
@@ -610,21 +614,27 @@ router.get("/hq-products", requireChainStoreContext, requireStoreReplenishmentMe
       params
     );
 
+    const includeSensitiveCost = canViewSensitiveCost(req.user || {});
     return res.json({
       ok: true,
-      products: rows.map((row) => ({
+      products: rows.map((row) => {
+        const payload = {
         hqProductId: Number(row.hqProductId),
         hqStoreId: Number(row.hqStoreId),
         sku: row.sku || "",
         name: row.name || "",
         hqStock: Number(row.hqStock || 0),
         price: Number(row.price || 0),
-        costPrice: Number(row.costPrice || 0),
-        unitCost: Number(row.unitCost || 0),
         targetStoreProductId: row.targetStoreProductId === null ? null : Number(row.targetStoreProductId),
         targetStock: row.targetStock === null || row.targetStock === undefined ? null : Number(row.targetStock),
         mapped: Boolean(row.targetStoreProductId)
-      }))
+        };
+        if (includeSensitiveCost) {
+          payload.costPrice = Number(row.costPrice || 0);
+          payload.unitCost = Number(row.unitCost || 0);
+        }
+        return payload;
+      })
     });
   } catch (error) {
     return next(error);
@@ -702,7 +712,7 @@ router.post("/", requireChainStoreContext, requireStoreReplenishmentMenuAccess, 
       return insertResult.insertId;
     });
 
-    const request = await loadRequestWithItems(requestId);
+    const request = await loadRequestWithItems(requestId, pool, { includeSensitiveCost: canViewSensitiveCost(req.user || {}) });
     if (request?.status === "SUBMITTED") {
       notifySubmittedRequestAsync(request);
     }
@@ -735,7 +745,7 @@ router.post("/:id/submit", requireChainStoreContext, requireStoreReplenishmentMe
         "UPDATE store_replenishment_requests SET status = 'SUBMITTED', submitted_at = NOW() WHERE id = ?",
         [requestId]
       );
-      return loadRequestWithItems(requestId, connection);
+      return loadRequestWithItems(requestId, connection, { includeSensitiveCost: canViewSensitiveCost(req.user || {}) });
     });
 
     notifySubmittedRequestAsync(submittedRequest);
@@ -766,7 +776,7 @@ router.post("/:id/cancel", requireChainStoreContext, requireStoreReplenishmentMe
       await connection.query("UPDATE store_replenishment_requests SET status = 'CANCELED', canceled_at = NOW() WHERE id = ?", [requestId]);
       await connection.query("UPDATE store_replenishment_request_items SET status = 'CANCELED' WHERE request_id = ?", [requestId]);
     });
-    const request = await loadRequestWithItems(requestId);
+    const request = await loadRequestWithItems(requestId, pool, { includeSensitiveCost: canViewSensitiveCost(req.user || {}) });
     return res.json({ ok: true, request });
   } catch (error) {
     return next(error);
@@ -835,7 +845,7 @@ async function createTransferFromRequestItem(req, res, next, shouldShip) {
       return transferResult;
     });
 
-    const request = await loadRequestWithItems(requestId);
+    const request = await loadRequestWithItems(requestId, pool, { includeSensitiveCost: true });
     return res.status(201).json({ ok: true, request, transferId: result.transferId, transferItemId: result.transferItemId });
   } catch (error) {
     return next(error);
@@ -869,7 +879,11 @@ router.get("/:id", async (req, res, next) => {
     } else if (!membership) {
       throw createError("沒有請貨單權限", 403);
     }
-    return res.json({ ok: true, request });
+    const includeSensitiveCost = Number(request.requestingStoreId) === storeId
+      ? canViewSensitiveCost(req.user || {})
+      : Boolean(membership && HQ_READ_ROLES.has(membership.role));
+    const responseRequest = await loadRequestWithItems(Number(req.params.id), pool, { includeSensitiveCost });
+    return res.json({ ok: true, request: responseRequest });
   } catch (error) {
     return next(error);
   }

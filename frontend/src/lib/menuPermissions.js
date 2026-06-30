@@ -1,3 +1,4 @@
+import { canViewSalesManagement } from "./roleAccess";
 export const MENU_CATALOG = [
   { key: "dashboard", label: "儀表板" },
   { key: "pos", label: "POS 銷售" },
@@ -6,6 +7,7 @@ export const MENU_CATALOG = [
   { key: "customers", label: "客戶管理" },
   { key: "products", label: "商品管理" },
   { key: "inventory", label: "庫存管理" },
+  { key: "sales_management", label: "銷售管理", description: "銷售統計、銷售報表與營業分析，限店長以上" },
   { key: "suppliers", label: "供應商管理" },
   { key: "staff", label: "員工管理" },
   { key: "coupons", label: "優惠券" },
@@ -34,7 +36,7 @@ export const PATH_MENU_KEY_MAP = [
   { path: "/store-cash-reports", key: "dashboard" },
   { path: "/store-visit-records", key: "dashboard" },
   { path: "/customer-status", key: "dashboard" },
-  { path: "/sales", key: "dashboard" },
+  { path: "/sales", key: "sales_management" },
   { path: "/pos", key: "pos" },
   { path: "/orders", key: "orders" },
   { path: "/purchase-confirmations", key: "orders" },
@@ -102,7 +104,7 @@ export function getFallbackMenuPermissions(user) {
   const map = allPermissions(false);
   const role = normalizeRole(user?.role);
   const enabledByRole = {
-    MANAGER: ["dashboard", "pos", "orders", "repairs", "customers", "products", "inventory", "suppliers", "staff", "coupons", "line", "settings", "store_replenishment_requests", "store_transfers", "inbound_transfers"],
+    MANAGER: ["dashboard", "pos", "orders", "repairs", "customers", "products", "inventory", "sales_management", "suppliers", "staff", "coupons", "line", "settings", "store_replenishment_requests", "store_transfers", "inbound_transfers"],
     CASHIER: ["dashboard", "pos", "orders", "customers", "coupons"],
     REPAIR: ["dashboard", "orders", "repairs", "customers"],
     INVENTORY: ["dashboard", "products", "inventory", "suppliers", "store_replenishment_requests", "store_transfers", "inbound_transfers"]
@@ -132,6 +134,9 @@ export function normalizeMenuPermissions(rawPermissions, user) {
 export function getMenuPermission(permissions, menuKey, user) {
   if (!menuKey) {
     return allow();
+  }
+  if (menuKey === "sales_management" && !canViewSalesManagement(user)) {
+    return deny();
   }
   if (isOwnerUser(user)) {
     return allow();

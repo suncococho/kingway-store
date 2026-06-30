@@ -14,8 +14,9 @@ import StatusBadge from "../components/StatusBadge";
 import { useFetchList } from "../hooks/useFetchList";
 import { API_BASE_URL, apiRequest, apiUploadImage } from "../lib/api";
 import { getCategoryLabel } from "../lib/display";
-import { clearAuth, getStoredToken } from "../lib/auth";
+import { clearAuth, getStoredToken, getStoredUser } from "../lib/auth";
 import { PRODUCT_CATEGORY_LABELS, PRODUCT_CATEGORY_OPTIONS, deriveProductCategoryFromSku, normalizeProductCategory } from "../lib/productCategories";
+import { canEditSensitiveCost, canViewSensitiveCost } from "../lib/roleAccess";
 
 const PRODUCT_EXPORT_FILENAME = "KINGWAY_product_export.xlsx";
 const PRODUCT_IMPORT_TEMPLATE_FILENAME = "KINGWAY_product_import_template.xlsx";
@@ -66,6 +67,9 @@ function buildProductPreviewUrl(imagePath, productId) {
 
 function ProductsPage() {
   const location = useLocation();
+  const currentUser = getStoredUser();
+  const canViewCost = canViewSensitiveCost(currentUser);
+  const canEditCost = canEditSensitiveCost(currentUser);
   const { items, loading, error, refetch } = useFetchList("/products");
   const categories = useFetchList("/product-categories");
   const [form, setForm] = useState({
@@ -280,13 +284,13 @@ function ProductsPage() {
       price: String(detailProduct.price ?? ""),
       reorderLevel: String(detailProduct.reorderLevel ?? ""),
       imageUrl: detailProduct.imagePath || "",
-      costPrice: String(detailProduct.costPrice ?? ""),
+      costPrice: canViewCost ? String(detailProduct.costPrice ?? "") : "",
       location: detailProduct.location || "",
       description: detailProduct.description || "",
       requiresPurchaseConfirmation: Boolean(detailProduct.requiresPurchaseConfirmation),
       isActive: Boolean(detailProduct.isActive)
     });
-  }, [detailProduct]);
+  }, [detailProduct, canViewCost]);
 
   useEffect(
     () => () => {
@@ -425,22 +429,25 @@ function ProductsPage() {
     setSubmitting(true);
 
     try {
+      const productPayload = {
+        name: form.name,
+        sku: form.sku,
+        category: form.category,
+        categoryId: form.categoryId ? Number(form.categoryId) : null,
+        price: Number(form.price),
+        stock: Number(form.stock),
+        reorderLevel: Number(form.reorderLevel),
+        imageUrl: form.imageUrl,
+        location: form.location,
+        requiresPurchaseConfirmation: Boolean(form.requiresPurchaseConfirmation),
+        description: form.description
+      };
+      if (canEditCost) {
+        productPayload.costPrice = Number(form.costPrice || 0);
+      }
       const data = await apiRequest("/products", {
         method: "POST",
-        body: JSON.stringify({
-          name: form.name,
-          sku: form.sku,
-          category: form.category,
-          categoryId: form.categoryId ? Number(form.categoryId) : null,
-          price: Number(form.price),
-          stock: Number(form.stock),
-          reorderLevel: Number(form.reorderLevel),
-          imageUrl: form.imageUrl,
-          costPrice: Number(form.costPrice || 0),
-          location: form.location,
-          requiresPurchaseConfirmation: Boolean(form.requiresPurchaseConfirmation),
-          description: form.description
-        })
+        body: JSON.stringify(productPayload)
       });
 
       setForm({
@@ -494,22 +501,25 @@ function ProductsPage() {
     }
 
     try {
+      const detailPayload = {
+        sku: detailForm.sku,
+        name: detailForm.name,
+        category: detailForm.category,
+        categoryId: detailForm.categoryId ? Number(detailForm.categoryId) : null,
+        price: Number(detailForm.price || 0),
+        reorderLevel: Number(detailForm.reorderLevel || 0),
+        imageUrl: detailForm.imageUrl,
+        location: detailForm.location,
+        description: detailForm.description,
+        requiresPurchaseConfirmation: Boolean(detailForm.requiresPurchaseConfirmation),
+        isActive: detailForm.isActive
+      };
+      if (canEditCost) {
+        detailPayload.costPrice = Number(detailForm.costPrice || 0);
+      }
       await apiRequest(`/products/${detailProduct.id}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          sku: detailForm.sku,
-          name: detailForm.name,
-          category: detailForm.category,
-          categoryId: detailForm.categoryId ? Number(detailForm.categoryId) : null,
-          price: Number(detailForm.price || 0),
-          reorderLevel: Number(detailForm.reorderLevel || 0),
-          imageUrl: detailForm.imageUrl,
-          costPrice: Number(detailForm.costPrice || 0),
-          location: detailForm.location,
-          description: detailForm.description,
-          requiresPurchaseConfirmation: Boolean(detailForm.requiresPurchaseConfirmation),
-          isActive: detailForm.isActive
-        })
+        body: JSON.stringify(detailPayload)
       });
       await refetch();
       alert("商品已更新");
@@ -1458,10 +1468,12 @@ function ProductsPage() {
                     <span>售價</span>
                     <input name="price" type="number" min="0" step="0.01" value={form.price} onChange={handleChange} required />
                   </label>
-                  <label className="form-field">
-                    <span>成本</span>
-                    <input name="costPrice" type="number" min="0" step="0.01" value={form.costPrice} onChange={handleChange} />
-                  </label>
+                  {canEditCost ? (
+                    <label className="form-field">
+                      <span>成本</span>
+                      <input name="costPrice" type="number" min="0" step="0.01" value={form.costPrice} onChange={handleChange} />
+                    </label>
+                  ) : null}
                 </div>
               </div>
               ) : null}
@@ -1754,10 +1766,12 @@ function ProductsPage() {
                   <span>庫位</span>
                   <input value={detailForm.location} onChange={(event) => setDetailForm((current) => ({ ...current, location: event.target.value }))} />
                 </label>
-                <label className="form-field">
-                  <span>成本</span>
-                  <input type="number" min="0" step="0.01" value={detailForm.costPrice} onChange={(event) => setDetailForm((current) => ({ ...current, costPrice: event.target.value }))} />
-                </label>
+                {canEditCost ? (
+                  <label className="form-field">
+                    <span>成本</span>
+                    <input type="number" min="0" step="0.01" value={detailForm.costPrice} onChange={(event) => setDetailForm((current) => ({ ...current, costPrice: event.target.value }))} />
+                  </label>
+                ) : null}
                 <label className="form-field">
                   <span>圖片網址</span>
                   <input
@@ -1818,10 +1832,12 @@ function ProductsPage() {
               <section className="stack-card">
                 <div className="section-title">價格與庫存</div>
                 <div className="field-grid">
-                  <div className="field-item">
-                    <div className="field-label">成本</div>
-                    <div className="field-value">{formatCurrency(detailProduct.costPrice)}</div>
-                  </div>
+                  {canViewCost ? (
+                    <div className="field-item">
+                      <div className="field-label">成本</div>
+                      <div className="field-value">{formatCurrency(detailProduct.costPrice)}</div>
+                    </div>
+                  ) : null}
                   <div className="field-item">
                     <div className="field-label">補貨警戒值</div>
                     <div className="field-value">{detailProduct.reorderLevel ?? 0}</div>

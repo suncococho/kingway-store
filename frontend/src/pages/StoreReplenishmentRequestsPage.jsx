@@ -5,6 +5,8 @@ import PageHeader from "../components/PageHeader";
 import PageHelpButton from "../components/PageHelpButton";
 import StatusBadge from "../components/StatusBadge";
 import { apiRequest } from "../lib/api";
+import { getStoredUser } from "../lib/auth";
+import { canViewSensitiveCost } from "../lib/roleAccess";
 import { PAGE_HELP } from "../lib/pageHelpContent";
 
 const STATUS_LABELS = {
@@ -42,6 +44,8 @@ function formatDate(value) {
 }
 
 export default function StoreReplenishmentRequestsPage() {
+  const currentUser = getStoredUser();
+  const canViewCost = canViewSensitiveCost(currentUser);
   const [requests, setRequests] = useState([]);
   const [products, setProducts] = useState([]);
   const [selectedRequest, setSelectedRequest] = useState(null);
@@ -211,7 +215,7 @@ export default function StoreReplenishmentRequestsPage() {
     { key: "requestedProductName", label: "商品名稱" },
     { key: "quantityRequested", label: "申請數量" },
     { key: "quantityFulfilled", label: "已出貨數量" },
-    { key: "unitCost", label: "建議結算單價", render: (row) => money(row.unitCost) },
+    ...(canViewCost ? [{ key: "unitCost", label: "建議結算單價", render: (row) => money(row.unitCost) }] : []),
     { key: "status", label: "狀態", render: (row) => <StatusBadge tone={statusTone(row.status)}>{STATUS_LABELS[row.status] || row.status}</StatusBadge> }
   ];
 
@@ -262,7 +266,7 @@ export default function StoreReplenishmentRequestsPage() {
                 className={String(product.hqProductId) === String(form.selectedProductId) ? "primary-button" : "secondary-button"}
                 onClick={() => setForm((current) => ({ ...current, selectedProductId: String(product.hqProductId) }))}
               >
-                {product.sku} / {product.name} / 本部庫存 {product.hqStock} / 建議結算單價 {money(product.unitCost)} {product.mapped ? "" : " / 門市尚未建立此 SKU"}
+                {product.sku} / {product.name} / 本部庫存 {product.hqStock}{canViewCost ? ` / 建議結算單價 ${money(product.unitCost)}` : ""} {product.mapped ? "" : " / 門市尚未建立此 SKU"}
               </button>
             ))}
             {hasMoreProducts ? (
@@ -284,7 +288,7 @@ export default function StoreReplenishmentRequestsPage() {
               <div className="field-item"><div className="field-label">SKU</div><div className="field-value">{selectedProduct.sku}</div></div>
               <div className="field-item"><div className="field-label">商品名稱</div><div className="field-value">{selectedProduct.name}</div></div>
               <div className="field-item"><div className="field-label">本部庫存</div><div className="field-value">{selectedProduct.hqStock}</div></div>
-              <div className="field-item"><div className="field-label">建議結算單價</div><div className="field-value">{money(selectedProduct.unitCost)}</div></div>
+              {canViewCost ? <div className="field-item"><div className="field-label">建議結算單價</div><div className="field-value">{money(selectedProduct.unitCost)}</div></div> : null}
             </div>
           ) : null}
 

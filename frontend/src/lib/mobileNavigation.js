@@ -1,5 +1,6 @@
 import { filterMenuItemsForUser } from "./permissions";
 import { getMenuPermission, isOwnerUser } from "./menuPermissions";
+import { canViewSalesManagement } from "./roleAccess";
 
 const FEATURE_ROUTE_MAP = {
   "/sales": "sales_dashboard_enabled",
@@ -35,7 +36,7 @@ export const mobileMenuSections = [
       { to: "/daily-tasks", label: "今日任務", description: "每日工作檢查、完成與逾期提醒", menuKey: "dashboard" },
       { to: "/store-cash-reports", label: "現金日報", description: "營業金盤點與每日現金收款紀錄", menuKey: "dashboard" },
       { to: "/store-visit-records", label: "來店紀錄", description: "每日來店客戶、人數與追蹤狀態", menuKey: "dashboard" },
-      { to: "/sales", label: "銷售報表", description: "銷售統計、商品排行與訂單明細", menuKey: "dashboard" },
+      { to: "/sales", label: "銷售管理", description: "銷售統計、商品排行與訂單明細", menuKey: "sales_management" },
       { to: "/pos", label: "POS / 新訂單", description: "快速建立訂單與結帳", menuKey: "pos" },
       { to: "/orders", label: "訂單管理", description: "一般訂單、預約單、維修相關", menuKey: "orders" },
       { to: "/customers", label: "客戶管理", description: "CRM、歷程與跟進", menuKey: "customers" },
@@ -93,7 +94,11 @@ function isMenuItemVisibleByPermissions(item, permissions, user) {
   if (!item.menuKey) {
     return true;
   }
-  if (item.to?.split("?")[0] === "/inventory" && !canUseInventoryMain(user)) {
+  const path = item.to?.split("?")[0] || "";
+  if (path === "/inventory" && !canUseInventoryMain(user)) {
+    return false;
+  }
+  if (path === "/sales" && !canViewSalesManagement(user)) {
     return false;
   }
   return getMenuPermission(permissions, item.menuKey, user).canView;

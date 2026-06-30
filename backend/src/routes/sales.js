@@ -1,12 +1,13 @@
 const express = require("express");
 const { pool } = require("../db");
-const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
+const { authenticate, requireStoreScope } = require("../middleware/auth");
 const { requireStoreFeature } = require("../middleware/storeFeature");
 const ExcelJS = require("exceljs");
+const { requireSalesManagementAccess } = require("../utils/roleAccess");
 
 const router = express.Router();
 
-router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER"]), requireStoreFeature("sales_dashboard_enabled"));
+router.use(authenticate, requireStoreScope(), requireSalesManagementAccess, requireStoreFeature("sales_dashboard_enabled"));
 
 function getRequestStoreId(req) {
   return Number(req.storeId || req.user?.store_id || req.user?.storeId || 1);

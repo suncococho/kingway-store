@@ -7,6 +7,7 @@ const { requireFeature } = require("../services/storeAccessService");
 const { resolveStoreLineCredentials } = require("../services/storeLineSettingsService");
 const { sendLineMessage } = require("../utils/line");
 const { loadCompanyMembership } = require("../middleware/companyAuth");
+const { canViewSensitiveCost, requireSensitiveCostAccess } = require("../utils/roleAccess");
 
 const router = express.Router();
 
@@ -720,7 +721,7 @@ router.delete("/:id", requireStoreAdminRole, async (req, res, next) => {
   }
 });
 
-router.get("/:id/product-prices", async (req, res, next) => {
+router.get("/:id/product-prices", requireSensitiveCostAccess, async (req, res, next) => {
   try {
     const context = await resolveSupplierScopeContext(req);
     const supplierId = Number(req.params.id);
@@ -768,7 +769,7 @@ router.get("/:id/product-prices", async (req, res, next) => {
   }
 });
 
-router.post("/:id/product-prices", requireStoreAdminRole, async (req, res, next) => {
+router.post("/:id/product-prices", requireStoreAdminRole, requireSensitiveCostAccess, async (req, res, next) => {
   try {
     const context = await resolveSupplierScopeContext(req);
     const supplierId = Number(req.params.id);
@@ -815,7 +816,7 @@ router.post("/:id/product-prices", requireStoreAdminRole, async (req, res, next)
   }
 });
 
-router.patch("/:id/product-prices/:priceId", requireStoreAdminRole, async (req, res, next) => {
+router.patch("/:id/product-prices/:priceId", requireStoreAdminRole, requireSensitiveCostAccess, async (req, res, next) => {
   try {
     const context = await resolveSupplierScopeContext(req);
     const supplierId = Number(req.params.id);
@@ -921,7 +922,16 @@ router.get("/requests", async (req, res, next) => {
       LIMIT 200
     `, [storeId, storeId]);
 
-    res.json(rows);
+    const includeSensitiveCost = canViewSensitiveCost(req.user || {});
+    res.json(rows.map((row) => {
+      if (includeSensitiveCost) {
+        return row;
+      }
+      const payload = { ...row };
+      delete payload.costPrice;
+      delete payload.cost_price;
+      return payload;
+    }));
   } catch (error) {
     next(error);
   }

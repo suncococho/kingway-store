@@ -2,6 +2,7 @@ const express = require("express");
 const { pool } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { getPendingTaskCounts } = require("../services/taskService");
+const { canViewSalesManagement } = require("../utils/roleAccess");
 
 const router = express.Router();
 
@@ -254,12 +255,15 @@ router.get("/summary", async (req, res, next) => {
       [storeId]
     );
 
+    const canViewSalesSummary = canViewSalesManagement(req.user || {});
+
     return res.json({
       totals: {
         customers: Number(totals.customers || 0),
         products: Number(totals.products || 0),
         orders: Number(totals.orders || 0),
-        salesToday: Number(totals.salesToday || 0),
+        salesToday: canViewSalesSummary ? Number(totals.salesToday || 0) : null,
+        canViewSalesSummary,
         depositOrdersPending: Number(totals.depositOrdersPending || 0),
         lowStockCount: Number(totals.lowStockCount || 0),
         supplierRequestsPending: Number(totals.supplierRequestsPending || 0)

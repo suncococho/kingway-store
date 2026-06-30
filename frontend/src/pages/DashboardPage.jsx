@@ -164,6 +164,9 @@ function DashboardPage() {
     { key: "STAFF", label: "員工摘要" }
   ];
 
+  const canViewSalesSummary = Boolean(summary?.totals?.canViewSalesSummary);
+  const salesTodayLabel = canViewSalesSummary ? `NT$${summary?.totals?.salesToday ?? 0}` : "店長以上可查看";
+
   const summaryCards = [
     { label: "今日來店件數", value: visitSummary.todayVisitRecordsCount ?? 0 },
     { label: "今日來店人數", value: visitSummary.todayVisitorCount ?? 0 },
@@ -183,7 +186,7 @@ function DashboardPage() {
         (summary?.pendingTasks?.repairReservationsPending ?? 0)
     },
     { label: "低庫存", value: summary?.totals?.lowStockCount ?? 0 },
-    { label: "今日營業重點", value: `NT$${summary?.totals?.salesToday ?? 0}`, small: true }
+    { label: "今日營業重點", value: salesTodayLabel, small: true }
   ];
 
   const pendingNoticeRows = [
@@ -478,7 +481,7 @@ function DashboardPage() {
             <span className="hero-meta-item">登入帳號：{user?.displayName || user?.username || "-"}</span>
             <span className="hero-meta-item">角色：{user?.role || "-"}</span>
             <span className="hero-meta-item">目前門市：{currentStoreName}</span>
-            <span className="hero-meta-item">今日銷售：NT${summary?.totals?.salesToday ?? 0}</span>
+            <span className="hero-meta-item">今日銷售：{salesTodayLabel}</span>
           </div>
         </div>
         <div className="admin-subpanel">

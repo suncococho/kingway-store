@@ -16,6 +16,7 @@ const {
   normalizeProductSku
 } = require("../utils/productCategories");
 const { recordPlatformAudit } = require("../services/platformAuditService");
+const { canViewSensitiveCost, canEditSensitiveCost } = require("../utils/roleAccess");
 
 const PRODUCT_IMPORT_COLUMNS = [
   "sku",
@@ -206,11 +207,36 @@ function normalizeImageUrl(imageUrl, productId = null) {
   return value;
 }
 
-function mapProductRow(row) {
+const SENSITIVE_COST_KEYS = [
+  "costPrice",
+  "cost_price",
+  "supplierPrice",
+  "supplier_price",
+  "supplierCost",
+  "supplier_cost",
+  "purchasePrice",
+  "purchase_price",
+  "wholesalePrice",
+  "wholesale_price"
+];
+
+function hasSensitiveCostPayload(body = {}) {
+  return SENSITIVE_COST_KEYS.some((key) => Object.prototype.hasOwnProperty.call(body || {}, key));
+}
+
+function assertCanEditSensitiveCost(req) {
+  if (hasSensitiveCostPayload(req.body) && !canEditSensitiveCost(req.user || {})) {
+    const error = new Error("供應商價格僅限店長以上權限查看或修改");
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
+function mapProductRow(row, options = {}) {
   const derivedCategory = deriveProductCategoryFromSku(row.sku || "");
   const storedCategory = normalizeProductCategory(row.category);
   const category = row.categoryCode || (PRODUCT_CATEGORY_LABELS[storedCategory] ? storedCategory : derivedCategory);
-  return {
+  const payload = {
     ...row,
     categoryId: row.categoryId === undefined || row.categoryId === null ? null : Number(row.categoryId),
     categoryName: row.categoryName || null,
@@ -222,6 +248,11 @@ function mapProductRow(row) {
     requiresPurchaseConfirmation: Boolean(Number(row.requiresPurchaseConfirmation ?? row.requires_purchase_confirmation ?? 0)),
     requires_purchase_confirmation: Number(row.requiresPurchaseConfirmation ?? row.requires_purchase_confirmation ?? 0) ? 1 : 0
   };
+  if (!options.includeSensitiveCost) {
+    delete payload.costPrice;
+    delete payload.cost_price;
+  }
+  return payload;
 }
 
 function normalizeExportBoolean(value) {
@@ -245,16 +276,15 @@ function resolveExportCategoryCode(row) {
   return deriveProductCategoryFromSku(row.sku || "");
 }
 
-function buildProductExportRows(rawRows) {
+function buildProductExportRows(rawRows, options = {}) {
   return rawRows.map((row) => {
     const categoryCode = resolveExportCategoryCode(row);
-    return {
+    const payload = {
       sku: row.sku || "",
       name: row.name || "",
       categoryCode: categoryCode || "",
       categoryName: row.categoryName || mapCategoryLabel(categoryCode) || "",
       price: Number(row.price || 0),
-      costPrice: Number(row.costPrice || 0),
       stock: Number(row.stock || 0),
       reorderLevel: Number(row.reorderLevel || 0),
       isActive: normalizeExportBoolean(row.isActive),
@@ -264,6 +294,10 @@ function buildProductExportRows(rawRows) {
       inputterName: row.inputterName || "",
       source: row.source || ""
     };
+    if (options.includeSensitiveCost) {
+      payload.costPrice = Number(row.costPrice || 0);
+    }
+    return payload;
   });
 }
 
@@ -1072,7 +1106,8 @@ router.get("/", async (req, res, next) => {
     sql += " ORDER BY products.id DESC";
 
     const [rows] = await pool.query(sql, params);
-    return res.json(rows.map(mapProductRow));
+    const includeSensitiveCost = canViewSensitiveCost(req.user || {});
+    return res.json(rows.map((row) => mapProductRow(row, { includeSensitiveCost })));
   } catch (error) {
     return next(error);
   }
@@ -1109,7 +1144,8 @@ router.get("/export", async (req, res, next) => {
       [storeId]
     );
 
-    const exportRows = buildProductExportRows(rows);
+    const includeSensitiveCost = canViewSensitiveCost(req.user || {});
+    const exportRows = buildProductExportRows(rows, { includeSensitiveCost });
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "KINGWAY";
     const sheet = workbook.addWorksheet("商品資料");
@@ -1119,7 +1155,7 @@ router.get("/export", async (req, res, next) => {
       { header: "categoryCode", key: "categoryCode", width: 16 },
       { header: "categoryName", key: "categoryName", width: 22 },
       { header: "price", key: "price", width: 12 },
-      { header: "costPrice", key: "costPrice", width: 14 },
+      ...(includeSensitiveCost ? [{ header: "costPrice", key: "costPrice", width: 14 }] : []),
       { header: "stock", key: "stock", width: 10 },
       { header: "reorderLevel", key: "reorderLevel", width: 14 },
       { header: "isActive", key: "isActive", width: 12 },
@@ -1132,7 +1168,9 @@ router.get("/export", async (req, res, next) => {
     sheet.getRow(1).font = { bold: true };
     sheet.addRows(exportRows);
 
-    const numberColumns = ["price", "costPrice", "stock", "reorderLevel", "isActive"];
+    const numberColumns = includeSensitiveCost
+      ? ["price", "costPrice", "stock", "reorderLevel", "isActive"]
+      : ["price", "stock", "reorderLevel", "isActive"];
     for (const key of numberColumns) {
       sheet.getColumn(key).numFmt = "#,##0";
     }
@@ -1477,6 +1515,7 @@ router.post("/", async (req, res, next) => {
     if (!hasStoreId) {
       return res.status(500).json({ message: "products.store_id 欄位不存在，請先更新資料表結構" });
     }
+    assertCanEditSensitiveCost(req);
 
     const { sku, name, category, categoryId, price, stock, reorderLevel, isActive, requiresPurchaseConfirmation, requires_purchase_confirmation, description, imageUrl, costPrice, location, inputterName, source } = req.body;
 
@@ -1529,7 +1568,7 @@ router.post("/", async (req, res, next) => {
       insertValues
     );
 
-    return res.status(201).json({
+    const responsePayload = {
       id: result.insertId,
       sku: normalizedSku,
       name,
@@ -1545,11 +1584,14 @@ router.post("/", async (req, res, next) => {
       description: description || null,
       imagePath: normalizeEditableImagePath(imageUrl),
       imageUrl: normalizeImageUrl(imageUrl, result.insertId),
-      costPrice: costPrice === undefined ? 0 : Number(costPrice || 0),
       location: location || null,
       inputterName: inputterName || null,
       source: source || null
-    });
+    };
+    if (canViewSensitiveCost(req.user || {})) {
+      responsePayload.costPrice = costPrice === undefined ? 0 : Number(costPrice || 0);
+    }
+    return res.status(201).json(responsePayload);
   } catch (error) {
     if (error.code === "ER_DUP_ENTRY") {
       error.statusCode = 409;
@@ -1572,6 +1614,7 @@ router.patch("/:id", async (req, res, next) => {
 
 async function updateProduct(req, res, next) {
   try {
+    assertCanEditSensitiveCost(req);
     const id = Number(req.params.id);
     const { sku, name, category, categoryId, price, stock, reorderLevel, isActive, requiresPurchaseConfirmation, requires_purchase_confirmation, description, imageUrl, costPrice, location, inputterName, source } = req.body;
     const normalizedSku = sku !== undefined && sku !== null && sku !== "" ? normalizeProductSku(sku) : null;
@@ -1691,7 +1734,7 @@ async function updateProduct(req, res, next) {
       return res.status(404).json({ message: "找不到商品" });
     }
 
-    return res.json(mapProductRow(rows[0]));
+    return res.json(mapProductRow(rows[0], { includeSensitiveCost: canViewSensitiveCost(req.user || {}) }));
   } catch (error) {
     if (error.code === "ER_DUP_ENTRY") {
       error.statusCode = 409;
