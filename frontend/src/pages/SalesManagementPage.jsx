@@ -39,9 +39,10 @@ function statusText(status) {
 
 function paymentText(status, method) {
   const map = {
-    PAID: "已付款",
-    PARTIAL: "部分付款",
-    UNPAID: "未付款",
+    PAID: "已收款",
+    DEPOSIT_ONLY: "訂金已收",
+    PARTIAL: "訂金已收",
+    UNPAID: "未收款",
     REFUNDED: "已退款",
   };
   return map[status] || method || "-";
@@ -50,9 +51,13 @@ function paymentText(status, method) {
 function badgeTone(value) {
   const text = String(value || "").toUpperCase();
   if (["PAID", "COMPLETED"].includes(text)) return "success";
-  if (["PARTIAL", "PENDING_CONFIRM", "PENDING_PAYMENT", "REPAIRING"].includes(text)) return "warning";
+  if (["DEPOSIT_ONLY", "PARTIAL", "PENDING_CONFIRM", "PENDING_PAYMENT", "REPAIRING"].includes(text)) return "warning";
   if (["UNPAID", "CANCELED", "CANCELLED"].includes(text)) return "danger";
   return "neutral";
+}
+
+function dateBasisText(value) {
+  return value === "orderCreated" ? "依訂單建立日" : "依付款完成日";
 }
 
 function Badge({ children, tone = "neutral" }) {
@@ -70,11 +75,20 @@ function splitItems(summary) {
 export default function SalesManagementPage() {
   const [startDate, setStartDate] = useState(monthStart());
   const [endDate, setEndDate] = useState(dateText(new Date()));
+  const [dateBasis, setDateBasis] = useState("paymentCompleted");
   const [data, setData] = useState({
     summary: {
       orderCount: 0,
       totalQuantity: 0,
-      totalSales: 0,
+      totalOrderAmount: 0,
+      paidOrderAmount: 0,
+      actualReceivedAmount: 0,
+      unpaidAmount: 0,
+      depositOnlyAmount: 0,
+      paidOrderCount: 0,
+      unpaidOrderCount: 0,
+      depositOnlyOrderCount: 0,
+      totalOrderCount: 0,
       averageOrderAmount: 0,
     },
     orders: [],
@@ -84,16 +98,15 @@ export default function SalesManagementPage() {
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState("");
 
-  const rangeLabel = useMemo(() => `${startDate} ～ ${endDate}`, [startDate, endDate]);
+  const rangeLabel = useMemo(() => `${startDate} ～ ${endDate} / ${dateBasisText(dateBasis)}`, [startDate, endDate, dateBasis]);
 
   async function loadSales() {
     setLoading(true);
     setError("");
 
     try {
-      const result = await apiRequest(
-        `/sales/summary?startDate=${startDate}&endDate=${endDate}`
-      );
+      const params = new URLSearchParams({ startDate, endDate, dateBasis });
+      const result = await apiRequest(`/sales/summary?${params.toString()}`);
       setData(result);
     } catch (err) {
       setError(err?.message || "銷售資料讀取失敗");
@@ -109,7 +122,7 @@ export default function SalesManagementPage() {
     try {
       const token = getStoredToken();
       const response = await fetch(
-        `${API_BASE_URL}/sales/export-sales?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`,
+        `${API_BASE_URL}/sales/export-sales?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&dateBasis=${encodeURIComponent(dateBasis)}`,
         {
           method: "GET",
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -230,7 +243,8 @@ export default function SalesManagementPage() {
           font-weight: 700;
         }
 
-        .sales-filter-row input {
+        .sales-filter-row input,
+        .sales-filter-row select {
           min-width: 180px;
           border: 1px solid #d0d5dd;
           border-radius: 12px;
@@ -549,6 +563,7 @@ export default function SalesManagementPage() {
           }
 
           .sales-filter-row input,
+          .sales-filter-row select,
           .sales-filter-row button {
             width: 100%;
           }
@@ -567,7 +582,7 @@ export default function SalesManagementPage() {
       <section className="sales-hero">
         <div>
           <h1>銷售管理</h1>
-          <p>依日期區間查看訂單數、銷售數量、總營收、訂單商品明細與商品銷售排行。</p>
+          <p>銷售管理預設以實際付款完成日計算，避免未收款訂單被列入實收營收。</p>
         </div>
         <div className="sales-range-pill">{rangeLabel}</div>
       </section>
@@ -592,6 +607,14 @@ export default function SalesManagementPage() {
             />
           </label>
 
+          <label>
+            <span>統計基準</span>
+            <select value={dateBasis} onChange={(event) => setDateBasis(event.target.value)}>
+              <option value="paymentCompleted">依付款完成日</option>
+              <option value="orderCreated">依訂單建立日</option>
+            </select>
+          </label>
+
           <button type="button" onClick={loadSales} disabled={loading}>
             {loading ? "查詢中..." : "查詢"}
           </button>
@@ -605,33 +628,27 @@ export default function SalesManagementPage() {
 
       <section className="sales-summary-grid">
         <div className="sales-summary-card">
-          <div className="sales-summary-label">訂單數</div>
-          <div className="sales-summary-value">{Number(summary.orderCount || 0).toLocaleString()}</div>
+          <div className="sales-summary-label">實際已收款</div>
+          <div className="sales-summary-value">{money(summary.actualReceivedAmount)}</div>
+          <div className="sales-muted">已收款訂單 {Number(summary.paidOrderCount || 0).toLocaleString()} 筆</div>
         </div>
 
         <div className="sales-summary-card">
-          <div className="sales-summary-label">銷售總數量</div>
-          <div className="sales-summary-value">{Number(summary.totalQuantity || 0).toLocaleString()}</div>
+          <div className="sales-summary-label">未收款</div>
+          <div className="sales-summary-value sales-discount-text">{money(summary.unpaidAmount)}</div>
+          <div className="sales-muted">未結清訂單 {Number(summary.unpaidOrderCount || 0).toLocaleString()} 筆</div>
         </div>
 
         <div className="sales-summary-card">
-          <div className="sales-summary-label">商品總額</div>
-          <div className="sales-summary-value">{money(summary.grossSales)}</div>
+          <div className="sales-summary-label">訂金已收</div>
+          <div className="sales-summary-value">{money(summary.depositOnlyAmount)}</div>
+          <div className="sales-muted">訂金/部分付款 {Number(summary.depositOnlyOrderCount || 0).toLocaleString()} 筆</div>
         </div>
 
         <div className="sales-summary-card">
-          <div className="sales-summary-label">折扣總額</div>
-          <div className="sales-summary-value sales-discount-text">- {money(summary.totalDiscount)}</div>
-        </div>
-
-        <div className="sales-summary-card">
-          <div className="sales-summary-label">訂單應收</div>
-          <div className="sales-summary-value">{money(summary.totalSales)}</div>
-        </div>
-
-        <div className="sales-summary-card">
-          <div className="sales-summary-label">平均應收</div>
-          <div className="sales-summary-value">{money(summary.averageOrderAmount)}</div>
+          <div className="sales-summary-label">全部訂單金額</div>
+          <div className="sales-summary-value">{money(summary.totalOrderAmount)}</div>
+          <div className="sales-muted">全部訂單 {Number(summary.totalOrderCount || summary.orderCount || 0).toLocaleString()} 筆</div>
         </div>
       </section>
 
@@ -644,13 +661,14 @@ export default function SalesManagementPage() {
         <div className="sales-order-list">
           {orders.map((order) => {
             const itemList = splitItems(order.itemSummary);
-            const receivableAmount = Number(order.discountedAmount || order.totalAmount || 0);
+            const receivableAmount = Number(order.totalAmount || 0);
             const couponDiscountAmount = Number(order.couponDiscountAmount || 0);
             const otherDiscountAmount = Number(order.otherDiscountAmount || 0);
             const discountAmount = Number(order.discountAmount || (couponDiscountAmount + otherDiscountAmount));
             const originalAmount = Number(order.originalAmount || (receivableAmount + discountAmount));
             const depositAmount = Number(order.depositAmount || 0);
-            const unpaidBalance = Number(order.unpaidBalance || Math.max(receivableAmount - depositAmount, 0));
+            const actualReceivedAmount = Number(order.actualReceivedAmount || 0);
+            const unpaidBalance = Number(order.unpaidAmount ?? order.unpaidBalance ?? Math.max(receivableAmount - actualReceivedAmount, 0));
             return (
               <article className="sales-order-card" key={order.orderId}>
                 <div className="sales-order-top">
@@ -673,21 +691,27 @@ export default function SalesManagementPage() {
                       <div><span>商品總額</span><strong>{money(originalAmount)}</strong></div>
                       <div className="sales-discount-row"><span>會員服務</span><strong>- {money(couponDiscountAmount)}</strong></div>
                       <div className="sales-discount-row"><span>其他折扣</span><strong>- {money(otherDiscountAmount)}</strong></div>
-                      <div className="sales-final-row"><span>訂單應收</span><strong>{money(receivableAmount)}</strong></div>
-                      <div><span>已收訂金</span><strong>{money(depositAmount)}</strong></div>
-                      <div><span>未收尾款</span><strong>{money(unpaidBalance)}</strong></div>
+                      <div className="sales-final-row"><span>全部訂單金額</span><strong>{money(receivableAmount)}</strong></div>
+                      <div><span>實際已收款</span><strong>{money(actualReceivedAmount)}</strong></div>
+                      <div><span>訂金已收</span><strong>{money(order.depositOnlyAmount || depositAmount)}</strong></div>
+                      <div><span>未收款</span><strong>{money(unpaidBalance)}</strong></div>
                     </div>
                   </div>
 
                   <div>
                     <div className="sales-order-label">付款 / 狀態</div>
                     <div className="sales-order-meta">
-                      <Badge tone={badgeTone(order.finalPaymentStatus)}>
-                        {paymentText(order.finalPaymentStatus, order.paymentMethod)}
+                      <Badge tone={badgeTone(order.paymentStatusCode || order.finalPaymentStatus)}>
+                        {order.paymentStatusLabel || paymentText(order.paymentStatusCode || order.finalPaymentStatus, order.paymentMethod)}
                       </Badge>
                       <Badge tone={badgeTone(order.status)}>
                         {statusText(order.status)}
                       </Badge>
+                      {order.finalPaymentCompletedAt || order.paymentBasisAt ? (
+                        <span className="sales-order-sub">
+                          付款日：{formatDate(order.finalPaymentCompletedAt || order.paymentBasisAt)}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                 </div>

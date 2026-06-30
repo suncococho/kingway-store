@@ -18,6 +18,10 @@ function normalizeDate(value, fallback) {
   return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : fallback;
 }
 
+function normalizeDateBasis(value) {
+  return value === "orderCreated" ? "orderCreated" : "paymentCompleted";
+}
+
 function todayText() {
   const now = new Date();
   const yyyy = now.getFullYear();
@@ -66,18 +70,124 @@ function pickAmountExpression(orderColumns, itemColumns) {
   return "0";
 }
 
+function money(value) {
+  const numeric = Number(value || 0);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function buildPaymentSummaryJoin(recordColumns, eventColumns) {
+  const hasPaymentRecords = recordColumns.has("order_id") &&
+    recordColumns.has("received_amount") &&
+    recordColumns.has("payment_stage") &&
+    recordColumns.has("received_at");
+
+  if (hasPaymentRecords) {
+    return `
+      LEFT JOIN (
+        SELECT
+          order_id AS orderId,
+          SUM(COALESCE(received_amount, 0)) AS paymentTotal,
+          SUM(CASE WHEN payment_stage = 'DEPOSIT' THEN COALESCE(received_amount, 0) ELSE 0 END) AS depositPaymentTotal,
+          MAX(received_at) AS latestPaymentAt
+        FROM order_payment_records
+        WHERE order_id IS NOT NULL
+        GROUP BY order_id
+      ) paymentSummary ON paymentSummary.orderId = o.id
+    `;
+  }
+
+  const hasPaymentEvents = eventColumns.has("order_id") &&
+    eventColumns.has("amount") &&
+    eventColumns.has("payment_kind") &&
+    eventColumns.has("created_at");
+
+  if (hasPaymentEvents) {
+    return `
+      LEFT JOIN (
+        SELECT
+          order_id AS orderId,
+          SUM(COALESCE(amount, 0)) AS paymentTotal,
+          SUM(CASE WHEN payment_kind IN ('DEPOSIT', 'PARTIAL') THEN COALESCE(amount, 0) ELSE 0 END) AS depositPaymentTotal,
+          MAX(created_at) AS latestPaymentAt
+        FROM order_payment_events
+        WHERE order_id IS NOT NULL
+        GROUP BY order_id
+      ) paymentSummary ON paymentSummary.orderId = o.id
+    `;
+  }
+
+  return `
+    LEFT JOIN (
+      SELECT
+        NULL AS orderId,
+        0 AS paymentTotal,
+        0 AS depositPaymentTotal,
+        NULL AS latestPaymentAt
+    ) paymentSummary ON paymentSummary.orderId = o.id
+  `;
+}
+
+function resolvePaymentStatus(row) {
+  const status = String(row.finalPaymentStatus || "").trim().toUpperCase();
+  const totalAmount = money(row.totalAmount);
+  const depositAmount = money(row.depositAmount);
+  const recordTotal = money(row.paymentRecordTotal);
+  const finalReceivedAmount = money(row.finalPaymentReceivedAmount);
+  const rawUnpaidBalance = row.unpaidBalance === null || row.unpaidBalance === undefined
+    ? Math.max(totalAmount - Math.max(depositAmount, recordTotal, finalReceivedAmount), 0)
+    : money(row.unpaidBalance);
+  const hasCompletionAt = Boolean(row.finalPaymentCompletedAt || row.finalPaidAt);
+  const isPaid = status === "PAID" || hasCompletionAt || rawUnpaidBalance <= 0;
+
+  const actualReceivedAmount = isPaid
+    ? Math.max(totalAmount, recordTotal, finalReceivedAmount, 0)
+    : Math.max(recordTotal, depositAmount, totalAmount - rawUnpaidBalance, 0);
+  const unpaidAmount = isPaid ? 0 : Math.max(totalAmount - actualReceivedAmount, rawUnpaidBalance, 0);
+  const isDepositOnly = !isPaid && actualReceivedAmount > 0;
+
+  if (isPaid) {
+    return {
+      paymentStatusCode: "PAID",
+      paymentStatusLabel: "已收款",
+      actualReceivedAmount,
+      unpaidAmount,
+      depositOnlyAmount: 0
+    };
+  }
+
+  if (isDepositOnly) {
+    return {
+      paymentStatusCode: "DEPOSIT_ONLY",
+      paymentStatusLabel: "訂金已收",
+      actualReceivedAmount,
+      unpaidAmount,
+      depositOnlyAmount: actualReceivedAmount
+    };
+  }
+
+  return {
+    paymentStatusCode: "UNPAID",
+    paymentStatusLabel: "未收款",
+    actualReceivedAmount: 0,
+    unpaidAmount,
+    depositOnlyAmount: 0
+  };
+}
+
 router.get("/summary", async (req, res, next) => {
   try {
     const startDate = normalizeDate(req.query.startDate, monthStartText());
     const endDate = normalizeDate(req.query.endDate, todayText());
+    const dateBasis = normalizeDateBasis(req.query.dateBasis);
 
     const startDateTime = `${startDate} 00:00:00`;
     const endDateTime = `${endDate} 23:59:59`;
 
     const orderColumns = await getColumns("orders");
     const itemColumns = await getColumns("order_items");
+    const paymentRecordColumns = await getColumns("order_payment_records");
+    const paymentEventColumns = await getColumns("order_payment_events");
 
-    // SALES_STORE_ID_FILTER_SAFE_V1
     const storeId = getRequestStoreId(req);
     const storeFilter = orderColumns.has("store_id") ? "AND o.`store_id` = ?" : "";
 
@@ -88,7 +198,14 @@ router.get("/summary", async (req, res, next) => {
     const orderStatusCol = pickColumn(orderColumns, ["status"], "NULL", "o");
     const paymentMethodCol = pickColumn(orderColumns, ["payment_method"], "NULL", "o");
     const finalPaymentStatusCol = pickColumn(orderColumns, ["final_payment_status", "payment_status"], "NULL", "o");
+    const finalPaymentMethodCol = pickColumn(orderColumns, ["final_payment_method", "payment_method"], "NULL", "o");
+    const finalPaymentReceivedCol = pickColumn(orderColumns, ["final_payment_received_amount"], "NULL", "o");
+    const finalPaymentCompletedCol = pickColumn(orderColumns, ["final_payment_completed_at", "final_paid_at"], "NULL", "o");
+    const finalPaidAtCol = pickColumn(orderColumns, ["final_paid_at"], "NULL", "o");
+    const depositAmountCol = pickColumn(orderColumns, ["deposit_amount"], "0", "o");
+    const unpaidBalanceCol = pickColumn(orderColumns, ["unpaid_balance"], "NULL", "o");
     const totalAmountCol = pickColumn(orderColumns, ["total_amount", "amount", "grand_total"], "0", "o");
+    const otherDiscountCol = pickColumn(orderColumns, ["other_discount"], "0", "o");
 
     const itemNameCol = pickColumn(itemColumns, ["product_name_snapshot", "product_name", "name"], "'商品'", "oi");
     const itemSkuCol = pickColumn(itemColumns, ["product_sku_snapshot", "sku"], "''", "oi");
@@ -101,35 +218,22 @@ router.get("/summary", async (req, res, next) => {
       ? "AND COALESCE(o.`status`, '') NOT IN ('CANCELED', 'CANCELLED', 'canceled', 'cancelled')"
       : "";
 
-    const dateFilter = orderColumns.has("created_at") || orderColumns.has("business_date") || orderColumns.has("updated_at")
-      ? `AND ${orderDateCol} BETWEEN ? AND ?`
-      : "";
+    const paymentSummaryJoin = buildPaymentSummaryJoin(paymentRecordColumns, paymentEventColumns);
+    const isPaidExpression = `(UPPER(COALESCE(${finalPaymentStatusCol}, '')) = 'PAID' OR ${finalPaymentCompletedCol} IS NOT NULL OR COALESCE(${unpaidBalanceCol}, 0) <= 0)`;
+    const paymentDateExpression = `
+      CASE
+        WHEN ${isPaidExpression} THEN COALESCE(${finalPaymentCompletedCol}, ${finalPaidAtCol}, paymentSummary.latestPaymentAt, ${orderDateCol})
+        WHEN COALESCE(paymentSummary.paymentTotal, 0) > 0 OR COALESCE(${depositAmountCol}, 0) > 0 THEN COALESCE(paymentSummary.latestPaymentAt, ${orderDateCol})
+        ELSE ${orderDateCol}
+      END
+    `;
+    const basisDateExpression = dateBasis === "orderCreated" ? orderDateCol : paymentDateExpression;
+    const dateFilter = `AND ${basisDateExpression} BETWEEN ? AND ?`;
 
-    const params = [];
-    if (dateFilter) {
-      params.push(startDateTime, endDateTime);
-    }
+    const params = [startDateTime, endDateTime];
     if (storeFilter) {
       params.push(storeId);
     }
-
-    const [summaryRows] = await pool.query(
-      `
-        SELECT
-          COUNT(DISTINCT o.id) AS orderCount,
-          COALESCE(SUM(COALESCE(${itemQuantityCol}, 0)), 0) AS totalQuantity,
-          COALESCE(SUM(DISTINCT COALESCE(${totalAmountCol}, 0)), 0) AS totalSales,
-          COALESCE(AVG(COALESCE(${totalAmountCol}, 0)), 0) AS averageOrderAmount
-        FROM orders o
-        LEFT JOIN order_items oi ON oi.order_id = o.id
-        WHERE 1=1
-          ${deletedFilter}
-          ${statusFilter}
-          ${dateFilter}
-          ${storeFilter}
-      `,
-      params
-    );
 
     const [orderRows] = await pool.query(
       `
@@ -141,9 +245,21 @@ router.get("/summary", async (req, res, next) => {
           ${orderStatusCol} AS status,
           ${paymentMethodCol} AS paymentMethod,
           ${finalPaymentStatusCol} AS finalPaymentStatus,
+          ${finalPaymentMethodCol} AS finalPaymentMethod,
+          ${finalPaymentReceivedCol} AS finalPaymentReceivedAmount,
+          ${finalPaymentCompletedCol} AS finalPaymentCompletedAt,
+          ${finalPaidAtCol} AS finalPaidAt,
+          COALESCE(${depositAmountCol}, 0) AS depositAmount,
+          ${unpaidBalanceCol} AS unpaidBalance,
+          COALESCE(${otherDiscountCol}, 0) AS otherDiscountAmount,
           COALESCE(${totalAmountCol}, 0) AS totalAmount,
           ${orderDateCol} AS createdAt,
+          ${paymentDateExpression} AS paymentBasisAt,
+          COALESCE(paymentSummary.paymentTotal, 0) AS paymentRecordTotal,
+          COALESCE(paymentSummary.depositPaymentTotal, 0) AS depositPaymentRecordTotal,
+          paymentSummary.latestPaymentAt AS latestPaymentAt,
           COALESCE(SUM(COALESCE(${itemQuantityCol}, 0)), 0) AS totalQuantity,
+          COALESCE(SUM(COALESCE(${itemAmountExpr}, 0)), 0) AS originalAmount,
           GROUP_CONCAT(
             CONCAT(
               COALESCE(${itemNameCol}, '商品'),
@@ -157,13 +273,14 @@ router.get("/summary", async (req, res, next) => {
           ) AS itemSummary
         FROM orders o
         LEFT JOIN order_items oi ON oi.order_id = o.id
+        ${paymentSummaryJoin}
         WHERE 1=1
           ${deletedFilter}
           ${statusFilter}
           ${dateFilter}
           ${storeFilter}
         GROUP BY o.id
-        ORDER BY createdAt DESC, o.id DESC
+        ORDER BY ${basisDateExpression} DESC, o.id DESC
         LIMIT 500
       `,
       params
@@ -179,6 +296,7 @@ router.get("/summary", async (req, res, next) => {
           COALESCE(SUM(COALESCE(${itemAmountExpr}, 0)), 0) AS totalSales
         FROM orders o
         INNER JOIN order_items oi ON oi.order_id = o.id
+        ${paymentSummaryJoin}
         WHERE 1=1
           ${deletedFilter}
           ${statusFilter}
@@ -191,15 +309,15 @@ router.get("/summary", async (req, res, next) => {
       params
     );
 
-    res.json({
-      range: { startDate, endDate },
-      summary: {
-        orderCount: Number(summaryRows[0]?.orderCount || 0),
-        totalQuantity: Number(summaryRows[0]?.totalQuantity || 0),
-        totalSales: Number(summaryRows[0]?.totalSales || 0),
-        averageOrderAmount: Number(summaryRows[0]?.averageOrderAmount || 0)
-      },
-      orders: orderRows.map((row) => ({
+    const orders = orderRows.map((row) => {
+      const payment = resolvePaymentStatus(row);
+      const totalAmount = money(row.totalAmount);
+      const originalAmount = money(row.originalAmount || totalAmount);
+      const otherDiscountAmount = money(row.otherDiscountAmount);
+      const discountAmount = Math.max(originalAmount - totalAmount, 0);
+      const couponDiscountAmount = Math.max(discountAmount - otherDiscountAmount, 0);
+
+      return {
         orderId: row.orderId,
         orderNo: row.orderNo,
         customerName: row.customerName,
@@ -207,11 +325,77 @@ router.get("/summary", async (req, res, next) => {
         status: row.status,
         paymentMethod: row.paymentMethod,
         finalPaymentStatus: row.finalPaymentStatus,
-        totalAmount: Number(row.totalAmount || 0),
+        finalPaymentMethod: row.finalPaymentMethod,
+        finalPaymentCompletedAt: row.finalPaymentCompletedAt,
+        finalPaidAt: row.finalPaidAt,
+        latestPaymentAt: row.latestPaymentAt,
+        paymentBasisAt: row.paymentBasisAt,
+        totalAmount,
+        originalAmount,
+        discountAmount,
+        couponDiscountAmount,
+        otherDiscountAmount,
+        depositAmount: money(row.depositAmount),
+        unpaidBalance: payment.unpaidAmount,
+        actualReceivedAmount: payment.actualReceivedAmount,
+        depositOnlyAmount: payment.depositOnlyAmount,
+        paymentStatusCode: payment.paymentStatusCode,
+        paymentStatusLabel: payment.paymentStatusLabel,
+        paymentRecordTotal: money(row.paymentRecordTotal),
         totalQuantity: Number(row.totalQuantity || 0),
         itemSummary: row.itemSummary || "",
         createdAt: row.createdAt
-      })),
+      };
+    });
+
+    const summary = orders.reduce((acc, order) => {
+      acc.totalOrderCount += 1;
+      acc.orderCount += 1;
+      acc.totalQuantity += Number(order.totalQuantity || 0);
+      acc.grossSales += money(order.originalAmount);
+      acc.totalDiscount += money(order.discountAmount);
+      acc.totalOrderAmount += money(order.totalAmount);
+      acc.totalSales += money(order.totalAmount);
+      acc.actualReceivedAmount += money(order.actualReceivedAmount);
+      acc.unpaidAmount += money(order.unpaidBalance);
+      if (order.paymentStatusCode === "PAID") {
+        acc.paidOrderCount += 1;
+        acc.paidOrderAmount += money(order.totalAmount);
+      } else if (order.paymentStatusCode === "DEPOSIT_ONLY") {
+        acc.depositOnlyOrderCount += 1;
+        acc.depositOnlyAmount += money(order.depositOnlyAmount);
+        acc.unpaidOrderCount += 1;
+      } else {
+        acc.unpaidOrderCount += 1;
+      }
+      return acc;
+    }, {
+      orderCount: 0,
+      totalOrderCount: 0,
+      totalQuantity: 0,
+      grossSales: 0,
+      totalDiscount: 0,
+      totalSales: 0,
+      totalOrderAmount: 0,
+      paidOrderAmount: 0,
+      actualReceivedAmount: 0,
+      unpaidAmount: 0,
+      depositOnlyAmount: 0,
+      paidOrderCount: 0,
+      unpaidOrderCount: 0,
+      depositOnlyOrderCount: 0,
+      averageOrderAmount: 0
+    });
+
+    summary.averageOrderAmount = summary.totalOrderCount > 0
+      ? summary.totalOrderAmount / summary.totalOrderCount
+      : 0;
+
+    res.json({
+      range: { startDate, endDate, dateBasis },
+      dateBasis,
+      summary,
+      orders,
       products: productRows.map((row) => ({
         productId: row.productId,
         sku: row.sku,
@@ -256,7 +440,7 @@ function buildPaymentMethodExpression(columnExpr) {
   `;
 }
 
-async function resolveSalesExportRows(startDate, endDate, req) {
+async function resolveSalesExportRows(startDate, endDate, req, dateBasis = normalizeDateBasis(req.query.dateBasis)) {
   const orderColumns = await getColumns("orders");
   const itemColumns = await getColumns("order_items");
   const paymentColumns = await getColumns("order_payment_events");
@@ -284,17 +468,20 @@ async function resolveSalesExportRows(startDate, endDate, req) {
   const dateStart = `${startDate} 00:00:00`;
   const dateEnd = `${endDate} 23:59:59`;
   const hasDateColumn = orderColumns.has("created_at") || orderColumns.has("business_date") || orderColumns.has("updated_at");
-  const dateFilter = hasDateColumn
-    ? `
-      AND COALESCE(
+  const exportDateExpression = dateBasis === "orderCreated"
+    ? orderDateValueCol
+    : `
+      COALESCE(
         CASE
           WHEN COALESCE(paymentSummary.paymentTotal, 0) > 0
             THEN paymentSummary.latestPaymentAt
           ELSE ${orderDateValueCol}
         END,
         ${orderDateValueCol}
-      ) BETWEEN ? AND ?
-    `
+      )
+    `;
+  const dateFilter = hasDateColumn
+    ? `AND ${exportDateExpression} BETWEEN ? AND ?`
     : "";
 
   const paymentSummaryJoin = hasPaymentEvent ? `
@@ -458,7 +645,8 @@ router.get("/export-sales", async (req, res, next) => {
   try {
     const startDate = normalizeDate(req.query.startDate, monthStartText());
     const endDate = normalizeDate(req.query.endDate, todayText());
-    const rows = await resolveSalesExportRows(startDate, endDate, req);
+    const dateBasis = normalizeDateBasis(req.query.dateBasis);
+    const rows = await resolveSalesExportRows(startDate, endDate, req, dateBasis);
 
     const exportRows = buildSalesExportRows(rows);
     const summary = exportRows.reduce((acc, row) => {
