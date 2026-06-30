@@ -28,12 +28,14 @@ const {
 } = require("../utils/displayLabels");
 const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
 const { sendOrderCreationNotification } = require("../services/telegramService");
+const { canEditPaymentCompletionDate } = require("../utils/roleAccess");
 const { createOrReuseRepairConfirmationForPaidOrder } = require("../services/repairConfirmationService");
 const {
   createOrderPaymentRecord,
   getCompanyIdForStore,
   getPaymentRecordsForOrder,
-  normalizePaymentCompletionPayload
+  normalizePaymentCompletionPayload,
+  normalizeTaipeiDateTime
 } = require("../services/orderPaymentRecordService");
 
 dayjs.extend(utc);
@@ -1394,6 +1396,134 @@ router.post("/:id/purchase-confirmation", requireOrderManagementFeature, async (
     }
 
     return res.json({ link: confirmation.link, sent });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+
+router.patch("/:id/payment-completed-at", requireOrderManagementFeature, async (req, res, next) => {
+  try {
+    if (!canEditPaymentCompletionDate(req.user || {})) {
+      throw createError("僅店長以上可修改實際付款完成日期", 403);
+    }
+
+    const orderId = Number(req.params.id);
+    const storeId = req.storeId;
+    const staffUserId = Number(req.user?.id || 0);
+    if (!orderId) {
+      throw createError("找不到訂單", 404);
+    }
+    if (!staffUserId) {
+      throw createError("請重新登入後再修改付款完成日期", 401);
+    }
+
+    const rawPaymentCompletedAt =
+      req.body?.paymentCompletedAt ||
+      req.body?.payment_completed_at ||
+      req.body?.finalPaymentCompletedAt ||
+      req.body?.final_payment_completed_at;
+    if (!String(rawPaymentCompletedAt || "").trim()) {
+      throw createError("請輸入實際付款完成日期", 400);
+    }
+    const nextPaymentCompletedAt = normalizeTaipeiDateTime(rawPaymentCompletedAt, "實際付款完成日期");
+
+    const result = await withTransaction(async (connection) => {
+      const [rows] = await connection.query(
+        `
+          SELECT id,
+                 order_no AS orderNo,
+                 final_payment_status AS finalPaymentStatus,
+                 final_payment_completed_at AS oldFinalPaymentCompletedAt,
+                 final_paid_at AS oldFinalPaidAt
+          FROM orders
+          WHERE id = ?
+            AND store_id = ?
+          FOR UPDATE
+        `,
+        [orderId, storeId]
+      );
+
+      const order = rows[0];
+      if (!order) {
+        const [scopeRows] = await connection.query(
+          "SELECT store_id AS storeId FROM orders WHERE id = ? LIMIT 1",
+          [orderId]
+        );
+        if (scopeRows[0]) {
+          throw createError("無權限處理其他門市訂單", 403);
+        }
+        throw createError("找不到訂單", 404);
+      }
+
+      if (String(order.finalPaymentStatus || "").toUpperCase() !== "PAID") {
+        throw createError("僅已付款完成訂單可修改付款完成日期", 409);
+      }
+
+      await connection.query(
+        `
+          UPDATE orders
+          SET final_payment_completed_at = ?,
+              final_paid_at = ?
+          WHERE id = ?
+            AND store_id = ?
+        `,
+        [nextPaymentCompletedAt, nextPaymentCompletedAt, orderId, storeId]
+      );
+
+      const [paymentRows] = await connection.query(
+        `
+          SELECT id
+          FROM order_payment_records
+          WHERE order_id = ?
+            AND store_id = ?
+          ORDER BY CASE WHEN payment_stage IN ('BALANCE', 'FULL_PAYMENT') THEN 0 ELSE 1 END,
+                   received_at DESC,
+                   id DESC
+          LIMIT 1
+        `,
+        [orderId, storeId]
+      );
+
+      const updatedPaymentRecordIds = [];
+      const paymentRecordId = paymentRows[0]?.id ? Number(paymentRows[0].id) : null;
+      if (paymentRecordId) {
+        await connection.query(
+          `
+            UPDATE order_payment_records
+            SET received_at = ?
+            WHERE id = ?
+              AND order_id = ?
+              AND store_id = ?
+          `,
+          [nextPaymentCompletedAt, paymentRecordId, orderId, storeId]
+        );
+        updatedPaymentRecordIds.push(paymentRecordId);
+      }
+
+      await logWorkflowEvent("payment_completed_at_updated", "ORDER", orderId, {
+        orderNo: order.orderNo,
+        oldFinalPaymentCompletedAt: order.oldFinalPaymentCompletedAt || null,
+        oldFinalPaidAt: order.oldFinalPaidAt || null,
+        newFinalPaymentCompletedAt: nextPaymentCompletedAt,
+        updatedPaymentRecordIds
+      }, staffUserId, connection);
+
+      return {
+        orderId,
+        oldFinalPaymentCompletedAt: order.oldFinalPaymentCompletedAt || null,
+        newFinalPaymentCompletedAt: nextPaymentCompletedAt,
+        updatedPaymentRecordIds,
+        warning: updatedPaymentRecordIds.length ? null : "此訂單沒有可同步的收款紀錄，已更新訂單付款完成日期。"
+      };
+    });
+
+    return res.json({
+      ...result,
+      finalPaymentCompletedAt: result.newFinalPaymentCompletedAt,
+      finalPaidAt: result.newFinalPaymentCompletedAt,
+      message: "實際付款完成日期已更新"
+    });
   } catch (error) {
     return next(error);
   }

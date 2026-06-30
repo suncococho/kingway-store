@@ -35,3 +35,7 @@ export function canEditSensitiveCost(user = {}) {
 export function canViewSalesManagement(user = {}) {
   return isManagerOrAboveUser(user);
 }
+
+export function canEditPaymentCompletionDate(user = {}) {
+  return isManagerOrAboveUser(user);
+}

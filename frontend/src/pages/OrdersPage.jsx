@@ -14,9 +14,11 @@ import StatusBadge from "../components/StatusBadge";
 import { useFetchList } from "../hooks/useFetchList";
 import { useProcessingGuard } from "../hooks/useProcessingGuard";
 import { apiRequest } from "../lib/api";
+import { getStoredUser } from "../lib/auth";
 import { formatTaipeiDate, formatTaipeiDateTime, getFinalPaymentStatusLabel, getOrderStatusLabel, getPaymentMethodLabel, getRepairStatusLabel } from "../lib/display";
 import { PAGE_HELP } from "../lib/pageHelpContent";
 import { PAYMENT_METHOD_OPTIONS } from "../lib/paymentMethods";
+import { canEditPaymentCompletionDate } from "../lib/roleAccess";
 
 function formatAmount(value) {
   return `NT$${Number(value || 0).toFixed(0)}`;
@@ -46,6 +48,17 @@ function parseTaipeiDatetimeLocal(value) {
   const [, yyyy, mm, dd, hh, min] = match;
   const parsed = new Date(`${yyyy}-${mm}-${dd}T${hh}:${min}:00+08:00`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function toTaipeiDatetimeLocalInput(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}):(\d{2})/);
+  if (match) {
+    return `${match[1]}T${match[2]}:${match[3]}`;
+  }
+
+  const parsed = text ? new Date(text) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? getTaipeiDatetimeLocal(parsed) : getTaipeiDatetimeLocal();
 }
 
 function getDisplayFinalAmount(order) {
@@ -168,8 +181,11 @@ function OrdersPage() {
   const [warningModal, setWarningModal] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
   const [paymentModal, setPaymentModal] = useState(null);
+  const [paymentDateModal, setPaymentDateModal] = useState(null);
   const [toastMessage, setToastMessage] = useState("");
   const { isProcessing, pendingAction, runWithProcessing } = useProcessingGuard();
+  const currentUser = useMemo(() => getStoredUser(), []);
+  const canEditCompletedPaymentDate = canEditPaymentCompletionDate(currentUser);
 
   const sectionItems = [
     { key: "ALL", label: "全部訂單" },
@@ -312,6 +328,62 @@ function OrdersPage() {
 
   function updatePaymentModal(key, value) {
     setPaymentModal((current) => current ? { ...current, [key]: value, error: "" } : current);
+  }
+
+  function isPaidOrder(row) {
+    return String(row?.finalPaymentStatus || "").toUpperCase() === "PAID";
+  }
+
+  function openPaymentDateModal(row) {
+    if (!row || !canEditCompletedPaymentDate || !isPaidOrder(row)) {
+      return;
+    }
+    setPaymentDateModal({
+      order: row,
+      paymentCompletedAt: toTaipeiDatetimeLocalInput(row.finalPaymentCompletedAt || row.finalPaidAt),
+      error: ""
+    });
+  }
+
+  function updatePaymentDateModal(value) {
+    setPaymentDateModal((current) => current ? { ...current, paymentCompletedAt: value, error: "" } : current);
+  }
+
+  async function submitPaymentDateModal(event) {
+    event.preventDefault();
+    if (!paymentDateModal?.order) return;
+
+    const order = paymentDateModal.order;
+    const paymentCompletedAt = String(paymentDateModal.paymentCompletedAt || "").trim();
+    const parsedPaymentCompletedAt = parseTaipeiDatetimeLocal(paymentCompletedAt);
+    if (!paymentCompletedAt || !parsedPaymentCompletedAt) {
+      setPaymentDateModal((current) => ({ ...current, error: "請輸入正確的實際付款完成日期" }));
+      return;
+    }
+    if (parsedPaymentCompletedAt.getTime() > Date.now()) {
+      setPaymentDateModal((current) => ({ ...current, error: "實際付款完成日期不可晚於現在" }));
+      return;
+    }
+
+    await runWithProcessing(async () => {
+      const data = await apiRequest(`/orders/${order.id}/payment-completed-at`, {
+        method: "PATCH",
+        body: JSON.stringify({ paymentCompletedAt })
+      });
+      await refetch();
+      setDetail((current) => current && current.id === order.id ? {
+        ...current,
+        finalPaymentCompletedAt: data.finalPaymentCompletedAt || data.newFinalPaymentCompletedAt || paymentCompletedAt,
+        finalPaidAt: data.finalPaidAt || data.finalPaymentCompletedAt || paymentCompletedAt,
+        paymentRecords: Array.isArray(current.paymentRecords)
+          ? current.paymentRecords.map((record) => data.updatedPaymentRecordIds?.includes(record.id) ? { ...record, receivedAt: data.finalPaymentCompletedAt || paymentCompletedAt } : record)
+          : current.paymentRecords
+      } : current);
+      setPaymentDateModal(null);
+      setToastMessage(data.message || "實際付款完成日期已更新");
+    }, { id: `order-payment-date-${order.id}`, label: "付款完成日期更新中..." }).catch((error) => {
+      setPaymentDateModal((current) => current ? { ...current, error: error.message || "付款完成日期更新失敗" } : current);
+    });
   }
 
   async function submitPaymentModal(event) {
@@ -904,6 +976,11 @@ if (!window.confirm(
               {pendingAction?.id === `order-payment-${row.id}` ? "處理中..." : "完成付款"}
             </button>
           ) : null}
+          {canEditCompletedPaymentDate && isPaidOrder(row) ? (
+            <button type="button" className="secondary-button" onClick={() => openPaymentDateModal(row)} disabled={isProcessing}>
+              {pendingAction?.id === `order-payment-date-${row.id}` ? "處理中..." : "修改付款完成日期"}
+            </button>
+          ) : null}
           {!row.handoverConfirmedAt ? (
             <button type="button" className="secondary-button" onClick={() => requestHandover(row)} disabled={isProcessing}>
               {pendingAction?.id === `order-handover-${row.id}` ? "處理中..." : "確認交車"}
@@ -1268,6 +1345,11 @@ if (!window.confirm(
                   {pendingAction?.id === `order-payment-${detail.id}` ? "處理中..." : "完成付款"}
                 </button>
               ) : null}
+              {canEditCompletedPaymentDate && isPaidOrder(detail) ? (
+                <button type="button" className="secondary-button" onClick={() => openPaymentDateModal(detail)} disabled={isProcessing}>
+                  {pendingAction?.id === `order-payment-date-${detail.id}` ? "處理中..." : "修改付款完成日期"}
+                </button>
+              ) : null}
               <button type="button" className="secondary-button" onClick={requestPurchaseConfirmation} disabled={isProcessing}>
                 {pendingAction?.id === `order-confirmation-${detail.id}` ? "處理中..." : "發送確認書"}
               </button>
@@ -1370,6 +1452,47 @@ if (!window.confirm(
                 <button type="button" className="secondary-button" onClick={() => setPaymentModal(null)}>取消</button>
                 <button type="submit" className="primary-button" disabled={isProcessing}>
                   {pendingAction?.id === `order-payment-${paymentModal.order.id}` ? "處理中..." : "確認收款"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+      {paymentDateModal ? (
+        <div className="admin-modal-backdrop" role="presentation">
+          <section className="admin-modal" role="dialog" aria-modal="true" aria-label="修改實際付款完成日期">
+            <div className="admin-modal-header">
+              <div>
+                <h2>修改實際付款完成日期</h2>
+                <p>此日期會影響銷售管理的付款完成日統計，請依實際收款日填寫。</p>
+              </div>
+              <button type="button" className="icon-button" aria-label="關閉" onClick={() => setPaymentDateModal(null)}>×</button>
+            </div>
+            <form className="grid-form compact-grid" onSubmit={submitPaymentDateModal}>
+              <div className="field-item">
+                <div className="field-label">訂單編號</div>
+                <div className="field-value">{paymentDateModal.order.orderNo || `#${paymentDateModal.order.id}`}</div>
+              </div>
+              <div className="field-item">
+                <div className="field-label">客戶</div>
+                <div className="field-value">{paymentDateModal.order.customerName || paymentDateModal.order.customerNameSnapshot || "-"}</div>
+              </div>
+              <label className="form-field form-field-wide">
+                <span>實際付款完成日期</span>
+                <input
+                  type="datetime-local"
+                  value={paymentDateModal.paymentCompletedAt}
+                  max={getTaipeiDatetimeLocal()}
+                  onChange={(event) => updatePaymentDateModal(event.target.value)}
+                  required
+                />
+                <small className="muted-text">此日期會影響銷售管理的付款完成日統計，請依實際收款日填寫。</small>
+              </label>
+              {paymentDateModal.error ? <div className="alert alert-error form-field-wide">{paymentDateModal.error}</div> : null}
+              <div className="form-actions form-field-wide">
+                <button type="button" className="secondary-button" onClick={() => setPaymentDateModal(null)}>取消</button>
+                <button type="submit" className="primary-button" disabled={isProcessing}>
+                  {pendingAction?.id === `order-payment-date-${paymentDateModal.order.id}` ? "處理中..." : "儲存"}
                 </button>
               </div>
             </form>

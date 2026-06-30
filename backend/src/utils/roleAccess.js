@@ -44,6 +44,10 @@ function canViewSalesManagement(user = {}) {
   return canViewSensitiveCost(user);
 }
 
+function canEditPaymentCompletionDate(user = {}) {
+  return canViewSensitiveCost(user);
+}
+
 function requireSensitiveCostAccess(req, res, next) {
   if (!canViewSensitiveCost(req.user || {})) {
     return res.status(403).json({ message: "供應商價格僅限店長以上權限查看或修改" });
@@ -62,6 +66,7 @@ module.exports = {
   canViewSensitiveCost,
   canEditSensitiveCost,
   canViewSalesManagement,
+  canEditPaymentCompletionDate,
   requireSensitiveCostAccess,
   requireSalesManagementAccess
 };
