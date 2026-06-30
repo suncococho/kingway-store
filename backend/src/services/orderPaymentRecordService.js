@@ -1,8 +1,15 @@
 const { pool } = require("../db");
 const { createError } = require("../utils/errors");
 const { mapPaymentMethodLabel, normalizePaymentMethod } = require("../utils/paymentMethods");
+const dayjs = require("dayjs");
+const utc = require("dayjs/plugin/utc");
+const timezone = require("dayjs/plugin/timezone");
 
 const VALID_PAYMENT_STAGES = new Set(["DEPOSIT", "BALANCE", "FULL_PAYMENT", "ADJUSTMENT"]);
+const TAIPEI_TZ = "Asia/Taipei";
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 function toPositiveInteger(value, fallback = null) {
   const parsed = Number(value);
@@ -43,6 +50,30 @@ function normalizePaymentStage(value, fallback = "BALANCE") {
   return VALID_PAYMENT_STAGES.has(normalized) ? normalized : fallback;
 }
 
+function normalizeTaipeiDateTime(value, fieldName = "實際付款完成日期") {
+  const now = dayjs().tz(TAIPEI_TZ);
+  const text = String(value || "").trim();
+  if (!text) {
+    return now.format("YYYY-MM-DD HH:mm:ss");
+  }
+
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!match) {
+    throw createError(`${fieldName} 格式不正確`, 400);
+  }
+
+  const [, yyyy, mm, dd, hh = "00", min = "00", ss = "00"] = match;
+  const normalized = `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+  const parsed = dayjs.tz(normalized, TAIPEI_TZ);
+  if (!parsed.isValid() || parsed.format("YYYY-MM-DD HH:mm:ss") !== normalized) {
+    throw createError(`${fieldName} 不正確`, 400);
+  }
+  if (parsed.isAfter(now)) {
+    throw createError(`${fieldName} 不可晚於現在`, 400);
+  }
+  return normalized;
+}
+
 function normalizePaymentCompletionPayload(payload = {}) {
   const paymentMethod = normalizePaymentMethod(payload.paymentMethod || payload.payment_method);
   if (!paymentMethod) {
@@ -59,7 +90,10 @@ function normalizePaymentCompletionPayload(payload = {}) {
     receivedAmount: centsToDecimal(receivedAmountCents),
     receivedAmountCents,
     note: String(payload.note || payload.paymentNote || "").trim().slice(0, 5000) || null,
-    paymentStage: normalizePaymentStage(payload.paymentStage || payload.payment_stage)
+    paymentStage: normalizePaymentStage(payload.paymentStage || payload.payment_stage),
+    paymentCompletedAt: normalizeTaipeiDateTime(
+      payload.paymentCompletedAt || payload.payment_completed_at || payload.finalPaymentCompletedAt || payload.final_payment_completed_at
+    )
   };
 }
 
@@ -97,9 +131,10 @@ async function createOrderPaymentRecord(connection, options = {}) {
         payment_method,
         received_amount,
         note,
-        received_by_staff_user_id
+        received_by_staff_user_id,
+        received_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       companyId,
@@ -109,7 +144,8 @@ async function createOrderPaymentRecord(connection, options = {}) {
       options.paymentMethod,
       options.receivedAmount,
       options.note || null,
-      staffUserId
+      staffUserId,
+      options.receivedAt || options.paymentCompletedAt || null
     ]
   );
 
@@ -222,6 +258,7 @@ module.exports = {
   getCashReferenceForDate,
   getCompanyIdForStore,
   getPaymentRecordsForOrder,
+  normalizeTaipeiDateTime,
   normalizePaymentCompletionPayload,
   normalizePaymentRecord
 };

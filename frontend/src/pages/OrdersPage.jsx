@@ -22,6 +22,32 @@ function formatAmount(value) {
   return `NT$${Number(value || 0).toFixed(0)}`;
 }
 
+function getTaipeiDatetimeLocal(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(date).reduce((acc, part) => {
+    if (part.type !== "literal") acc[part.type] = part.value;
+    return acc;
+  }, {});
+  const hour = parts.hour === "24" ? "00" : parts.hour;
+  return `${parts.year}-${parts.month}-${parts.day}T${hour}:${parts.minute}`;
+}
+
+function parseTaipeiDatetimeLocal(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const [, yyyy, mm, dd, hh, min] = match;
+  const parsed = new Date(`${yyyy}-${mm}-${dd}T${hh}:${min}:00+08:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function getDisplayFinalAmount(order) {
   const candidates = [
     order?.displayFinalAmount,
@@ -278,6 +304,7 @@ function OrdersPage() {
       order: row,
       paymentMethod: row.finalPaymentMethod || row.paymentMethod || "CASH",
       receivedAmount: String(amount),
+      paymentCompletedAt: getTaipeiDatetimeLocal(),
       note: row.finalPaymentNote || "",
       error: ""
     });
@@ -306,6 +333,16 @@ function OrdersPage() {
       setPaymentModal((current) => ({ ...current, error: "實收金額不可小於未收尾款" }));
       return;
     }
+    const paymentCompletedAt = String(paymentModal.paymentCompletedAt || "").trim();
+    const parsedPaymentCompletedAt = parseTaipeiDatetimeLocal(paymentCompletedAt);
+    if (!paymentCompletedAt || !parsedPaymentCompletedAt) {
+      setPaymentModal((current) => ({ ...current, error: "請輸入正確的實際付款完成日期" }));
+      return;
+    }
+    if (parsedPaymentCompletedAt.getTime() > Date.now()) {
+      setPaymentModal((current) => ({ ...current, error: "實際付款完成日期不可晚於現在" }));
+      return;
+    }
     if (receivedAmount > expectedAmount && !window.confirm("實收金額高於未收尾款，確認仍要完成收款？")) {
       return;
     }
@@ -317,6 +354,7 @@ function OrdersPage() {
           paymentMethod: paymentModal.paymentMethod,
           receivedAmount,
           note: paymentModal.note,
+          paymentCompletedAt,
           paymentStage: inferPaymentStage(order)
         })
       });
@@ -331,7 +369,7 @@ function OrdersPage() {
         finalPaymentReceivedAmount: data.receivedAmount,
         finalPaymentNote: data.paymentNote,
         finalPaymentCompletedByStaffUserId: data.receivedByStaffUserId,
-        finalPaymentCompletedAt: new Date().toISOString()
+        finalPaymentCompletedAt: data.finalPaymentCompletedAt || data.paymentCompletedAt || paymentCompletedAt
       } : current);
       setPaymentModal(null);
       alert("已完成付款");
@@ -1274,7 +1312,7 @@ if (!window.confirm(
             <div className="admin-modal-header">
               <div>
                 <h2>付款完成確認</h2>
-                <p>此操作會記錄處理人員與時間。</p>
+                <p>此操作會記錄處理人員、實收金額與實際付款完成日期。</p>
               </div>
               <button type="button" className="icon-button" aria-label="關閉" onClick={() => setPaymentModal(null)}>×</button>
             </div>
@@ -1307,6 +1345,17 @@ if (!window.confirm(
               <label className="form-field">
                 <span>實際收款金額</span>
                 <input type="number" min="0" step="0.01" value={paymentModal.receivedAmount} onChange={(event) => updatePaymentModal("receivedAmount", event.target.value)} required />
+              </label>
+              <label className="form-field form-field-wide">
+                <span>實際付款完成日期</span>
+                <input
+                  type="datetime-local"
+                  value={paymentModal.paymentCompletedAt}
+                  max={getTaipeiDatetimeLocal()}
+                  onChange={(event) => updatePaymentModal("paymentCompletedAt", event.target.value)}
+                  required
+                />
+                <small className="muted-text">預設為今天，可依實際收款日修改。此日期會用於銷售管理的付款完成日統計。</small>
               </label>
               <label className="form-field form-field-wide">
                 <span>既有訂單備註</span>

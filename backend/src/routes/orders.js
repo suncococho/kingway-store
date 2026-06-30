@@ -1471,26 +1471,28 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
           UPDATE orders
           SET unpaid_balance = ?,
               final_payment_status = ?,
-              final_paid_at = NOW(),
+              final_paid_at = ?,
               payment_method = ?,
               notes = COALESCE(?, notes),
               final_payment_method = ?,
               final_payment_received_amount = ?,
               final_payment_note = ?,
               final_payment_completed_by_staff_user_id = ?,
-              final_payment_completed_at = NOW()
+              final_payment_completed_at = ?
           WHERE id = ?
             AND store_id = ?
         `,
         [
           nextBalance,
           nextStatus,
+          paymentPayload.paymentCompletedAt,
           paymentPayload.paymentMethod,
           paymentPayload.note,
           paymentPayload.paymentMethod,
           paymentPayload.receivedAmount,
           paymentPayload.note,
           staffUserId,
+          paymentPayload.paymentCompletedAt,
           orderId,
           storeId
         ]
@@ -1504,7 +1506,8 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
         paymentMethod: paymentPayload.paymentMethod,
         receivedAmount: paymentPayload.receivedAmount,
         note: paymentPayload.note,
-        staffUserId
+        staffUserId,
+        paymentCompletedAt: paymentPayload.paymentCompletedAt
       });
 
       await connection.query(
@@ -1520,7 +1523,7 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
             created_by_staff_id,
             meta_json
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, JSON_OBJECT('paymentMethod', ?, 'paymentRecordId', ?))
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, JSON_OBJECT('paymentMethod', ?, 'paymentRecordId', ?, 'paymentCompletedAt', ?))
         `,
         [
           orderId,
@@ -1532,7 +1535,8 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
           "collect_balance",
           staffUserId,
           paymentPayload.paymentMethod,
-          paymentRecordId
+          paymentRecordId,
+          paymentPayload.paymentCompletedAt
         ]
       );
 
@@ -1542,6 +1546,7 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
         paymentMethodLabel: mapPaymentMethodLabel(paymentPayload.paymentMethod),
         paymentStage: inferredStage,
         paymentRecordId,
+        paymentCompletedAt: paymentPayload.paymentCompletedAt,
         unpaidBalance: nextBalance
       }, staffUserId, connection);
 
@@ -1582,6 +1587,9 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
         paymentMethodLabel: mapPaymentMethodLabel(paymentPayload.paymentMethod),
         receivedAmount: paymentPayload.receivedAmount,
         paymentNote: paymentPayload.note,
+        paymentCompletedAt: paymentPayload.paymentCompletedAt,
+        finalPaymentCompletedAt: paymentPayload.paymentCompletedAt,
+        finalPaidAt: paymentPayload.paymentCompletedAt,
         paymentStage: inferredStage,
         paymentRecordId,
         receivedByStaffUserId: staffUserId,
