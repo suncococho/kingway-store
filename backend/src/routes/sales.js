@@ -70,6 +70,10 @@ function pickAmountExpression(orderColumns, itemColumns) {
   return "0";
 }
 
+function buildActiveOrderFilter(orderColumns, alias = "o") {
+  return orderColumns.has("deleted_at") ? `AND ${alias}.` + "`deleted_at`" + ` IS NULL` : "";
+}
+
 function money(value) {
   const numeric = Number(value || 0);
   return Number.isFinite(numeric) ? numeric : 0;
@@ -240,7 +244,7 @@ function createPaymentMethodBreakdown(orders, paymentRows = []) {
   });
 }
 
-function buildPaymentSummaryJoin(recordColumns, eventColumns) {
+function buildPaymentSummaryJoin(recordColumns, eventColumns, activeOrderFilter = "") {
   const hasPaymentRecords = recordColumns.has("order_id") &&
     recordColumns.has("received_amount") &&
     recordColumns.has("payment_stage") &&
@@ -250,13 +254,15 @@ function buildPaymentSummaryJoin(recordColumns, eventColumns) {
     return `
       LEFT JOIN (
         SELECT
-          order_id AS orderId,
-          SUM(COALESCE(received_amount, 0)) AS paymentTotal,
-          SUM(CASE WHEN payment_stage = 'DEPOSIT' THEN COALESCE(received_amount, 0) ELSE 0 END) AS depositPaymentTotal,
-          MAX(received_at) AS latestPaymentAt
-        FROM order_payment_records
-        WHERE order_id IS NOT NULL
-        GROUP BY order_id
+          opr.order_id AS orderId,
+          SUM(COALESCE(opr.received_amount, 0)) AS paymentTotal,
+          SUM(CASE WHEN opr.payment_stage = 'DEPOSIT' THEN COALESCE(opr.received_amount, 0) ELSE 0 END) AS depositPaymentTotal,
+          MAX(opr.received_at) AS latestPaymentAt
+        FROM order_payment_records opr
+        INNER JOIN orders paymentOrder ON paymentOrder.id = opr.order_id
+        WHERE opr.order_id IS NOT NULL
+          ${activeOrderFilter}
+        GROUP BY opr.order_id
       ) paymentSummary ON paymentSummary.orderId = o.id
     `;
   }
@@ -270,13 +276,15 @@ function buildPaymentSummaryJoin(recordColumns, eventColumns) {
     return `
       LEFT JOIN (
         SELECT
-          order_id AS orderId,
-          SUM(COALESCE(amount, 0)) AS paymentTotal,
-          SUM(CASE WHEN payment_kind IN ('DEPOSIT', 'PARTIAL') THEN COALESCE(amount, 0) ELSE 0 END) AS depositPaymentTotal,
-          MAX(created_at) AS latestPaymentAt
-        FROM order_payment_events
-        WHERE order_id IS NOT NULL
-        GROUP BY order_id
+          pe.order_id AS orderId,
+          SUM(COALESCE(pe.amount, 0)) AS paymentTotal,
+          SUM(CASE WHEN pe.payment_kind IN ('DEPOSIT', 'PARTIAL') THEN COALESCE(pe.amount, 0) ELSE 0 END) AS depositPaymentTotal,
+          MAX(pe.created_at) AS latestPaymentAt
+        FROM order_payment_events pe
+        INNER JOIN orders paymentOrder ON paymentOrder.id = pe.order_id
+        WHERE pe.order_id IS NOT NULL
+          ${activeOrderFilter}
+        GROUP BY pe.order_id
       ) paymentSummary ON paymentSummary.orderId = o.id
     `;
   }
@@ -380,12 +388,12 @@ router.get("/summary", async (req, res, next) => {
     const itemQuantityCol = pickColumn(itemColumns, ["quantity", "qty"], "0", "oi");
     const itemAmountExpr = pickAmountExpression(orderColumns, itemColumns);
 
-    const deletedFilter = orderColumns.has("deleted_at") ? "AND o.`deleted_at` IS NULL" : "";
+    const deletedFilter = buildActiveOrderFilter(orderColumns, "o");
     const statusFilter = orderColumns.has("status")
       ? "AND COALESCE(o.`status`, '') NOT IN ('CANCELED', 'CANCELLED', 'canceled', 'cancelled')"
       : "";
 
-    const paymentSummaryJoin = buildPaymentSummaryJoin(paymentRecordColumns, paymentEventColumns);
+    const paymentSummaryJoin = buildPaymentSummaryJoin(paymentRecordColumns, paymentEventColumns, buildActiveOrderFilter(orderColumns, "paymentOrder"));
     const isPaidExpression = `(UPPER(COALESCE(${finalPaymentStatusCol}, '')) = 'PAID' OR ${finalPaymentCompletedCol} IS NOT NULL OR COALESCE(${unpaidBalanceCol}, 0) <= 0)`;
     const paymentDateExpression = `
       CASE
@@ -590,9 +598,9 @@ router.get("/summary", async (req, res, next) => {
             opr.payment_method AS paymentMethod,
             SUM(COALESCE(opr.received_amount, 0)) AS receivedAmount
           FROM order_payment_records opr
-          INNER JOIN orders o ON o.id = opr.order_id
+          INNER JOIN orders paymentOrder ON paymentOrder.id = opr.order_id
           WHERE opr.order_id IN (${placeholders})
-            ${deletedFilter}
+            ${buildActiveOrderFilter(orderColumns, "paymentOrder")}
           GROUP BY opr.order_id, opr.payment_method
         `,
         orderIds
@@ -676,7 +684,7 @@ async function resolveSalesExportRows(startDate, endDate, req, dateBasis = norma
   const notesCol = pickColumn(orderColumns, ["notes"], "NULL", "o");
   const itemNameCol = pickColumn(itemColumns, ["product_name_snapshot", "product_name", "name"], "'商品'", "oi");
   const itemQuantityCol = pickColumn(itemColumns, ["quantity", "qty"], "0", "oi");
-  const deletedFilter = orderColumns.has("deleted_at") ? "AND o.`deleted_at` IS NULL" : "";
+  const deletedFilter = buildActiveOrderFilter(orderColumns, "o");
   const statusFilter = orderColumns.has("status")
     ? "AND COALESCE(o.`status`, '') NOT IN ('CANCELED', 'CANCELLED', 'canceled', 'cancelled')"
     : "";
@@ -712,7 +720,9 @@ async function resolveSalesExportRows(startDate, endDate, req, dateBasis = norma
         COUNT(*) AS paymentEventCount,
         MAX(pe.created_at) AS latestPaymentAt
       FROM order_payment_events pe
+      INNER JOIN orders paymentOrder ON paymentOrder.id = pe.order_id
       WHERE pe.order_id IS NOT NULL
+        ${buildActiveOrderFilter(orderColumns, "paymentOrder")}
       GROUP BY pe.order_id
     ) paymentSummary ON paymentSummary.orderId = o.id
   ` : "";
