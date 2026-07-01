@@ -8,6 +8,10 @@ const STORE_MANAGER_ROLES = new Set(["owner", "admin", "manager"]);
 const VALID_PRIORITIES = new Set(["LOW", "NORMAL", "IMPORTANT", "URGENT"]);
 const VALID_STATUSES = new Set(["PENDING", "DONE", "SKIPPED"]);
 const VALID_CATEGORIES = new Set(["OPENING", "MIDDAY", "CLOSING", "CUSTOMER", "INVENTORY", "SAFETY", "GENERAL"]);
+const DEFAULT_TASK_LIMIT = 100;
+const MAX_TASK_LIMIT = 200;
+const MAX_TASK_RANGE_DAYS = 31;
+
 const DEFAULT_TASKS = [
   { title: "門市清潔與地面整理", category: "OPENING", dueTime: "13:00:00", priority: "NORMAL", sortOrder: 10 },
   { title: "展示車排列與外觀確認", category: "OPENING", dueTime: "13:00:00", priority: "NORMAL", sortOrder: 20 },
@@ -33,6 +37,10 @@ function toPositiveInteger(value, fallback = null) {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) return fallback;
   return parsed;
+}
+
+function normalizeLimit(value, fallback = DEFAULT_TASK_LIMIT) {
+  return Math.min(toPositiveInteger(value, fallback), MAX_TASK_LIMIT);
 }
 
 function normalizeRole(value) {
@@ -74,6 +82,46 @@ function normalizeDateString(value) {
   if (!value) return "";
   if (value instanceof Date) return getTaipeiDateString(value);
   return String(value).slice(0, 10);
+}
+
+function isDateString(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+}
+
+function normalizeTaskDateOption(value, fallback = getTaipeiDateString()) {
+  const date = normalizeDateString(value);
+  return isDateString(date) ? date : fallback;
+}
+
+function addDays(dateString, days) {
+  const date = new Date(`${dateString}T00:00:00+08:00`);
+  date.setDate(date.getDate() + days);
+  return getTaipeiDateString(date);
+}
+
+function resolveTaskDateRange(filters = {}) {
+  const today = getTaipeiDateString();
+  const date = normalizeTaskDateOption(filters.date, "");
+  if (date) {
+    return { startDate: date, endDate: date };
+  }
+
+  let startDate = normalizeTaskDateOption(filters.startDate, "");
+  let endDate = normalizeTaskDateOption(filters.endDate, "");
+  if (!startDate && !endDate) {
+    return { startDate: today, endDate: today };
+  }
+  if (!startDate) startDate = endDate;
+  if (!endDate) endDate = startDate;
+  if (startDate > endDate) {
+    [startDate, endDate] = [endDate, startDate];
+  }
+
+  const maxEndDate = addDays(startDate, MAX_TASK_RANGE_DAYS - 1);
+  if (endDate > maxEndDate) {
+    endDate = maxEndDate;
+  }
+  return { startDate, endDate };
 }
 
 function buildDueAt(taskDate, dueTime) {
@@ -219,7 +267,8 @@ function summarizeInstances(instances) {
   }, { total: 0, pending: 0, done: 0, skipped: 0, overdue: 0 });
 }
 
-async function selectTodayInstances(context, taskDate = getTaipeiDateString(), connection = pool) {
+async function selectTodayInstances(context, taskDate = getTaipeiDateString(), options = {}, connection = pool) {
+  const limit = normalizeLimit(options.limit);
   const [rows] = await connection.query(
     `
       SELECT ${selectInstanceColumns("sti")}
@@ -230,13 +279,14 @@ async function selectTodayInstances(context, taskDate = getTaipeiDateString(), c
                sti.due_at IS NULL,
                sti.due_at ASC,
                sti.id ASC
+      LIMIT ?
     `,
-    [context.storeId, taskDate]
+    [context.storeId, taskDate, limit]
   );
   return rows.map(normalizeInstance);
 }
 
-async function ensureTodayTaskInstances(context, taskDate = getTaipeiDateString(), connection = pool) {
+async function ensureTodayTaskInstances(context, taskDate = getTaipeiDateString(), options = {}, connection = pool) {
   const scope = buildEligibleTaskWhere(context, "dst", true);
   const [tasks] = await connection.query(
     `
@@ -248,7 +298,20 @@ async function ensureTodayTaskInstances(context, taskDate = getTaipeiDateString(
     scope.params
   );
 
-  for (const task of tasks) {
+  if (tasks.length) {
+    const placeholders = tasks.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+    const values = tasks.flatMap((task) => [
+      task.id,
+      task.companyId || context.companyIds[0] || null,
+      context.storeId,
+      taskDate,
+      task.title,
+      task.description || null,
+      normalizeCategory(task.category),
+      buildDueAt(taskDate, task.dueTime),
+      normalizePriority(task.priority)
+    ]);
+
     await connection.query(
       `
         INSERT IGNORE INTO staff_task_instances (
@@ -262,23 +325,13 @@ async function ensureTodayTaskInstances(context, taskDate = getTaipeiDateString(
           due_at,
           priority
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES ${placeholders}
       `,
-      [
-        task.id,
-        task.companyId || context.companyIds[0] || null,
-        context.storeId,
-        taskDate,
-        task.title,
-        task.description || null,
-        normalizeCategory(task.category),
-        buildDueAt(taskDate, task.dueTime),
-        normalizePriority(task.priority)
-      ]
+      values
     );
   }
 
-  return selectTodayInstances(context, taskDate, connection);
+  return selectTodayInstances(context, taskDate, { limit: options.limit }, connection);
 }
 
 async function createOverdueTaskNotifications(context, instances, connection = pool) {
@@ -306,15 +359,23 @@ async function createOverdueTaskNotifications(context, instances, connection = p
 }
 
 async function getTodayTasks(context, options = {}, connection = pool) {
-  const taskDate = options.date || getTaipeiDateString();
-  const tasks = await ensureTodayTaskInstances(context, taskDate, connection);
-  if (options.createNotifications !== false) {
+  const taskDate = normalizeTaskDateOption(options.date);
+  const limit = normalizeLimit(options.limit);
+  const tasks = await ensureTodayTaskInstances(context, taskDate, { limit }, connection);
+  if (options.createNotifications === true) {
     await createOverdueTaskNotifications(context, tasks, connection);
   }
   return {
     taskDate,
     tasks,
-    summary: summarizeInstances(tasks)
+    summary: summarizeInstances(tasks),
+    meta: {
+      date: taskDate,
+      startDate: taskDate,
+      endDate: taskDate,
+      limit,
+      total: tasks.length
+    }
   };
 }
 
@@ -332,11 +393,11 @@ async function getDailyTaskSummary(context, options = {}, connection = pool) {
 async function getTaskInstances(context, filters = {}, connection = pool) {
   const clauses = ["sti.store_id = ?"];
   const params = [context.storeId];
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(filters.date || "")) ? filters.date : null;
-  if (date) {
-    clauses.push("sti.task_date = ?");
-    params.push(date);
-  }
+  const { startDate, endDate } = resolveTaskDateRange(filters);
+  const limit = normalizeLimit(filters.limit);
+  clauses.push("sti.task_date BETWEEN ? AND ?");
+  params.push(startDate, endDate);
+
   const status = String(filters.status || "").trim().toUpperCase();
   if (VALID_STATUSES.has(status)) {
     clauses.push("sti.status = ?");
@@ -354,11 +415,21 @@ async function getTaskInstances(context, filters = {}, connection = pool) {
       FROM staff_task_instances sti
       WHERE ${clauses.join(" AND ")}
       ORDER BY sti.task_date DESC, sti.due_at IS NULL, sti.due_at ASC, sti.id DESC
-      LIMIT 300
+      LIMIT ?
     `,
-    params
+    [...params, limit]
   );
-  return rows.map(normalizeInstance);
+  const tasks = rows.map(normalizeInstance);
+  return {
+    tasks,
+    meta: {
+      date: startDate === endDate ? startDate : null,
+      startDate,
+      endDate,
+      limit,
+      total: tasks.length
+    }
+  };
 }
 
 async function updateInstanceStatus(instanceId, context, action, note = null, connection = pool) {

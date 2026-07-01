@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataTable from "../components/DataTable";
 import PageHeader from "../components/PageHeader";
 import PageHelpButton from "../components/PageHelpButton";
@@ -39,6 +39,18 @@ const PRIORITY_LABELS = {
   URGENT: "緊急"
 };
 
+const DEFAULT_SUMMARY = { total: 0, pending: 0, done: 0, skipped: 0, overdue: 0 };
+const DEFAULT_TASK_LIMIT = 100;
+
+function getTaipeiDateString(date = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(date);
+}
+
 function getStatusTone(task) {
   if (task.status === "DONE") return "success";
   if (task.status === "SKIPPED") return "neutral";
@@ -65,31 +77,44 @@ function SummaryCard({ label, value, tone }) {
 function DailyTasksPage() {
   const [category, setCategory] = useState("ALL");
   const [tasks, setTasks] = useState([]);
-  const [summary, setSummary] = useState({ total: 0, pending: 0, done: 0, skipped: 0, overdue: 0 });
-  const [taskDate, setTaskDate] = useState("");
+  const [summary, setSummary] = useState(DEFAULT_SUMMARY);
+  const [taskDate, setTaskDate] = useState(getTaipeiDateString);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [actionId, setActionId] = useState(null);
+  const latestRequestRef = useRef(0);
 
-  async function loadTasks() {
+  const loadTasks = useCallback(async (options = {}) => {
+    const requestId = latestRequestRef.current + 1;
+    latestRequestRef.current = requestId;
     try {
       setLoading(true);
       setError("");
-      const response = await fetchTodayTasks();
+      const response = await fetchTodayTasks(
+        { date: taskDate, limit: DEFAULT_TASK_LIMIT },
+        { signal: options.signal }
+      );
+      if (options.signal?.aborted || latestRequestRef.current !== requestId) return;
       setTasks(response.tasks || []);
-      setSummary(response.summary || { total: 0, pending: 0, done: 0, skipped: 0, overdue: 0 });
-      setTaskDate(response.taskDate || "");
+      setSummary(response.summary || DEFAULT_SUMMARY);
+      setTaskDate(response.taskDate || response.meta?.date || taskDate);
     } catch (err) {
+      if (err?.name === "AbortError" || options.signal?.aborted || latestRequestRef.current !== requestId) return;
       setTasks([]);
-      setError(err?.message || "今日任務載入失敗");
+      setSummary(DEFAULT_SUMMARY);
+      setError("載入失敗，請稍後再試");
     } finally {
-      setLoading(false);
+      if (!options.signal?.aborted && latestRequestRef.current === requestId) {
+        setLoading(false);
+      }
     }
-  }
+  }, [taskDate]);
 
   useEffect(() => {
-    loadTasks();
-  }, []);
+    const controller = new AbortController();
+    loadTasks({ signal: controller.signal });
+    return () => controller.abort();
+  }, [loadTasks]);
 
   async function runAction(task, action) {
     try {
@@ -211,7 +236,7 @@ function DailyTasksPage() {
           <DataTable
             rows={visibleTasks}
             columns={columns}
-            emptyText="目前沒有今日任務。請至每日任務設定建立基本項目。"
+            emptyText="今日尚無工作項目"
             cardTitle={(row) => row.title}
             cardDescription={(row) => `${CATEGORY_LABELS[row.category] || row.category} / ${row.dueAt || "無期限"}`}
             cardBadges={(row) => (

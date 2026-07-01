@@ -11,12 +11,12 @@ function toQuery(filters = {}) {
   return suffix ? `?${suffix}` : "";
 }
 
-export function fetchTodayTasks() {
-  return apiRequest("/daily-staff-tasks/today");
+export function fetchTodayTasks(filters = {}, options = {}) {
+  return apiRequest(`/daily-staff-tasks/today${toQuery(filters)}`, options);
 }
 
-export function fetchTaskInstances(filters = {}) {
-  return apiRequest(`/daily-staff-tasks${toQuery(filters)}`);
+export function fetchTaskInstances(filters = {}, options = {}) {
+  return apiRequest(`/daily-staff-tasks${toQuery(filters)}`, options);
 }
 
 export function fetchTaskSettings() {

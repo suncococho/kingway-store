@@ -21,8 +21,17 @@ router.use(
 
 router.get("/today", async (req, res, next) => {
   try {
+    const startedAt = Date.now();
     const context = await resolveDailyTaskContext(req);
-    const result = await getTodayTasks(context);
+    const result = await getTodayTasks(context, {
+      date: req.query?.date,
+      limit: req.query?.limit,
+      createNotifications: false
+    });
+    result.meta = {
+      ...(result.meta || {}),
+      durationMs: Date.now() - startedAt
+    };
     res.json(result);
   } catch (error) {
     next(error);
@@ -31,9 +40,16 @@ router.get("/today", async (req, res, next) => {
 
 router.get("/", async (req, res, next) => {
   try {
+    const startedAt = Date.now();
     const context = await resolveDailyTaskContext(req);
-    const tasks = await getTaskInstances(context, req.query);
-    res.json({ tasks });
+    const result = await getTaskInstances(context, req.query);
+    res.json({
+      ...result,
+      meta: {
+        ...(result.meta || {}),
+        durationMs: Date.now() - startedAt
+      }
+    });
   } catch (error) {
     next(error);
   }
