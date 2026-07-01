@@ -586,12 +586,14 @@ router.get("/summary", async (req, res, next) => {
       const [rows] = await pool.query(
         `
           SELECT
-            order_id AS orderId,
-            payment_method AS paymentMethod,
-            SUM(COALESCE(received_amount, 0)) AS receivedAmount
-          FROM order_payment_records
-          WHERE order_id IN (${placeholders})
-          GROUP BY order_id, payment_method
+            opr.order_id AS orderId,
+            opr.payment_method AS paymentMethod,
+            SUM(COALESCE(opr.received_amount, 0)) AS receivedAmount
+          FROM order_payment_records opr
+          INNER JOIN orders o ON o.id = opr.order_id
+          WHERE opr.order_id IN (${placeholders})
+            ${deletedFilter}
+          GROUP BY opr.order_id, opr.payment_method
         `,
         orderIds
       );
