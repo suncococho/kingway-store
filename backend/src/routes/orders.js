@@ -645,6 +645,7 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
         LEFT JOIN staff_users paid_staff ON paid_staff.id = o.final_payment_completed_by_staff_user_id
         WHERE o.id = ?
           AND o.store_id = ?
+          AND o.deleted_at IS NULL
         LIMIT 1
       `,
       [orderId, storeId]
