@@ -48,6 +48,14 @@ function paymentText(status, method) {
   return map[status] || method || "-";
 }
 
+const PAYMENT_METHOD_ROWS = [
+  { paymentMethod: "CASH", label: "現金" },
+  { paymentMethod: "CREDIT_CARD", label: "信用卡" },
+  { paymentMethod: "BANK_TRANSFER", label: "轉帳" },
+  { paymentMethod: "LINE_PAY", label: "LINE Pay" },
+  { paymentMethod: "OTHER", label: "其他 / 未指定" },
+];
+
 function badgeTone(value) {
   const text = String(value || "").toUpperCase();
   if (["PAID", "COMPLETED"].includes(text)) return "success";
@@ -169,6 +177,23 @@ export default function SalesManagementPage() {
   const summary = data.summary || {};
   const orders = data.orders || [];
   const products = data.products || [];
+  const byOrderType = data.byOrderType || summary.byOrderType || {};
+  const byPaymentStatus = data.byPaymentStatus || summary.byPaymentStatus || {};
+  const byPaymentMethod = data.byPaymentMethod || summary.byPaymentMethod || [];
+  const paymentMethodByCode = new Map(byPaymentMethod.map((item) => [item.paymentMethod, item]));
+  const orderTypeRows = [
+    { key: "regular", label: "一般訂單", ...(byOrderType.regular || {}) },
+    { key: "repair", label: "維修訂單", ...(byOrderType.repair || {}) },
+  ];
+  const paymentStatusRows = [
+    { key: "paid", label: "已收款", ...(byPaymentStatus.paid || {}) },
+    { key: "partial", label: "訂金已收", ...(byPaymentStatus.partial || {}) },
+    { key: "unpaid", label: "未收款", ...(byPaymentStatus.unpaid || {}) },
+  ];
+  const paymentMethodRows = PAYMENT_METHOD_ROWS.map((item) => ({
+    ...item,
+    ...(paymentMethodByCode.get(item.paymentMethod) || {}),
+  }));
 
   return (
     <div className="page sales-page">
@@ -311,6 +336,49 @@ export default function SalesManagementPage() {
 
         .sales-section {
           padding: 18px;
+        }
+
+        .sales-breakdown-grid {
+          display: grid;
+          grid-template-columns: minmax(280px, 0.8fr) minmax(360px, 1fr);
+          gap: 14px;
+        }
+
+        .sales-breakdown-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 14px;
+        }
+
+        .sales-breakdown-table th,
+        .sales-breakdown-table td {
+          padding: 10px 8px;
+          border-bottom: 1px solid #eaecf0;
+          text-align: right;
+          vertical-align: middle;
+        }
+
+        .sales-breakdown-table th:first-child,
+        .sales-breakdown-table td:first-child {
+          text-align: left;
+          font-weight: 800;
+        }
+
+        .sales-breakdown-table th {
+          color: #667085;
+          font-size: 12px;
+          font-weight: 800;
+        }
+
+        .sales-breakdown-table tr:last-child td {
+          border-bottom: none;
+        }
+
+        .sales-breakdown-note {
+          margin: 0 0 12px;
+          color: #667085;
+          font-size: 13px;
+          line-height: 1.6;
         }
 
         .sales-section-header {
@@ -562,6 +630,10 @@ export default function SalesManagementPage() {
             grid-template-columns: 1fr;
           }
 
+          .sales-breakdown-grid {
+            grid-template-columns: 1fr;
+          }
+
           .sales-filter-row input,
           .sales-filter-row select,
           .sales-filter-row button {
@@ -652,6 +724,89 @@ export default function SalesManagementPage() {
         </div>
       </section>
 
+      <section className="sales-breakdown-grid">
+        <section className="sales-panel sales-section">
+          <div className="sales-section-header">
+            <h2>依付款狀態</h2>
+          </div>
+          <p className="sales-breakdown-note">實收金額依實際付款紀錄與付款完成日計算；未收款訂單不列入實收營收。</p>
+          <table className="sales-breakdown-table">
+            <thead>
+              <tr>
+                <th>付款狀態</th>
+                <th>金額</th>
+                <th>訂單數</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paymentStatusRows.map((row) => (
+                <tr key={row.key}>
+                  <td>{row.label}</td>
+                  <td>{money(row.amount)}</td>
+                  <td>{Number(row.count || 0).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+
+        <section className="sales-panel sales-section">
+          <div className="sales-section-header">
+            <h2>依訂單類型</h2>
+          </div>
+          <table className="sales-breakdown-table">
+            <thead>
+              <tr>
+                <th>訂單類型</th>
+                <th>實際已收款</th>
+                <th>訂金已收</th>
+                <th>未收款</th>
+                <th>訂單數</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orderTypeRows.map((row) => (
+                <tr key={row.key}>
+                  <td>{row.label}</td>
+                  <td>{money(row.actualReceivedAmount)}</td>
+                  <td>{money(row.depositOnlyAmount)}</td>
+                  <td>{money(row.unpaidAmount)}</td>
+                  <td>{Number(row.totalOrderCount || 0).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      </section>
+
+      <section className="sales-panel sales-section">
+        <div className="sales-section-header">
+          <h2>依付款方式</h2>
+        </div>
+        <table className="sales-breakdown-table">
+          <thead>
+            <tr>
+              <th>付款方式</th>
+              <th>實收金額</th>
+              <th>訂金/部分付款</th>
+              <th>已收款訂單數</th>
+              <th>訂金訂單數</th>
+            </tr>
+          </thead>
+          <tbody>
+            {paymentMethodRows.map((row) => (
+              <tr key={row.paymentMethod}>
+                <td>{row.label}</td>
+                <td>{money(row.actualReceivedAmount)}</td>
+                <td>{money(row.depositOnlyAmount)}</td>
+                <td>{Number(row.paidOrderCount || 0).toLocaleString()}</td>
+                <td>{Number(row.depositOnlyOrderCount || 0).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
       <section className="sales-panel sales-section">
         <div className="sales-section-header">
           <h2>訂單銷售明細</h2>
@@ -706,6 +861,12 @@ export default function SalesManagementPage() {
                       </Badge>
                       <Badge tone={badgeTone(order.status)}>
                         {statusText(order.status)}
+                      </Badge>
+                      <Badge tone="neutral">
+                        {order.orderTypeLabel || (order.orderType === "repair" ? "維修訂單" : "一般訂單")}
+                      </Badge>
+                      <Badge tone="neutral">
+                        {order.paymentMethodLabel || "其他 / 未指定"}
                       </Badge>
                       {order.finalPaymentCompletedAt || order.paymentBasisAt ? (
                         <span className="sales-order-sub">

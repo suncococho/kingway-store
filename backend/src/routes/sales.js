@@ -75,6 +75,171 @@ function money(value) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
+const PAYMENT_METHOD_LABELS = {
+  CASH: "現金",
+  CREDIT_CARD: "信用卡",
+  BANK_TRANSFER: "轉帳",
+  LINE_PAY: "LINE Pay",
+  OTHER: "其他 / 未指定"
+};
+
+const ORDER_TYPE_TEMPLATE = {
+  regular: {
+    label: "一般訂單",
+    totalOrderAmount: 0,
+    actualReceivedAmount: 0,
+    paidOrderAmount: 0,
+    unpaidAmount: 0,
+    depositOnlyAmount: 0,
+    totalOrderCount: 0,
+    paidOrderCount: 0,
+    unpaidOrderCount: 0,
+    depositOnlyOrderCount: 0
+  },
+  repair: {
+    label: "維修訂單",
+    totalOrderAmount: 0,
+    actualReceivedAmount: 0,
+    paidOrderAmount: 0,
+    unpaidAmount: 0,
+    depositOnlyAmount: 0,
+    totalOrderCount: 0,
+    paidOrderCount: 0,
+    unpaidOrderCount: 0,
+    depositOnlyOrderCount: 0
+  }
+};
+
+function createOrderTypeBreakdown() {
+  return JSON.parse(JSON.stringify(ORDER_TYPE_TEMPLATE));
+}
+
+function normalizeSalesPaymentMethod(value) {
+  const text = String(value || "").trim().toUpperCase().replace(/[\s-]+/g, "_");
+  if (!text) return "OTHER";
+  if (["CASH", "現金"].includes(text)) return "CASH";
+  if (["CARD", "CREDIT_CARD", "CREDITCARD", "刷卡", "信用卡"].includes(text)) return "CREDIT_CARD";
+  if (["TRANSFER", "BANK_TRANSFER", "BANK", "匯款", "銀行轉帳", "轉帳", "匯款/轉帳"].includes(text)) return "BANK_TRANSFER";
+  if (["LINE_PAY", "LINEPAY", "LINE_PAY_PAYMENT"].includes(text)) return "LINE_PAY";
+  return "OTHER";
+}
+
+function getPaymentMethodLabel(method) {
+  return PAYMENT_METHOD_LABELS[method] || PAYMENT_METHOD_LABELS.OTHER;
+}
+
+function createPaymentStatusBreakdown() {
+  return {
+    paid: { label: "已收款", amount: 0, count: 0 },
+    partial: { label: "訂金已收", amount: 0, count: 0 },
+    unpaid: { label: "未收款", amount: 0, count: 0 }
+  };
+}
+
+function addOrderToTypeBreakdown(target, order) {
+  const row = target[order.orderType === "repair" ? "repair" : "regular"];
+  row.totalOrderCount += 1;
+  row.totalOrderAmount += money(order.totalAmount);
+  row.actualReceivedAmount += money(order.actualReceivedAmount);
+  row.unpaidAmount += money(order.unpaidBalance);
+
+  if (order.paymentStatusCode === "PAID") {
+    row.paidOrderCount += 1;
+    row.paidOrderAmount += money(order.totalAmount);
+  } else if (order.paymentStatusCode === "DEPOSIT_ONLY") {
+    row.depositOnlyOrderCount += 1;
+    row.depositOnlyAmount += money(order.depositOnlyAmount);
+    row.unpaidOrderCount += 1;
+  } else {
+    row.unpaidOrderCount += 1;
+  }
+}
+
+function addOrderToPaymentStatusBreakdown(target, order) {
+  if (order.paymentStatusCode === "PAID") {
+    target.paid.amount += money(order.actualReceivedAmount);
+    target.paid.count += 1;
+  } else if (order.paymentStatusCode === "DEPOSIT_ONLY") {
+    target.partial.amount += money(order.depositOnlyAmount);
+    target.partial.count += 1;
+  } else {
+    target.unpaid.amount += money(order.unpaidBalance);
+    target.unpaid.count += 1;
+  }
+}
+
+function createPaymentMethodBreakdown(orders, paymentRows = []) {
+  const byOrderId = new Map(orders.map((order) => [Number(order.orderId), order]));
+  const rowsByMethod = new Map();
+
+  function ensure(method) {
+    const normalized = normalizeSalesPaymentMethod(method);
+    if (!rowsByMethod.has(normalized)) {
+      rowsByMethod.set(normalized, {
+        paymentMethod: normalized,
+        label: getPaymentMethodLabel(normalized),
+        actualReceivedAmount: 0,
+        paidOrderAmount: 0,
+        depositOnlyAmount: 0,
+        orderCount: 0,
+        paidOrderCount: 0,
+        depositOnlyOrderCount: 0,
+        orderIds: new Set(),
+        paidOrderIds: new Set(),
+        depositOnlyOrderIds: new Set()
+      });
+    }
+    return rowsByMethod.get(normalized);
+  }
+
+  const ordersWithPaymentRecords = new Set();
+  paymentRows.forEach((payment) => {
+    const order = byOrderId.get(Number(payment.orderId));
+    if (!order) return;
+    ordersWithPaymentRecords.add(Number(payment.orderId));
+    const row = ensure(payment.paymentMethod);
+    const amount = money(payment.receivedAmount);
+    row.actualReceivedAmount += amount;
+    row.orderIds.add(Number(payment.orderId));
+    if (order.paymentStatusCode === "PAID") {
+      row.paidOrderAmount += amount;
+      row.paidOrderIds.add(Number(payment.orderId));
+    } else if (order.paymentStatusCode === "DEPOSIT_ONLY") {
+      row.depositOnlyAmount += amount;
+      row.depositOnlyOrderIds.add(Number(payment.orderId));
+    }
+  });
+
+  orders.forEach((order) => {
+    if (ordersWithPaymentRecords.has(Number(order.orderId))) return;
+    if (money(order.actualReceivedAmount) <= 0) return;
+    const row = ensure(order.finalPaymentMethod || order.paymentMethod);
+    row.actualReceivedAmount += money(order.actualReceivedAmount);
+    row.orderIds.add(Number(order.orderId));
+    if (order.paymentStatusCode === "PAID") {
+      row.paidOrderAmount += money(order.actualReceivedAmount);
+      row.paidOrderIds.add(Number(order.orderId));
+    } else if (order.paymentStatusCode === "DEPOSIT_ONLY") {
+      row.depositOnlyAmount += money(order.depositOnlyAmount);
+      row.depositOnlyOrderIds.add(Number(order.orderId));
+    }
+  });
+
+  return ["CASH", "CREDIT_CARD", "BANK_TRANSFER", "LINE_PAY", "OTHER"].map((method) => {
+    const row = ensure(method);
+    return {
+      paymentMethod: row.paymentMethod,
+      label: row.label,
+      actualReceivedAmount: row.actualReceivedAmount,
+      paidOrderAmount: row.paidOrderAmount,
+      depositOnlyAmount: row.depositOnlyAmount,
+      orderCount: row.orderIds.size,
+      paidOrderCount: row.paidOrderIds.size,
+      depositOnlyOrderCount: row.depositOnlyOrderIds.size
+    };
+  });
+}
+
 function buildPaymentSummaryJoin(recordColumns, eventColumns) {
   const hasPaymentRecords = recordColumns.has("order_id") &&
     recordColumns.has("received_amount") &&
@@ -199,6 +364,7 @@ router.get("/summary", async (req, res, next) => {
     const paymentMethodCol = pickColumn(orderColumns, ["payment_method"], "NULL", "o");
     const finalPaymentStatusCol = pickColumn(orderColumns, ["final_payment_status", "payment_status"], "NULL", "o");
     const finalPaymentMethodCol = pickColumn(orderColumns, ["final_payment_method", "payment_method"], "NULL", "o");
+    const repairOrderIdCol = pickColumn(orderColumns, ["repair_order_id"], "NULL", "o");
     const finalPaymentReceivedCol = pickColumn(orderColumns, ["final_payment_received_amount"], "NULL", "o");
     const finalPaymentCompletedCol = pickColumn(orderColumns, ["final_payment_completed_at", "final_paid_at"], "NULL", "o");
     const finalPaidAtCol = pickColumn(orderColumns, ["final_paid_at"], "NULL", "o");
@@ -210,6 +376,7 @@ router.get("/summary", async (req, res, next) => {
     const itemNameCol = pickColumn(itemColumns, ["product_name_snapshot", "product_name", "name"], "'商品'", "oi");
     const itemSkuCol = pickColumn(itemColumns, ["product_sku_snapshot", "sku"], "''", "oi");
     const itemProductIdCol = pickColumn(itemColumns, ["product_id"], "0", "oi");
+    const itemCategoryCol = pickColumn(itemColumns, ["product_category_snapshot", "category_snapshot", "product_category", "category"], "NULL", "oi");
     const itemQuantityCol = pickColumn(itemColumns, ["quantity", "qty"], "0", "oi");
     const itemAmountExpr = pickAmountExpression(orderColumns, itemColumns);
 
@@ -246,6 +413,11 @@ router.get("/summary", async (req, res, next) => {
           ${paymentMethodCol} AS paymentMethod,
           ${finalPaymentStatusCol} AS finalPaymentStatus,
           ${finalPaymentMethodCol} AS finalPaymentMethod,
+          CASE
+            WHEN ${repairOrderIdCol} IS NOT NULL THEN 1
+            WHEN MAX(CASE WHEN UPPER(COALESCE(${itemCategoryCol}, '')) IN ('RP', 'REPAIR') THEN 1 ELSE 0 END) = 1 THEN 1
+            ELSE 0
+          END AS hasRepairItem,
           ${finalPaymentReceivedCol} AS finalPaymentReceivedAmount,
           ${finalPaymentCompletedCol} AS finalPaymentCompletedAt,
           ${finalPaidAtCol} AS finalPaidAt,
@@ -311,6 +483,8 @@ router.get("/summary", async (req, res, next) => {
 
     const orders = orderRows.map((row) => {
       const payment = resolvePaymentStatus(row);
+      const orderType = Number(row.hasRepairItem || 0) > 0 ? "repair" : "regular";
+      const normalizedPaymentMethod = normalizeSalesPaymentMethod(row.finalPaymentMethod || row.paymentMethod);
       const totalAmount = money(row.totalAmount);
       const originalAmount = money(row.originalAmount || totalAmount);
       const otherDiscountAmount = money(row.otherDiscountAmount);
@@ -324,8 +498,12 @@ router.get("/summary", async (req, res, next) => {
         customerPhone: row.customerPhone,
         status: row.status,
         paymentMethod: row.paymentMethod,
+        paymentMethodCode: normalizedPaymentMethod,
+        paymentMethodLabel: getPaymentMethodLabel(normalizedPaymentMethod),
         finalPaymentStatus: row.finalPaymentStatus,
         finalPaymentMethod: row.finalPaymentMethod,
+        orderType,
+        orderTypeLabel: orderType === "repair" ? "維修訂單" : "一般訂單",
         finalPaymentCompletedAt: row.finalPaymentCompletedAt,
         finalPaidAt: row.finalPaidAt,
         latestPaymentAt: row.latestPaymentAt,
@@ -348,6 +526,9 @@ router.get("/summary", async (req, res, next) => {
       };
     });
 
+    const byOrderType = createOrderTypeBreakdown();
+    const byPaymentStatus = createPaymentStatusBreakdown();
+
     const summary = orders.reduce((acc, order) => {
       acc.totalOrderCount += 1;
       acc.orderCount += 1;
@@ -358,6 +539,8 @@ router.get("/summary", async (req, res, next) => {
       acc.totalSales += money(order.totalAmount);
       acc.actualReceivedAmount += money(order.actualReceivedAmount);
       acc.unpaidAmount += money(order.unpaidBalance);
+      addOrderToTypeBreakdown(byOrderType, order);
+      addOrderToPaymentStatusBreakdown(byPaymentStatus, order);
       if (order.paymentStatusCode === "PAID") {
         acc.paidOrderCount += 1;
         acc.paidOrderAmount += money(order.totalAmount);
@@ -391,10 +574,41 @@ router.get("/summary", async (req, res, next) => {
       ? summary.totalOrderAmount / summary.totalOrderCount
       : 0;
 
+    let paymentRows = [];
+    const orderIds = orders.map((order) => Number(order.orderId)).filter(Boolean);
+    if (
+      orderIds.length &&
+      paymentRecordColumns.has("order_id") &&
+      paymentRecordColumns.has("received_amount") &&
+      paymentRecordColumns.has("payment_method")
+    ) {
+      const placeholders = orderIds.map(() => "?").join(",");
+      const [rows] = await pool.query(
+        `
+          SELECT
+            order_id AS orderId,
+            payment_method AS paymentMethod,
+            SUM(COALESCE(received_amount, 0)) AS receivedAmount
+          FROM order_payment_records
+          WHERE order_id IN (${placeholders})
+          GROUP BY order_id, payment_method
+        `,
+        orderIds
+      );
+      paymentRows = rows;
+    }
+
+    summary.byOrderType = byOrderType;
+    summary.byPaymentMethod = createPaymentMethodBreakdown(orders, paymentRows);
+    summary.byPaymentStatus = byPaymentStatus;
+
     res.json({
       range: { startDate, endDate, dateBasis },
       dateBasis,
       summary,
+      byOrderType,
+      byPaymentMethod: summary.byPaymentMethod,
+      byPaymentStatus,
       orders,
       products: productRows.map((row) => ({
         productId: row.productId,
