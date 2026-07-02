@@ -93,6 +93,16 @@ function getOrderCreateGuardKey(storeId, body = {}) {
   return `store:${storeId}:fingerprint:${JSON.stringify(fingerprint)}`;
 }
 
+function hasOwnPropertyValue(source, key) {
+  return Object.prototype.hasOwnProperty.call(source || {}, key);
+}
+
+function normalizeOrderCustomerSnapshot(value) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  return String(value).trim();
+}
+
 function startOrderCreateGuard(storeId, body = {}) {
   const now = Date.now();
   pruneOrderCreateGuards(now);
@@ -448,7 +458,8 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
           ${selectColumn(orderColumns, "o", "notes", "notes")},
           ${selectColumn(orderColumns, "o", "created_at", "createdAt")},
           ${selectColumn(customerColumns, "c", "id", "customerId")},
-          ${selectColumn(customerColumns, "c", "name", "customerName")},
+          COALESCE(o.customer_name, ${hasColumn(customerColumns, "name") ? "c.name" : "NULL"}) AS customerName,
+          COALESCE(o.customer_phone, ${hasColumn(customerColumns, "phone") ? "c.phone" : "NULL"}) AS customerPhone,
           ${selectColumn(staffColumns, "s", "id", "staffId")},
           ${selectColumn(staffColumns, "s", "display_name", "staffName")},
           ${repairExistsSql} AS isRepairOrder
@@ -635,8 +646,8 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
           o.handover_confirmed_at AS handoverConfirmedAt,
           o.notes,
           o.created_at AS createdAt,
-          c.name AS customerName,
-          c.phone AS customerPhone,
+          COALESCE(o.customer_name, c.name) AS customerName,
+          COALESCE(o.customer_phone, c.phone) AS customerPhone,
           c.line_user_id AS lineUserId,
           s.display_name AS staffName
         FROM orders o
@@ -1053,6 +1064,8 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
     const {
       customerName,
       customerPhone,
+      customer_name: customerNameSnake,
+      customer_phone: customerPhoneSnake,
       paymentMethod,
       isReservationOrder,
       depositAmount,
@@ -1061,6 +1074,10 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
       finalPaymentStatus,
       notes
     } = req.body;
+    const hasCustomerName = hasOwnPropertyValue(req.body, "customerName") || hasOwnPropertyValue(req.body, "customer_name");
+    const hasCustomerPhone = hasOwnPropertyValue(req.body, "customerPhone") || hasOwnPropertyValue(req.body, "customer_phone");
+    const nextCustomerName = normalizeOrderCustomerSnapshot(customerNameSnake !== undefined ? customerNameSnake : customerName);
+    const nextCustomerPhone = normalizeOrderCustomerSnapshot(customerPhoneSnake !== undefined ? customerPhoneSnake : customerPhone);
 
     const [rows] = await pool.query(
       `
@@ -1122,8 +1139,8 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
           AND store_id = ?
       `,
       [
-        customerName === undefined ? null : customerName,
-        customerPhone === undefined ? null : customerPhone,
+        hasCustomerName ? nextCustomerName : null,
+        hasCustomerPhone ? nextCustomerPhone : null,
         paymentMethod === undefined ? null : paymentMethod,
         isReservationOrder === undefined ? null : Number(Boolean(isReservationOrder)),
         hasDepositAmount ? nextDepositAmount : null,
@@ -1209,8 +1226,8 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
           o.handover_confirmed_at AS handoverConfirmedAt,
           o.notes,
           o.created_at AS createdAt,
-          c.name AS customerName,
-          c.phone AS customerPhone,
+          COALESCE(o.customer_name, c.name) AS customerName,
+          COALESCE(o.customer_phone, c.phone) AS customerPhone,
           c.line_user_id AS lineUserId,
           s.display_name AS staffName
         FROM orders o
@@ -2008,8 +2025,8 @@ router.get("/:id/invoice", requireOrderManagementFeature, async (req, res, next)
       `
         SELECT
           o.*,
-          COALESCE(c.name, o.customer_name) AS resolved_customer_name,
-          COALESCE(c.phone, o.customer_phone) AS resolved_customer_phone
+          COALESCE(o.customer_name, c.name) AS resolved_customer_name,
+          COALESCE(o.customer_phone, c.phone) AS resolved_customer_phone
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
           AND c.store_id = o.store_id

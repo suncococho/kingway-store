@@ -102,8 +102,8 @@ router.get("/summary", async (req, res, next) => {
         SELECT
           o.id,
           o.order_no AS orderNo,
-          COALESCE(c.name, o.customer_name, '-') AS customerName,
-          COALESCE(c.phone, o.customer_phone, '-') AS customerPhone,
+          COALESCE(o.customer_name, c.name, '-') AS customerName,
+          COALESCE(o.customer_phone, c.phone, '-') AS customerPhone,
           COALESCE(
             GROUP_CONCAT(DISTINCT oi.product_name_snapshot ORDER BY oi.id SEPARATOR ' / '),
             '-'
@@ -211,8 +211,8 @@ router.get("/summary", async (req, res, next) => {
         SELECT
           o.id,
           o.order_no AS orderNo,
-          COALESCE(c.name, o.customer_name, '-') AS customerName,
-          COALESCE(c.phone, o.customer_phone, '-') AS customerPhone,
+          COALESCE(o.customer_name, c.name, '-') AS customerName,
+          COALESCE(o.customer_phone, c.phone, '-') AS customerPhone,
           COALESCE(
             GROUP_CONCAT(DISTINCT oi.product_name_snapshot ORDER BY oi.id SEPARATOR ' / '),
             '-'
