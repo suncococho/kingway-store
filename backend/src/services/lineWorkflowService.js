@@ -12,10 +12,10 @@ const { createError } = require("../utils/errors");
 const { sanitizeLogObject } = require("../utils/logSanitizer");
 const {
   assertFutureRepairReservationSlot,
-  normalizeRepairReservationTime,
-  validateRepairReservationDate
+  normalizeRepairReservationTime
 } = require("./repairService");
 const { getPublicStoreSettings } = require("./settingsService");
+const { assertRepairReservationDateAvailable } = require("./repairReservationAvailabilityService");
 const { sendInternalTelegram } = require("./telegramService");
 const { applyRepairReservationDecision, notifyRepairCustomer } = require("./repairReservationService");
 const { getTableColumns, hasColumn } = require("../utils/schema");
@@ -2929,7 +2929,8 @@ async function createRepairReservationFromSession(lineUserId, options = {}) {
       return { phoneRequired: true };
     }
 
-    const reservationDay = validateRepairReservationDate(payload.reservationDate);
+    const reservationAvailability = await assertRepairReservationDateAvailable(resolvedStoreId, payload.reservationDate);
+    const reservationDay = reservationAvailability.weekdayName;
     const reservationTime = normalizeRepairReservationTime(payload.reservationTime || "14:00");
     assertFutureRepairReservationSlot(payload.reservationDate, reservationTime);
 
@@ -3050,7 +3051,14 @@ async function handleRepairReservationWizard(event) {
     }
 
     try {
-      validateRepairReservationDate(messageText);
+      const storeContext = await resolveLineWorkflowStoreContext({
+        storeId: payload.storeId || null,
+        lineUserId,
+        connection: pool,
+        reason: "repair_reservation_date_check"
+      });
+      await assertRepairReservationDateAvailable(storeContext.storeId, messageText);
+      payload.storeId = storeContext.storeId;
     } catch (error) {
       if (event.replyToken) {
         await replyToLine(event.replyToken, buildRepairReservationDatePromptMessages(error.message));
@@ -3059,6 +3067,7 @@ async function handleRepairReservationWizard(event) {
     }
 
     await upsertLineChatSession(lineUserId, REPAIR_RESERVATION_FLOW, REPAIR_RESERVATION_STEPS.time, {
+      ...payload,
       reservationDate: messageText
     });
 
@@ -4695,8 +4704,17 @@ async function handleLinePostback(event) {
     }
 
     try {
-      validateRepairReservationDate(selectedDate);
+      const payload = normalizeLineChatPayload(session.payload);
+      const storeContext = await resolveLineWorkflowStoreContext({
+        storeId: postbackStoreId || payload.storeId || null,
+        lineUserId: sourceLineUserId,
+        connection: pool,
+        reason: "repair_reservation_postback_date_check"
+      });
+      await assertRepairReservationDateAvailable(storeContext.storeId, selectedDate);
       await upsertLineChatSession(sourceLineUserId, REPAIR_RESERVATION_FLOW, REPAIR_RESERVATION_STEPS.time, {
+        ...payload,
+        storeId: storeContext.storeId,
         reservationDate: selectedDate
       });
       if (event.replyToken) {

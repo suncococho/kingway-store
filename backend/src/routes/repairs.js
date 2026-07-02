@@ -2,7 +2,8 @@ const express = require("express");
 const { pool } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { requireStoreFeature } = require("../middleware/storeFeature");
-const { BASE_FEE, calculateStorageFee, validateRepairReservationDate } = require("../services/repairService");
+const { BASE_FEE, calculateStorageFee } = require("../services/repairService");
+const { assertRepairReservationDateAvailable } = require("../services/repairReservationAvailabilityService");
 const { createError } = require("../utils/errors");
 const { logKpi } = require("../services/kpiService");
 const { sendLineMessage } = require("../utils/line");
@@ -617,7 +618,8 @@ router.post("/",  async (req, res, next) => {
     const normalizedCustomerType = normalizeCustomerType(
       customerType || customer.customerType || (customer.lineUserId ? "LINE" : customer.phone ? "OFFLINE_WITH_PHONE" : "OFFLINE_NO_PHONE")
     );
-    const reservationDay = validateRepairReservationDate(reservationDate);
+    const reservationAvailability = await assertRepairReservationDateAvailable(storeId, reservationDate);
+    const reservationDay = reservationAvailability.weekdayName;
     const [result] = await pool.query(
       `
         INSERT INTO repair_orders (

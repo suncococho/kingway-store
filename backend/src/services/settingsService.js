@@ -28,6 +28,9 @@ const STORE_DEFAULTS = {
   repairNoPrefix: "REP",
   purchaseConfirmationNoRule: "PC-{YYYY}{MM}{SEQ}",
   repairReservationWeekdays: ["TUE", "WED", "SUN"],
+  repairReservationDisabledDates: [],
+  repairReservationEnabledDates: [],
+  repairReservationMaxDaysAhead: 30,
   basicInspectionFee: 400,
   storageFeeRule: "完修後逾期保管依門市現場規則另計。",
   depositRule: "預約單可依門市規則收取訂金，尾款以完款流程為準。",
@@ -142,6 +145,23 @@ function normalizeStringArray(value, fallback = []) {
   return Array.isArray(fallback) ? [...fallback] : [];
 }
 
+function normalizeDateArray(value) {
+  const source = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[,\n]/) : [];
+  return Array.from(new Set(
+    source
+      .map((item) => normalizeText(item))
+      .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item))
+  )).sort();
+}
+
+function normalizeMaxDaysAhead(value, fallback = 30) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.floor(parsed), 1), 60);
+}
+
 function mergeSettings(defaults, payload) {
   const base = Array.isArray(defaults) ? [] : { ...defaults };
   if (!payload || typeof payload !== "object") {
@@ -195,6 +215,9 @@ function normalizeStorePayload(input = {}) {
     repairNoPrefix: normalizeText(input.repairNoPrefix) || STORE_DEFAULTS.repairNoPrefix,
     purchaseConfirmationNoRule: normalizeText(input.purchaseConfirmationNoRule) || STORE_DEFAULTS.purchaseConfirmationNoRule,
     repairReservationWeekdays: normalizeStringArray(input.repairReservationWeekdays, STORE_DEFAULTS.repairReservationWeekdays),
+    repairReservationDisabledDates: normalizeDateArray(input.repairReservationDisabledDates),
+    repairReservationEnabledDates: normalizeDateArray(input.repairReservationEnabledDates),
+    repairReservationMaxDaysAhead: normalizeMaxDaysAhead(input.repairReservationMaxDaysAhead, STORE_DEFAULTS.repairReservationMaxDaysAhead),
     basicInspectionFee: normalizeNumber(input.basicInspectionFee, STORE_DEFAULTS.basicInspectionFee),
     storageFeeRule: normalizeText(input.storageFeeRule) || STORE_DEFAULTS.storageFeeRule,
     depositRule: normalizeText(input.depositRule) || STORE_DEFAULTS.depositRule,

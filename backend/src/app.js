@@ -35,6 +35,7 @@ const inventoryRoutes = require("./routes/inventory");
 const purchaseConfirmationRoutes = require("./routes/purchaseConfirmations");
 const repairConfirmationRoutes = require("./routes/repairConfirmations");
 const repairRoutes = require("./routes/repairs");
+const repairReservationSettingsRoutes = require("./routes/repairReservationSettings");
 const couponRoutes = require("./routes/coupons");
 const surveyRoutes = require("./routes/surveys");
 const supplierRoutes = require("./routes/suppliers");
@@ -519,6 +520,7 @@ app.get("/health", async (req, res, next) => {
 app.use("/api/store", storeSettingsRoutes);
 app.use("/api/storefront", storefrontRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/repair-reservation-settings", repairReservationSettingsRoutes);
 app.use("/api/system", systemStatusRoutes);
 app.use("/api", storeSignupRoutes);
 app.use("/api/platform-auth", platformAuthRoutes);

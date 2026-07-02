@@ -25,6 +25,10 @@ const {
   normalizeRepairReservationDateValue,
   normalizeRepairReservationTime
 } = require("../services/repairService");
+const {
+  assertRepairReservationDateAvailable,
+  getAvailableRepairReservationDates
+} = require("../services/repairReservationAvailabilityService");
 
 const router = express.Router();
 const resolvePublicStoreContext = createPublicStoreContextMiddleware({
@@ -248,6 +252,29 @@ function isPlaceholderCustomerName(value) {
 
 router.use(resolvePublicStoreContext);
 
+router.get("/reservation-availability", async (req, res, next) => {
+  try {
+    const requestedLineUserId = String(req.query.lineUserId || req.get("X-Line-User-Id") || "").trim();
+    let storeId = Number(req.publicStoreContext?.storeId || 0) || null;
+
+    if (!storeId && requestedLineUserId) {
+      const storeContext = await resolveLineRepairStoreContext(req, requestedLineUserId, "line_repair_availability");
+      if (storeContext.ok) {
+        storeId = storeContext.storeId;
+      }
+    }
+
+    if (!storeId) {
+      storeId = 1;
+    }
+
+    const availability = await getAvailableRepairReservationDates(storeId);
+    return res.json(availability);
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/customer", async (req, res, next) => {
   try {
     const lineUserId = String(req.query.lineUserId || "").trim();
@@ -263,6 +290,7 @@ router.get("/customer", async (req, res, next) => {
     }
 
     const resolvedStoreId = storeContext.storeId;
+    await assertRepairReservationDateAvailable(resolvedStoreId, reservationDate);
 
     const [rows] = await pool.query(
       `SELECT

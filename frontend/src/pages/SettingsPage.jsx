@@ -43,6 +43,9 @@ const STORE_DEFAULTS = {
   repairNoPrefix: "",
   purchaseConfirmationNoRule: "",
   repairReservationWeekdays: [],
+  repairReservationDisabledDates: [],
+  repairReservationEnabledDates: [],
+  repairReservationMaxDaysAhead: "30",
   basicInspectionFee: "0",
   storageFeeRule: "",
   depositRule: "",
@@ -127,6 +130,9 @@ function cloneStoreForm(source) {
     repairNoPrefix: source?.repairNoPrefix || "",
     purchaseConfirmationNoRule: source?.purchaseConfirmationNoRule || "",
     repairReservationWeekdays: Array.isArray(source?.repairReservationWeekdays) ? source.repairReservationWeekdays : [],
+    repairReservationDisabledDates: Array.isArray(source?.repairReservationDisabledDates) ? source.repairReservationDisabledDates : [],
+    repairReservationEnabledDates: Array.isArray(source?.repairReservationEnabledDates) ? source.repairReservationEnabledDates : [],
+    repairReservationMaxDaysAhead: String(source?.repairReservationMaxDaysAhead ?? "30"),
     basicInspectionFee: String(source?.basicInspectionFee ?? "0"),
     storageFeeRule: source?.storageFeeRule || "",
     depositRule: source?.depositRule || "",
@@ -192,6 +198,8 @@ function SettingsPage() {
   const [systemTab, setSystemTab] = useState("line");
   const [storeForm, setStoreForm] = useState(STORE_DEFAULTS);
   const [systemForm, setSystemForm] = useState(SYSTEM_DEFAULTS);
+  const [disabledDateInput, setDisabledDateInput] = useState("");
+  const [enabledDateInput, setEnabledDateInput] = useState("");
 
   useEffect(() => {
     async function load() {
@@ -242,6 +250,25 @@ function SettingsPage() {
       repairReservationWeekdays: current.repairReservationWeekdays.includes(code)
         ? current.repairReservationWeekdays.filter((item) => item !== code)
         : [...current.repairReservationWeekdays, code]
+    }));
+  }
+
+  function addStoreDateField(fieldName, value, clear) {
+    const normalized = String(value || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      return;
+    }
+    setStoreForm((current) => ({
+      ...current,
+      [fieldName]: Array.from(new Set([...(current[fieldName] || []), normalized])).sort()
+    }));
+    clear("");
+  }
+
+  function removeStoreDateField(fieldName, value) {
+    setStoreForm((current) => ({
+      ...current,
+      [fieldName]: (current[fieldName] || []).filter((item) => item !== value)
     }));
   }
 
@@ -551,6 +578,37 @@ function SettingsPage() {
                       </div>
                     </div>
                     <label className="form-field">
+                      <span>最多可預約天數</span>
+                      <select value={storeForm.repairReservationMaxDaysAhead} onChange={(event) => updateStoreField("repairReservationMaxDaysAhead", event.target.value)}>
+                        <option value="30">30 天</option>
+                        <option value="60">60 天</option>
+                      </select>
+                    </label>
+                    <div className="form-field form-field-wide">
+                      <span>不可預約日期</span>
+                      <div className="inline-form-row">
+                        <input type="date" value={disabledDateInput} onChange={(event) => setDisabledDateInput(event.target.value)} />
+                        <button type="button" className="secondary-button" onClick={() => addStoreDateField("repairReservationDisabledDates", disabledDateInput, setDisabledDateInput)}>新增不可預約日期</button>
+                      </div>
+                      <div className="admin-chip-row">
+                        {(storeForm.repairReservationDisabledDates || []).map((date) => (
+                          <button key={date} type="button" className="admin-filter-chip" onClick={() => removeStoreDateField("repairReservationDisabledDates", date)}>{date} ×</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="form-field form-field-wide">
+                      <span>特別可預約日期</span>
+                      <div className="inline-form-row">
+                        <input type="date" value={enabledDateInput} onChange={(event) => setEnabledDateInput(event.target.value)} />
+                        <button type="button" className="secondary-button" onClick={() => addStoreDateField("repairReservationEnabledDates", enabledDateInput, setEnabledDateInput)}>新增可預約日期</button>
+                      </div>
+                      <div className="admin-chip-row">
+                        {(storeForm.repairReservationEnabledDates || []).map((date) => (
+                          <button key={date} type="button" className="admin-filter-chip" onClick={() => removeStoreDateField("repairReservationEnabledDates", date)}>{date} ×</button>
+                        ))}
+                      </div>
+                    </div>
+                    <label className="form-field">
                       <span>基本檢查費</span>
                       <input value={storeForm.basicInspectionFee} onChange={(event) => updateStoreField("basicInspectionFee", event.target.value)} />
                     </label>
@@ -585,6 +643,18 @@ function SettingsPage() {
                     <div className="log-row">
                       <strong>可預約星期：</strong>
                       <div>{joinWeekdays(storeForm.repairReservationWeekdays)}</div>
+                    </div>
+                    <div className="log-row">
+                      <strong>最多可預約：</strong>
+                      <div>{storeForm.repairReservationMaxDaysAhead || "30"} 天</div>
+                    </div>
+                    <div className="log-row">
+                      <strong>不可預約日期：</strong>
+                      <div>{(storeForm.repairReservationDisabledDates || []).join("、") || "未設定"}</div>
+                    </div>
+                    <div className="log-row">
+                      <strong>特別可預約日期：</strong>
+                      <div>{(storeForm.repairReservationEnabledDates || []).join("、") || "未設定"}</div>
                     </div>
                     <div className="log-row">
                       <strong>檢查費：</strong>

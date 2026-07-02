@@ -89,6 +89,11 @@ function formatTaipeiDate(now = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+function formatAvailableDateOption(item) {
+  const weekday = item?.weekdayLabel || item?.weekday || "";
+  return weekday ? `${item.date}（${weekday}）` : item.date;
+}
+
 function normalizeReservationTime(value) {
   const match = String(value || "").trim().match(/^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
   return match ? `${match[1]}:${match[2]}` : "";
@@ -199,6 +204,8 @@ function LineRepairRequestPage() {
   const [submitting, setSubmitting] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [availability, setAvailability] = useState({ availableDates: [], maxDaysAhead: 30 });
+  const [availabilityLoading, setAvailabilityLoading] = useState(true);
   const submitLockRef = useRef(false);
   const [lineContextFailureReason, setLineContextFailureReason] = useState("");
   const [lineInClient, setLineInClient] = useState(false);
@@ -210,6 +217,29 @@ function LineRepairRequestPage() {
     profileUserId: "",
     recoveredLineUserId: ""
   });
+
+  async function loadRepairReservationAvailability(nextStoreContext) {
+    setAvailabilityLoading(true);
+    try {
+      const storeQuery = nextStoreContext?.isExplicitStore
+        ? `?store=${encodeURIComponent(nextStoreContext.storeCode)}`
+        : "";
+      const response = await apiRequest(`/line-repair/reservation-availability${storeQuery}`);
+      const availableDates = Array.isArray(response?.availableDates) ? response.availableDates : [];
+      setAvailability({ ...(response || {}), availableDates });
+      setForm((current) => {
+        if (current.reservationDate && availableDates.some((item) => item.date === current.reservationDate)) {
+          return current;
+        }
+        return { ...current, reservationDate: availableDates[0]?.date || "", reservationTime: "" };
+      });
+    } catch (availabilityError) {
+      setAvailability({ availableDates: [], maxDaysAhead: 30 });
+      setError(availabilityError.message || "讀取可預約日期失敗");
+    } finally {
+      setAvailabilityLoading(false);
+    }
+  }
 
   useEffect(() => {
     async function loadStoreContext() {
@@ -249,6 +279,7 @@ function LineRepairRequestPage() {
         setLoading(false);
         return;
       }
+      await loadRepairReservationAvailability(resolvedStoreContext);
 
       try {
         const context = await resolveLineContext();
@@ -338,8 +369,15 @@ function LineRepairRequestPage() {
   function update(name, value) {
     setForm((current) => {
       const next = { ...current, [name]: value };
-      if (name === "reservationDate" && next.reservationTime && isPastReservationSlot(value, next.reservationTime)) {
-        next.reservationTime = "";
+      if (name === "reservationDate") {
+        if (!availability.availableDates.some((item) => item.date === value)) {
+          next.reservationDate = "";
+          next.reservationTime = "";
+          return next;
+        }
+        if (next.reservationTime && isPastReservationSlot(value, next.reservationTime)) {
+          next.reservationTime = "";
+        }
       }
       return next;
     });
@@ -419,6 +457,13 @@ function LineRepairRequestPage() {
 
     if (!form.reservationDate) {
       setError("請選擇希望到店日期。");
+      setSubmitting(false);
+      submitLockRef.current = false;
+      return;
+    }
+
+    if (!availability.availableDates.some((item) => item.date === form.reservationDate)) {
+      setError("此日期目前無法預約，請選擇其他日期。");
       setSubmitting(false);
       submitLockRef.current = false;
       return;
@@ -602,8 +647,20 @@ function LineRepairRequestPage() {
         </label>
 
         <label className="form-field">
-          <span>希望到店日期</span>
-          <input type="date" min={formatTaipeiDate()} value={form.reservationDate} onChange={(e) => update("reservationDate", e.target.value)} disabled={submitting} />
+          <span>可預約日期</span>
+          <select
+            value={form.reservationDate}
+            onChange={(e) => update("reservationDate", e.target.value)}
+            disabled={submitting || availabilityLoading || !availability.availableDates.length}
+          >
+            <option value="">{availabilityLoading ? "可預約日期讀取中..." : "請選擇維修預約日期"}</option>
+            {availability.availableDates.map((item) => (
+              <option key={item.date} value={item.date}>{formatAvailableDateOption(item)}</option>
+            ))}
+          </select>
+          {!availabilityLoading && !availability.availableDates.length ? (
+            <small className="muted-text">目前沒有可預約日期，請聯絡門市。</small>
+          ) : null}
         </label>
 
         <label className="form-field">
@@ -686,7 +743,7 @@ function LineRepairRequestPage() {
           </label>
         </div>
 
-        <button className="line-customer-close" type="submit" disabled={submitting || !form.repairWarrantyAccepted}>
+        <button className="line-customer-close" type="submit" disabled={submitting || !form.repairWarrantyAccepted || availabilityLoading || !availability.availableDates.length}>
           {uploadingAttachments ? "附件上傳中..." : submitting ? "送出中，請稍候..." : "送出維修預約"}
         </button>
           </form>
