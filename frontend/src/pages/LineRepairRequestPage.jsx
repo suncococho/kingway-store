@@ -573,6 +573,20 @@ function LineRepairRequestPage() {
     );
   }
 
+  const selectedAvailableDate = availability.availableDates.find((item) => item.date === form.reservationDate) || null;
+  const selectedDateText = selectedAvailableDate ? formatAvailableDateOption(selectedAvailableDate) : "尚未選擇";
+  const selectedTimeText = form.reservationTime
+    ? (REPAIR_RESERVATION_TIME_SLOTS.find((slot) => slot.value === form.reservationTime)?.label || form.reservationTime)
+    : "尚未選擇";
+  const needsReservationTime = Boolean(form.reservationDate) && !form.reservationTime;
+  const canSubmitReservation = Boolean(
+    form.repairWarrantyAccepted &&
+    form.reservationDate &&
+    form.reservationTime &&
+    availability.availableDates.length &&
+    !availabilityLoading
+  );
+
   return (
     <div className="line-customer-page">
       <section className="line-customer-hero">
@@ -646,6 +660,16 @@ function LineRepairRequestPage() {
           <input value={form.bikeModel} onChange={(e) => update("bikeModel", e.target.value)} placeholder="例如 Fatbike / 電動自行車 / 車款名稱" disabled={submitting} />
         </label>
 
+        <div className="line-reservation-info-box">
+          <strong>維修預約日期說明</strong>
+          <ul>
+            <li>可預約日是門市安排技術人員可處理維修的日期。</li>
+            <li>您選擇的日期，門市可協助向技術人員提出維修需求。</li>
+            <li>系統只會顯示目前可選擇的日期。</li>
+          </ul>
+          <small>若某一天沒有出現在清單中，代表該日未開放維修預約、技術人員未排班，或已被門市設定為不可預約日期。</small>
+        </div>
+
         <label className="form-field">
           <span>可預約日期</span>
           <select
@@ -660,6 +684,9 @@ function LineRepairRequestPage() {
           </select>
           {!availabilityLoading && !availability.availableDates.length ? (
             <small className="muted-text">目前沒有可預約日期，請聯絡門市。</small>
+          ) : null}
+          {!availabilityLoading && availability.availableDates.length ? (
+            <small className="muted-text">未顯示的日期代表當天未開放維修預約或門市已設定為不可預約。</small>
           ) : null}
         </label>
 
@@ -678,6 +705,9 @@ function LineRepairRequestPage() {
           </select>
           {form.reservationDate && REPAIR_RESERVATION_TIME_SLOTS.every((slot) => isTimeSlotDisabled(form.reservationDate, slot.value)) ? (
             <small className="muted-text">今日可預約時段已過，請選擇其他日期。</small>
+          ) : null}
+          {needsReservationTime ? (
+            <small className="line-reservation-warning">請先選擇希望到店時間。</small>
           ) : null}
         </label>
 
@@ -743,8 +773,21 @@ function LineRepairRequestPage() {
           </label>
         </div>
 
-        <button className="line-customer-close" type="submit" disabled={submitting || !form.repairWarrantyAccepted || availabilityLoading || !availability.availableDates.length}>
-          {uploadingAttachments ? "附件上傳中..." : submitting ? "送出中，請稍候..." : "送出維修預約"}
+        <div className="line-reservation-confirm-box">
+          <div className="line-customer-summary-title">送出前確認</div>
+          <div className={form.reservationDate ? "line-reservation-confirm-row ready" : "line-reservation-confirm-row missing"}>
+            <span>預約日期</span>
+            <strong>{selectedDateText}</strong>
+          </div>
+          <div className={form.reservationTime ? "line-reservation-confirm-row ready" : "line-reservation-confirm-row missing"}>
+            <span>預約時間</span>
+            <strong>{selectedTimeText}</strong>
+          </div>
+          {!form.reservationTime ? <div className="line-reservation-warning">請先選擇預約時間，才可以送出。</div> : null}
+        </div>
+
+        <button className="line-customer-close" type="submit" disabled={submitting || !canSubmitReservation}>
+          {uploadingAttachments ? "附件上傳中..." : submitting ? "送出中，請稍候..." : !form.reservationTime ? "請先選擇預約時間" : "送出維修預約"}
         </button>
           </form>
         </>

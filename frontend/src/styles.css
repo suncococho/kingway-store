@@ -5441,3 +5441,79 @@ button:hover {
     grid-template-columns: 1fr;
   }
 }
+
+
+.line-reservation-info-box,
+.line-reservation-confirm-box {
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.line-reservation-info-box strong,
+.line-reservation-confirm-box .line-customer-summary-title {
+  color: #1d4ed8;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.line-reservation-info-box ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.line-reservation-info-box li,
+.line-reservation-info-box small {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.line-reservation-confirm-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+  border: 1px solid #dbeafe;
+}
+
+.line-reservation-confirm-row span {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.line-reservation-confirm-row strong {
+  color: #0f172a;
+  font-size: 14px;
+  text-align: right;
+}
+
+.line-reservation-confirm-row.missing {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.line-reservation-confirm-row.missing strong {
+  color: #b91c1c;
+}
+
+.line-reservation-confirm-row.ready {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.line-reservation-warning {
+  color: #b91c1c;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.45;
+}
