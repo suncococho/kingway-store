@@ -139,6 +139,7 @@ const allowedImageTypes = new Map([
 
 router.use(authenticate, requireStoreScope(), authorize());
 const requireStoreAdminRole = requireStoreRole(["owner", "admin"]);
+const requireStoreManagerRole = requireStoreRole(["owner", "admin", "manager"]);
 
 function extractProductImageFileName(imageUrl) {
   const value = String(imageUrl || "").trim();
@@ -230,6 +231,10 @@ function assertCanEditSensitiveCost(req) {
     error.statusCode = 403;
     throw error;
   }
+}
+
+function getActiveProductWhereClause(productColumns, tableAlias = "products") {
+  return hasColumn(productColumns, "is_active") ? `${tableAlias}.is_active = 1` : "1 = 1";
 }
 
 function mapProductRow(row, options = {}) {
@@ -1090,6 +1095,7 @@ router.get("/", async (req, res, next) => {
 
     whereClauses.push("products.store_id = ?");
     params.push(storeId);
+    whereClauses.push(getActiveProductWhereClause(productColumns));
 
     if (search) {
       const searchFields = ["sku", "name"].filter((column) => hasColumn(productColumns, column));
@@ -1139,6 +1145,7 @@ router.get("/export", async (req, res, next) => {
         FROM products
         ${hasCategorySchema ? "LEFT JOIN product_categories pc ON pc.id = products.category_id AND pc.store_id = products.store_id" : ""}
         WHERE products.store_id = ?
+          AND ${getActiveProductWhereClause(productColumns)}
         ORDER BY products.id DESC
       `,
       [storeId]
@@ -1601,10 +1608,68 @@ router.post("/", async (req, res, next) => {
   }
 });
 
+router.delete("/:id", requireStoreManagerRole, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "商品 ID 錯誤" });
+    }
+
+    const storeId = getRequestStoreId(req);
+    const [result] = await pool.query(
+      `
+        UPDATE products
+        SET is_active = 0
+        WHERE id = ?
+          AND store_id = ?
+          AND is_active = 1
+      `,
+      [id, storeId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "找不到可刪除商品" });
+    }
+
+    return res.json({ ok: true, deleted: true, id });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/:id/restore", requireStoreManagerRole, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "商品 ID 錯誤" });
+    }
+
+    const storeId = getRequestStoreId(req);
+    const [result] = await pool.query(
+      `
+        UPDATE products
+        SET is_active = 1
+        WHERE id = ?
+          AND store_id = ?
+          AND is_active = 0
+      `,
+      [id, storeId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "找不到可復原商品" });
+    }
+
+    return res.json({ ok: true, restored: true, id });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.patch("/:id", async (req, res, next) => {
   try {
     if (Object.prototype.hasOwnProperty.call(req.body || {}, "isActive") && !req.body.isActive) {
-      return requireStoreAdminRole(req, res, () => updateProduct(req, res, next));
+      return requireStoreManagerRole(req, res, () => updateProduct(req, res, next));
     }
     return updateProduct(req, res, next);
   } catch (error) {

@@ -48,7 +48,7 @@ router.put("/:id/items", requireStoreFeature("orders_enabled"), async (req, res,
         if (!productId) throw createError("商品資料錯誤", 400);
 
         const [products] = await tx.query(
-          `SELECT id, sku, name, category, price FROM products WHERE id = ? AND store_id = ? LIMIT 1`,
+          `SELECT id, sku, name, category, price FROM products WHERE id = ? AND store_id = ? AND is_active = 1 LIMIT 1`,
           [productId, storeId]
         );
 

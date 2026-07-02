@@ -16,7 +16,7 @@ import { API_BASE_URL, apiRequest, apiUploadImage } from "../lib/api";
 import { getCategoryLabel } from "../lib/display";
 import { clearAuth, getStoredToken, getStoredUser } from "../lib/auth";
 import { PRODUCT_CATEGORY_LABELS, PRODUCT_CATEGORY_OPTIONS, deriveProductCategoryFromSku, normalizeProductCategory } from "../lib/productCategories";
-import { canEditSensitiveCost, canViewSensitiveCost } from "../lib/roleAccess";
+import { canEditSensitiveCost, canViewSensitiveCost, isManagerOrAboveUser } from "../lib/roleAccess";
 
 const PRODUCT_EXPORT_FILENAME = "KINGWAY_product_export.xlsx";
 const PRODUCT_IMPORT_TEMPLATE_FILENAME = "KINGWAY_product_import_template.xlsx";
@@ -70,6 +70,7 @@ function ProductsPage() {
   const currentUser = getStoredUser();
   const canViewCost = canViewSensitiveCost(currentUser);
   const canEditCost = canEditSensitiveCost(currentUser);
+  const canDeleteProduct = isManagerOrAboveUser(currentUser);
   const { items, loading, error, refetch } = useFetchList("/products");
   const categories = useFetchList("/product-categories");
   const [form, setForm] = useState({
@@ -525,6 +526,26 @@ function ProductsPage() {
       alert("商品已更新");
     } catch (error) {
       alert(error.message || "更新商品失敗");
+    }
+  }
+
+  async function deleteDetailProduct() {
+    if (!detailProduct || !canDeleteProduct) {
+      return;
+    }
+
+    const confirmed = window.confirm(`確定要刪除商品「${detailProduct.name}」嗎？刪除後不會影響既有訂單明細。`);
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await apiRequest(`/products/${detailProduct.id}`, { method: "DELETE" });
+      setDetailProductId(null);
+      await refetch();
+      alert("商品已刪除");
+    } catch (error) {
+      alert(error.message || "刪除商品失敗");
     }
   }
 
@@ -1815,6 +1836,11 @@ function ProductsPage() {
                 <button type="submit" className="primary-button inline-submit" disabled={detailImageUploading}>
                   {detailImageUploading ? "圖片上傳中..." : "儲存商品"}
                 </button>
+                {canDeleteProduct ? (
+                  <button type="button" className="kw-btn red inline-submit" onClick={deleteDetailProduct}>
+                    刪除商品
+                  </button>
+                ) : null}
               </form>
               <div className="product-image-preview">
                 <ProductImage

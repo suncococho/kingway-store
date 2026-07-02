@@ -374,6 +374,7 @@ router.get("/products",  async (req, res, next) => {
       WHERE products.store_id = ?
     `;
     const params = [storeId];
+    sql += " AND products.is_active = 1";
 
     if (search) {
       const searchFields = ["sku", "name"].filter((column) => hasColumn(productColumns, column));

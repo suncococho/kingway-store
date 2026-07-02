@@ -253,6 +253,7 @@ async function runInventoryImportDryRun(storeId, buffer) {
       SELECT sku, name, stock
       FROM products
       WHERE store_id = ?
+        AND is_active = 1
     `,
     [storeId]
   );
@@ -403,6 +404,7 @@ async function fetchInventoryRows(storeId) {
       FROM products
       ${hasCategorySchema ? "LEFT JOIN product_categories pc ON pc.id = products.category_id AND pc.store_id = products.store_id" : ""}
       WHERE products.store_id = ?
+        AND products.is_active = 1
       ORDER BY products.id DESC
     `,
     [storeId]
@@ -606,6 +608,7 @@ router.get("/low-stock", async (req, res, next) => {
         SELECT id, name, sku, category, stock, reorder_level AS reorderLevel
         FROM products
         WHERE store_id = ?
+          AND is_active = 1
           AND stock <= reorder_level
         ORDER BY stock ASC, name ASC
       `,
@@ -684,6 +687,7 @@ router.post("/movements", requireStoreAdminForAdjustment, async (req, res, next)
           FROM products
           WHERE id = ?
             AND store_id = ?
+            AND is_active = 1
           FOR UPDATE
         `,
         [productId, storeId]
@@ -772,7 +776,7 @@ router.post("/supplier-requests", requireStoreAdminRole, async (req, res, next) 
         }
 
         const [[product]] = await connection.query(
-          "SELECT id FROM products WHERE id = ? AND store_id = ? LIMIT 1",
+          "SELECT id FROM products WHERE id = ? AND store_id = ? AND is_active = 1 LIMIT 1",
           [productId, storeId]
         );
         if (!product) {
