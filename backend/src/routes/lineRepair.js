@@ -346,10 +346,12 @@ router.post(
           "SELECT ro.id, ro.store_id AS storeId, c.line_user_id AS lineUserId",
           "FROM repair_orders ro",
           "INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id",
+          "LEFT JOIN orders linked_o ON linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id",
           "WHERE ro.id = ?",
           "AND ro.store_id = ?",
           "AND c.line_user_id = ?",
           "AND ro.deleted_at IS NULL",
+          "AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))",
           "LIMIT 1"
         ].join(" "),
         [repairId, storeContext.storeId, lineUserId]
@@ -422,10 +424,12 @@ async function handleLineProgressQuoteResponse(req, res, next, approved) {
           c.line_user_id AS lineUserId
         FROM repair_orders ro
         INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
+        LEFT JOIN orders linked_o ON linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id
         WHERE ro.id = ?
           AND ro.store_id = ?
           AND c.line_user_id = ?
           AND ro.deleted_at IS NULL
+          AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
         LIMIT 1
       `,
       [repairId, storeContext.storeId, lineUserId]

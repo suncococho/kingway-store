@@ -131,8 +131,11 @@ async function assertRepairBelongsToStore(repairId, storeId, connection = pool) 
       SELECT ro.id
       FROM repair_orders ro
       INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ?
+      LEFT JOIN orders linked_o ON linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id
       WHERE ro.id = ?
         AND ro.store_id = ?
+        AND ro.deleted_at IS NULL
+        AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
       LIMIT 1
     `,
     [storeId, repairId, storeId]
@@ -217,6 +220,7 @@ router.get("/",  async (req, res, next) => {
           GROUP BY store_id, repair_order_id
         ) ra ON ra.repair_order_id = ro.id AND ra.store_id = ro.store_id
         WHERE ro.deleted_at IS NULL
+          AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
         ORDER BY ro.id DESC
       `;
     const repairListParams = [storeId];
@@ -519,7 +523,10 @@ router.get("/:id",  async (req, res, next) => {
           COALESCE(ro.customer_type, c.customer_type, 'LINE') AS customerType
         FROM repair_orders ro
         INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ?
+        LEFT JOIN orders linked_o ON linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id
         WHERE ro.id = ?
+          AND ro.deleted_at IS NULL
+          AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
       `,
       [storeId, req.params.id]
     );

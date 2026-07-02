@@ -114,6 +114,7 @@ async function fetchRepairForConfirmation(repairOrderId, storeId, connection = p
       WHERE ro.id = ?
         AND ro.store_id = ?
         AND ro.deleted_at IS NULL
+        AND (ro.order_id IS NULL OR (o.id IS NOT NULL AND o.deleted_at IS NULL))
       LIMIT 1
       ${lockClause}
     `,
@@ -155,6 +156,8 @@ async function findRepairIdForPaidOrder(orderId, storeId, connection = pool) {
       LEFT JOIN orders o ON o.id = ? AND o.store_id = ?
       WHERE ro.store_id = ?
         AND ro.deleted_at IS NULL
+        AND o.id IS NOT NULL
+        AND o.deleted_at IS NULL
         AND (
           ro.order_id = ?
           OR ro.id = o.repair_order_id

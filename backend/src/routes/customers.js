@@ -119,11 +119,13 @@ router.get("/", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, nex
           FROM repair_orders ro
           WHERE ro.customer_id = customers.id
             AND ro.store_id = ?
+            AND ro.deleted_at IS NULL
+            AND (ro.order_id IS NULL OR EXISTS (SELECT 1 FROM orders linked_o WHERE linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id AND linked_o.deleted_at IS NULL))
         ) AS repairCount,
         (
           (SELECT COUNT(*) FROM orders o WHERE o.customer_id = customers.id AND o.store_id = ?)
           +
-          (SELECT COUNT(*) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.store_id = ?)
+          (SELECT COUNT(*) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.store_id = ? AND ro.deleted_at IS NULL AND (ro.order_id IS NULL OR EXISTS (SELECT 1 FROM orders linked_o WHERE linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id AND linked_o.deleted_at IS NULL)))
         ) AS visitCount,
         COALESCE((
           SELECT SUM(o.total_amount)
@@ -134,7 +136,7 @@ router.get("/", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, nex
         ), 0) AS totalSpent,
         GREATEST(
           COALESCE((SELECT MAX(created_at) FROM orders o WHERE o.customer_id = customers.id AND o.store_id = ?), '1970-01-01 00:00:00'),
-          COALESCE((SELECT MAX(created_at) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.store_id = ?), '1970-01-01 00:00:00')
+          COALESCE((SELECT MAX(created_at) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.store_id = ? AND ro.deleted_at IS NULL AND (ro.order_id IS NULL OR EXISTS (SELECT 1 FROM orders linked_o WHERE linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id AND linked_o.deleted_at IS NULL))), '1970-01-01 00:00:00')
         ) AS lastVisit,
         EXISTS(
           SELECT 1
@@ -156,7 +158,7 @@ router.get("/", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res, nex
         GREATEST(
           COALESCE(last_contact_at, '1970-01-01 00:00:00'),
           COALESCE((SELECT MAX(created_at) FROM orders o WHERE o.customer_id = customers.id), '1970-01-01 00:00:00'),
-          COALESCE((SELECT MAX(created_at) FROM repair_orders ro WHERE ro.customer_id = customers.id), '1970-01-01 00:00:00'),
+          COALESCE((SELECT MAX(created_at) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.deleted_at IS NULL AND (ro.order_id IS NULL OR EXISTS (SELECT 1 FROM orders linked_o WHERE linked_o.id = ro.order_id AND linked_o.deleted_at IS NULL))), '1970-01-01 00:00:00'),
           COALESCE((SELECT MAX(created_at) FROM follow_up_tasks ft WHERE ft.customer_id = customers.id), '1970-01-01 00:00:00'),
           COALESCE((SELECT MAX(created_at) FROM purchase_confirmations pc WHERE pc.customer_id = customers.id), '1970-01-01 00:00:00'),
           COALESCE((SELECT MAX(submitted_at) FROM surveys s WHERE s.customer_id = customers.id), '1970-01-01 00:00:00')
@@ -356,7 +358,7 @@ router.patch("/:id", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res
           (
             (SELECT COUNT(*) FROM orders o WHERE o.customer_id = customers.id AND o.store_id = ?)
             +
-            (SELECT COUNT(*) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.store_id = ?)
+            (SELECT COUNT(*) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.store_id = ? AND ro.deleted_at IS NULL AND (ro.order_id IS NULL OR EXISTS (SELECT 1 FROM orders linked_o WHERE linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id AND linked_o.deleted_at IS NULL)))
           ) AS visitCount,
           COALESCE((
             SELECT SUM(o.total_amount)
@@ -367,7 +369,7 @@ router.patch("/:id", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req, res
           ), 0) AS totalSpent,
           GREATEST(
             COALESCE((SELECT MAX(created_at) FROM orders o WHERE o.customer_id = customers.id AND o.store_id = ?), '1970-01-01 00:00:00'),
-            COALESCE((SELECT MAX(created_at) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.store_id = ?), '1970-01-01 00:00:00')
+            COALESCE((SELECT MAX(created_at) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.store_id = ? AND ro.deleted_at IS NULL AND (ro.order_id IS NULL OR EXISTS (SELECT 1 FROM orders linked_o WHERE linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id AND linked_o.deleted_at IS NULL))), '1970-01-01 00:00:00')
           ) AS lastVisit,
           notes,
           created_at AS createdAt
@@ -406,7 +408,7 @@ router.get("/:id/detail", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req
           (
             (SELECT COUNT(*) FROM orders o WHERE o.customer_id = customers.id)
             +
-            (SELECT COUNT(*) FROM repair_orders ro WHERE ro.customer_id = customers.id)
+            (SELECT COUNT(*) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.deleted_at IS NULL AND (ro.order_id IS NULL OR EXISTS (SELECT 1 FROM orders linked_o WHERE linked_o.id = ro.order_id AND linked_o.deleted_at IS NULL)))
           ) AS visitCount,
           COALESCE((
             SELECT SUM(o.total_amount)
@@ -416,7 +418,7 @@ router.get("/:id/detail", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req
           ), 0) AS totalSpent,
           GREATEST(
             COALESCE((SELECT MAX(created_at) FROM orders o WHERE o.customer_id = customers.id), '1970-01-01 00:00:00'),
-            COALESCE((SELECT MAX(created_at) FROM repair_orders ro WHERE ro.customer_id = customers.id), '1970-01-01 00:00:00')
+            COALESCE((SELECT MAX(created_at) FROM repair_orders ro WHERE ro.customer_id = customers.id AND ro.deleted_at IS NULL AND (ro.order_id IS NULL OR EXISTS (SELECT 1 FROM orders linked_o WHERE linked_o.id = ro.order_id AND linked_o.deleted_at IS NULL))), '1970-01-01 00:00:00')
           ) AS lastVisit,
           created_at AS createdAt
         FROM customers
@@ -435,6 +437,7 @@ router.get("/:id/detail", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req
         SELECT id, order_no AS orderNo, total_amount AS totalAmount, final_payment_status AS finalPaymentStatus, business_date AS businessDate
         FROM orders
         WHERE customer_id = ?
+          AND deleted_at IS NULL
         ORDER BY id DESC
       `,
       [id]
@@ -442,9 +445,12 @@ router.get("/:id/detail", authorize(["ADMIN", "MANAGER", "CASHIER"]), async (req
     const [repairs] = await pool.query(
       `
         SELECT id, bike_model AS bikeModel, issue_description AS issueDescription, status, reservation_date AS reservationDate
-        FROM repair_orders
-        WHERE customer_id = ?
-        ORDER BY id DESC
+        FROM repair_orders ro
+        LEFT JOIN orders linked_o ON linked_o.id = ro.order_id
+        WHERE ro.customer_id = ?
+          AND ro.deleted_at IS NULL
+          AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
+        ORDER BY ro.id DESC
       `,
       [id]
     );

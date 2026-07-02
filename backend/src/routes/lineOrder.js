@@ -349,6 +349,7 @@ router.get("/customer", async (req, res, next) => {
         FROM orders
        WHERE (customer_id = ? OR customer_phone = ?)
          AND store_id = ?
+         AND deleted_at IS NULL
        ORDER BY id DESC
        LIMIT 20`,
       [customer.id, customer.phone, storeId]
@@ -418,6 +419,7 @@ router.get("/customer", async (req, res, next) => {
        WHERE ro.customer_id = ?
          AND ro.store_id = ?
          AND ro.deleted_at IS NULL
+         AND (ro.order_id IS NULL OR (o.id IS NOT NULL AND o.deleted_at IS NULL))
        ORDER BY ro.id DESC
        LIMIT 20`,
       [customer.id, storeId]
@@ -468,6 +470,7 @@ router.get("/customer", async (req, res, next) => {
         WHERE pc.store_id = ?
           AND pc.status = 'PENDING'
           AND pc.token IS NOT NULL
+          AND (pc.order_id IS NULL OR (o.id IS NOT NULL AND o.deleted_at IS NULL))
           AND (
             pc.customer_id = ?
             OR o.customer_id = ?

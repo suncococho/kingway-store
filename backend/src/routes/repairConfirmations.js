@@ -131,6 +131,7 @@ async function fetchRepairForConfirmation(repairOrderId, storeId, connection = p
       WHERE ro.id = ?
         AND ro.store_id = ?
         AND ro.deleted_at IS NULL
+        AND (ro.order_id IS NULL OR (o.id IS NOT NULL AND o.deleted_at IS NULL))
       LIMIT 1
       ${lockClause}
     `,
@@ -216,28 +217,32 @@ async function fetchConfirmationByToken(token, connection = pool, options = {}) 
   const [rows] = await connection.query(
     `
       SELECT
-        id,
-        store_id AS storeId,
-        repair_order_id AS repairOrderId,
-        customer_id AS customerId,
-        token,
-        status,
-        customer_name_snapshot AS customerNameSnapshot,
-        customer_phone_snapshot AS customerPhoneSnapshot,
-        vehicle_model_snapshot AS vehicleModelSnapshot,
-        issue_snapshot AS issueSnapshot,
-        repair_summary_snapshot AS repairSummarySnapshot,
-        amount_total_snapshot AS amountTotalSnapshot,
-        payment_status_snapshot AS paymentStatusSnapshot,
-        terms_version AS termsVersion,
-        confirmation_payload_json AS confirmationPayloadJson,
-        signature_image_path AS signatureImagePath,
-        pdf_path AS pdfPath,
-        pdf_url AS pdfUrl,
-        sent_at AS sentAt,
-        submitted_at AS submittedAt
-      FROM repair_confirmations
-      WHERE token = ?
+        rc.id,
+        rc.store_id AS storeId,
+        rc.repair_order_id AS repairOrderId,
+        rc.customer_id AS customerId,
+        rc.token,
+        rc.status,
+        rc.customer_name_snapshot AS customerNameSnapshot,
+        rc.customer_phone_snapshot AS customerPhoneSnapshot,
+        rc.vehicle_model_snapshot AS vehicleModelSnapshot,
+        rc.issue_snapshot AS issueSnapshot,
+        rc.repair_summary_snapshot AS repairSummarySnapshot,
+        rc.amount_total_snapshot AS amountTotalSnapshot,
+        rc.payment_status_snapshot AS paymentStatusSnapshot,
+        rc.terms_version AS termsVersion,
+        rc.confirmation_payload_json AS confirmationPayloadJson,
+        rc.signature_image_path AS signatureImagePath,
+        rc.pdf_path AS pdfPath,
+        rc.pdf_url AS pdfUrl,
+        rc.sent_at AS sentAt,
+        rc.submitted_at AS submittedAt
+      FROM repair_confirmations rc
+      INNER JOIN repair_orders ro ON ro.id = rc.repair_order_id AND ro.store_id = rc.store_id
+      LEFT JOIN orders o ON o.id = ro.order_id AND o.store_id = ro.store_id
+      WHERE rc.token = ?
+        AND ro.deleted_at IS NULL
+        AND (ro.order_id IS NULL OR (o.id IS NOT NULL AND o.deleted_at IS NULL))
       LIMIT 1
       ${lockClause}
     `,

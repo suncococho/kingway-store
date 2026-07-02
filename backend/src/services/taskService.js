@@ -27,8 +27,7 @@ async function getPendingTaskCounts(storeId) {
         AND pc.status = 'PENDING'
         AND (
           pc.order_id IS NULL
-          OR o.id IS NULL
-          OR ${getValidOrderWhereClause("o")}
+          OR (o.id IS NOT NULL AND ${getValidOrderWhereClause("o")})
         )
     `,
     [normalizedStoreId]
@@ -37,11 +36,15 @@ async function getPendingTaskCounts(storeId) {
   const [[repairReservations]] = await pool.query(
     `
       SELECT COUNT(*) AS count
-      FROM repair_orders
-      WHERE store_id = ?
-        AND deleted_at IS NULL
-        AND status NOT IN (${PICKUP_PENDING_REPAIR_STATES})
-        AND picked_up_at IS NULL
+      FROM repair_orders ro
+      LEFT JOIN orders linked_o
+        ON linked_o.id = ro.order_id
+       AND linked_o.store_id = ro.store_id
+      WHERE ro.store_id = ?
+        AND ro.deleted_at IS NULL
+        AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
+        AND ro.status NOT IN (${PICKUP_PENDING_REPAIR_STATES})
+        AND ro.picked_up_at IS NULL
     `,
     [normalizedStoreId]
   );

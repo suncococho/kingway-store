@@ -265,6 +265,7 @@ app.get("/api/customer-status", ...customerStatusStaffAuth, async (req, res, nex
        FROM orders
        WHERE store_id = ?
          AND (customer_id = ? OR customer_phone = ?)
+         AND deleted_at IS NULL
        ORDER BY id DESC
        LIMIT 20`,
       [storeId, customer.id, customer.phone]
@@ -275,10 +276,13 @@ app.get("/api/customer-status", ...customerStatusStaffAuth, async (req, res, nex
               reservation_date AS reservationDate, estimate_amount AS estimateAmount,
               inspection_fee AS inspectionFee, parts_fee AS partsFee, labor_fee AS laborFee,
               storage_fee AS storageFee, completed_at AS completedAt, picked_up_at AS pickedUpAt
-       FROM repair_orders
-       WHERE store_id = ?
-         AND customer_id = ?
-       ORDER BY id DESC
+       FROM repair_orders ro
+       LEFT JOIN orders linked_o ON linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id
+       WHERE ro.store_id = ?
+         AND ro.customer_id = ?
+         AND ro.deleted_at IS NULL
+         AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
+       ORDER BY ro.id DESC
        LIMIT 20`,
       [storeId, customer.id]
     );
@@ -292,6 +296,7 @@ app.get("/api/customer-status", ...customerStatusStaffAuth, async (req, res, nex
        WHERE pc.store_id = ?
          AND pc.status = 'PENDING'
          AND pc.token IS NOT NULL
+         AND (pc.order_id IS NULL OR (o.id IS NOT NULL AND o.deleted_at IS NULL))
          AND (
            pc.customer_id = ?
            OR o.customer_id = ?

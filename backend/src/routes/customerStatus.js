@@ -27,7 +27,8 @@ router.get("/", async (req, res, next) => {
               unpaid_balance AS unpaidBalance, final_payment_status AS finalPaymentStatus,
               payment_method AS paymentMethod, status, business_date AS businessDate
        FROM orders
-       WHERE customer_id = ? OR customer_phone = ?
+       WHERE (customer_id = ? OR customer_phone = ?)
+         AND deleted_at IS NULL
        ORDER BY id DESC
        LIMIT 20`,
       [customer.id, customer.phone]
@@ -38,9 +39,12 @@ router.get("/", async (req, res, next) => {
               reservation_date AS reservationDate, estimate_amount AS estimateAmount,
               inspection_fee AS inspectionFee, parts_fee AS partsFee, labor_fee AS laborFee,
               storage_fee AS storageFee, completed_at AS completedAt, picked_up_at AS pickedUpAt
-       FROM repair_orders
-       WHERE customer_id = ?
-       ORDER BY id DESC
+       FROM repair_orders ro
+       LEFT JOIN orders linked_o ON linked_o.id = ro.order_id
+       WHERE ro.customer_id = ?
+         AND ro.deleted_at IS NULL
+         AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
+       ORDER BY ro.id DESC
        LIMIT 20`,
       [customer.id]
     );

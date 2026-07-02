@@ -156,8 +156,12 @@ router.get("/summary", async (req, res, next) => {
         INNER JOIN customers c
           ON c.id = ro.customer_id
           AND c.store_id = ro.store_id
+        LEFT JOIN orders linked_o
+          ON linked_o.id = ro.order_id
+          AND linked_o.store_id = ro.store_id
         WHERE ro.store_id = ?
           AND ${getRepairWhereClause("ro")}
+          AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
           AND ro.status NOT IN (${REPAIR_PICKUP_EXCLUDED_STATUSES})
           AND ro.picked_up_at IS NULL
         ORDER BY ro.id DESC
@@ -170,8 +174,12 @@ router.get("/summary", async (req, res, next) => {
       `
         SELECT COUNT(*) AS pendingRepairPickupCount
         FROM repair_orders ro
+        LEFT JOIN orders linked_o
+          ON linked_o.id = ro.order_id
+          AND linked_o.store_id = ro.store_id
         WHERE ro.store_id = ?
           AND ${getRepairWhereClause("ro")}
+          AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
           AND ro.status NOT IN (${REPAIR_PICKUP_EXCLUDED_STATUSES})
           AND ro.picked_up_at IS NULL
       `,
