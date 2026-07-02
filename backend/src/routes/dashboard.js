@@ -8,6 +8,7 @@ const router = express.Router();
 
 const VALID_STATUS_LIST = "'cancelled', 'canceled', 'deleted', 'CANCELED', 'CANCELLED', 'DELETED'";
 const REPAIR_PICKUP_EXCLUDED_STATUSES = "'picked_up', 'completed', 'canceled', 'CANCELED', 'CANCELLED', 'DELETED'";
+const INVALID_REPAIR_WORKFLOW_VALUES = "'rejected', 'declined', 'cancelled', 'canceled', 'cancel'";
 const VALID_ORDER_WHERE = "deleted_at IS NULL AND status NOT IN (" + VALID_STATUS_LIST + ")";
 
 const VALID_REPAIR_WHERE = VALID_ORDER_WHERE;
@@ -21,7 +22,26 @@ function getOrderWhereClause(alias = "") {
 
 function getRepairWhereClause(alias = "") {
   const prefix = alias ? `${alias}.` : "";
-  return `${prefix}deleted_at IS NULL AND ${prefix}status NOT IN (${VALID_STATUS_LIST})`;
+  return [
+    `${prefix}deleted_at IS NULL`,
+    `${prefix}status NOT IN (${VALID_STATUS_LIST})`,
+    `LOWER(COALESCE(${prefix}status, '')) NOT IN (${INVALID_REPAIR_WORKFLOW_VALUES})`,
+    `LOWER(COALESCE(${prefix}customer_estimate_response, '')) NOT IN (${INVALID_REPAIR_WORKFLOW_VALUES})`
+  ].join(" AND ");
+}
+
+function buildInvalidLinkedRepairOrderClause(orderAlias = "o") {
+  return `AND NOT EXISTS (
+    SELECT 1
+    FROM repair_orders ro_invalid
+    WHERE ro_invalid.store_id = ${orderAlias}.store_id
+      AND (ro_invalid.order_id = ${orderAlias}.id OR ro_invalid.id = ${orderAlias}.repair_order_id)
+      AND (
+        ro_invalid.deleted_at IS NOT NULL
+        OR LOWER(COALESCE(ro_invalid.status, '')) IN (${INVALID_REPAIR_WORKFLOW_VALUES})
+        OR LOWER(COALESCE(ro_invalid.customer_estimate_response, '')) IN (${INVALID_REPAIR_WORKFLOW_VALUES})
+      )
+  )`;
 }
 
 async function getProductFilterClause() {
@@ -212,6 +232,7 @@ router.get("/summary", async (req, res, next) => {
           AND c.store_id = o.store_id
         WHERE o.store_id = ?
           AND ${getOrderWhereClause("o")}
+          ${buildInvalidLinkedRepairOrderClause("o")}
           AND (COALESCE(o.unpaid_balance, 0) > 0 OR COALESCE(o.final_payment_status, 'UNPAID') <> 'PAID')
         GROUP BY
           o.id,
@@ -237,10 +258,11 @@ router.get("/summary", async (req, res, next) => {
         SELECT
           COUNT(*) AS pendingPaymentCount,
           COALESCE(SUM(unpaid_balance), 0) AS pendingPaymentAmount
-        FROM orders
-        WHERE store_id = ?
-          AND ${VALID_ORDER_WHERE}
-          AND (COALESCE(unpaid_balance, 0) > 0 OR COALESCE(final_payment_status, 'UNPAID') <> 'PAID')
+        FROM orders o
+        WHERE o.store_id = ?
+          AND ${getOrderWhereClause("o")}
+          ${buildInvalidLinkedRepairOrderClause("o")}
+          AND (COALESCE(o.unpaid_balance, 0) > 0 OR COALESCE(o.final_payment_status, 'UNPAID') <> 'PAID')
       `,
       [storeId]
     );

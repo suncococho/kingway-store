@@ -2,10 +2,25 @@ const { pool } = require("../db");
 
 const INVALID_STATUS_LIST = "'cancelled', 'canceled', 'deleted', 'CANCELED', 'CANCELLED', 'DELETED'";
 const PICKUP_PENDING_REPAIR_STATES = "'picked_up', 'completed', 'canceled', 'CANCELED', 'CANCELLED', 'DELETED'";
+const INVALID_REPAIR_WORKFLOW_VALUES = "'rejected', 'declined', 'cancelled', 'canceled', 'cancel'";
 
 function getValidOrderWhereClause(alias = "") {
   const prefix = alias ? `${alias}.` : "";
   return `${prefix}deleted_at IS NULL AND ${prefix}status NOT IN (${INVALID_STATUS_LIST})`;
+}
+
+function buildInvalidLinkedRepairOrderClause(orderAlias = "o") {
+  return `AND NOT EXISTS (
+    SELECT 1
+    FROM repair_orders ro_invalid
+    WHERE ro_invalid.store_id = ${orderAlias}.store_id
+      AND (ro_invalid.order_id = ${orderAlias}.id OR ro_invalid.id = ${orderAlias}.repair_order_id)
+      AND (
+        ro_invalid.deleted_at IS NOT NULL
+        OR LOWER(COALESCE(ro_invalid.status, '')) IN (${INVALID_REPAIR_WORKFLOW_VALUES})
+        OR LOWER(COALESCE(ro_invalid.customer_estimate_response, '')) IN (${INVALID_REPAIR_WORKFLOW_VALUES})
+      )
+  )`;
 }
 
 async function getPendingTaskCounts(storeId) {
@@ -27,7 +42,7 @@ async function getPendingTaskCounts(storeId) {
         AND pc.status = 'PENDING'
         AND (
           pc.order_id IS NULL
-          OR (o.id IS NOT NULL AND ${getValidOrderWhereClause("o")})
+          OR (o.id IS NOT NULL AND ${getValidOrderWhereClause("o")} ${buildInvalidLinkedRepairOrderClause("o")})
         )
     `,
     [normalizedStoreId]
@@ -43,6 +58,8 @@ async function getPendingTaskCounts(storeId) {
       WHERE ro.store_id = ?
         AND ro.deleted_at IS NULL
         AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
+        AND LOWER(COALESCE(ro.status, '')) NOT IN (${INVALID_REPAIR_WORKFLOW_VALUES})
+        AND LOWER(COALESCE(ro.customer_estimate_response, '')) NOT IN (${INVALID_REPAIR_WORKFLOW_VALUES})
         AND ro.status NOT IN (${PICKUP_PENDING_REPAIR_STATES})
         AND ro.picked_up_at IS NULL
     `,
