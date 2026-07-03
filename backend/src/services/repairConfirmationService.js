@@ -8,6 +8,7 @@ const {
   createUriAction
 } = require("./lineWorkflowService");
 const repairConfirmationContent = require("../content/repairConfirmationContent.json");
+const { getReplacementConfirmationBlockReason } = require("./repairReplacementConfirmationService");
 
 const COMPLETED_REPAIR_STATUSES = new Set(["completed_waiting_pickup", "picked_up", "completed"]);
 
@@ -218,6 +219,16 @@ async function createOrReuseRepairConfirmationForCompletedRepair(repairOrderId, 
       return {
         ok: false,
         reason: blockReason,
+        confirmation: null,
+        repair
+      };
+    }
+
+    const replacementBlockReason = await getReplacementConfirmationBlockReason(repairOrderId, storeId, connection);
+    if (replacementBlockReason) {
+      return {
+        ok: false,
+        reason: replacementBlockReason,
         confirmation: null,
         repair
       };

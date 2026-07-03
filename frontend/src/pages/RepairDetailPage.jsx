@@ -6,6 +6,8 @@ import PageHeader from "../components/PageHeader";
 import ProductImage from "../components/ProductImage";
 import StatusBadge from "../components/StatusBadge";
 import { apiRequest } from "../lib/api";
+import { getStoredUser } from "../lib/auth";
+import { isManagerOrAboveUser } from "../lib/roleAccess";
 import { formatTaipeiDate, formatTaipeiDateTime, getCategoryLabel, getRepairStatusLabel } from "../lib/display";
 
 function getStockTone(stock, reorderLevel) {
@@ -225,8 +227,11 @@ function RepairDetailPage() {
   const [confirmModal, setConfirmModal] = useState(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [systemInfoOpen, setSystemInfoOpen] = useState(false);
+  const currentUser = useMemo(() => getStoredUser(), []);
   const [repairConfirmation, setRepairConfirmation] = useState(null);
   const [repairConfirmationLoading, setRepairConfirmationLoading] = useState(false);
+  const [replacementConfirmations, setReplacementConfirmations] = useState({ tableExists: true, items: [] });
+  const [replacementConfirmationsLoading, setReplacementConfirmationsLoading] = useState(false);
   const [quoteConfirmationNotice, setQuoteConfirmationNotice] = useState(null);
 
   async function loadDetail() {
@@ -234,6 +239,7 @@ function RepairDetailPage() {
       const data = await apiRequest(`/repairs/${id}`);
       setDetail(data);
       loadRepairConfirmation();
+      loadReplacementConfirmations();
     } catch (error) {
       alert(getRepairActionErrorMessage(error));
     }
@@ -248,6 +254,21 @@ function RepairDetailPage() {
       setRepairConfirmation(null);
     } finally {
       setRepairConfirmationLoading(false);
+    }
+  }
+
+  async function loadReplacementConfirmations() {
+    setReplacementConfirmationsLoading(true);
+    try {
+      const data = await apiRequest("/repairs/" + id + "/replacement-confirmations");
+      setReplacementConfirmations({
+        tableExists: data?.tableExists !== false,
+        items: Array.isArray(data?.items) ? data.items : []
+      });
+    } catch {
+      setReplacementConfirmations({ tableExists: true, items: [] });
+    } finally {
+      setReplacementConfirmationsLoading(false);
     }
   }
 
@@ -299,6 +320,7 @@ function RepairDetailPage() {
       });
       loadDetail();
       loadRepairConfirmation();
+      loadReplacementConfirmations();
       if (response?.quoteConfirmationWarning) {
         setQuoteConfirmationNotice({
           warning: response.quoteConfirmationWarning,
@@ -636,6 +658,52 @@ function RepairDetailPage() {
     }
   }
 
+  async function updateReplacementConfirmation(item, patch) {
+    if (!item?.id) {
+      alert("更換確認資料表尚未建立，請先執行資料庫 migration");
+      return;
+    }
+    try {
+      const response = await apiRequest("/repairs/" + id + "/replacement-confirmations/" + item.id, {
+        method: "PATCH",
+        body: JSON.stringify({
+          isReplaced: patch.isReplaced !== undefined ? patch.isReplaced : item.isReplaced,
+          isTested: patch.isTested !== undefined ? patch.isTested : item.isTested,
+          isStockHandled: patch.isStockHandled !== undefined ? patch.isStockHandled : item.isStockHandled,
+          isPhotoConfirmed: patch.isPhotoConfirmed !== undefined ? patch.isPhotoConfirmed : item.isPhotoConfirmed
+        })
+      });
+      setReplacementConfirmations({
+        tableExists: response?.tableExists !== false,
+        items: Array.isArray(response?.items) ? response.items : []
+      });
+      loadRepairConfirmation();
+    } catch (error) {
+      alert(getRepairActionErrorMessage(error));
+    }
+  }
+
+  async function crossCheckReplacementConfirmation(item) {
+    if (!item?.id) {
+      alert("更換確認資料表尚未建立，請先執行資料庫 migration");
+      return;
+    }
+    try {
+      const response = await apiRequest("/repairs/" + id + "/replacement-confirmations/" + item.id + "/cross-check", {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      setReplacementConfirmations({
+        tableExists: response?.tableExists !== false,
+        items: Array.isArray(response?.items) ? response.items : []
+      });
+      loadRepairConfirmation();
+      alert(response?.message || "交叉確認已完成");
+    } catch (error) {
+      alert(getRepairActionErrorMessage(error));
+    }
+  }
+
   const summaryBadges = useMemo(
     () =>
       detail
@@ -713,6 +781,14 @@ function RepairDetailPage() {
       .includes(productKeyword);
   });
 
+  const replacementRows = Array.isArray(replacementConfirmations.items) ? replacementConfirmations.items : [];
+  const hasReplacementItems = replacementRows.length > 0;
+  const replacementConfirmationsReady =
+    !hasReplacementItems ||
+    replacementRows.every((item) => item.isReplaced && item.isTested && item.isStockHandled && item.crossCheckedAt);
+  const currentUserId = Number(currentUser?.id || 0);
+  const currentUserCanManagerCrossCheck = isManagerOrAboveUser(currentUser);
+
   const repairSteps = [
     { label: "建立維修單", done: detail.reservation_status !== "pending_approval" },
     { 
@@ -722,6 +798,7 @@ function RepairDetailPage() {
     { label: "填寫報價", done: Number(detail.estimate_amount || 0) > 0 },
     { label: "等待客戶同意", done: detail.customer_estimate_response === "approved" || detail.quote_status === "approved" || detail.quote_status === "accepted" || detail.status === "estimate_approved" || detail.status === "customer_confirmed" || detail.status === "repairing" || detail.status === "completed_waiting_pickup" || detail.status === "picked_up" },
     { label: "維修中", done: detail.status === "repairing" || detail.status === "completed_waiting_pickup" || detail.status === "picked_up" },
+    ...(hasReplacementItems ? [{ label: "更換項目確認", done: replacementConfirmationsReady || detail.status === "completed_waiting_pickup" || detail.status === "picked_up" }] : []),
     { label: "完成通知取車", done: detail.status === "completed_waiting_pickup" || detail.status === "picked_up" }
   ];
   const currentStep = repairSteps.find((step) => !step.done) || repairSteps[repairSteps.length - 1];
@@ -740,6 +817,8 @@ function RepairDetailPage() {
               ? canStartRepair
                 ? { label: "開始維修", action: requestStartRepair, tone: "blue" }
                 : null
+                : currentStep.label === "更換項目確認"
+                  ? { label: "完成更換確認", action: () => warnPreviousStep("更換項目確認"), tone: "yellow" }
               : detail.status === "repairing"
                 ? { label: "完成通知取車", action: requestCompleteRepair, tone: "blue" }
               : detail.status === "completed_waiting_pickup"
@@ -802,6 +881,105 @@ function RepairDetailPage() {
         </div>
       ) : (
         <div className="empty-state">目前沒有客戶上傳的照片或影片。</div>
+      )}
+    </section>
+  );
+
+  const replacementConfirmationPanel = (
+    <section className="content-card">
+      <div className="section-header">
+        <div>
+          <h2>更換項目確認</h2>
+          <p className="muted-text">維修報價中的配件/零件需完成更換、測試、庫存處理與交叉確認後才能結案。</p>
+          {!replacementConfirmations.tableExists ? (
+            <p className="muted-text">更換確認資料表尚未建立，請先執行資料庫 migration。</p>
+          ) : null}
+        </div>
+        <StatusBadge tone={replacementConfirmationsReady ? "success" : "warning"}>
+          {replacementConfirmationsLoading ? "讀取中" : replacementConfirmationsReady ? "已確認" : "待確認"}
+        </StatusBadge>
+      </div>
+      {hasReplacementItems ? (
+        <div className="stack-list">
+          {replacementRows.map((item) => {
+            const requiredChecksDone = Boolean(item.isReplaced && item.isTested && item.isStockHandled);
+            const checkedByCurrentUser = currentUserId && item.checkedByStaffId && Number(item.checkedByStaffId) === currentUserId;
+            const canCrossCheckItem = requiredChecksDone && !item.crossCheckedAt && (currentUserCanManagerCrossCheck || !checkedByCurrentUser);
+            return (
+              <div key={item.id || item.sourceKey} className="log-row">
+                <div className="section-header compact-header">
+                  <div>
+                    <strong>{item.itemName}</strong>
+                    <div className="muted-text">
+                      {item.sku ? `${item.sku} / ` : ""}數量 {Number(item.quantity || 0).toFixed(0)} / 單價 {formatCurrency(item.unitPrice)}
+                    </div>
+                  </div>
+                  <StatusBadge tone={item.completed ? "success" : "warning"}>{item.completed ? "已交叉確認" : "待確認"}</StatusBadge>
+                </div>
+                <div className="action-row">
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(item.isReplaced)}
+                      disabled={isFinalizedRepair || !item.id}
+                      onChange={(event) => updateReplacementConfirmation(item, { isReplaced: event.target.checked })}
+                    />
+                    <span>已更換</span>
+                  </label>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(item.isTested)}
+                      disabled={isFinalizedRepair || !item.id}
+                      onChange={(event) => updateReplacementConfirmation(item, { isTested: event.target.checked })}
+                    />
+                    <span>已測試</span>
+                  </label>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(item.isStockHandled)}
+                      disabled={isFinalizedRepair || !item.id}
+                      onChange={(event) => updateReplacementConfirmation(item, { isStockHandled: event.target.checked })}
+                    />
+                    <span>庫存已處理</span>
+                  </label>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(item.isPhotoConfirmed)}
+                      disabled={isFinalizedRepair || !item.id}
+                      onChange={(event) => updateReplacementConfirmation(item, { isPhotoConfirmed: event.target.checked })}
+                    />
+                    <span>照片已確認</span>
+                  </label>
+                </div>
+                <div className="muted-text">
+                  確認：{item.checkedByStaffName || "-"} {formatTaipeiDateTime(item.checkedAt)}
+                  {" / "}
+                  交叉確認：{item.crossCheckedByStaffName || "-"} {formatTaipeiDateTime(item.crossCheckedAt)}
+                </div>
+                {!isFinalizedRepair ? (
+                  <div className="action-row">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={!canCrossCheckItem}
+                      onClick={() => crossCheckReplacementConfirmation(item)}
+                    >
+                      交叉確認
+                    </button>
+                    {checkedByCurrentUser && !currentUserCanManagerCrossCheck && requiredChecksDone && !item.crossCheckedAt ? (
+                      <span className="muted-text">需由店長或另一位員工交叉確認。</span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="empty-state">目前沒有配件/零件更換項目。</div>
       )}
     </section>
   );
@@ -908,6 +1086,8 @@ function RepairDetailPage() {
         </section>
 
         {repairConfirmationPanel}
+
+        {replacementConfirmationPanel}
 
         {repairAttachmentsPanel}
 
@@ -1033,6 +1213,8 @@ function RepairDetailPage() {
       </section>
 
       {repairConfirmationPanel}
+
+      {replacementConfirmationPanel}
 
       {repairAttachmentsPanel}
 

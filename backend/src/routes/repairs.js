@@ -35,6 +35,13 @@ const {
   createOrReuseRepairConfirmationForCompletedRepair,
   getRepairConfirmationBlockReason
 } = require("../services/repairConfirmationService");
+const {
+  assertReplacementConfirmationsComplete,
+  crossCheckReplacementConfirmation,
+  listReplacementConfirmations,
+  syncReplacementConfirmationsFromQuote,
+  updateReplacementConfirmation
+} = require("../services/repairReplacementConfirmationService");
 
 const router = express.Router();
 const REPAIR_ALLOWED_ROLES = ["ADMIN", "MANAGER", "STAFF", "CASHIER", "REPAIR", "USER", "EMPLOYEE"];
@@ -806,6 +813,7 @@ router.post("/:id/estimate",  async (req, res, next) => {
       pool,
       { storeId }
     );
+    await syncReplacementConfirmationsFromQuote(req.params.id, storeId);
     const quoteConfirmation = result?.quoteConfirmation || null;
     const quoteConfirmationStatus = quoteConfirmation?.sent ? "SENT" : quoteConfirmation?.warning ? "FAILED" : null;
     return res.json({
@@ -849,6 +857,57 @@ router.post("/:id/send-quote-confirmation", async (req, res, next) => {
       quoteConfirmationWarning: result.warning || null,
       quoteConfirmationLink: result.link || buildRepairQuoteConfirmationUrl(req.params.id),
       lineSent: Boolean(result.sent)
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/:id/replacement-confirmations", async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    await assertRepairBelongsToStore(req.params.id, storeId);
+    const result = await listReplacementConfirmations(req.params.id, storeId);
+    return res.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.patch("/:id/replacement-confirmations/:replacementId", async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    await assertRepairBelongsToStore(req.params.id, storeId);
+    const result = await updateReplacementConfirmation(
+      req.params.id,
+      req.params.replacementId,
+      storeId,
+      req.body || {},
+      req.user?.id || null
+    );
+    return res.json({
+      message: "更換項目確認已更新",
+      ...result
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/:id/replacement-confirmations/:replacementId/cross-check", async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    await assertRepairBelongsToStore(req.params.id, storeId);
+    const result = await crossCheckReplacementConfirmation(
+      req.params.id,
+      req.params.replacementId,
+      storeId,
+      req.user?.id || null,
+      req.user || {}
+    );
+    return res.json({
+      message: "交叉確認已完成",
+      ...result
     });
   } catch (error) {
     return next(error);
@@ -904,6 +963,7 @@ router.post("/:id/offline-complete", async (req, res, next) => {
     await connection.beginTransaction();
 
     await assertRepairBelongsToStore(req.params.id, storeId, connection);
+    await assertReplacementConfirmationsComplete(req.params.id, storeId, connection);
     // REPAIRS_OFFLINE_COMPLETE_STORE_SCOPE_V1
 
     await connection.query(
@@ -1147,6 +1207,8 @@ router.post("/:id/complete",  async (req, res, next) => {
     } else {
       throw createError("維修尚未開始，無法標記完修", 400);
     }
+
+    await assertReplacementConfirmationsComplete(req.params.id, storeId);
 
     await pool.query(
       `

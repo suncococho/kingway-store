@@ -19,6 +19,7 @@ const {
 } = require("../services/pdfService");
 const repairConfirmationService = require("../services/repairConfirmationService");
 const repairConfirmationContent = require("../content/repairConfirmationContent.json");
+const { getReplacementConfirmationBlockReason } = require("../services/repairReplacementConfirmationService");
 const { notifyRepairConfirmationSubmitted } = require("../services/notificationEventService");
 
 const router = express.Router();
@@ -436,7 +437,9 @@ router.get("/repairs/:repairOrderId", async (req, res, next) => {
       throw createError("找不到維修工單", 404);
     }
     const confirmation = await repairConfirmationService.fetchConfirmationByRepair(repairOrderId, req.storeId);
-    const blockReason = repairConfirmationService.getRepairConfirmationBlockReason(repair);
+    const blockReason =
+      repairConfirmationService.getRepairConfirmationBlockReason(repair) ||
+      await getReplacementConfirmationBlockReason(repairOrderId, req.storeId);
     return res.json({
       repairOrderId,
       canSend: !blockReason,
