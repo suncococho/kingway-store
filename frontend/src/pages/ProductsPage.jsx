@@ -130,6 +130,10 @@ function ProductsPage() {
   const [importApplyLoading, setImportApplyLoading] = useState(false);
   const [importError, setImportError] = useState("");
   const [importSuccess, setImportSuccess] = useState("");
+  const [restoreSuccess, setRestoreSuccess] = useState("");
+  const [deletedProducts, setDeletedProducts] = useState([]);
+  const [deletedLoading, setDeletedLoading] = useState(false);
+  const [deletedError, setDeletedError] = useState("");
   const [importResult, setImportResult] = useState(null);
   const [showImportPreviewDetails, setShowImportPreviewDetails] = useState(true);
   const [importApplyConfirm, setImportApplyConfirm] = useState(null);
@@ -138,10 +142,11 @@ function ProductsPage() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const nextSection = params.get("section");
-    if (nextSection && ["LIST", "CREATE", "CATEGORY", "SKU", "IMAGES", "STOCK"].includes(nextSection)) {
+    const allowedSections = canDeleteProduct ? ["LIST", "TRASH", "CREATE", "CATEGORY", "SKU", "IMAGES", "STOCK"] : ["LIST", "CREATE", "CATEGORY", "SKU", "IMAGES", "STOCK"];
+    if (nextSection && allowedSections.includes(nextSection)) {
       setSection(nextSection);
     }
-  }, [location.search]);
+  }, [location.search, canDeleteProduct]);
 
   useEffect(() => {
     setStockDrafts((current) => {
@@ -168,6 +173,32 @@ function ProductsPage() {
       })),
     [items]
   );
+
+  const deletedProductRows = useMemo(
+    () =>
+      deletedProducts.map((item) => ({
+        ...item,
+        categoryLabel: item.categoryLabel || getCategoryLabel(item.category),
+        stockTone: getStockTone(item.stock, item.reorderLevel),
+        stockLabel: getStockLabel(item.stock, item.reorderLevel),
+        statusLabel: "已刪除",
+        requiresPurchaseConfirmation: Boolean(item.requiresPurchaseConfirmation || item.requires_purchase_confirmation)
+      })),
+    [deletedProducts]
+  );
+
+  useEffect(() => {
+    if (section === "TRASH" && !canDeleteProduct) {
+      setSection("LIST");
+    }
+  }, [section, canDeleteProduct]);
+
+  useEffect(() => {
+    if (section !== "TRASH" || !canDeleteProduct) {
+      return;
+    }
+    loadDeletedProducts();
+  }, [section, canDeleteProduct]);
 
   const categoryOptions = useMemo(() => {
     const apiCategories = categories.items
@@ -546,6 +577,45 @@ function ProductsPage() {
       alert("商品已刪除");
     } catch (error) {
       alert(error.message || "刪除商品失敗");
+    }
+  }
+
+  async function loadDeletedProducts() {
+    if (!canDeleteProduct) {
+      setDeletedProducts([]);
+      return;
+    }
+
+    setDeletedLoading(true);
+    setDeletedError("");
+    try {
+      const data = await apiRequest("/products/trash/list");
+      setDeletedProducts(Array.isArray(data.products) ? data.products : []);
+    } catch (error) {
+      setDeletedProducts([]);
+      setDeletedError(error.message || "已刪除商品載入失敗");
+    } finally {
+      setDeletedLoading(false);
+    }
+  }
+
+  async function restoreProduct(product) {
+    if (!product || !canDeleteProduct) {
+      return;
+    }
+
+    const confirmed = window.confirm("確定復原此商品？復原後會重新出現在商品列表與 POS。");
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await apiRequest("/products/" + product.id + "/restore", { method: "POST" });
+      setRestoreSuccess("商品已復原");
+      await refetch();
+      await loadDeletedProducts();
+    } catch (error) {
+      alert(error.message || "復原商品失敗");
     }
   }
 
@@ -983,8 +1053,26 @@ function ProductsPage() {
     }
   ];
 
+  const deletedColumns = [
+    { key: "sku", label: "SKU" },
+    { key: "name", label: "商品名稱" },
+    { key: "categoryLabel", label: "分類" },
+    { key: "price", label: "價格", render: (row) => formatCurrency(row.price) },
+    { key: "stock", label: "庫存" },
+    {
+      key: "actions",
+      label: "操作",
+      render: (row) => (
+        <button type="button" className="secondary-button" onClick={() => restoreProduct(row)}>
+          復原
+        </button>
+      )
+    }
+  ];
+
   const sectionItems = [
     { key: "LIST", label: "商品列表" },
+    ...(canDeleteProduct ? [{ key: "TRASH", label: "已刪除商品" }] : []),
     { key: "CREATE", label: "新增商品" },
     { key: "CATEGORY", label: "分類管理" },
     { key: "SKU", label: "SKU / 規則" },
@@ -1378,6 +1466,40 @@ function ProductsPage() {
                     </div>
                     <button type="button" className="secondary-button compact-detail-button" onClick={() => setDetailProductId(row.id)}>
                       查看詳情
+                    </button>
+                  </div>
+                )}
+              />
+            ) : null}
+          </section>
+        ) : null}
+        {section === "TRASH" && canDeleteProduct ? (
+          <section className="admin-panel">
+            <AdminSectionHeader
+              eyebrow="已刪除商品"
+              title="刪除商品管理"
+              description="已刪除商品不會出現在一般商品列表與 POS，復原後會重新上架顯示。"
+              badges={<StatusBadge tone="neutral">已刪除 {deletedProductRows.length}</StatusBadge>}
+            />
+            {restoreSuccess ? <div className="success-banner">{restoreSuccess}</div> : null}
+            {deletedLoading ? <div className="loading-state">載入已刪除商品中...</div> : null}
+            {deletedError ? <div className="error-banner">{deletedError}</div> : null}
+            {!deletedLoading && !deletedError ? (
+              <DataTable
+                columns={deletedColumns}
+                rows={deletedProductRows}
+                emptyText="目前沒有已刪除商品。"
+                cardTitle={(row) => row.name || "商品"}
+                cardDescription={(row) => "SKU：" + row.sku + " / " + row.categoryLabel}
+                cardBadges={(row) => <StatusBadge tone="neutral">{row.statusLabel}</StatusBadge>}
+                cardFooter={(row) => (
+                  <div className="compact-card-footer">
+                    <div className="compact-card-meta">
+                      <strong>{formatCurrency(row.price)}</strong>
+                      <span>庫存 {row.stock}</span>
+                    </div>
+                    <button type="button" className="secondary-button compact-detail-button" onClick={() => restoreProduct(row)}>
+                      復原
                     </button>
                   </div>
                 )}

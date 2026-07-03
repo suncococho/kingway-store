@@ -1119,6 +1119,45 @@ router.get("/", async (req, res, next) => {
   }
 });
 
+router.get("/trash/list", requireStoreManagerRole, async (req, res, next) => {
+  try {
+    const storeId = getRequestStoreId(req);
+    const hasStoreId = await hasProductsStoreIdColumn(pool);
+    if (!hasStoreId) {
+      return res.status(500).json({ message: "products.store_id 欄位不存在，請先更新資料表結構" });
+    }
+
+    const [rows] = await pool.query(
+      `
+        SELECT
+          id,
+          sku,
+          name,
+          category,
+          description,
+          image_url AS imageUrl,
+          price,
+          stock,
+          reorder_level AS reorderLevel,
+          is_active AS isActive,
+          created_at AS createdAt,
+          updated_at AS updatedAt
+        FROM products
+        WHERE store_id = ?
+          AND is_active = 0
+        ORDER BY id DESC
+      `,
+      [storeId]
+    );
+
+    return res.json({
+      products: rows.map((row) => mapProductRow(row, { includeSensitiveCost: canViewSensitiveCost(req.user || {}) }))
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/export", async (req, res, next) => {
   try {
     const storeId = getRequestStoreId(req);
