@@ -53,11 +53,11 @@ if [ -n "$EXPECTED_HEAD" ] && [ "$CURRENT_HEAD" != "$EXPECTED_HEAD" ]; then
 fi
 info "HEAD verified: $CURRENT_HEAD"
 
-MEM_AVAILABLE_MB="$(awk '/MemAvailable:/ { printf "%d", $2 / 1024 }' /proc/meminfo)"
+MEM_AVAILABLE_MB="$(free -m | awk '/^Mem:/ {print $7}')"
 if [ "${MEM_AVAILABLE_MB:-0}" -lt "$MIN_MEM_AVAILABLE_MB" ]; then
   fail "available memory too low: ${MEM_AVAILABLE_MB}MB < ${MIN_MEM_AVAILABLE_MB}MB"
 fi
-info "available memory ${MEM_AVAILABLE_MB}MB >= ${MIN_MEM_AVAILABLE_MB}MB"
+info "available memory ${MEM_AVAILABLE_MB}MB"
 
 DISK_AVAILABLE_MB="$(df -Pm "$REPO_DIR" | awk 'NR == 2 { print $4 }')"
 if [ "${DISK_AVAILABLE_MB:-0}" -lt "$MIN_DISK_AVAILABLE_MB" ]; then
