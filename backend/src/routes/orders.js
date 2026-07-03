@@ -14,6 +14,7 @@ const {
   createFlexMessage,
   createUriAction,
   backfillApprovedRepairOrders,
+  backfillMissingRepairQuoteOrderItems,
   createPurchaseConfirmationForOrder,
   getPurchaseConfirmationEligibility,
   logWorkflowEvent,
@@ -583,6 +584,25 @@ router.delete("/:id/permanent", requireOrderManagementFeature, async (req, res, 
   }
 });
 
+
+router.post("/repair-quote-backfill-missing-items", authorize(["ADMIN", "MANAGER"]), requireOrderManagementFeature, async (req, res, next) => {
+  try {
+    const apply = req.body?.apply === true;
+    const limit = req.body?.limit;
+    const result = await backfillMissingRepairQuoteOrderItems({
+      storeId: req.storeId,
+      limit,
+      apply
+    });
+
+    return res.json({
+      message: apply ? "維修報價品項同步完成" : "維修報價品項同步 dry-run 完成",
+      ...result
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
 
 router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
   try {

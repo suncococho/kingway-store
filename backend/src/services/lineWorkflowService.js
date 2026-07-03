@@ -856,6 +856,221 @@ async function normalizeRepairLinkedOrderStatus(connection, repairStatus) {
   return "PENDING";
 }
 
+function mapOrderItemCategorySnapshot(category) {
+  if (category === "EB") return "EBIKE";
+  if (category === "RP") return "REPAIR";
+  if (category === "AC") return "ACCESSORY";
+  if (["PT", "TR", "LT", "LK", "SE", "HB", "CR"].includes(category)) return "ACCESSORY";
+  if (["EBIKE", "REPAIR", "ACCESSORY", "OTHER"].includes(category)) return category;
+  if (!category) return "REPAIR";
+  return "OTHER";
+}
+
+function parseRepairQuoteItemsJson(value) {
+  if (!value) return [];
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+async function normalizeRepairQuoteOrderItems(connection, quoteItemsJson, storeId) {
+  const rawItems = parseRepairQuoteItemsJson(quoteItemsJson);
+  const normalized = [];
+
+  for (let index = 0; index < rawItems.length; index += 1) {
+    const item = rawItems[index] || {};
+    const quantity = Math.max(Number(item.quantity ?? item.qty ?? 1), 1);
+    const unitPrice = Number(item.unitPrice ?? item.unit_price ?? item.price ?? 0);
+    const lineTotal = Number(item.total ?? item.lineTotal ?? item.line_total ?? quantity * unitPrice);
+    const requestedProductId = Number(item.productId ?? item.product_id ?? 0);
+    const requestedSku = String(item.sku || item.productSku || "").trim();
+    let product = null;
+
+    if (requestedProductId > 0) {
+      const [rows] = await connection.query(
+        `
+          SELECT id, sku, name, category
+          FROM products
+          WHERE id = ?
+            AND store_id = ?
+          LIMIT 1
+        `,
+        [requestedProductId, storeId]
+      );
+      product = rows[0] || null;
+    }
+
+    if (!product && requestedSku) {
+      const [rows] = await connection.query(
+        `
+          SELECT id, sku, name, category
+          FROM products
+          WHERE sku = ?
+            AND store_id = ?
+          LIMIT 1
+        `,
+        [requestedSku, storeId]
+      );
+      product = rows[0] || null;
+    }
+
+    const productId = Number(product?.id || 0);
+    normalized.push({
+      sourceIndex: index,
+      productId,
+      sku: product?.sku || requestedSku || null,
+      name: product?.name || item.name || item.productName || item.description || "維修品項",
+      category: mapOrderItemCategorySnapshot(product?.category || item.category || "REPAIR"),
+      quantity,
+      unitPrice,
+      lineTotal
+    });
+  }
+
+  return normalized;
+}
+
+async function syncRepairQuoteItemsToOrder(connection, {
+  repairId,
+  orderId,
+  storeId,
+  dryRun = false,
+  force = false,
+  adjustTotals = true,
+  strict = false
+}) {
+  const scopedStoreId = requireScopedStoreId(storeId, "維修報價品項同步門市範圍");
+  const [repairRows] = await connection.query(
+    `
+      SELECT id, quote_items_json AS quoteItemsJson
+      FROM repair_orders
+      WHERE id = ?
+        AND store_id = ?
+      LIMIT 1
+    `,
+    [repairId, scopedStoreId]
+  );
+  const repair = repairRows[0];
+  if (!repair) {
+    return { synced: false, reason: "repair_not_found", items: [], insertedCount: 0, itemTotal: 0 };
+  }
+
+  const items = await normalizeRepairQuoteOrderItems(connection, repair.quoteItemsJson, scopedStoreId);
+  const itemTotal = items.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
+  const unresolvedItems = items.filter((item) => !Number(item.productId || 0));
+  if (unresolvedItems.length) {
+    const result = {
+      synced: false,
+      reason: "unresolved_product",
+      items,
+      unresolvedItems,
+      insertedCount: 0,
+      itemTotal
+    };
+    if (strict) {
+      throw new Error("維修報價品項缺少商品資料，請先確認品項 SKU 或商品 ID 後再建立維修訂單");
+    }
+    return result;
+  }
+  const [countRows] = await connection.query(
+    "SELECT COUNT(*) AS count FROM order_items WHERE order_id = ? AND store_id = ?",
+    [orderId, scopedStoreId]
+  );
+  const existingItemCount = Number(countRows[0]?.count || 0);
+
+  if (!items.length) {
+    return { synced: false, reason: "empty_quote_items", items, existingItemCount, insertedCount: 0, itemTotal };
+  }
+  if (existingItemCount > 0 && !force) {
+    return { synced: false, reason: "order_items_exist", items, existingItemCount, insertedCount: 0, itemTotal };
+  }
+
+  if (dryRun) {
+    return {
+      synced: false,
+      dryRun: true,
+      reason: "dry_run",
+      items,
+      existingItemCount,
+      wouldInsertCount: items.length,
+      insertedCount: 0,
+      itemTotal
+    };
+  }
+
+  if (force && existingItemCount > 0) {
+    await connection.query(
+      "DELETE FROM order_items WHERE order_id = ? AND store_id = ?",
+      [orderId, scopedStoreId]
+    );
+  }
+
+  for (const item of items) {
+    await connection.query(
+      `
+        INSERT INTO order_items
+          (store_id, order_id, product_id, sku_snapshot, product_name_snapshot, product_category_snapshot, quantity, unit_price, line_total)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        scopedStoreId,
+        orderId,
+        item.productId,
+        item.sku,
+        item.name,
+        item.category,
+        item.quantity,
+        item.unitPrice,
+        item.lineTotal
+      ]
+    );
+  }
+
+  let totalsAdjusted = false;
+  if (adjustTotals && itemTotal > 0) {
+    const [orderRows] = await connection.query(
+      `
+        SELECT total_amount AS totalAmount,
+               deposit_amount AS depositAmount,
+               final_payment_status AS finalPaymentStatus
+        FROM orders
+        WHERE id = ?
+          AND store_id = ?
+        LIMIT 1
+      `,
+      [orderId, scopedStoreId]
+    );
+    const order = orderRows[0];
+    if (order && order.finalPaymentStatus !== "PAID" && Number(order.totalAmount || 0) !== itemTotal) {
+      const unpaidBalance = Math.max(itemTotal - Number(order.depositAmount || 0), 0);
+      await connection.query(
+        `
+          UPDATE orders
+          SET total_amount = ?,
+              unpaid_balance = ?,
+              final_payment_status = ?
+          WHERE id = ?
+            AND store_id = ?
+        `,
+        [itemTotal, unpaidBalance, unpaidBalance > 0 ? "UNPAID" : "PAID", orderId, scopedStoreId]
+      );
+      totalsAdjusted = true;
+    }
+  }
+
+  return {
+    synced: true,
+    items,
+    existingItemCount,
+    insertedCount: items.length,
+    itemTotal,
+    totalsAdjusted
+  };
+}
+
 function parseRepairEstimateItems(messageText) {
   const lines = String(messageText || "")
     .split(/\r?\n/)
@@ -3762,16 +3977,24 @@ async function ensureRepairJobOrder(repairId, staffId = null, connection = pool,
       `,
       [repairId, scopedStoreId]
     );
+    const itemSync = await syncRepairQuoteItemsToOrder(connection, {
+      repairId,
+      orderId: linkedOrder.orderId,
+      storeId: scopedStoreId,
+      strict: true
+    });
     console.log("[repair:quote-confirm]", {
       repair_id: Number(repairId),
       existing_order_id: Number(linkedOrder.orderId),
       created_order_id: null,
-      total: Number(repairAmountRows[0]?.estimateAmount || 0)
+      total: Number(itemSync.itemTotal || repairAmountRows[0]?.estimateAmount || 0),
+      item_sync: itemSync.synced ? "synced" : itemSync.reason
     });
     return {
       orderId: linkedOrder.orderId,
       orderNo: linkedOrder.orderNo,
-      created: false
+      created: false,
+      itemSync
     };
   }
 
@@ -3782,6 +4005,7 @@ async function ensureRepairJobOrder(repairId, staffId = null, connection = pool,
         ro.store_id AS storeId,
         ro.customer_id AS customerId,
         ro.estimate_amount AS estimateAmount,
+        ro.quote_items_json AS quoteItemsJson,
         ro.issue_description AS issueDescription,
         ro.bike_model AS bikeModel,
         ro.approved_by_staff_id AS approvedByStaffId,
@@ -3810,7 +4034,9 @@ async function ensureRepairJobOrder(repairId, staffId = null, connection = pool,
   }
 
   const orderNo = `REP-${dayjs().format("YYYYMMDD-HHmmss-SSS")}`;
-  const totalAmount = Number(repair.estimateAmount || 0);
+  const quoteItemsForTotal = await normalizeRepairQuoteOrderItems(connection, repair.quoteItemsJson, scopedStoreId);
+  const quoteItemTotal = quoteItemsForTotal.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
+  const totalAmount = quoteItemTotal > 0 ? quoteItemTotal : Number(repair.estimateAmount || 0);
   const orderColumns = await getOrdersTableColumns(connection);
   const orderStatus = await normalizeRepairLinkedOrderStatus(connection, repair.status);
   const orderNotes = [
@@ -3874,17 +4100,27 @@ async function ensureRepairJobOrder(repairId, staffId = null, connection = pool,
     "UPDATE repair_orders SET order_id = ? WHERE id = ? AND store_id = ?",
     [orderResult.insertId, repairId, scopedStoreId]
   );
+  const itemSync = await syncRepairQuoteItemsToOrder(connection, {
+    repairId,
+    orderId: orderResult.insertId,
+    storeId: scopedStoreId,
+    adjustTotals: true,
+    strict: true
+  });
+
   console.log("[repair:quote-confirm]", {
     repair_id: Number(repairId),
     existing_order_id: null,
     created_order_id: Number(orderResult.insertId),
-    total: totalAmount
+    total: Number(itemSync.itemTotal || totalAmount),
+    item_sync: itemSync.synced ? "synced" : itemSync.reason
   });
 
   return {
     orderId: orderResult.insertId,
     orderNo,
-    created: true
+    created: true,
+    itemSync
   };
 }
 
@@ -3922,6 +4158,92 @@ async function backfillApprovedRepairOrders(limit = 50, connection = pool) {
 
   return connection === pool
     ? withTransaction(async (tx) => run(tx))
+    : run(connection);
+}
+
+async function backfillMissingRepairQuoteOrderItems(options = {}, connection = pool) {
+  const limit = Math.min(Math.max(Number(options.limit || 50), 1), 200);
+  const apply = options.apply === true;
+  const scopedStoreId = requireScopedStoreId(options.storeId, "維修報價品項補同步門市範圍");
+
+  const run = async (tx) => {
+    const [rows] = await tx.query(
+      `
+        SELECT
+          o.id AS orderId,
+          o.order_no AS orderNo,
+          o.total_amount AS totalAmount,
+          o.unpaid_balance AS unpaidBalance,
+          o.final_payment_status AS finalPaymentStatus,
+          ro.id AS repairId,
+          ro.quote_items_json AS quoteItemsJson,
+          (
+            SELECT COUNT(*)
+            FROM order_items oi
+            WHERE oi.order_id = o.id
+              AND oi.store_id = o.store_id
+          ) AS itemCount
+        FROM orders o
+        INNER JOIN repair_orders ro
+          ON (ro.order_id = o.id OR o.repair_order_id = ro.id)
+         AND ro.store_id = o.store_id
+        WHERE o.store_id = ?
+          AND o.order_type = 'REPAIR'
+          AND o.source = 'repair_quote'
+          AND o.deleted_at IS NULL
+          AND ro.quote_items_json IS NOT NULL
+          AND JSON_VALID(ro.quote_items_json) = 1
+          AND JSON_LENGTH(ro.quote_items_json) > 0
+          AND NOT EXISTS (
+            SELECT 1
+            FROM order_items oi
+            WHERE oi.order_id = o.id
+              AND oi.store_id = o.store_id
+          )
+        ORDER BY o.id ASC
+        LIMIT ?
+        ${apply ? "FOR UPDATE" : ""}
+      `,
+      [scopedStoreId, limit]
+    );
+
+    const results = [];
+    for (const row of rows) {
+      const sync = await syncRepairQuoteItemsToOrder(tx, {
+        repairId: row.repairId,
+        orderId: row.orderId,
+        storeId: scopedStoreId,
+        dryRun: !apply,
+        adjustTotals: true
+      });
+      results.push({
+        orderId: Number(row.orderId),
+        orderNo: row.orderNo,
+        repairId: Number(row.repairId),
+        totalAmount: Number(row.totalAmount || 0),
+        unpaidBalance: Number(row.unpaidBalance || 0),
+        finalPaymentStatus: row.finalPaymentStatus,
+        quoteItemCount: parseRepairQuoteItemsJson(row.quoteItemsJson).length,
+        expectedInsertRows: sync.wouldInsertCount || sync.insertedCount || 0,
+        itemTotal: Number(sync.itemTotal || 0),
+        synced: Boolean(sync.synced),
+        reason: sync.reason || null,
+        totalsAdjusted: Boolean(sync.totalsAdjusted)
+      });
+    }
+
+    return {
+      dryRun: !apply,
+      apply,
+      storeId: scopedStoreId,
+      targetCount: results.length,
+      expectedInsertRows: results.reduce((sum, row) => sum + Number(row.expectedInsertRows || 0), 0),
+      results
+    };
+  };
+
+  return apply && connection === pool
+    ? withTransaction((tx) => run(tx))
     : run(connection);
 }
 
@@ -4999,6 +5321,7 @@ function mapRegistrationTypeLabel(type) {
 module.exports = {
   applyRepairEstimateCustomerResponse,
   backfillApprovedRepairOrders,
+  backfillMissingRepairQuoteOrderItems,
   bindPhoneAndIssueNewFriendCoupon,
   claimLineWebhookEvent,
   buildCustomerMenuMessages,

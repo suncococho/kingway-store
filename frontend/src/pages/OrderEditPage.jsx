@@ -27,6 +27,8 @@ function OrderEditPage() {
           otherDiscount: Number(o.otherDiscount || 0),
           unpaidBalance: Number(o.unpaidBalance || 0),
           finalPaymentStatus: o.finalPaymentStatus || "UNPAID",
+          orderType: o.orderType || o.order_type || "",
+          source: o.source || "",
           notes: o.notes || ""
         });
 
@@ -99,6 +101,8 @@ function OrderEditPage() {
   const couponDiscount = hasNewFriendCoupon ? 500 : Math.max(itemTotal - Number(form?.totalAmount || 0) - otherDiscount, 0);
   const payableAmount = Math.max(itemTotal - couponDiscount - otherDiscount, 0);
   const unpaidBalance = Math.max(payableAmount - depositAmount, 0);
+  const showRepairQuoteItemsWarning =
+    form?.orderType === "REPAIR" && form?.source === "repair_quote" && items.length === 0;
 
 async function requestGoogleReviewCoupon() {
     if (!form?.customerId) {
@@ -336,6 +340,16 @@ async function requestGoogleReviewCoupon() {
           border-color: #fecaca;
           background: #fff7f7;
         }
+        .kw-warning {
+          background: #fff7ed;
+          color: #9a3412;
+          border: 1px solid #fed7aa;
+          border-radius: 12px;
+          padding: 12px 16px;
+          margin-bottom: 16px;
+          font-weight: 900;
+          line-height: 1.6;
+        }
         .kw-error {
           background: #fee2e2;
           color: #b91c1c;
@@ -496,6 +510,10 @@ async function requestGoogleReviewCoupon() {
               <h2 className="kw-card-title" style={{ margin: 0 }}>商品項目</h2>
               <button type="button" className="kw-btn green" onClick={addItem}>＋ 新增商品</button>
             </div>
+
+            {showRepairQuoteItemsWarning && (
+              <div className="kw-warning">此維修訂單尚未同步品項，請先完成維修品項同步後再收款。</div>
+            )}
 
             <input
               className="kw-product-search"
