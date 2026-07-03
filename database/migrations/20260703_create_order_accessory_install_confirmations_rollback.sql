@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS order_accessory_install_confirmations;

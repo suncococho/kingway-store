@@ -38,6 +38,12 @@ const {
   normalizePaymentCompletionPayload,
   normalizeTaipeiDateTime
 } = require("../services/orderPaymentRecordService");
+const {
+  assertOrderAccessoryInstallConfirmationsComplete,
+  crossCheckOrderAccessoryInstallConfirmation,
+  listOrderAccessoryInstallConfirmations,
+  updateOrderAccessoryInstallConfirmation
+} = require("../services/orderAccessoryInstallConfirmationService");
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -573,6 +579,7 @@ router.delete("/:id/permanent", requireOrderManagementFeature, async (req, res, 
       await connection.query("DELETE FROM order_items WHERE order_id = ? AND store_id = ?", [req.params.id, storeId]);
       await connection.query("DELETE FROM purchase_confirmation_tokens WHERE order_id = ?", [req.params.id]);
       await connection.query("DELETE FROM purchase_confirmations WHERE order_id = ? AND store_id = ?", [req.params.id, storeId]);
+      await connection.query("DELETE FROM order_accessory_install_confirmations WHERE order_id = ? AND store_id = ?", [req.params.id, storeId]);
       await connection.query("UPDATE coupons SET order_id = NULL WHERE order_id = ? AND store_id = ?", [req.params.id, storeId]);
       await connection.query("UPDATE repair_orders SET order_id = NULL WHERE order_id = ? AND store_id = ?", [req.params.id, storeId]);
       await connection.query("DELETE FROM orders WHERE id = ? AND store_id = ?", [req.params.id, storeId]);
@@ -719,6 +726,83 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
       finalPaymentMethodLabel: mapPaymentMethodLabel(rows[0].finalPaymentMethod || rows[0].paymentMethod),
       paymentRecords,
       items
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/:orderId/accessory-install-confirmations", requireOrderManagementFeature, async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    const storeId = req.storeId;
+    if (!orderId) {
+      throw createError("找不到訂單", 404);
+    }
+
+    const result = await withTransaction(async (connection) =>
+      listOrderAccessoryInstallConfirmations(orderId, storeId, connection)
+    );
+
+    return res.json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.patch("/:orderId/accessory-install-confirmations/:confirmationId", requireOrderManagementFeature, async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    const confirmationId = Number(req.params.confirmationId);
+    const storeId = req.storeId;
+    if (!orderId || !confirmationId) {
+      throw createError("找不到配件安裝確認項目", 404);
+    }
+
+    const result = await withTransaction(async (connection) =>
+      updateOrderAccessoryInstallConfirmation(
+        orderId,
+        confirmationId,
+        storeId,
+        req.body || {},
+        req.user?.id || null,
+        req.user?.displayName || req.user?.username || "",
+        connection
+      )
+    );
+
+    return res.json({
+      message: "配件安裝確認已更新",
+      ...result
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/:orderId/accessory-install-confirmations/:confirmationId/cross-check", requireOrderManagementFeature, async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    const confirmationId = Number(req.params.confirmationId);
+    const storeId = req.storeId;
+    if (!orderId || !confirmationId) {
+      throw createError("找不到配件安裝確認項目", 404);
+    }
+
+    const result = await withTransaction(async (connection) =>
+      crossCheckOrderAccessoryInstallConfirmation(
+        orderId,
+        confirmationId,
+        storeId,
+        req.user?.id || null,
+        req.user?.displayName || req.user?.username || "",
+        connection
+      )
+    );
+
+    return res.json({
+      message: "交叉確認已完成",
+      ...result
     });
   } catch (error) {
     return next(error);
@@ -1955,6 +2039,8 @@ router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), requireOrd
     if (!orderRows[0]) {
       return res.status(404).json({ message: "找不到訂單" });
     }
+
+    await assertOrderAccessoryInstallConfirmationsComplete(Number(req.params.id), storeId, pool);
 
     await pool.query(
       `

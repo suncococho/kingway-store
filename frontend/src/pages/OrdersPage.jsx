@@ -155,6 +155,43 @@ function isEbikeCategory(value) {
   return normalized === "EB" || normalized === "EBIKE";
 }
 
+function isAccessoryCategory(value) {
+  return String(value || "").trim().toUpperCase() === "ACCESSORY";
+}
+
+function buildEmptyAccessoryChecklistState() {
+  return {
+    loading: false,
+    error: "",
+    tableExists: true,
+    applicable: false,
+    hasEbike: false,
+    hasAccessoryItems: false,
+    readyForHandoverChecklist: true,
+    blockReason: "",
+    items: []
+  };
+}
+
+function isAccessoryChecklistEligible(detail) {
+  if (!detail || isRepairRelatedOrder(detail) || String(detail.source || "").trim().toLowerCase() === "repair_quote") {
+    return false;
+  }
+
+  const items = normalizeOrderDetailItems(detail);
+  return items.some((item) => isEbikeCategory(item.productCategory)) && items.some((item) => isAccessoryCategory(item.productCategory));
+}
+
+function buildAccessoryUpdatePayload(item, overrides = {}) {
+  const next = { ...item, ...overrides };
+  return {
+    isInstalled: Boolean(next.isInstalled),
+    isTested: Boolean(next.isTested),
+    isPhotoConfirmed: Boolean(next.isPhotoConfirmed),
+    note: next.note || ""
+  };
+}
+
 function OrdersPage() {
   const { items, loading, error, refetch } = useFetchList("/orders");
   const navigate = useNavigate();
@@ -175,6 +212,7 @@ function OrdersPage() {
     finalPaymentStatus: "PAID",
     notes: ""
   });
+  const [accessoryChecklist, setAccessoryChecklist] = useState(buildEmptyAccessoryChecklistState());
   const [searchMode, setSearchMode] = useState(false);
   const [searchScope, setSearchScope] = useState("ALL");
   const [systemInfoOpen, setSystemInfoOpen] = useState(false);
@@ -476,6 +514,13 @@ function OrdersPage() {
       setWarningModal({ title: "請先完成上一個步驟", message: "請先完成付款，再確認交車。" });
       return;
     }
+    if (accessoryChecklist.applicable && accessoryChecklist.hasAccessoryItems && !accessoryChecklist.readyForHandoverChecklist) {
+      setWarningModal({
+        title: "請先完成上一個步驟",
+        message: accessoryChecklist.blockReason || "配件安裝確認尚未完成，請先完成安裝、測試、照片確認與交叉確認。"
+      });
+      return;
+    }
     setConfirmModal({
       title: "確認交車",
       message: "確認此訂單已完成交車嗎？",
@@ -594,6 +639,7 @@ function OrdersPage() {
   async function openDetail(row) {
     setDetail(row);
     setSystemInfoOpen(false);
+    setAccessoryChecklist(buildEmptyAccessoryChecklistState());
     setDetailForm({
       customerName: row.customerName || row.customerNameSnapshot || "",
       customerPhone: row.customerPhone || row.customerPhoneSnapshot || "",
@@ -605,7 +651,7 @@ function OrdersPage() {
       notes: row.notes || ""
     });
     try {
-      const loaded = await apiRequest(`/orders/${row.id}`);
+      const loaded = await apiRequest("/orders/" + row.id);
       const nextDetail = {
         ...row,
         ...loaded,
@@ -626,9 +672,89 @@ function OrdersPage() {
         finalPaymentStatus: nextDetail.finalPaymentStatus || "PAID",
         notes: nextDetail.notes || ""
       });
+      if (isAccessoryChecklistEligible(nextDetail)) {
+        setAccessoryChecklist((current) => ({ ...current, loading: true, error: "" }));
+        try {
+          const checklist = await apiRequest("/orders/" + row.id + "/accessory-install-confirmations");
+          setAccessoryChecklist({
+            loading: false,
+            error: "",
+            ...buildEmptyAccessoryChecklistState(),
+            ...checklist
+          });
+        } catch (checklistError) {
+          setAccessoryChecklist({
+            ...buildEmptyAccessoryChecklistState(),
+            loading: false,
+            error: checklistError.message || "配件安裝確認讀取失敗"
+          });
+        }
+      }
     } catch (loadError) {
       setToastMessage(loadError.message || "訂單明細載入失敗");
     }
+  }
+
+  async function reloadAccessoryChecklist(orderId) {
+    const checklist = await apiRequest("/orders/" + orderId + "/accessory-install-confirmations");
+    setAccessoryChecklist({
+      loading: false,
+      error: "",
+      ...buildEmptyAccessoryChecklistState(),
+      ...checklist
+    });
+    return checklist;
+  }
+
+  function updateAccessoryChecklistItemLocally(confirmationId, updater) {
+    setAccessoryChecklist((current) => ({
+      ...current,
+      items: current.items.map((item) => item.id === confirmationId ? updater(item) : item)
+    }));
+  }
+
+  async function saveAccessoryChecklistItem(item, overrides = {}) {
+    if (!detail?.id) {
+      return;
+    }
+
+    await runWithProcessing(async () => {
+      const response = await apiRequest("/orders/" + detail.id + "/accessory-install-confirmations/" + item.id, {
+        method: "PATCH",
+        body: JSON.stringify(buildAccessoryUpdatePayload(item, overrides))
+      });
+      setAccessoryChecklist({
+        loading: false,
+        error: "",
+        ...buildEmptyAccessoryChecklistState(),
+        ...response
+      });
+    }, { id: "order-accessory-" + detail.id + "-" + item.id, label: "配件安裝確認更新中..." }).catch((error) => {
+      alert(error.message || "配件安裝確認更新失敗");
+      reloadAccessoryChecklist(detail.id).catch(() => {});
+    });
+  }
+
+  async function crossCheckAccessoryChecklistItem(item) {
+    if (!detail?.id) {
+      return;
+    }
+
+    await runWithProcessing(async () => {
+      const response = await apiRequest("/orders/" + detail.id + "/accessory-install-confirmations/" + item.id + "/cross-check", {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      setAccessoryChecklist({
+        loading: false,
+        error: "",
+        ...buildEmptyAccessoryChecklistState(),
+        ...response
+      });
+    }, { id: "order-accessory-cross-" + detail.id + "-" + item.id, label: "配件交叉確認中..." }).catch((error) => {
+      alert(error.message || "配件交叉確認失敗");
+      reloadAccessoryChecklist(detail.id).catch(() => {});
+    });
   }
 
   function openSearch(scope = "ALL") {
@@ -1283,6 +1409,74 @@ if (!window.confirm(
                 <div className="empty-state">此訂單尚未建立商品明細，請先補登商品後再產生購買確認書。</div>
               )}
             </section>
+            {accessoryChecklist.applicable && accessoryChecklist.hasAccessoryItems ? (
+              <section className="stack-card">
+                <div className="section-title">配件安裝確認</div>
+                <p className="muted-text">電動自行車訂單中的配件需完成安裝、測試、照片確認與交叉確認後才能交車。</p>
+                {accessoryChecklist.error ? <div className="empty-state">{accessoryChecklist.error}</div> : null}
+                {accessoryChecklist.blockReason && !accessoryChecklist.readyForHandoverChecklist ? (
+                  <div className="error-banner">{accessoryChecklist.blockReason}</div>
+                ) : null}
+                {accessoryChecklist.loading ? (
+                  <div className="empty-state">配件安裝確認讀取中...</div>
+                ) : accessoryChecklist.items.length ? (
+                  <div className="stack-list">
+                    {accessoryChecklist.items.map((item) => (
+                      <div key={item.id} className="log-row">
+                        <div className="section-header compact-header">
+                          <div>
+                            <strong>{item.itemName}</strong>
+                            <div className="muted-text">
+                              {item.sku ? item.sku + " / " : ""}數量 {item.quantity} / 單價 {formatAmount(item.unitPrice)} / 小計 {formatAmount(item.lineTotal)}
+                            </div>
+                          </div>
+                          <StatusBadge tone={item.completed ? "success" : "warning"}>{item.completed ? "已交叉確認" : "待確認"}</StatusBadge>
+                        </div>
+                        <div className="action-row">
+                          <label className="checkbox-label">
+                            <input type="checkbox" checked={Boolean(item.isInstalled)} disabled={isProcessing} onChange={(event) => saveAccessoryChecklistItem(item, { isInstalled: event.target.checked })} />
+                            <span>已安裝</span>
+                          </label>
+                          <label className="checkbox-label">
+                            <input type="checkbox" checked={Boolean(item.isTested)} disabled={isProcessing} onChange={(event) => saveAccessoryChecklistItem(item, { isTested: event.target.checked })} />
+                            <span>已測試</span>
+                          </label>
+                          <label className="checkbox-label">
+                            <input type="checkbox" checked={Boolean(item.isPhotoConfirmed)} disabled={isProcessing} onChange={(event) => saveAccessoryChecklistItem(item, { isPhotoConfirmed: event.target.checked })} />
+                            <span>照片已確認</span>
+                          </label>
+                        </div>
+                        <label className="form-field">
+                          <span>備註</span>
+                          <textarea
+                            rows="2"
+                            value={item.note || ""}
+                            disabled={isProcessing}
+                            onChange={(event) => updateAccessoryChecklistItemLocally(item.id, (current) => ({ ...current, note: event.target.value }))}
+                            onBlur={(event) => saveAccessoryChecklistItem(item, { note: event.target.value })}
+                          />
+                        </label>
+                        <div className="muted-text">
+                          確認：{item.checkedByStaffName || "-"} {formatTaipeiDateTime(item.checkedAt)}
+                          {" / "}
+                          交叉確認：{item.crossCheckedByStaffName || "-"} {formatTaipeiDateTime(item.crossCheckedAt)}
+                        </div>
+                        <div className="action-row">
+                          <button type="button" className="secondary-button" disabled={isProcessing || item.completed || !item.isInstalled || !item.isTested || !item.isPhotoConfirmed} onClick={() => crossCheckAccessoryChecklistItem(item)}>
+                            交叉確認
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state">目前沒有需要確認的配件項目。</div>
+                )}
+                <div className="field-grid">
+                  <div className="field-item"><div className="field-label">整體狀態</div><div className="field-value"><StatusBadge tone={accessoryChecklist.readyForHandoverChecklist ? "success" : "warning"}>{accessoryChecklist.readyForHandoverChecklist ? "可交車" : "待確認"}</StatusBadge></div></div>
+                </div>
+              </section>
+            ) : null}
             <section className="stack-card">
               <div className="section-title">付款狀態</div>
               <div className="field-grid">
@@ -1339,6 +1533,9 @@ if (!window.confirm(
             </section>
             <section className="stack-card">
               <div className="section-title">操作</div>
+              {accessoryChecklist.applicable && accessoryChecklist.hasAccessoryItems && !accessoryChecklist.readyForHandoverChecklist ? (
+                <div className="error-banner">{accessoryChecklist.blockReason || "配件安裝確認尚未完成，請先完成安裝、測試、照片確認與交叉確認。"}</div>
+              ) : null}
               <div className="action-row">
               {Number(detail.unpaidBalance || 0) > 0 ? (
                 <button type="button" className="primary-button inline-submit" onClick={() => requestCollectBalance(detail)} disabled={isProcessing}>

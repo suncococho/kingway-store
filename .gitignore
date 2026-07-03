@@ -42,6 +42,7 @@ frontend/src/**/*.backup*
 *.tar.gz
 *.gz
 *.sql
+!database/migrations/*.sql
 
 frontend/dist/
 backups/
@@ -49,6 +50,7 @@ backup*/
 migration/manual_review/
 
 .DS_Store
+._*
 .env.save
 
 backend/src/storage/

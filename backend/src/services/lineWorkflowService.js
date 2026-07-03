@@ -20,6 +20,7 @@ const { sendInternalTelegram } = require("./telegramService");
 const { applyRepairReservationDecision, notifyRepairCustomer } = require("./repairReservationService");
 const { getTableColumns, hasColumn } = require("../utils/schema");
 const { notifyRepairReservationCreated } = require("./staffLineNotify");
+const { assertOrderAccessoryInstallConfirmationsComplete } = require("./orderAccessoryInstallConfirmationService");
 
 const lineAccessTokenOptionsStorage = new AsyncLocalStorage();
 
@@ -5247,6 +5248,18 @@ async function handleLinePostback(event) {
     });
     const handoverStoreId = handoverStoreContext.storeId;
     const result = await withTransaction(async (connection) => {
+      try {
+        await assertOrderAccessoryInstallConfirmationsComplete(Number(id), handoverStoreId, connection);
+      } catch (error) {
+        await logWorkflowEvent("order_handover_confirm_blocked", "ORDER", id, {
+          source: "line_postback",
+          storeId: handoverStoreId,
+          reason: "accessory_install_incomplete",
+          message: error.message
+        }, staffId, connection);
+        return { updated: false, blockedMessage: error.message || "配件安裝確認尚未完成。" };
+      }
+
       const [orderUpdate] = await connection.query(
         `
           UPDATE orders
@@ -5284,7 +5297,7 @@ async function handleLinePostback(event) {
 
     if (!result.updated) {
       if (event.replyToken) {
-        await replyToLine(event.replyToken, withStaffQuickReply([{ type: "text", text: "找不到此店別可確認交車的訂單。" }]));
+        await replyToLine(event.replyToken, withStaffQuickReply([{ type: "text", text: result.blockedMessage || "找不到此店別可確認交車的訂單。" }]));
       }
       return true;
     }
