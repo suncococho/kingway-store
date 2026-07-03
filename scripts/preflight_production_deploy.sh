@@ -5,6 +5,17 @@ REPO_DIR="${KINGWAY_REPO_DIR:-/volume1/docker/kingway-store}"
 EXPECTED_HEAD="${1:-${KINGWAY_EXPECTED_HEAD:-}}"
 MIN_MEM_AVAILABLE_MB="${KINGWAY_MIN_MEM_AVAILABLE_MB:-256}"
 MIN_DISK_AVAILABLE_MB="${KINGWAY_MIN_DISK_AVAILABLE_MB:-1024}"
+TMP_DIR="$(mktemp -d /tmp/kingway_preflight.XXXXXX)"
+CONTAINER_MANAGER_STATUS_JSON="$TMP_DIR/container_manager_status.json"
+CONTAINER_MANAGER_STATUS_ERR="$TMP_DIR/container_manager_status.err"
+MYSQL_PING_OUT="$TMP_DIR/mysql_ping.out"
+MYSQL_PING_ERR="$TMP_DIR/mysql_ping.err"
+BACKEND_HEALTH_OUT="$TMP_DIR/backend_health.out"
+
+cleanup_tmp() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup_tmp EXIT
 
 fail() {
   printf 'ERROR: %s\n' "$1" >&2
@@ -17,26 +28,30 @@ info() {
 
 cd "$REPO_DIR"
 
-if ! synopkg status ContainerManager >/tmp/kingway_container_manager_status.json 2>/tmp/kingway_container_manager_status.err; then
-  cat /tmp/kingway_container_manager_status.err >&2 || true
+set +e
+synopkg status ContainerManager >"$CONTAINER_MANAGER_STATUS_JSON" 2>"$CONTAINER_MANAGER_STATUS_ERR"
+CONTAINER_MANAGER_STATUS_EXIT="$?"
+set -e
+if [ ! -s "$CONTAINER_MANAGER_STATUS_JSON" ]; then
+  cat "$CONTAINER_MANAGER_STATUS_ERR" >&2 || true
   fail "ContainerManager status check failed."
 fi
-info "ContainerManager status command responded."
+info "ContainerManager status command responded (exit=${CONTAINER_MANAGER_STATUS_EXIT})."
 
 if ! sudo docker ps >/dev/null; then
   fail "docker ps did not respond."
 fi
 info "docker ps responded."
 
-if ! sudo docker exec kingway-mysql sh -lc 'mysqladmin -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" ping' >/tmp/kingway_mysql_ping.out 2>/tmp/kingway_mysql_ping.err; then
-  cat /tmp/kingway_mysql_ping.err >&2 || true
-  cat /tmp/kingway_mysql_ping.out >&2 || true
+if ! sudo docker exec kingway-mysql sh -lc 'mysqladmin -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" ping' >"$MYSQL_PING_OUT" 2>"$MYSQL_PING_ERR"; then
+  cat "$MYSQL_PING_ERR" >&2 || true
+  cat "$MYSQL_PING_OUT" >&2 || true
   fail "production MySQL ping failed."
 fi
 info "production MySQL ping responded."
 
-if ! curl -fsS --max-time 10 http://127.0.0.1:3000/health >/tmp/kingway_backend_health.out; then
-  cat /tmp/kingway_backend_health.out >&2 || true
+if ! curl -fsS --max-time 10 http://127.0.0.1:3000/health >"$BACKEND_HEALTH_OUT"; then
+  cat "$BACKEND_HEALTH_OUT" >&2 || true
   fail "backend /health check failed."
 fi
 info "backend /health responded."
