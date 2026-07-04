@@ -479,6 +479,7 @@ function notifySubmittedRequestAsync(submittedRequest) {
     storeCode: submittedRequest.requestingStoreCode,
     storeName: submittedRequest.requestingStoreName,
     itemCount: submittedRequest.itemCount,
+    items: submittedRequest.items || [],
     note: submittedRequest.note
   }).catch((error) => {
     console.info("[store-replenishment] notify_async_failed", {

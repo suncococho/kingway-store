@@ -9,12 +9,48 @@ function formatValue(value, fallback = "-") {
   return text || fallback;
 }
 
+function formatRequestItemLine(item = {}, index = 0) {
+  const sku = formatValue(
+    item.requestedSku ||
+      item.sku ||
+      item.productSku ||
+      item.product_sku,
+    ""
+  );
+  const name = formatValue(
+    item.requestedProductName ||
+      item.productName ||
+      item.product_name ||
+      item.name ||
+      sku,
+    "未命名品項"
+  );
+  const quantity = Number(item.quantityRequested || item.quantity || item.qty || 0);
+  const skuText = sku ? `（${sku}）` : "";
+  const quantityText = quantity > 0 ? ` × ${quantity}` : "";
+  return `${index + 1}. ${name}${skuText}${quantityText}`;
+}
+
+function formatRequestItemLines(items = []) {
+  if (!Array.isArray(items) || !items.length) {
+    return ["未命名品項"];
+  }
+
+  const visibleItems = items.slice(0, 10).map(formatRequestItemLine);
+  const remainingCount = items.length - visibleItems.length;
+  return remainingCount > 0
+    ? visibleItems.concat(`另有 ${remainingCount} 項`)
+    : visibleItems;
+}
+
 function buildRequestMessage(payload = {}) {
+  const itemLines = formatRequestItemLines(payload.items);
   return [
     "門市請貨通知",
     `門市：${formatValue(payload.storeName || payload.storeCode)}`,
     `申請單：${formatValue(payload.requestNo)}`,
-    `品項：${formatValue(payload.itemCount, "0")}`,
+    "品項：",
+    ...itemLines,
     `備註：${formatValue(payload.note)}`,
     "請至 POS 本部請貨管理查看。"
   ].join("\n");
