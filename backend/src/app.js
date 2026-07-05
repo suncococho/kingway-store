@@ -251,7 +251,7 @@ app.get("/api/customer-status", ...customerStatusStaffAuth, async (req, res, nex
     const like = `%${q}%`;
 
     const [customers] = await pool.query(
-      "SELECT id, name, phone, line_user_id AS lineUserId FROM customers WHERE store_id = ? AND (phone LIKE ? OR name LIKE ? OR line_user_id = ?) ORDER BY updated_at DESC LIMIT 1",
+      "SELECT c.id AS id, c.name AS name, c.phone AS phone, c.line_user_id AS lineUserId FROM customers c WHERE c.store_id = ? AND (c.phone LIKE ? OR c.name LIKE ? OR c.line_user_id = ?) ORDER BY c.updated_at DESC LIMIT 1",
       [storeId, like, like, q]
     );
 
@@ -260,23 +260,23 @@ app.get("/api/customer-status", ...customerStatusStaffAuth, async (req, res, nex
 
 
     const [orders] = await pool.query(
-      `SELECT id, order_no AS orderNo, total_amount AS totalAmount, deposit_amount AS depositAmount,
-              unpaid_balance AS unpaidBalance, final_payment_status AS finalPaymentStatus,
-              payment_method AS paymentMethod, status, business_date AS businessDate
-       FROM orders
-       WHERE store_id = ?
-         AND (customer_id = ? OR customer_phone = ?)
-         AND deleted_at IS NULL
-       ORDER BY id DESC
+      `SELECT o.id AS id, o.order_no AS orderNo, o.total_amount AS totalAmount, o.deposit_amount AS depositAmount,
+              o.unpaid_balance AS unpaidBalance, o.final_payment_status AS finalPaymentStatus,
+              o.payment_method AS paymentMethod, o.status AS status, o.business_date AS businessDate
+       FROM orders o
+       WHERE o.store_id = ?
+         AND (o.customer_id = ? OR o.customer_phone = ?)
+         AND o.deleted_at IS NULL
+       ORDER BY o.id DESC
        LIMIT 20`,
       [storeId, customer.id, customer.phone]
     );
 
     const [repairs] = await pool.query(
-      `SELECT id, bike_model AS bikeModel, issue_description AS issueDescription, status,
-              reservation_date AS reservationDate, estimate_amount AS estimateAmount,
-              inspection_fee AS inspectionFee, parts_fee AS partsFee, labor_fee AS laborFee,
-              storage_fee AS storageFee, completed_at AS completedAt, picked_up_at AS pickedUpAt
+      `SELECT ro.id AS id, ro.bike_model AS bikeModel, ro.issue_description AS issueDescription, ro.status AS status,
+              ro.reservation_date AS reservationDate, ro.estimate_amount AS estimateAmount,
+              ro.inspection_fee AS inspectionFee, ro.parts_fee AS partsFee, ro.labor_fee AS laborFee,
+              ro.storage_fee AS storageFee, ro.completed_at AS completedAt, ro.picked_up_at AS pickedUpAt
        FROM repair_orders ro
        LEFT JOIN orders linked_o ON linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id
        WHERE ro.store_id = ?
@@ -289,7 +289,7 @@ app.get("/api/customer-status", ...customerStatusStaffAuth, async (req, res, nex
     );
 
     const [pendingPurchaseConfirmations] = await pool.query(
-      `SELECT pc.id, pc.order_id AS orderId, pc.token, pc.status, pc.created_at AS createdAt,
+      `SELECT pc.id AS id, pc.order_id AS orderId, pc.token AS token, pc.status AS status, pc.created_at AS createdAt,
               o.order_no AS orderNo
        FROM purchase_confirmations pc
        LEFT JOIN orders o ON o.id = pc.order_id
@@ -309,12 +309,12 @@ app.get("/api/customer-status", ...customerStatusStaffAuth, async (req, res, nex
     );
 
     const [coupons] = await pool.query(
-      `SELECT id, code, coupon_type AS couponType, amount, status, is_used AS isUsed,
-              eligible_category AS eligibleCategory, issued_at AS issuedAt, used_at AS usedAt
-       FROM coupons
-       WHERE store_id = ?
-         AND customer_id = ?
-       ORDER BY id DESC
+      `SELECT cp.id AS id, cp.code AS code, cp.coupon_type AS couponType, cp.amount AS amount, cp.status AS status, cp.is_used AS isUsed,
+              cp.eligible_category AS eligibleCategory, cp.issued_at AS issuedAt, cp.used_at AS usedAt
+       FROM coupons cp
+       WHERE cp.store_id = ?
+         AND cp.customer_id = ?
+       ORDER BY cp.id DESC
        LIMIT 20`,
       [storeId, customer.id]
     );
