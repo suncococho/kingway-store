@@ -935,6 +935,46 @@ async function normalizeRepairQuoteOrderItems(connection, quoteItemsJson, storeI
   return normalized;
 }
 
+
+function normalizeOrderItemComparableNumber(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function repairQuoteItemMatchesOrderItem(item, orderItem) {
+  const productMatches = Number(item.productId || 0) > 0
+    && Number(item.productId || 0) === Number(orderItem.productId || 0);
+  const skuMatches = item.sku
+    && orderItem.sku
+    && String(item.sku).trim() === String(orderItem.sku).trim();
+  const nameMatches = item.name
+    && orderItem.name
+    && String(item.name).trim() === String(orderItem.name).trim();
+
+  if (!productMatches && !skuMatches && !nameMatches) {
+    return false;
+  }
+
+  return Math.abs(normalizeOrderItemComparableNumber(item.quantity) - normalizeOrderItemComparableNumber(orderItem.quantity)) < 0.0001
+    && Math.abs(normalizeOrderItemComparableNumber(item.unitPrice) - normalizeOrderItemComparableNumber(orderItem.unitPrice)) < 0.0001
+    && Math.abs(normalizeOrderItemComparableNumber(item.lineTotal) - normalizeOrderItemComparableNumber(orderItem.lineTotal)) < 0.0001;
+}
+
+function selectMissingRepairQuoteOrderItems(items, existingRows) {
+  const usedExistingIndexes = new Set();
+  return items.filter((item) => {
+    const matchIndex = existingRows.findIndex((row, index) => {
+      if (usedExistingIndexes.has(index)) return false;
+      return repairQuoteItemMatchesOrderItem(item, row);
+    });
+    if (matchIndex >= 0) {
+      usedExistingIndexes.add(matchIndex);
+      return false;
+    }
+    return true;
+  });
+}
+
 async function syncRepairQuoteItemsToOrder(connection, {
   repairId,
   orderId,
@@ -977,17 +1017,42 @@ async function syncRepairQuoteItemsToOrder(connection, {
     }
     return result;
   }
-  const [countRows] = await connection.query(
-    "SELECT COUNT(*) AS count FROM order_items WHERE order_id = ? AND store_id = ?",
+  const [existingRows] = await connection.query(
+    `
+      SELECT
+        id,
+        product_id AS productId,
+        sku_snapshot AS sku,
+        product_name_snapshot AS name,
+        quantity,
+        unit_price AS unitPrice,
+        line_total AS lineTotal
+      FROM order_items
+      WHERE order_id = ?
+        AND store_id = ?
+      ORDER BY id ASC
+    `,
     [orderId, scopedStoreId]
   );
-  const existingItemCount = Number(countRows[0]?.count || 0);
+  const existingItemCount = existingRows.length;
 
   if (!items.length) {
     return { synced: false, reason: "empty_quote_items", items, existingItemCount, insertedCount: 0, itemTotal };
   }
-  if (existingItemCount > 0 && !force) {
-    return { synced: false, reason: "order_items_exist", items, existingItemCount, insertedCount: 0, itemTotal };
+
+  const itemsToInsert = force
+    ? items
+    : selectMissingRepairQuoteOrderItems(items, existingRows);
+
+  if (existingItemCount > 0 && !force && !itemsToInsert.length) {
+    return {
+      synced: false,
+      reason: "quote_items_already_synced",
+      items,
+      existingItemCount,
+      insertedCount: 0,
+      itemTotal
+    };
   }
 
   if (dryRun) {
@@ -997,7 +1062,7 @@ async function syncRepairQuoteItemsToOrder(connection, {
       reason: "dry_run",
       items,
       existingItemCount,
-      wouldInsertCount: items.length,
+      wouldInsertCount: itemsToInsert.length,
       insertedCount: 0,
       itemTotal
     };
@@ -1010,7 +1075,7 @@ async function syncRepairQuoteItemsToOrder(connection, {
     );
   }
 
-  for (const item of items) {
+  for (const item of itemsToInsert) {
     await connection.query(
       `
         INSERT INTO order_items
@@ -1067,7 +1132,7 @@ async function syncRepairQuoteItemsToOrder(connection, {
     synced: true,
     items,
     existingItemCount,
-    insertedCount: items.length,
+    insertedCount: itemsToInsert.length,
     itemTotal,
     totalsAdjusted
   };
