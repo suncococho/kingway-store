@@ -468,18 +468,16 @@ async function getMaskedLineCredentialStatus({ storeId = null, storeCode = null 
 function normalizePatchPayload(input, current) {
   const body = input && typeof input === "object" && !Array.isArray(input) ? input : {};
 
-  const channelSecretState = parseSecretInput(
-    body.channelSecret,
-    current.channelSecretRef,
-    current.channelSecretDirectValue,
-    current.channelSecretPresent
-  );
-  const channelAccessTokenState = parseSecretInput(
-    body.channelAccessToken,
-    current.channelAccessTokenRef,
-    current.channelAccessTokenDirectValue,
-    current.channelAccessTokenPresent
-  );
+  const channelSecretState = {
+    ref: current.channelSecretRef,
+    directValue: current.channelSecretDirectValue,
+    present: current.channelSecretPresent
+  };
+  const channelAccessTokenState = {
+    ref: current.channelAccessTokenRef,
+    directValue: current.channelAccessTokenDirectValue,
+    present: current.channelAccessTokenPresent
+  };
 
   const requestedWebhookPath = Object.prototype.hasOwnProperty.call(body, "webhookPath")
     ? normalizeWebhookPath(body.webhookPath)

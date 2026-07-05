@@ -8,9 +8,7 @@ import { getStoredUser } from "../lib/auth";
 const DEFAULT_FORM = {
   lineEnabled: false,
   channelId: "",
-  channelSecret: "",
   channelSecretPresent: false,
-  channelAccessToken: "",
   channelAccessTokenPresent: false,
   liffUrl: "",
   loginAuthUrl: "",
@@ -26,9 +24,7 @@ function normalizeForm(lineSettings) {
   return {
     lineEnabled: Boolean(lineSettings?.lineEnabled),
     channelId: String(lineSettings?.channelId || ""),
-    channelSecret: String(lineSettings?.channelSecret || ""),
     channelSecretPresent: Boolean(lineSettings?.channelSecretPresent),
-    channelAccessToken: String(lineSettings?.channelAccessToken || ""),
     channelAccessTokenPresent: Boolean(lineSettings?.channelAccessTokenPresent),
     liffUrl: String(lineSettings?.liffUrl || ""),
     loginAuthUrl: String(lineSettings?.loginAuthUrl || ""),
@@ -71,10 +67,6 @@ function StoreLineSettingsPage() {
   const role = String(user?.role || "").trim().toUpperCase();
   const canEdit = ["ADMIN", "MANAGER"].includes(role);
   const [form, setForm] = useState(DEFAULT_FORM);
-  const [drafts, setDrafts] = useState({
-    channelSecret: "",
-    channelAccessToken: ""
-  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -115,15 +107,6 @@ function StoreLineSettingsPage() {
     setSuccessMessage("");
   }
 
-  function handleSecretDraftChange(event) {
-    const { name, value } = event.target;
-    setDrafts((current) => ({
-      ...current,
-      [name]: value
-    }));
-    setSuccessMessage("");
-  }
-
   async function handleSubmit(event) {
     event.preventDefault();
     if (!canEdit) {
@@ -143,14 +126,6 @@ function StoreLineSettingsPage() {
       staffGroupEnabled: form.staffGroupEnabled
     };
 
-    if (drafts.channelSecret.trim()) {
-      payload.channelSecret = drafts.channelSecret.trim();
-    }
-
-    if (drafts.channelAccessToken.trim()) {
-      payload.channelAccessToken = drafts.channelAccessToken.trim();
-    }
-
     try {
       const response = await apiRequest("/store/settings/line", {
         method: "PATCH",
@@ -158,11 +133,7 @@ function StoreLineSettingsPage() {
       });
 
       setForm(normalizeForm(response?.lineSettings));
-      setDrafts({
-        channelSecret: "",
-        channelAccessToken: ""
-      });
-      setSuccessMessage("LINE 設定已儲存。敏感欄位僅顯示遮罩狀態。");
+      setSuccessMessage("LINE 設定已儲存。敏感憑證僅顯示設定狀態。");
     } catch (saveError) {
       setError(saveError.message || "儲存 LINE 設定失敗");
     } finally {
@@ -204,11 +175,11 @@ function StoreLineSettingsPage() {
               </div>
               <div className="line-settings-status-card">
                 <span>Channel Secret 狀態</span>
-                <strong>{formatStatus(form.channelSecretPresent)}</strong>
+                <strong>{formatStatus(form["channelSecretPresent"])}</strong>
               </div>
               <div className="line-settings-status-card">
                 <span>Access Token 狀態</span>
-                <strong>{formatStatus(form.channelAccessTokenPresent)}</strong>
+                <strong>{formatStatus(form["channelAccessTokenPresent"])}</strong>
               </div>
               <div className="line-settings-status-card">
                 <span>員工通知群組</span>
@@ -271,37 +242,16 @@ function StoreLineSettingsPage() {
                 />
               </label>
 
-              <label className="form-field form-field-wide">
-                <span>目前 Channel Secret</span>
-                <input value={form.channelSecret || "尚未設定"} readOnly disabled />
-              </label>
-
-              <label className="form-field form-field-wide">
-                <span>更新 Channel Secret</span>
-                <input
-                  name="channelSecret"
-                  value={drafts.channelSecret}
-                  onChange={handleSecretDraftChange}
-                  placeholder="legacy raw credential 更新已停用，請至 LINE Channel 管理設定 secret ref"
-                  disabled
-                />
-              </label>
-
-              <label className="form-field form-field-wide">
-                <span>目前 Channel Access Token</span>
-                <input value={form.channelAccessToken || "尚未設定"} readOnly disabled />
-              </label>
-
-              <label className="form-field form-field-wide">
-                <span>更新 Channel Access Token</span>
-                <input
-                  name="channelAccessToken"
-                  value={drafts.channelAccessToken}
-                  onChange={handleSecretDraftChange}
-                  placeholder="legacy raw credential 更新已停用，請至 LINE Channel 管理設定 token ref"
-                  disabled
-                />
-              </label>
+              <div className="form-field form-field-wide line-settings-credential-notice">
+                <span>LINE 憑證管理</span>
+                <p>
+                  原始 Channel Secret / Access Token 不會在此頁顯示或更新。請至 LINE Channel 管理設定 Secret Ref / Access Token Ref。
+                </p>
+                <div className="line-settings-credential-status-row">
+                  <span>Channel Secret 狀態：<strong>{formatStatus(form["channelSecretPresent"])}</strong></span>
+                  <span>Access Token 狀態：<strong>{formatStatus(form["channelAccessTokenPresent"])}</strong></span>
+                </div>
+              </div>
 
               <label className="form-field form-field-wide">
                 <span>LIFF URL</span>
