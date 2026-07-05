@@ -104,7 +104,7 @@ function OrderInstallCheckPrintPage() {
                 <th>數量</th>
                 <th>安裝</th>
                 <th>測試</th>
-                <th>照片確認</th>
+                <th>照片</th>
                 <th>完成</th>
                 <th>備註</th>
               </tr>
@@ -151,9 +151,9 @@ function OrderInstallCheckPrintPage() {
             <span>實際安裝人員：__________________</span>
             <span>交叉確認人員：__________________</span>
           </div>
-          <NoteBox title="備註 memo" lines={4} />
-          <NoteBox title="追加發現問題" lines={4} />
-          <NoteBox title="需告知客戶事項" lines={4} />
+          <NoteBox title="備註 memo" lines={2} />
+          <NoteBox title="追加發現問題" lines={2} />
+          <NoteBox title="需告知客戶事項" lines={2} />
           <div className="install-check-sign-row">
             <span>員工簽名：__________________</span>
             <span>日期：__________________</span>
