@@ -100,7 +100,7 @@ function StoreLineSettingsPage() {
 
   const readOnlyHint = useMemo(() => {
     if (canEdit) {
-      return "可維護目前門市的 LINE OA、LIFF 與憑證狀態。Channel Secret 與 Access Token 可直接輸入儲存，原始值不會顯示在畫面或 API 回應中。";
+      return "此頁為 legacy 門市 LINE 摘要設定。新 LINE 官方帳號、Webhook、LIFF 與憑證請改用 LINE Channel 管理。";
     }
 
     return "目前帳號僅可檢視，若需修改請使用 ADMIN 或 MANAGER 帳號。";
@@ -191,8 +191,8 @@ function StoreLineSettingsPage() {
               title="LINE 狀態總覽"
               description="此頁只會讀寫目前登入帳號所屬門市的 LINE 設定，不會影響其他門市。"
               actions={
-                <Link to="/settings/store" className="secondary-button">
-                  返回門市設定
+                <Link to="/settings/line-channels" className="secondary-button">
+                  前往 LINE Channel 管理
                 </Link>
               }
             />
@@ -282,8 +282,8 @@ function StoreLineSettingsPage() {
                   name="channelSecret"
                   value={drafts.channelSecret}
                   onChange={handleSecretDraftChange}
-                  placeholder="留空表示保留既有設定；可直接輸入，或使用進階 env:STORE4_LINE_CHANNEL_SECRET"
-                  disabled={!canEdit || saving}
+                  placeholder="legacy raw credential 更新已停用，請至 LINE Channel 管理設定 secret ref"
+                  disabled
                 />
               </label>
 
@@ -298,8 +298,8 @@ function StoreLineSettingsPage() {
                   name="channelAccessToken"
                   value={drafts.channelAccessToken}
                   onChange={handleSecretDraftChange}
-                  placeholder="留空表示保留既有設定；可直接輸入，或使用進階 env:STORE4_LINE_CHANNEL_ACCESS_TOKEN"
-                  disabled={!canEdit || saving}
+                  placeholder="legacy raw credential 更新已停用，請至 LINE Channel 管理設定 token ref"
+                  disabled
                 />
               </label>
 

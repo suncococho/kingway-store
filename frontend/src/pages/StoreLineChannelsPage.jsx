@@ -8,7 +8,8 @@ import {
   dryRunStoreLineChannel,
   fetchStoreLineChannel,
   fetchStoreLineChannels,
-  updateStoreLineChannel
+  updateStoreLineChannel,
+  verifyStoreLineChannel
 } from "../lib/storeLineChannelsApi";
 import { PAGE_HELP } from "../lib/pageHelpContent";
 
@@ -234,6 +235,22 @@ function StoreLineChannelsPage() {
     }
   }
 
+  async function runVerify(row) {
+    try {
+      setBusyId(`verify-${row.id}`);
+      setError("");
+      setSuccessMessage("");
+      const result = await verifyStoreLineChannel(row.id);
+      setDryRunResult(result);
+      setSuccessMessage(result.message || "Verify 測試完成");
+      await loadData(filters);
+    } catch (err) {
+      setError(err?.message || "Verify 測試失敗");
+    } finally {
+      setBusyId("");
+    }
+  }
+
   const columns = useMemo(() => [
     { key: "storeName", label: "門市", render: (row) => row.storeName || `#${row.storeId}` },
     { key: "ownershipType", label: "Ownership", render: (row) => OWNERSHIP_LABELS[row.ownershipType] || row.ownershipType },
@@ -260,6 +277,9 @@ function StoreLineChannelsPage() {
           <button type="button" className="primary-button" onClick={() => runDryRun(row)} disabled={!canManageSettings || busyId === `dry-run-${row.id}`}>
             Dry-run 測試
           </button>
+          <button type="button" className="secondary-button" onClick={() => runVerify(row)} disabled={!canManageSettings || busyId === `verify-${row.id}`}>
+            Verify
+          </button>
         </div>
       )
     }
@@ -280,8 +300,8 @@ function StoreLineChannelsPage() {
         <div className="section-heading-row">
           <div>
             <h2>設定說明</h2>
-            <p className="muted-text">
-              此頁只保存 Channel metadata、secret ref 與 token ref。請勿輸入 LINE Access Token 或 Channel Secret 原文。
+              <p className="muted-text">
+              此頁只保存 Channel metadata、secret ref 與 token ref。Webhook 標準路徑為 /api/line/webhook/channel/:webhookPath，請勿輸入 LINE Access Token 或 Channel Secret 原文。
             </p>
           </div>
           <StatusBadge tone={canManageCompanyChannels ? "warning" : "info"}>
@@ -422,18 +442,18 @@ function StoreLineChannelsPage() {
                 <input
                   value={form.lineChannelSecretRef}
                   onChange={(event) => updateForm("lineChannelSecretRef", event.target.value)}
-                  placeholder={editing?.hasLineChannelSecretRef ? "已設定，留空代表不變" : "secret://line/test/channel-secret"}
+                  placeholder={editing?.hasLineChannelSecretRef ? "已設定，留空代表不變" : "env:KINGWAY_KAOHSIUNG_LINE_CHANNEL_SECRET"}
                 />
-                <small className="muted-text">Channel Secret 原文請勿輸入，請輸入 secret ref。</small>
+                <small className="muted-text">Channel Secret 原文請勿輸入，請輸入 secret ref，例如 env:KINGWAY_KAOHSIUNG_LINE_CHANNEL_SECRET。</small>
               </label>
               <label className="form-field form-grid-full">
                 <span>Access Token Ref</span>
                 <input
                   value={form.channelAccessTokenRef}
                   onChange={(event) => updateForm("channelAccessTokenRef", event.target.value)}
-                  placeholder={editing?.hasChannelAccessTokenRef ? "已設定，留空代表不變" : "secret://line/test/channel-access-token"}
+                  placeholder={editing?.hasChannelAccessTokenRef ? "已設定，留空代表不變" : "env:KINGWAY_KAOHSIUNG_LINE_CHANNEL_ACCESS_TOKEN"}
                 />
-                <small className="muted-text">Access Token 原文請勿輸入，請輸入 token ref。</small>
+                <small className="muted-text">Access Token 原文請勿輸入，請輸入 token ref，例如 env:KINGWAY_KAOHSIUNG_LINE_CHANNEL_ACCESS_TOKEN。</small>
               </label>
               <label className="form-field">
                 <span>LIFF ID</span>

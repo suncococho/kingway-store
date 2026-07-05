@@ -7,7 +7,8 @@ const {
   getWebhookPreview,
   listStoreLineChannels,
   resolveStoreLineChannelContext,
-  updateStoreLineChannel
+  updateStoreLineChannel,
+  verifyStoreLineChannel
 } = require("../services/storeLineChannelService");
 
 const router = express.Router();
@@ -72,6 +73,16 @@ router.post("/:id/dry-run-test", async (req, res, next) => {
   try {
     const context = await resolveStoreLineChannelContext(req);
     const result = await dryRunStoreLineChannel(context, req.params.id);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:id/verify", async (req, res, next) => {
+  try {
+    const context = await resolveStoreLineChannelContext(req);
+    const result = await verifyStoreLineChannel(context, req.params.id);
     res.json(result);
   } catch (error) {
     next(error);

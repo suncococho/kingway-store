@@ -3,6 +3,7 @@ import liff from "@line/liff";
 import { useLocation, useParams } from "react-router-dom";
 import SignaturePad from "../components/SignaturePad";
 import { apiRequest } from "../lib/api";
+import { resolveLineContext } from "../lib/lineContext";
 
 const DELIVERY_CHECK_ITEMS = [
   { id: "check-condition", label: "車況確認", value: "車況確認", description: "已當場檢查車輛外觀、功能、配件與規格，確認皆正常無誤、與訂單相符。", required: true },
@@ -384,34 +385,29 @@ function PurchaseConfirmPublicPage() {
           const content = await loadContent();
           setData({ content });
 
-          await liff.init({
-            liffId: import.meta.env.VITE_LIFF_ID || "2010080463-s7I6a2BG"
-          });
-
-          if (!liff.isLoggedIn()) {
-            liff.login();
+          const lineContext = await resolveLineContext();
+          if (!lineContext.isLoggedIn || lineContext.shouldLogin) {
             return;
           }
 
-          const profile = await liff.getProfile();
-          setProfileName(profile.displayName || "");
-        if (profile.userId && profile.displayName) {
+          setProfileName(lineContext.displayName || "");
+        if (lineContext.lineUserId && lineContext.displayName) {
           apiRequest("/line/profile-name", {
             method: "POST",
             body: JSON.stringify({
-              lineUserId: profile.userId,
-              displayName: profile.displayName
+              lineUserId: lineContext.lineUserId,
+              displayName: lineContext.displayName
             })
           }).catch(() => {});
         }
-          sessionStorage.setItem("lineProfileName", profile.displayName || "");
-        setProfileName(profile.displayName || "");
+          sessionStorage.setItem("lineProfileName", lineContext.displayName || "");
+        setProfileName(lineContext.displayName || "");
 
           const response = await apiRequest("/purchase-confirmations/line/latest-order", {
             method: "POST",
             body: JSON.stringify({
-              lineUserId: profile.userId,
-              displayName: profile.displayName || ""
+              lineUserId: lineContext.lineUserId,
+              displayName: lineContext.displayName || ""
             })
           });
 

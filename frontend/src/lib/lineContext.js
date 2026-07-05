@@ -1,7 +1,9 @@
 import liff from "@line/liff";
+import { apiRequest } from "./api";
 
 const LIFF_ID = import.meta.env.VITE_LIFF_ID || "2010080463-s7I6a2BG";
 const PROFILE_RETRY_DELAY_MS = [250, 500];
+const QUERY_STORE_CODE_KEYS = ["store", "storeCode", "store_code"];
 const QUERY_LINE_USER_ID_KEYS = [
   "lineUserId",
   "line_user_id",
@@ -195,9 +197,48 @@ function persistResolvedContext({ lineUserId, displayName }) {
   }
 }
 
-export async function resolveLineContext({ liffId = LIFF_ID } = {}) {
+async function resolveStoreLineContext() {
+  const store = firstMatchFromQuery(QUERY_STORE_CODE_KEYS);
+  if (!store.value) {
+    return {
+      storeCode: "",
+      liffId: "",
+      source: "none"
+    };
+  }
+
+  try {
+    const response = await apiRequest(`/storefront/line-context?store=${encodeURIComponent(store.value)}`);
+    return {
+      storeCode: response?.storeCode || store.value,
+      storeName: response?.storeName || "",
+      liffId: response?.liffId || "",
+      lineOfficialAccountName: response?.lineOfficialAccountName || "",
+      lineBasicId: response?.lineBasicId || "",
+      hasLineChannel: Boolean(response?.hasLineChannel),
+      source: "storefront-line-context"
+    };
+  } catch (error) {
+    debugLineContext({
+      stage: "store-line-context-error",
+      storeCode: store.value,
+      error: normalizeProfileErrorMessage(error)
+    });
+    return {
+      storeCode: store.value,
+      liffId: "",
+      source: "fallback"
+    };
+  }
+}
+
+export async function resolveLineContext(options = {}) {
+  const fallbackLiffId = options.liffId || LIFF_ID;
+  const storeLineContext = await resolveStoreLineContext();
+  const liffId = storeLineContext.liffId || fallbackLiffId;
   const result = {
     liffId,
+    storeLineContext,
     inClient: false,
     isLoggedIn: false,
     lineUserId: "",

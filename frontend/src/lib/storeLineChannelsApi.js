@@ -45,6 +45,14 @@ export function dryRunStoreLineChannel(id) {
   });
 }
 
+export function verifyStoreLineChannel(id) {
+  return apiRequest(`/store-line-channels/${id}/verify`, {
+    method: "POST",
+    processingMessage: "Verify LINE Channel",
+    processingDescription: "正在解析 secret ref / token ref 並執行 LINE API 輕量驗證。"
+  });
+}
+
 export function fetchWebhookPreview(params = {}) {
   return apiRequest(`/store-line-channels/webhook-preview${buildQuery(params)}`);
 }

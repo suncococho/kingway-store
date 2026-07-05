@@ -6,6 +6,10 @@ const { authenticate, authorize } = require("../middleware/auth");
 const { verifyLineSignature, sendLineReply } = require("../utils/line");
 const { resolveStoreLineCredentials } = require("../services/storeLineSettingsService");
 const {
+  recordStoreLineChannelWebhookReceived,
+  resolveStoreLineChannelByWebhookPath
+} = require("../services/storeLineChannelService");
+const {
   detectGroupTypeHint,
   getEventGroupId,
   maskLineId,
@@ -26,6 +30,7 @@ const {
   handleLinePostback,
   mapRegistrationTypeLabel,
   replyToLine,
+  runWithLineAccessTokenOptions,
   sendToGroups,
   withStaffQuickReply,
   createFlexMessage,
@@ -117,250 +122,14 @@ function isLimitedTokenizedReplyEvent(event) {
   );
 }
 
-router.post("/webhook/:webhookPathToken", async (req, res, next) => {
-  try {
-    const webhookPathToken = normalizeWebhookPathToken(req.params.webhookPathToken);
-    const webhookPathTokenHash = hashWebhookPathToken(webhookPathToken);
 
-    if (!/^[A-Za-z0-9_-]{1,190}$/.test(webhookPathToken)) {
-      return res.status(404).json({
-        ok: false,
-        mode: "tokenized_webhook_dry_run",
-        dryRun: true,
-        sendSuppressed: true,
-        resolved: false,
-        credentialsResolved: false,
-        message: "找不到對應的門市 LINE webhook 設定"
-      });
-    }
+async function handleLineWebhookEvents({ req, events, lineContext = {} }) {
+  const scopedLineContext = {
+    allowConfigFallback: lineContext.allowConfigFallback !== false,
+    ...lineContext
+  };
 
-    const row = await findStoreLineSettingsByWebhookPathToken(webhookPathToken);
-
-    if (!row) {
-      console.warn("[line:webhook:skeleton] mapping not found", {
-        webhookPathTokenHash
-      });
-      return res.status(404).json({
-        ok: false,
-        mode: "tokenized_webhook_dry_run",
-        dryRun: true,
-        sendSuppressed: true,
-        resolved: false,
-        credentialsResolved: false,
-        message: "找不到對應的門市 LINE webhook 設定"
-      });
-    }
-
-    console.log("[line:webhook:skeleton] mapping resolved", {
-      storeId: row.storeId,
-      webhookPathTokenHash,
-      channelIdPresent: Boolean(row.channelId),
-      channelSecretPresent: Boolean(row.channelSecretPresent),
-      channelAccessTokenPresent: Boolean(row.channelAccessTokenPresent)
-    });
-
-    const resolvedCredentials = await resolveStoreLineCredentials({
-      storeId: row.storeId,
-      purpose: "tokenized_webhook"
-    });
-
-    if (!resolvedCredentials.channelSecret) {
-      console.warn("[line:webhook:skeleton] secret unavailable", {
-        storeId: row.storeId,
-        webhookPathTokenHash,
-        channelSecretSource: resolvedCredentials.channelSecretStatus?.source || "none",
-        channelSecretResolvable: Boolean(resolvedCredentials.channelSecretStatus?.resolvable),
-        channelSecretPresent: Boolean(row.channelSecretPresent)
-      });
-      return res.status(503).json({
-        ok: false,
-        mode: "tokenized_webhook_dry_run",
-        dryRun: true,
-        sendSuppressed: true,
-        resolved: true,
-        signatureVerified: false,
-        credentialsResolved: false,
-        message: "找不到可用的 LINE channel secret 設定"
-      });
-    }
-
-    const signature = req.headers["x-line-signature"];
-    const rawBody = req.rawBody || "";
-    const signatureVerified = verifyLineSignature(rawBody, resolvedCredentials.channelSecret, signature);
-
-    if (!signatureVerified) {
-      console.warn("[line:webhook:skeleton] invalid signature", {
-        storeId: row.storeId,
-        webhookPathTokenHash
-      });
-      return res.status(401).json({
-        ok: false,
-        mode: "tokenized_webhook_dry_run",
-        dryRun: true,
-        sendSuppressed: true,
-        resolved: true,
-        signatureVerified: false,
-        credentialsResolved: false,
-        message: "Invalid LINE signature"
-      });
-    }
-
-    if (!resolvedCredentials.credentialsResolved || !resolvedCredentials.accessToken || !resolvedCredentials.channelSecret) {
-      console.warn("[line:webhook:skeleton] credentials unavailable", {
-        storeId: row.storeId,
-        webhookPathTokenHash,
-        accessTokenSource: resolvedCredentials.channelAccessTokenStatus?.source || "none",
-        channelSecretSource: resolvedCredentials.channelSecretStatus?.source || "none",
-        accessTokenResolvable: Boolean(resolvedCredentials.channelAccessTokenStatus?.resolvable),
-        channelSecretResolvable: Boolean(resolvedCredentials.channelSecretStatus?.resolvable)
-      });
-      return res.status(503).json({
-        ok: false,
-        mode: "tokenized_webhook_dry_run",
-        dryRun: true,
-        sendSuppressed: true,
-        resolved: true,
-        signatureVerified: true,
-        credentialsResolved: false,
-        message: "找不到可用的門市 LINE credentials"
-      });
-    }
-
-    const lineContext = {
-      storeId: resolvedCredentials.storeId,
-      storeCode: resolvedCredentials.storeCode,
-      lineChannelId: row.channelId || null,
-      channelAccessTokenRef: row.channelAccessTokenRef || null,
-      channelSecretRef: row.channelSecretRef || null,
-      source: "tokenized_webhook_reply",
-      purpose: "tokenized_webhook_reply",
-      credentialsResolved: true
-    };
-    req.lineContext = lineContext;
-
-    const events = Array.isArray(req.body?.events) ? req.body.events : [];
-    const routeDecisions = events.map(buildTokenizedWebhookRouteDecision);
-    const replyCandidates = events.filter(isLimitedTokenizedReplyEvent);
-
-    if (replyCandidates.length > 0) {
-      try {
-        for (const event of replyCandidates) {
-          await sendLineReply(config, event.replyToken, [{ type: "text", text: "pong" }], {
-            channelAccessToken: resolvedCredentials.accessToken,
-            accessToken: resolvedCredentials.accessToken,
-            allowConfigFallback: false,
-            context: lineContext
-          });
-        }
-
-        console.log("[line:webhook:tokenized-reply] delivered", {
-          storeId: resolvedCredentials.storeId,
-          webhookPathTokenHash,
-          replyAttemptedCount: replyCandidates.length,
-          lineChannelId: row.channelId || null
-        });
-
-        return res.status(200).json({
-          ok: true,
-          mode: "tokenized_webhook_reply",
-          dryRun: false,
-          sendSuppressed: false,
-          resolved: true,
-          signatureVerified: true,
-          credentialsResolved: true,
-          replyAttempted: true,
-          replyDelivered: true,
-          replyAttemptedCount: replyCandidates.length,
-          replyMessage: "pong",
-          storeScopedTokenUsed: true,
-          storeId: resolvedCredentials.storeId,
-          storeCode: resolvedCredentials.storeCode,
-          eventCount: routeDecisions.length,
-          routeDecisions
-        });
-      } catch (error) {
-        console.warn("[line:webhook:tokenized-reply] failed", {
-          storeId: resolvedCredentials.storeId,
-          webhookPathTokenHash,
-          replyAttemptedCount: replyCandidates.length,
-          lineApiStatus: error.lineApiStatus || null,
-          safeDetails: error.safeDetails || error.message
-        });
-
-        return res.status(error.statusCode || 502).json({
-          ok: false,
-          mode: "tokenized_webhook_reply",
-          dryRun: false,
-          sendSuppressed: true,
-          resolved: true,
-          signatureVerified: true,
-          credentialsResolved: true,
-          replyAttempted: true,
-          replyDelivered: false,
-          replyAttemptedCount: replyCandidates.length,
-          storeScopedTokenUsed: true,
-          storeId: resolvedCredentials.storeId,
-          storeCode: resolvedCredentials.storeCode,
-          eventCount: routeDecisions.length,
-          routeDecisions,
-          message: "LINE reply failed safely",
-          safeError: error.safeDetails || error.message
-        });
-      }
-    }
-
-    console.log("[line:webhook:dry-run] analyzed", {
-      storeId: resolvedCredentials.storeId,
-      webhookPathTokenHash,
-      eventCount: routeDecisions.length,
-      intendedHandlers: routeDecisions.map((decision) => decision.intendedHandler)
-    });
-
-    return res.status(200).json({
-      ok: true,
-      mode: "tokenized_webhook_dry_run",
-      dryRun: true,
-      sendSuppressed: true,
-      resolved: true,
-      signatureVerified: true,
-      credentialsResolved: true,
-      storeId: resolvedCredentials.storeId,
-      storeCode: resolvedCredentials.storeCode,
-      eventCount: routeDecisions.length,
-      routeDecisions,
-      lineEnabled: Boolean(row.lineEnabled),
-      channelIdPresent: Boolean(row.channelId),
-      channelSecretPresent: Boolean(row.channelSecretPresent),
-      channelAccessTokenPresent: Boolean(row.channelAccessTokenPresent),
-      staffGroupEnabled: Boolean(row.staffGroupEnabled),
-      webhookConfigured: Boolean(row.webhookPath),
-      updatedAt: row.updatedAt || null
-    });
-  } catch (error) {
-    return next(error);
-  }
-});
-
-router.post("/webhook", async (req, res, next) => {
-  try {
-    const signature = req.headers["x-line-signature"];
-    const rawBody = req.rawBody || "";
-
-    if (!verifyLineSignature(rawBody, config.line.channelSecret, signature)) {
-      return res.status(401).json({ message: "Invalid LINE signature" });
-    }
-
-    const events = Array.isArray(req.body.events) ? req.body.events : [];
-    await logWorkflowEvent("line_webhook_received", "WEBHOOK", null, {
-      eventCount: events.length,
-      path: req.originalUrl
-    });
-    console.log("[line:webhook] received", {
-      method: req.method,
-      url: req.originalUrl,
-      events: events.length
-    });
-
+  return runWithLineAccessTokenOptions(scopedLineContext, async () => {
     for (const event of events) {
       const claimResult = await claimLineWebhookEvent(event, req.originalUrl);
       if (!claimResult.claimed) {
@@ -647,6 +416,357 @@ router.post("/webhook", async (req, res, next) => {
         await handleCustomerMessageEvent(event);
       }
     }
+
+
+  });
+}
+
+router.post("/webhook/channel/:webhookPath", async (req, res, next) => {
+  try {
+    const webhookPath = normalizeWebhookPathToken(req.params.webhookPath);
+    const webhookPathHash = hashWebhookPathToken(webhookPath);
+    const resolved = await resolveStoreLineChannelByWebhookPath(webhookPath);
+    const { channel } = resolved;
+    const signature = req.headers["x-line-signature"];
+    const rawBody = req.rawBody || "";
+
+    if (!verifyLineSignature(rawBody, resolved.channelSecret.secret, signature)) {
+      console.warn("[line:webhook:channel] invalid signature", {
+        storeId: channel.storeId,
+        channelId: channel.id,
+        webhookPathHash
+      });
+      return res.status(401).json({ message: "Invalid LINE signature" });
+    }
+
+    const events = Array.isArray(req.body?.events) ? req.body.events : [];
+    const destinations = [...new Set(events.map((event) => String(event?.destination || "").trim()).filter(Boolean))];
+    const configuredLineChannelId = String(channel.lineChannelId || "").trim();
+    const destinationMismatch = configuredLineChannelId && destinations.length > 0
+      ? destinations.some((destination) => destination !== configuredLineChannelId)
+      : false;
+
+    if (destinationMismatch) {
+      console.warn("[line:webhook:channel] destination mismatch", {
+        storeId: channel.storeId,
+        channelId: channel.id,
+        webhookPathHash,
+        destinationCount: destinations.length
+      });
+      return res.status(403).json({ message: "LINE webhook destination mismatch" });
+    }
+
+    await recordStoreLineChannelWebhookReceived(channel.id);
+
+    const lineContext = {
+      storeId: channel.storeId,
+      storeCode: channel.storeCode || null,
+      lineChannelId: channel.lineChannelId || null,
+      lineChannelDbId: channel.id,
+      lineOfficialAccountId: channel.lineOfficialAccountId || null,
+      lineBasicId: channel.lineBasicId || null,
+      source: "store_line_channel",
+      purpose: "store_line_channel_webhook",
+      channelAccessTokenRef: channel.channelAccessTokenRef || null,
+      channelSecretRef: channel.lineChannelSecretRef || null,
+      credentialsResolved: true,
+      allowConfigFallback: false,
+      channelAccessToken: resolved.channelAccessToken.secret
+    };
+    req.lineContext = lineContext;
+
+    await logWorkflowEvent("line_webhook_received", "WEBHOOK", channel.storeId, {
+      eventCount: events.length,
+      path: req.originalUrl,
+      source: lineContext.source,
+      lineChannelDbId: channel.id,
+      webhookPathHash
+    });
+    console.log("[line:webhook:channel] received", {
+      method: req.method,
+      url: req.originalUrl,
+      storeId: channel.storeId,
+      channelId: channel.id,
+      events: events.length,
+      webhookPathHash
+    });
+
+    await handleLineWebhookEvents({
+      req,
+      events,
+      lineContext
+    });
+
+    return res.json({
+      ok: true,
+      mode: "store_line_channel_webhook",
+      storeId: channel.storeId,
+      storeCode: channel.storeCode || null,
+      lineChannelDbId: channel.id,
+      eventCount: events.length
+    });
+  } catch (error) {
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
+    return next(error);
+  }
+});
+
+router.post("/webhook/:webhookPathToken", async (req, res, next) => {
+  try {
+    const webhookPathToken = normalizeWebhookPathToken(req.params.webhookPathToken);
+    const webhookPathTokenHash = hashWebhookPathToken(webhookPathToken);
+
+    if (!/^[A-Za-z0-9_-]{1,190}$/.test(webhookPathToken)) {
+      return res.status(404).json({
+        ok: false,
+        mode: "tokenized_webhook_dry_run",
+        dryRun: true,
+        sendSuppressed: true,
+        resolved: false,
+        credentialsResolved: false,
+        message: "找不到對應的門市 LINE webhook 設定"
+      });
+    }
+
+    const row = await findStoreLineSettingsByWebhookPathToken(webhookPathToken);
+
+    if (!row) {
+      console.warn("[line:webhook:skeleton] mapping not found", {
+        webhookPathTokenHash
+      });
+      return res.status(404).json({
+        ok: false,
+        mode: "tokenized_webhook_dry_run",
+        dryRun: true,
+        sendSuppressed: true,
+        resolved: false,
+        credentialsResolved: false,
+        message: "找不到對應的門市 LINE webhook 設定"
+      });
+    }
+
+    console.log("[line:webhook:skeleton] mapping resolved", {
+      storeId: row.storeId,
+      webhookPathTokenHash,
+      channelIdPresent: Boolean(row.channelId),
+      channelSecretPresent: Boolean(row.channelSecretPresent),
+      channelAccessTokenPresent: Boolean(row.channelAccessTokenPresent)
+    });
+
+    const resolvedCredentials = await resolveStoreLineCredentials({
+      storeId: row.storeId,
+      purpose: "tokenized_webhook"
+    });
+
+    if (!resolvedCredentials.channelSecret) {
+      console.warn("[line:webhook:skeleton] secret unavailable", {
+        storeId: row.storeId,
+        webhookPathTokenHash,
+        channelSecretSource: resolvedCredentials.channelSecretStatus?.source || "none",
+        channelSecretResolvable: Boolean(resolvedCredentials.channelSecretStatus?.resolvable),
+        channelSecretPresent: Boolean(row.channelSecretPresent)
+      });
+      return res.status(503).json({
+        ok: false,
+        mode: "tokenized_webhook_dry_run",
+        dryRun: true,
+        sendSuppressed: true,
+        resolved: true,
+        signatureVerified: false,
+        credentialsResolved: false,
+        message: "找不到可用的 LINE channel secret 設定"
+      });
+    }
+
+    const signature = req.headers["x-line-signature"];
+    const rawBody = req.rawBody || "";
+    const signatureVerified = verifyLineSignature(rawBody, resolvedCredentials.channelSecret, signature);
+
+    if (!signatureVerified) {
+      console.warn("[line:webhook:skeleton] invalid signature", {
+        storeId: row.storeId,
+        webhookPathTokenHash
+      });
+      return res.status(401).json({
+        ok: false,
+        mode: "tokenized_webhook_dry_run",
+        dryRun: true,
+        sendSuppressed: true,
+        resolved: true,
+        signatureVerified: false,
+        credentialsResolved: false,
+        message: "Invalid LINE signature"
+      });
+    }
+
+    if (!resolvedCredentials.credentialsResolved || !resolvedCredentials.accessToken || !resolvedCredentials.channelSecret) {
+      console.warn("[line:webhook:skeleton] credentials unavailable", {
+        storeId: row.storeId,
+        webhookPathTokenHash,
+        accessTokenSource: resolvedCredentials.channelAccessTokenStatus?.source || "none",
+        channelSecretSource: resolvedCredentials.channelSecretStatus?.source || "none",
+        accessTokenResolvable: Boolean(resolvedCredentials.channelAccessTokenStatus?.resolvable),
+        channelSecretResolvable: Boolean(resolvedCredentials.channelSecretStatus?.resolvable)
+      });
+      return res.status(503).json({
+        ok: false,
+        mode: "tokenized_webhook_dry_run",
+        dryRun: true,
+        sendSuppressed: true,
+        resolved: true,
+        signatureVerified: true,
+        credentialsResolved: false,
+        message: "找不到可用的門市 LINE credentials"
+      });
+    }
+
+    const lineContext = {
+      storeId: resolvedCredentials.storeId,
+      storeCode: resolvedCredentials.storeCode,
+      lineChannelId: row.channelId || null,
+      channelAccessTokenRef: row.channelAccessTokenRef || null,
+      channelSecretRef: row.channelSecretRef || null,
+      source: "tokenized_webhook_reply",
+      purpose: "tokenized_webhook_reply",
+      credentialsResolved: true
+    };
+    req.lineContext = lineContext;
+
+    const events = Array.isArray(req.body?.events) ? req.body.events : [];
+    const routeDecisions = events.map(buildTokenizedWebhookRouteDecision);
+    const replyCandidates = events.filter(isLimitedTokenizedReplyEvent);
+
+    if (replyCandidates.length > 0) {
+      try {
+        for (const event of replyCandidates) {
+          await sendLineReply(config, event.replyToken, [{ type: "text", text: "pong" }], {
+            channelAccessToken: resolvedCredentials.accessToken,
+            accessToken: resolvedCredentials.accessToken,
+            allowConfigFallback: false,
+            context: lineContext
+          });
+        }
+
+        console.log("[line:webhook:tokenized-reply] delivered", {
+          storeId: resolvedCredentials.storeId,
+          webhookPathTokenHash,
+          replyAttemptedCount: replyCandidates.length,
+          lineChannelId: row.channelId || null
+        });
+
+        return res.status(200).json({
+          ok: true,
+          mode: "tokenized_webhook_reply",
+          dryRun: false,
+          sendSuppressed: false,
+          resolved: true,
+          signatureVerified: true,
+          credentialsResolved: true,
+          replyAttempted: true,
+          replyDelivered: true,
+          replyAttemptedCount: replyCandidates.length,
+          replyMessage: "pong",
+          storeScopedTokenUsed: true,
+          storeId: resolvedCredentials.storeId,
+          storeCode: resolvedCredentials.storeCode,
+          eventCount: routeDecisions.length,
+          routeDecisions
+        });
+      } catch (error) {
+        console.warn("[line:webhook:tokenized-reply] failed", {
+          storeId: resolvedCredentials.storeId,
+          webhookPathTokenHash,
+          replyAttemptedCount: replyCandidates.length,
+          lineApiStatus: error.lineApiStatus || null,
+          safeDetails: error.safeDetails || error.message
+        });
+
+        return res.status(error.statusCode || 502).json({
+          ok: false,
+          mode: "tokenized_webhook_reply",
+          dryRun: false,
+          sendSuppressed: true,
+          resolved: true,
+          signatureVerified: true,
+          credentialsResolved: true,
+          replyAttempted: true,
+          replyDelivered: false,
+          replyAttemptedCount: replyCandidates.length,
+          storeScopedTokenUsed: true,
+          storeId: resolvedCredentials.storeId,
+          storeCode: resolvedCredentials.storeCode,
+          eventCount: routeDecisions.length,
+          routeDecisions,
+          message: "LINE reply failed safely",
+          safeError: error.safeDetails || error.message
+        });
+      }
+    }
+
+    console.log("[line:webhook:dry-run] analyzed", {
+      storeId: resolvedCredentials.storeId,
+      webhookPathTokenHash,
+      eventCount: routeDecisions.length,
+      intendedHandlers: routeDecisions.map((decision) => decision.intendedHandler)
+    });
+
+    return res.status(200).json({
+      ok: true,
+      mode: "tokenized_webhook_dry_run",
+      dryRun: true,
+      sendSuppressed: true,
+      resolved: true,
+      signatureVerified: true,
+      credentialsResolved: true,
+      storeId: resolvedCredentials.storeId,
+      storeCode: resolvedCredentials.storeCode,
+      eventCount: routeDecisions.length,
+      routeDecisions,
+      lineEnabled: Boolean(row.lineEnabled),
+      channelIdPresent: Boolean(row.channelId),
+      channelSecretPresent: Boolean(row.channelSecretPresent),
+      channelAccessTokenPresent: Boolean(row.channelAccessTokenPresent),
+      staffGroupEnabled: Boolean(row.staffGroupEnabled),
+      webhookConfigured: Boolean(row.webhookPath),
+      updatedAt: row.updatedAt || null
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/webhook", async (req, res, next) => {
+  try {
+    const signature = req.headers["x-line-signature"];
+    const rawBody = req.rawBody || "";
+
+    if (!verifyLineSignature(rawBody, config.line.channelSecret, signature)) {
+      return res.status(401).json({ message: "Invalid LINE signature" });
+    }
+
+    const events = Array.isArray(req.body.events) ? req.body.events : [];
+    await logWorkflowEvent("line_webhook_received", "WEBHOOK", null, {
+      eventCount: events.length,
+      path: req.originalUrl
+    });
+    console.log("[line:webhook] received", {
+      method: req.method,
+      url: req.originalUrl,
+      events: events.length
+    });
+
+    await handleLineWebhookEvents({
+      req,
+      events,
+      lineContext: {
+        source: "global_webhook",
+        purpose: "global_webhook",
+        allowConfigFallback: true,
+        credentialsResolved: true
+      }
+    });
 
     return res.json({ ok: true });
   } catch (error) {

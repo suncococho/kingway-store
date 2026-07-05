@@ -68,6 +68,33 @@ async function loadResolvedStoreSnapshot(storeId) {
   return rows[0] || null;
 }
 
+async function loadStoreLineContext(storeId) {
+  const [rows] = await pool.query(
+    `
+      SELECT
+        s.id AS storeId,
+        s.code AS storeCode,
+        s.name AS storeName,
+        slc.id AS lineChannelDbId,
+        slc.line_official_account_name AS lineOfficialAccountName,
+        slc.line_basic_id AS lineBasicId,
+        slc.liff_id AS liffId,
+        slc.enabled AS lineEnabled
+      FROM stores s
+      LEFT JOIN store_line_channels slc
+        ON slc.store_id = s.id
+       AND slc.enabled = 1
+      WHERE s.id = ?
+        AND s.status = 'active'
+      ORDER BY slc.is_primary DESC, slc.updated_at DESC, slc.id DESC
+      LIMIT 1
+    `,
+    [storeId]
+  );
+
+  return rows[0] || null;
+}
+
 router.get("/resolve-store", resolveStorefrontContext, async (req, res, next) => {
   try {
     const context = req.publicStoreContext;
@@ -126,6 +153,44 @@ router.get("/resolve-store", resolveStorefrontContext, async (req, res, next) =>
         staffGroupEnabled: Boolean(store.staffGroupEnabled),
         updatedAt: store.lineSettingsUpdatedAt || null
       }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/line-context", resolveStorefrontContext, async (req, res, next) => {
+  try {
+    const context = req.publicStoreContext;
+    if (!context?.storeId) {
+      return res.status(404).json({
+        ok: false,
+        message: "找不到有效的門市代碼",
+        hasLineChannel: false,
+        liffId: null
+      });
+    }
+
+    const row = await loadStoreLineContext(context.storeId);
+    if (!row) {
+      return res.status(404).json({
+        ok: false,
+        message: "找不到有效的門市資料",
+        hasLineChannel: false,
+        liffId: null
+      });
+    }
+
+    return res.json({
+      ok: true,
+      storeId: row.storeId,
+      storeCode: row.storeCode,
+      storeName: row.storeName,
+      liffId: row.liffId || null,
+      lineOfficialAccountName: row.lineOfficialAccountName || null,
+      lineBasicId: row.lineBasicId || null,
+      lineEnabled: Boolean(row.lineEnabled),
+      hasLineChannel: Boolean(row.lineChannelDbId)
     });
   } catch (error) {
     return next(error);

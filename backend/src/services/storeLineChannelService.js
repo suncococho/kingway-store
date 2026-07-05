@@ -1,5 +1,6 @@
 const config = require("../config");
 const { pool } = require("../db");
+const { resolveSecretRef } = require("../utils/lineSecretResolver");
 
 const HQ_RELATIONSHIP_TYPES = new Set(["HEADQUARTERS", "WAREHOUSE"]);
 const DIRECT_RELATIONSHIP_TYPES = new Set(["DIRECT_STORE"]);
@@ -502,6 +503,70 @@ async function fetchStoreLineChannelById(connection, id, forUpdate = false) {
   return rows[0] || null;
 }
 
+async function resolveStoreLineChannelByWebhookPath(webhookPath, connection = pool) {
+  const normalizedPath = normalizeWebhookPath(webhookPath);
+  const [rows] = await connection.query(
+    `
+      ${selectStoreLineChannelSql(`
+        WHERE slc.webhook_path = ?
+          AND slc.enabled = 1
+          AND s.status = 'active'
+      `)}
+      LIMIT 2
+    `,
+    [normalizedPath]
+  );
+
+  if (rows.length > 1) {
+    throw createError("LINE Channel webhook path 設定重複", 409);
+  }
+
+  const row = rows[0] || null;
+  if (!row) {
+    throw createError("找不到啟用中的 LINE Channel webhook 設定", 404);
+  }
+
+  if (!row.lineChannelSecretRef) {
+    throw createError("LINE Channel Secret Ref 尚未設定", 503);
+  }
+
+  if (!row.channelAccessTokenRef) {
+    throw createError("LINE Channel Access Token Ref 尚未設定", 503);
+  }
+
+  const channelSecret = resolveSecretRef(row.lineChannelSecretRef);
+  if (!channelSecret.resolved) {
+    throw createError(`LINE Channel Secret Ref 無法解析：${channelSecret.reason}`, 503);
+  }
+
+  const channelAccessToken = resolveSecretRef(row.channelAccessTokenRef);
+  if (!channelAccessToken.resolved) {
+    throw createError(`LINE Channel Access Token Ref 無法解析：${channelAccessToken.reason}`, 503);
+  }
+
+  return {
+    channel: row,
+    channelSecret,
+    channelAccessToken
+  };
+}
+
+async function recordStoreLineChannelWebhookReceived(channelId, connection = pool) {
+  const normalizedId = toPositiveInteger(channelId);
+  if (!normalizedId) return;
+
+  await connection.query(
+    `
+      UPDATE store_line_channels
+      SET last_webhook_at = NOW(),
+          last_error_at = NULL,
+          last_error_message = NULL
+      WHERE id = ?
+    `,
+    [normalizedId]
+  );
+}
+
 async function listStoreLineChannels(context, filters = {}, connection = pool) {
   const requestedStoreId = resolveReadableStoreId(context, filters.storeId || filters.store_id);
   const storeIds = requestedStoreId ? [requestedStoreId] : (context.canManageCompanyChannels ? context.accessibleStoreIds : [context.storeId]);
@@ -782,6 +847,76 @@ async function dryRunStoreLineChannel(context, id, connection = pool) {
   };
 }
 
+async function verifyStoreLineChannel(context, id, connection = pool) {
+  assertManagePermission(context);
+  const channelId = toPositiveInteger(id);
+  if (!channelId) throw createError("找不到 LINE Channel", 404);
+  const row = await fetchStoreLineChannelById(connection, channelId);
+  if (!row) throw createError("找不到 LINE Channel", 404);
+  resolveReadableStoreId(context, row.storeId);
+
+  const checks = [
+    { key: "channelSecretRef", label: "Channel Secret Ref 可解析", ok: false },
+    { key: "channelAccessTokenRef", label: "Access Token Ref 可解析", ok: false },
+    { key: "lineApi", label: "LINE API 輕量驗證", ok: false }
+  ];
+
+  const secretResult = resolveSecretRef(row.lineChannelSecretRef);
+  checks[0].ok = Boolean(secretResult.resolved);
+  const tokenResult = resolveSecretRef(row.channelAccessTokenRef);
+  checks[1].ok = Boolean(tokenResult.resolved);
+
+  let lineApiStatus = null;
+  let errorMessage = "";
+
+  if (secretResult.resolved && tokenResult.resolved) {
+    try {
+      const response = await fetch("https://api.line.me/v2/bot/info", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${tokenResult.secret}`
+        }
+      });
+      lineApiStatus = response.status;
+      checks[2].ok = response.ok;
+      if (!response.ok) {
+        errorMessage = `LINE API verify failed: ${response.status}`;
+      }
+    } catch (error) {
+      errorMessage = "LINE API verify request failed";
+    }
+  } else {
+    errorMessage = checks.filter((item) => !item.ok).map((item) => item.label).join("；");
+  }
+
+  const ok = checks.every((item) => item.ok);
+  await connection.query(
+    `
+      UPDATE store_line_channels
+      SET connection_status = ?,
+          last_dry_run_test_at = NOW(),
+          last_error_at = ?,
+          last_error_message = ?,
+          updated_by_staff_user_id = ?
+      WHERE id = ?
+    `,
+    [ok ? "DRY_RUN_OK" : "DRY_RUN_FAILED", ok ? null : new Date(), ok ? null : errorMessage, context.staffUserId, channelId]
+  );
+
+  const updated = await fetchStoreLineChannelById(connection, channelId);
+  return {
+    ok,
+    verify: true,
+    actualLineApiCalled: Boolean(secretResult.resolved && tokenResult.resolved),
+    lineApiStatus,
+    message: ok
+      ? "Verify 成功：secret ref / token ref 可解析，LINE API 輕量驗證成功。"
+      : "Verify 失敗：請確認 secret ref / token ref 與 LINE Channel 設定。",
+    checks,
+    channel: maskLineChannelRecord(updated)
+  };
+}
+
 function getWebhookPreview(context, query = {}) {
   const storeId = resolveReadableStoreId(context, query.storeId || query.store_id) || context.storeId;
   const webhookPath = normalizeWebhookPath(query.webhookPath || query.webhook_path || query.lineChannelId || query.line_channel_id || `store-${storeId}-line-channel`);
@@ -804,7 +939,10 @@ module.exports = {
   listStoreLineChannels,
   maskLineChannelRecord,
   rejectRawSecretLikeValue,
+  recordStoreLineChannelWebhookReceived,
+  resolveStoreLineChannelByWebhookPath,
   resolveStoreLineChannelContext,
   updateStoreLineChannel,
-  validateStoreLineChannelPayload
+  validateStoreLineChannelPayload,
+  verifyStoreLineChannel
 };

@@ -121,8 +121,11 @@ async function sendLineMessage(config, to, messages, options = {}) {
 
   if (!response.ok) {
     const details = await response.text();
-    const error = new Error(`LINE push failed: ${response.status} ${details}`);
+    const safeError = buildSafeLineApiError(response.status, details);
+    const error = new Error(safeError.message);
     error.statusCode = 502;
+    error.lineApiStatus = response.status;
+    error.safeDetails = safeError.safeDetails;
     throw error;
   }
 }
