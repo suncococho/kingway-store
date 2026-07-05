@@ -769,13 +769,16 @@ function RepairDetailPage() {
     !["estimate_pending_approval", "estimate_approved", "customer_confirmed", "repairing"].includes(repairStatusValue) &&
     !["sent", "approved", "accepted"].includes(quoteStatusValue) &&
     detail.customer_estimate_response !== "approved";
+  const quoteAccepted = Boolean(detail.quoteAccepted) ||
+    detail.customer_estimate_response === "approved" ||
+    quoteStatusValue === "approved" ||
+    quoteStatusValue === "accepted" ||
+    ["estimate_approved", "customer_confirmed", "repair_order_created", "repairing", "completed_waiting_pickup", "picked_up"].includes(repairStatusValue);
   const canStartRepair =
-    !isFinalizedRepair &&
-    (detail.customer_estimate_response === "approved" ||
-      quoteStatusValue === "approved" ||
-      quoteStatusValue === "accepted" ||
-      repairStatusValue === "estimate_approved" ||
-      repairStatusValue === "customer_confirmed");
+    Boolean(detail.canStartRepair) ||
+    (!isFinalizedRepair &&
+      quoteAccepted &&
+      !["repairing", "completed_waiting_pickup", "picked_up"].includes(repairStatusValue));
   const inspectionAmount = Number(inspectionFee || 0);
   const laborAmount = Number(laborFee || 0);
   const selectedQuoteItems = quoteItems.map(normalizeQuoteItem).filter((item) => item.name && Number(item.quantity || 0) > 0);
@@ -809,7 +812,7 @@ function RepairDetailPage() {
       done: Boolean(detail.inspectionNotes && detail.inspectionNotes.trim()) 
     },
     { label: "填寫報價", done: Number(detail.estimate_amount || 0) > 0 },
-    { label: "等待客戶同意", done: detail.customer_estimate_response === "approved" || detail.quote_status === "approved" || detail.quote_status === "accepted" || detail.status === "estimate_approved" || detail.status === "customer_confirmed" || detail.status === "repairing" || detail.status === "completed_waiting_pickup" || detail.status === "picked_up" },
+    { label: "等待客戶同意", done: quoteAccepted },
     { label: "維修中", done: detail.status === "repairing" || detail.status === "completed_waiting_pickup" || detail.status === "picked_up" },
     ...(hasReplacementItems ? [{ label: "更換項目確認", done: replacementConfirmationsReady || detail.status === "completed_waiting_pickup" || detail.status === "picked_up" }] : []),
     { label: "完成通知取車", done: detail.status === "completed_waiting_pickup" || detail.status === "picked_up" }
@@ -818,6 +821,8 @@ function RepairDetailPage() {
   const currentRepairAction =
     isFinalizedRepair
       ? null
+      : canStartRepair
+        ? { label: "開始維修", action: requestStartRepair, tone: "blue" }
       : detail.reservation_status === "pending_approval"
         ? { label: "確認預約", action: () => respondReservation(true), tone: "blue" }
         : currentStep.label === "填寫報價"

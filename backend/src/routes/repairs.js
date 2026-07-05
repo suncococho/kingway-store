@@ -79,6 +79,23 @@ function normalizeRepairLifecycleStatus(row) {
   return row.status;
 }
 
+function isRepairQuoteAccepted(row = {}) {
+  const customerResponse = String(row.customerEstimateResponse || row.customer_estimate_response || "").trim();
+  const quoteStatus = String(row.quoteStatus || row.quote_status || "").trim();
+  const status = String(row.status || "").trim();
+  return customerResponse === "approved" || quoteStatus === "approved" || quoteStatus === "accepted" || ["estimate_approved", "customer_confirmed", "repair_order_created", "repairing", "completed_waiting_pickup", "picked_up"].includes(status);
+}
+
+function canStartRepairAction(row = {}) {
+  if (!isRepairQuoteAccepted(row)) return false;
+  const status = String(row.status || "").trim();
+  return !["repairing", "completed", "completed_waiting_pickup", "picked_up", "canceled", "estimate_rejected"].includes(status)
+    && !row.completedAt
+    && !row.completed_at
+    && !row.pickedUpAt
+    && !row.picked_up_at;
+}
+
 function getRepairSourceLabel(source, customerType) {
   if (source === "LINE" && isLineCustomerType(customerType)) {
     return "LINE預約";
@@ -294,10 +311,14 @@ router.get("/",  async (req, res, next) => {
           completedAt: row.completedAt,
           pickedUpAt: row.pickedUpAt
         });
+        const quoteAccepted = isRepairQuoteAccepted({ ...row, status: normalizedStatus, });
+        const canStartRepair = canStartRepairAction({ ...row, status: normalizedStatus, });
         return {
           ...row,
           rawStatus: row.status,
           status: normalizedStatus,
+          quoteAccepted,
+          canStartRepair,
           repairConfirmationLink: row.repairConfirmationToken ? buildRepairConfirmationLink(row.repairConfirmationToken) : null,
           repairConfirmationPdfUrl: row.repairConfirmationToken && row.repairConfirmationPdfPath ? buildRepairConfirmationPdfUrl(row.repairConfirmationToken) : null,
           canSendRepairConfirmation: !repairConfirmationBlockReason,
@@ -574,10 +595,15 @@ router.get("/:id",  async (req, res, next) => {
     const latestQuoteFailedLog = logs.find((log) => log.action === "quote_confirmation_send_failed");
     const quoteConfirmationStatus = latestQuoteSentLog ? "SENT" : latestQuoteFailedLog ? "FAILED" : "NOT_SENT";
 
+    const quoteAccepted = isRepairQuoteAccepted({ ...rows[0], status: normalizedStatus, });
+    const canStartRepair = canStartRepairAction({ ...rows[0], status: normalizedStatus, });
+
     return res.json({
       ...rows[0],
       raw_status: rows[0].status,
       status: normalizedStatus,
+      quoteAccepted,
+      canStartRepair,
       quoteConfirmationLink: buildRepairQuoteConfirmationUrl(rows[0].id),
       quoteConfirmationStatus,
       quoteConfirmationSentAt: latestQuoteSentLog?.createdAt || null,
@@ -1140,12 +1166,18 @@ router.post("/:id/approve", async (req, res, next) => {
     await assertRepairBelongsToStore(req.params.id, storeId);
     const [repairs] = await pool.query(
       `
-        SELECT customer_estimate_response AS customerEstimateResponse, status
+        SELECT
+          customer_estimate_response AS customerEstimateResponse,
+          quote_status AS quoteStatus,
+          status,
+          completed_at AS completedAt,
+          picked_up_at AS pickedUpAt
         FROM repair_orders
         WHERE id = ?
+          AND store_id = ?
         LIMIT 1
       `,
-      [req.params.id]
+      [req.params.id, storeId]
     );
 
     if (!repairs[0]) {
@@ -1154,7 +1186,7 @@ router.post("/:id/approve", async (req, res, next) => {
 
     assertRepairEditable(repairs[0]);
 
-    if (repairs[0].customerEstimateResponse !== "approved") {
+    if (!canStartRepairAction(repairs[0])) {
       throw createError("客戶尚未同意報價，無法開始維修", 400);
     }
 

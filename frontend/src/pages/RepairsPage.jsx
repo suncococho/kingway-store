@@ -157,12 +157,23 @@ function isEstimatedReservation(row) {
   return ["estimate_pending_approval", "quoted", "waiting_customer_confirm"].includes(String(row.status || "").trim());
 }
 
+function isQuoteAccepted(row) {
+  const status = String(row.status || "").trim();
+  const quoteStatus = String(row.quoteStatus || row.quote_status || "").trim();
+  return Boolean(row.quoteAccepted) || row.customerEstimateResponse === "approved" || quoteStatus === "approved" || quoteStatus === "accepted" || ["estimate_approved", "customer_confirmed", "repair_order_created", "repairing", "completed_waiting_pickup", "ready_for_pickup", "picked_up"].includes(status);
+}
+
+function canStartRepair(row) {
+  const status = String(row.status || "").trim();
+  return Boolean(row.canStartRepair) || (isQuoteAccepted(row) && !["repairing", "completed_waiting_pickup", "ready_for_pickup", "picked_up"].includes(status) && !row.completedAt && !row.pickedUpAt);
+}
+
 function isApprovedReservation(row) {
   const status = String(row.status || "").trim();
   if (["completed_waiting_pickup", "ready_for_pickup", "picked_up"].includes(status)) {
     return false;
   }
-  return row.customerEstimateResponse === "approved" || ["estimate_approved", "customer_confirmed", "repair_order_created"].includes(status);
+  return isQuoteAccepted(row);
 }
 
 function canPrintRepairWorkOrder(row) {
@@ -349,6 +360,23 @@ function RepairsPage() {
   function openRepairWorkOrderPrint(row) {
     if (!row?.id) return;
     window.open(`/repairs/${row.id}/work-order-print`, "_blank", "noopener,noreferrer");
+  }
+
+  async function startRepair(row) {
+    if (!row?.id || !canStartRepair(row)) {
+      return;
+    }
+    const confirmed = window.confirm("確認客戶已同意報價，開始維修嗎？");
+    if (!confirmed) {
+      return;
+    }
+    await runWithProcessing(async () => {
+      await apiRequest(`/repairs/${row.id}/approve`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      repairs.refetch?.();
+    }, { id: `repair-start-${row.id}` });
   }
 
   const rows = useMemo(
@@ -655,6 +683,11 @@ function RepairsPage() {
               下一步
             </button>
           ) : null}
+          {canStartRepair(row) ? (
+            <button type="button" className="primary-button inline-submit" onClick={() => startRepair(row)} disabled={isProcessing}>
+              {pendingAction?.id === `repair-start-${row.id}` ? "處理中..." : "開始維修"}
+            </button>
+          ) : null}
           {canPrintRepairWorkOrder(row) ? (
             <button type="button" className="secondary-button" onClick={() => openRepairWorkOrderPrint(row)}>
               列印維修工作單
@@ -916,6 +949,11 @@ function RepairsPage() {
                   <StatusBadge tone={getEstimateTone(row)}>{row.estimateStatusLabel}</StatusBadge>
                   <StatusBadge tone={getQuoteConfirmationTone(row.quoteConfirmationStatus)}>{row.quoteConfirmationLabel}</StatusBadge>
                   {row.detailPath ? <Link className="secondary-button compact-detail-button" to={row.detailPath}>查看</Link> : null}
+                  {canStartRepair(row) ? (
+                    <button type="button" className="primary-button compact-detail-button" onClick={() => startRepair(row)} disabled={isProcessing}>
+                      {pendingAction?.id === `repair-start-${row.id}` ? "處理中..." : "開始維修"}
+                    </button>
+                  ) : null}
                   {canPrintRepairWorkOrder(row) ? (
                     <button type="button" className="secondary-button compact-detail-button" onClick={() => openRepairWorkOrderPrint(row)}>
                       列印維修工作單
