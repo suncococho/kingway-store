@@ -152,7 +152,15 @@ function normalizeOrderDetailItems(detail) {
 
 function isEbikeCategory(value) {
   const normalized = String(value || "").trim().toUpperCase();
-  return normalized === "EB" || normalized === "EBIKE";
+  return normalized === "EB" || normalized === "EBIKE" || normalized.includes("電動自行車");
+}
+
+function isEbikeSku(value) {
+  return String(value || "").trim().toUpperCase().startsWith("B-EB-");
+}
+
+function isEbikeItem(item = {}) {
+  return isEbikeCategory(item.productCategory || item.category) || isEbikeSku(item.sku);
 }
 
 function isAccessoryCategory(value) {
@@ -179,7 +187,7 @@ function isAccessoryChecklistEligible(detail) {
   }
 
   const items = normalizeOrderDetailItems(detail);
-  return items.some((item) => isEbikeCategory(item.productCategory)) && items.some((item) => isAccessoryCategory(item.productCategory));
+  return items.some(isEbikeItem) && items.some((item) => isAccessoryCategory(item.productCategory));
 }
 
 function canPrintInstallCheck(row) {
@@ -187,11 +195,11 @@ function canPrintInstallCheck(row) {
     return false;
   }
 
-  if (row.hasEbikeItems !== undefined || row.hasAccessoryItems !== undefined) {
-    return Boolean(row.hasEbikeItems && row.hasAccessoryItems);
+  if (row.hasEbikeItems || row.hasAccessoryItems || row.hasEbike || row.applicable) {
+    return true;
   }
 
-  return isAccessoryChecklistEligible(row);
+  return normalizeOrderDetailItems(row).some(isEbikeItem) || isAccessoryChecklistEligible(row);
 }
 
 function buildAccessoryUpdatePayload(item, overrides = {}) {
@@ -1435,8 +1443,15 @@ if (!window.confirm(
             </section>
             {accessoryChecklist.applicable && accessoryChecklist.hasAccessoryItems ? (
               <section className="stack-card">
-                <div className="section-title">配件安裝確認</div>
-                <p className="muted-text">電動自行車訂單中的配件需完成安裝、測試、照片確認與交叉確認後才能交車。</p>
+                <div className="section-header compact-header">
+                  <div>
+                    <div className="section-title">配件安裝確認</div>
+                    <p className="muted-text">電動自行車訂單中的配件需完成安裝、測試、照片確認與交叉確認後才能交車。</p>
+                  </div>
+                  <button type="button" className="secondary-button" onClick={() => printInstallCheck(detail)}>
+                    列印安裝品項確認單
+                  </button>
+                </div>
                 {accessoryChecklist.error ? <div className="empty-state">{accessoryChecklist.error}</div> : null}
                 {accessoryChecklist.blockReason && !accessoryChecklist.readyForHandoverChecklist ? (
                   <div className="error-banner">{accessoryChecklist.blockReason}</div>
@@ -1577,7 +1592,7 @@ if (!window.confirm(
               <button type="button" className="secondary-button" onClick={requestDownloadPurchasePdf}>
                 查看/下載 PDF
               </button>
-              {accessoryChecklist.applicable && accessoryChecklist.hasAccessoryItems ? (
+              {canPrintInstallCheck(detail) || accessoryChecklist.applicable || accessoryChecklist.hasAccessoryItems ? (
                 <button type="button" className="secondary-button" onClick={() => printInstallCheck(detail)}>
                   列印安裝品項確認單
                 </button>

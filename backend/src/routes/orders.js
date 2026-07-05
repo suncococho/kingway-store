@@ -474,7 +474,11 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
             FROM order_items oi_eb
             WHERE oi_eb.order_id = o.id
               AND oi_eb.store_id = o.store_id
-              AND UPPER(COALESCE(oi_eb.product_category_snapshot, '')) IN ('EB', 'EBIKE')
+              AND (
+                UPPER(COALESCE(oi_eb.product_category_snapshot, '')) IN ('EB', 'EBIKE')
+                OR COALESCE(oi_eb.product_category_snapshot, '') LIKE '%電動自行車%'
+                OR UPPER(COALESCE(oi_eb.sku_snapshot, '')) LIKE 'B-EB-%'
+              )
             LIMIT 1
           ) AS hasEbikeItems,
           EXISTS (
@@ -690,8 +694,13 @@ router.get("/:id/install-check", requireOrderManagementFeature, async (req, res,
       [orderId, storeId]
     );
 
-    const hasEbike = itemRows.some((item) => ["EB", "EBIKE"].includes(String(item.category || "").trim().toUpperCase()));
-    const vehicleItem = itemRows.find((item) => ["EB", "EBIKE"].includes(String(item.category || "").trim().toUpperCase())) || null;
+    const isEbikeItem = (item = {}) => {
+      const category = String(item.category || "").trim().toUpperCase();
+      const sku = String(item.sku || "").trim().toUpperCase();
+      return category === "EB" || category === "EBIKE" || category.includes("電動自行車") || sku.startsWith("B-EB-");
+    };
+    const hasEbike = itemRows.some(isEbikeItem);
+    const vehicleItem = itemRows.find(isEbikeItem) || null;
     const accessoryItems = itemRows.filter((item) => String(item.category || "").trim().toUpperCase() === "ACCESSORY");
     let confirmationByOrderItemId = new Map();
 
@@ -725,7 +734,7 @@ router.get("/:id/install-check", requireOrderManagementFeature, async (req, res,
     }
 
     const installItems = !isRepairQuote && hasEbike
-      ? accessoryItems.map((item) => {
+      ? [vehicleItem, ...accessoryItems].filter(Boolean).map((item) => {
           const confirmation = confirmationByOrderItemId.get(Number(item.orderItemId)) || {};
           const isInstalled = Boolean(confirmation.isInstalled);
           const isTested = Boolean(confirmation.isTested);
@@ -758,7 +767,7 @@ router.get("/:id/install-check", requireOrderManagementFeature, async (req, res,
         handoverStatus: order.handoverConfirmedAt ? "confirmed" : "pending",
         handoverConfirmedAt: order.handoverConfirmedAt || null,
         repairQuote: isRepairQuote,
-        printable: Boolean(!isRepairQuote && hasEbike && accessoryItems.length)
+        printable: Boolean(!isRepairQuote && hasEbike && installItems.length)
       },
       customer: {
         name: order.customerName || order.customerNameSnapshot || "",
