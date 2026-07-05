@@ -21,6 +21,7 @@ const { applyRepairReservationDecision, notifyRepairCustomer } = require("./repa
 const { getTableColumns, hasColumn } = require("../utils/schema");
 const { notifyRepairReservationCreated } = require("./staffLineNotify");
 const { assertOrderAccessoryInstallConfirmationsComplete } = require("./orderAccessoryInstallConfirmationService");
+const { notifyRepairQuoteAcceptedWorkOrder } = require("./notificationEventService");
 
 const lineAccessTokenOptionsStorage = new AsyncLocalStorage();
 
@@ -5116,9 +5117,20 @@ async function handleLinePostback(event) {
       connection: pool,
       reason: "line_repair_estimate_postback"
     });
-    await applyRepairEstimateCustomerResponse(id, approved, staffId, pool, "line_postback", {
+    const result = await applyRepairEstimateCustomerResponse(id, approved, staffId, pool, "line_postback", {
       storeId: estimatePostbackStoreContext.storeId
     });
+    if (approved && !result?.alreadyProcessed) {
+      notifyRepairQuoteAcceptedWorkOrder({
+        repairId: id,
+        storeId: estimatePostbackStoreContext.storeId
+      }).catch((notificationError) => {
+        console.warn("[notification-event] REPAIR_WORK_ORDER_PRINT_REQUIRED failed", {
+          repairId: id,
+          message: notificationError.message
+        });
+      });
+    }
     if (event.replyToken) {
       await replyToLine(
         event.replyToken,

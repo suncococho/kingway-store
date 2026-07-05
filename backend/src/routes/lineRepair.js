@@ -15,7 +15,10 @@ const {
   resolveLineWorkflowStoreContext
 } = require("../services/lineWorkflowService");
 const { notifyRepairReservationCreated } = require("../services/staffLineNotify");
-const { notifyLineRepairCreated } = require("../services/notificationEventService");
+const {
+  notifyLineRepairCreated,
+  notifyRepairQuoteAcceptedWorkOrder
+} = require("../services/notificationEventService");
 const { saveRepairAttachment } = require("../services/repairAttachmentService");
 const {
   REPAIR_RESERVATION_SLOT_EXPIRED_CODE,
@@ -449,6 +452,8 @@ async function handleLineProgressQuoteResponse(req, res, next, approved) {
           ro.estimate_amount AS estimateAmount,
           ro.customer_estimate_response AS customerEstimateResponse,
           ro.quote_status AS quoteStatus,
+          c.name AS customerName,
+          c.phone AS customerPhone,
           c.line_user_id AS lineUserId
         FROM repair_orders ro
         INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
@@ -495,6 +500,20 @@ async function handleLineProgressQuoteResponse(req, res, next, approved) {
     const result = await applyRepairEstimateCustomerResponse(repairId, approved, null, pool, "line_progress", {
       storeId: storeContext.storeId
     });
+
+    if (approved && !result?.alreadyProcessed) {
+      notifyRepairQuoteAcceptedWorkOrder({
+        repairId,
+        storeId: storeContext.storeId,
+        customerName: repair.customerName,
+        customerPhone: repair.customerPhone
+      }).catch((notificationError) => {
+        console.warn("[notification-event] REPAIR_WORK_ORDER_PRINT_REQUIRED failed", {
+          repairId,
+          message: notificationError.message
+        });
+      });
+    }
 
     await pool.query(
       `

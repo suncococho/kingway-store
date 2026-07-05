@@ -165,6 +165,10 @@ function isApprovedReservation(row) {
   return row.customerEstimateResponse === "approved" || ["estimate_approved", "customer_confirmed", "repair_order_created"].includes(status);
 }
 
+function canPrintRepairWorkOrder(row) {
+  return row?.repairSource === "REPAIR_ORDER" && isApprovedReservation(row);
+}
+
 function isRepairingReservation(row) {
   return ["repairing", "in_progress"].includes(String(row.status || "").trim());
 }
@@ -340,6 +344,11 @@ function RepairsPage() {
     } catch {
       window.prompt("請複製報價確認連結", link);
     }
+  }
+
+  function openRepairWorkOrderPrint(row) {
+    if (!row?.id) return;
+    window.open(`/repairs/${row.id}/work-order-print`, "_blank", "noopener,noreferrer");
   }
 
   const rows = useMemo(
@@ -646,6 +655,11 @@ function RepairsPage() {
               下一步
             </button>
           ) : null}
+          {canPrintRepairWorkOrder(row) ? (
+            <button type="button" className="secondary-button" onClick={() => openRepairWorkOrderPrint(row)}>
+              列印維修工作單
+            </button>
+          ) : null}
           {isEstimatedReservation(row) && row.customerEstimateResponse === "pending" ? (
             <>
               <button type="button" className="secondary-button" onClick={() => sendQuoteConfirmation(row)} disabled={isProcessing}>
@@ -902,6 +916,11 @@ function RepairsPage() {
                   <StatusBadge tone={getEstimateTone(row)}>{row.estimateStatusLabel}</StatusBadge>
                   <StatusBadge tone={getQuoteConfirmationTone(row.quoteConfirmationStatus)}>{row.quoteConfirmationLabel}</StatusBadge>
                   {row.detailPath ? <Link className="secondary-button compact-detail-button" to={row.detailPath}>查看</Link> : null}
+                  {canPrintRepairWorkOrder(row) ? (
+                    <button type="button" className="secondary-button compact-detail-button" onClick={() => openRepairWorkOrderPrint(row)}>
+                      列印維修工作單
+                    </button>
+                  ) : null}
                   {isEstimatedReservation(row) && row.customerEstimateResponse === "pending" ? (
                     <>
                       <button type="button" className="secondary-button compact-detail-button" onClick={() => copyQuoteConfirmationLink(row)}>

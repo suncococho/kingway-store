@@ -247,6 +247,34 @@ async function notifyLineRepairCreated(repair = {}) {
   return result.notification;
 }
 
+async function notifyRepairQuoteAcceptedWorkOrder(repair = {}) {
+  const eventName = "REPAIR_WORK_ORDER_PRINT_REQUIRED";
+  const storeId = toPositiveInteger(pick(repair, "storeId", "store_id"));
+  const repairId = toPositiveInteger(pick(repair, "repairId", "id"));
+  const customerName = pick(repair, "customerName", "customer_name") || "客戶";
+  const customerPhone = pick(repair, "customerPhone", "customer_phone") || "";
+  const result = await safeCreateNotification(eventName, {
+    companyId: toPositiveInteger(repair.companyId),
+    storeId,
+    type: eventName,
+    title: "客戶已同意維修報價",
+    message: `客戶已同意維修報價，請列印維修工作單並交由技師確認。維修單 #${repairId} / ${customerName}${customerPhone ? ` / ${customerPhone}` : ""}`,
+    targetUrl: `/repairs/${repairId}/work-order-print`,
+    refType: "REPAIR",
+    refId: repairId,
+    priority: "IMPORTANT"
+  });
+  if (result.created) await dryRunStaffLine(eventName, {
+    storeId,
+    eventType: eventName,
+    eventLabel: "維修工作單",
+    title: "客戶已同意維修報價",
+    message: "客戶已同意維修報價，請列印維修工作單。",
+    targetUrl: `/repairs/${repairId}/work-order-print`
+  });
+  return result.notification;
+}
+
 async function notifyLineOrderCreated(order = {}) {
   const eventName = "LINE_ORDER_CREATED";
   const storeId = toPositiveInteger(pick(order, "storeId", "store_id"));
@@ -474,6 +502,7 @@ async function notifySupplierReturnShipped(supplierReturn = {}) {
 
 module.exports = {
   notifyLineRepairCreated,
+  notifyRepairQuoteAcceptedWorkOrder,
   notifyLineOrderCreated,
   notifyPurchaseConfirmationSubmitted,
   notifyRepairConfirmationSubmitted,

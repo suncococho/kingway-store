@@ -22,6 +22,7 @@ import POSPage from "./pages/POSPage";
 import PurchaseConfirmationsPage from "./pages/PurchaseConfirmationsPage";
 import RepairsPage from "./pages/RepairsPage";
 import RepairDetailPage from "./pages/RepairDetailPage";
+import RepairWorkOrderPrintPage from "./pages/RepairWorkOrderPrintPage";
 import CouponsPage from "./pages/CouponsPage";
 import SurveysPage from "./pages/SurveysPage";
 import StaffAttendancePage from "./pages/StaffAttendancePage";
@@ -131,6 +132,7 @@ function App() {
         <Route path="/purchase-confirmations" element={<PurchaseConfirmationsPage />} />
         <Route path="/repairs" element={<RepairsPage />} />
         <Route path="/repairs/:id" element={<RepairDetailPage />} />
+        <Route path="/repairs/:id/work-order-print" element={<RepairWorkOrderPrintPage />} />
         <Route path="/coupons" element={<CouponsPage />} />
         <Route path="/surveys" element={<SurveysPage />} />
         <Route path="/staff-attendance" element={<StaffAttendancePage />} />

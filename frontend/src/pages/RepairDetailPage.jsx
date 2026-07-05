@@ -208,6 +208,15 @@ function getRepairConfirmationTone(status) {
   return "neutral";
 }
 
+function canPrintRepairWorkOrder(detail) {
+  const status = String(detail?.status || "").trim();
+  return (
+    detail?.customer_estimate_response === "approved" ||
+    detail?.quote_status === "approved" ||
+    ["estimate_approved", "customer_confirmed", "repair_order_created", "repairing", "completed_waiting_pickup", "picked_up"].includes(status)
+  );
+}
+
 function RepairDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -362,6 +371,10 @@ function RepairDetailPage() {
     } catch (error) {
       alert(getRepairActionErrorMessage(error));
     }
+  }
+
+  function openRepairWorkOrderPrint() {
+    window.open(`/repairs/${id}/work-order-print`, "_blank", "noopener,noreferrer");
   }
 
   async function sendQuoteConfirmation() {
@@ -1036,6 +1049,19 @@ function RepairDetailPage() {
           title={`維修工單 #${detail.id}`}
           description="已完成或已取車的維修單僅顯示摘要，不再提供前一階段操作。"
         />
+        {canPrintRepairWorkOrder(detail) ? (
+          <section className="content-card section-panel">
+            <div className="section-header">
+              <div>
+                <h2>維修工作單</h2>
+                <p className="muted-text">客戶已同意報價，可列印給技師進行現場維修確認。</p>
+              </div>
+              <button type="button" className="primary-button" onClick={openRepairWorkOrderPrint}>
+                列印維修工作單
+              </button>
+            </div>
+          </section>
+        ) : null}
 
         <section className="content-card">
           <div className="section-header">
@@ -1197,6 +1223,19 @@ function RepairDetailPage() {
         title={`維修工單 #${detail.id}`}
         description="依照維修 SOP 一步一步處理，每次只操作下一個主要動作。"
       />
+      {canPrintRepairWorkOrder(detail) ? (
+        <section className="content-card section-panel">
+          <div className="section-header">
+            <div>
+              <h2>維修工作單</h2>
+              <p className="muted-text">客戶已同意維修報價，請列印維修工作單並交由技師確認。</p>
+            </div>
+            <button type="button" className="primary-button" onClick={openRepairWorkOrderPrint}>
+              列印維修工作單
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="content-card sop-overview">
         <div className="sop-step-list">

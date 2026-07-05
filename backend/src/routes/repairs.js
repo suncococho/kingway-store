@@ -863,6 +863,100 @@ router.post("/:id/send-quote-confirmation", async (req, res, next) => {
   }
 });
 
+router.get("/:id/work-order", async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const [rows] = await pool.query(
+      `
+        SELECT
+          ro.*,
+          ro.inspection_notes AS inspectionNotes,
+          c.name AS customerName,
+          c.phone AS customerPhone,
+          c.line_user_id AS lineUserId,
+          COALESCE(ro.customer_type, c.customer_type, 'LINE') AS customerType,
+          s.name AS storeName,
+          s.code AS storeCode
+        FROM repair_orders ro
+        INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
+        INNER JOIN stores s ON s.id = ro.store_id
+        LEFT JOIN orders linked_o ON linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id
+        WHERE ro.id = ?
+          AND ro.store_id = ?
+          AND ro.deleted_at IS NULL
+          AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
+        LIMIT 1
+      `,
+      [req.params.id, storeId]
+    );
+
+    const repair = rows[0] || null;
+    if (!repair) {
+      throw createError("找不到維修工單", 404);
+    }
+
+    const [logs] = await pool.query(
+      `
+        SELECT id, action, note, created_at AS createdAt
+        FROM repair_logs
+        WHERE repair_order_id = ?
+        ORDER BY id DESC
+      `,
+      [req.params.id]
+    );
+    const attachments = await listRepairAttachments(req.params.id, storeId);
+    const latestAcceptedLog = logs.find((log) => (
+      log.action === "customer_estimate_approved" ||
+      log.action === "quote_approved_by_customer_from_progress"
+    ));
+
+    return res.json({
+      repair: {
+        ...repair,
+        raw_status: repair.status,
+        status: normalizeRepairLifecycleStatus({
+          repairSource: "REPAIR_ORDER",
+          reservationStatus: repair.reservation_status,
+          status: repair.status
+        }),
+        repairStatusLabel: mapRepairStatusLabel(repair.status),
+        customerEstimateResponseLabel:
+          repair.customer_estimate_response === "approved"
+            ? "客戶已同意報價"
+            : repair.customer_estimate_response === "rejected"
+              ? "客戶已拒絕報價"
+              : repair.customer_estimate_response === "pending"
+                ? "客戶尚未回覆"
+                : "尚未送出報價",
+        quoteAcceptedAt: repair.customer_estimate_responded_at || repair.customer_confirmed_at || latestAcceptedLog?.createdAt || null
+      },
+      store: {
+        id: repair.store_id,
+        name: repair.storeName,
+        code: repair.storeCode
+      },
+      customer: {
+        id: repair.customer_id,
+        name: repair.customerName,
+        phone: repair.customerPhone,
+        lineUserId: repair.lineUserId,
+        customerType: repair.customerType
+      },
+      quoteItemsJson: repair.quote_items_json || null,
+      logs,
+      attachments,
+      mediaSummary: {
+        total: attachments.length,
+        images: attachments.filter((item) => String(item.fileType || "").toLowerCase() === "image").length,
+        videos: attachments.filter((item) => String(item.fileType || "").toLowerCase() === "video").length,
+        thumbnails: attachments.filter((item) => String(item.fileType || "").toLowerCase() === "image").slice(0, 4)
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get("/:id/replacement-confirmations", async (req, res, next) => {
   try {
     const storeId = req.storeId;
