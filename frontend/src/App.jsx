@@ -18,6 +18,7 @@ import SuppliersPage from "./pages/SuppliersPage";
 import OrdersPage from "./pages/OrdersPage";
 import SalesManagementPage from "./pages/SalesManagementPage";
 import OrderEditPage from "./pages/OrderEditPage";
+import OrderInstallCheckPrintPage from "./pages/OrderInstallCheckPrintPage";
 import POSPage from "./pages/POSPage";
 import PurchaseConfirmationsPage from "./pages/PurchaseConfirmationsPage";
 import RepairsPage from "./pages/RepairsPage";
@@ -128,6 +129,7 @@ function App() {
         <Route path="/orders" element={<OrdersPage />} />
         <Route path="/sales" element={<SalesManagementPage />} />
         <Route path="/orders/:id/edit" element={<OrderEditPage />} />
+        <Route path="/orders/:id/install-check-print" element={<OrderInstallCheckPrintPage />} />
         <Route path="/pos" element={<POSPage />} />
         <Route path="/purchase-confirmations" element={<PurchaseConfirmationsPage />} />
         <Route path="/repairs" element={<RepairsPage />} />

@@ -182,6 +182,18 @@ function isAccessoryChecklistEligible(detail) {
   return items.some((item) => isEbikeCategory(item.productCategory)) && items.some((item) => isAccessoryCategory(item.productCategory));
 }
 
+function canPrintInstallCheck(row) {
+  if (!row || isRepairRelatedOrder(row) || String(row.source || "").trim().toLowerCase() === "repair_quote") {
+    return false;
+  }
+
+  if (row.hasEbikeItems !== undefined || row.hasAccessoryItems !== undefined) {
+    return Boolean(row.hasEbikeItems && row.hasAccessoryItems);
+  }
+
+  return isAccessoryChecklistEligible(row);
+}
+
 function buildAccessoryUpdatePayload(item, overrides = {}) {
   const next = { ...item, ...overrides };
   return {
@@ -1037,6 +1049,13 @@ if (!window.confirm(
     }
   }
 
+  function printInstallCheck(row) {
+    if (!row?.id) {
+      return;
+    }
+    window.open(`/orders/${row.id}/install-check-print`, "_blank", "noopener,noreferrer");
+  }
+
 
   const columns = [
     { key: "orderNo", label: "訂單編號", mobileHidden: true },
@@ -1117,6 +1136,11 @@ if (!window.confirm(
           <button type="button" className="secondary-button" onClick={() => openDetail(row)}>
             詳情
           </button>
+          {canPrintInstallCheck(row) ? (
+            <button type="button" className="secondary-button" onClick={() => printInstallCheck(row)}>
+              列印安裝品項確認單
+            </button>
+          ) : null}
             <button type="button" className="secondary-button" onClick={() => printOrderInvoice(row)}>
               列印訂單
             </button>
@@ -1553,6 +1577,11 @@ if (!window.confirm(
               <button type="button" className="secondary-button" onClick={requestDownloadPurchasePdf}>
                 查看/下載 PDF
               </button>
+              {accessoryChecklist.applicable && accessoryChecklist.hasAccessoryItems ? (
+                <button type="button" className="secondary-button" onClick={() => printInstallCheck(detail)}>
+                  列印安裝品項確認單
+                </button>
+              ) : null}
               {!detail.handoverConfirmedAt ? (
                 <button type="button" className="secondary-button" onClick={() => requestHandover(detail)} disabled={isProcessing}>
                   {pendingAction?.id === `order-handover-${detail.id}` ? "處理中..." : "確認交車"}

@@ -5746,3 +5746,198 @@ button:hover {
     box-shadow: none;
   }
 }
+
+.install-check-page {
+  min-height: 100vh;
+  background: #f3f4f6;
+  color: #111827;
+  padding: 24px;
+}
+
+.install-check-toolbar {
+  max-width: 920px;
+  margin: 0 auto 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.install-check-sheet {
+  max-width: 920px;
+  margin: 0 auto;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  padding: 28px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, .12);
+}
+
+.install-check-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 2px solid #111827;
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+}
+
+.install-check-brand {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.install-check-header h1 {
+  margin: 4px 0;
+  font-size: 30px;
+}
+
+.install-check-header p {
+  margin: 0;
+  color: #4b5563;
+}
+
+.install-check-number {
+  min-width: 170px;
+  text-align: right;
+}
+
+.install-check-number span,
+.install-check-grid span {
+  display: block;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.install-check-number strong {
+  display: block;
+  font-size: 22px;
+}
+
+.install-check-warning {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+  font-weight: 700;
+}
+
+.install-check-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid #d1d5db;
+  margin-bottom: 18px;
+}
+
+.install-check-grid > div {
+  padding: 10px 12px;
+  border-right: 1px solid #d1d5db;
+  border-bottom: 1px solid #d1d5db;
+}
+
+.install-check-grid strong {
+  display: block;
+  margin-top: 4px;
+}
+
+.install-check-section {
+  margin-top: 18px;
+  break-inside: avoid;
+}
+
+.install-check-section h2 {
+  margin: 0 0 10px;
+  font-size: 18px;
+  border-bottom: 1px solid #d1d5db;
+  padding-bottom: 6px;
+}
+
+.install-check-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.install-check-table th,
+.install-check-table td {
+  border: 1px solid #9ca3af;
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.install-check-table th {
+  background: #f3f4f6;
+}
+
+.install-check-box {
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid #111827;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.install-check-box.checked::after {
+  content: "";
+  display: block;
+  width: 8px;
+  height: 4px;
+  margin: 3px 0 0 3px;
+  border-left: 2px solid #111827;
+  border-bottom: 2px solid #111827;
+  transform: rotate(-45deg);
+}
+
+.install-check-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px 12px;
+}
+
+.install-check-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.install-check-sign-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 12px 0;
+}
+
+.install-check-note-box {
+  margin-top: 12px;
+  border: 1px solid #d1d5db;
+  padding: 10px;
+}
+
+.install-check-note-line {
+  height: 24px;
+  border-bottom: 1px solid #d1d5db;
+}
+
+.install-check-footer {
+  margin-top: 18px;
+  color: #6b7280;
+  font-size: 12px;
+  text-align: right;
+}
+
+@media print {
+  .install-check-page {
+    padding: 0;
+    background: #ffffff;
+  }
+
+  .install-check-toolbar {
+    display: none !important;
+  }
+
+  .install-check-sheet {
+    max-width: none;
+    border: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+}

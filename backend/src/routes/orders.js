@@ -469,6 +469,22 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
           COALESCE(o.customer_phone, ${hasColumn(customerColumns, "phone") ? "c.phone" : "NULL"}) AS customerPhone,
           ${selectColumn(staffColumns, "s", "id", "staffId")},
           ${selectColumn(staffColumns, "s", "display_name", "staffName")},
+          EXISTS (
+            SELECT 1
+            FROM order_items oi_eb
+            WHERE oi_eb.order_id = o.id
+              AND oi_eb.store_id = o.store_id
+              AND UPPER(COALESCE(oi_eb.product_category_snapshot, '')) IN ('EB', 'EBIKE')
+            LIMIT 1
+          ) AS hasEbikeItems,
+          EXISTS (
+            SELECT 1
+            FROM order_items oi_accessory
+            WHERE oi_accessory.order_id = o.id
+              AND oi_accessory.store_id = o.store_id
+              AND UPPER(COALESCE(oi_accessory.product_category_snapshot, '')) = 'ACCESSORY'
+            LIMIT 1
+          ) AS hasAccessoryItems,
           ${repairExistsSql} AS isRepairOrder
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
@@ -486,6 +502,8 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
       rows.map((row) => ({
         ...row,
         isRepairOrder: Boolean(row.isRepairOrder),
+        hasEbikeItems: Boolean(row.hasEbikeItems),
+        hasAccessoryItems: Boolean(row.hasAccessoryItems),
         paymentMethodLabel: mapPaymentMethodLabel(row.paymentMethod),
         finalPaymentMethodLabel: mapPaymentMethodLabel(row.finalPaymentMethod || row.paymentMethod),
         statusLabel: mapOrderStatusLabel(row.status),
@@ -605,6 +623,157 @@ router.post("/repair-quote-backfill-missing-items", authorize(["ADMIN", "MANAGER
     return res.json({
       message: apply ? "維修報價品項同步完成" : "維修報價品項同步 dry-run 完成",
       ...result
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/:id/install-check", requireOrderManagementFeature, async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const orderId = Number(req.params.id);
+    if (!orderId) {
+      throw createError("找不到訂單", 404);
+    }
+
+    const orderColumns = await getTableColumns(pool, "orders");
+    const [orderRows] = await pool.query(
+      `
+        SELECT
+          ${selectColumn(orderColumns, "o", "id", "id")},
+          ${selectColumn(orderColumns, "o", "order_no", "orderNumber")},
+          ${selectColumn(orderColumns, "o", "status", "status")},
+          ${selectColumn(orderColumns, "o", "source", "source")},
+          ${selectColumn(orderColumns, "o", "repair_order_id", "repairOrderId")},
+          ${selectColumn(orderColumns, "o", "created_at", "createdAt")},
+          ${selectColumn(orderColumns, "o", "completed_at", "completedAt")},
+          ${selectColumn(orderColumns, "o", "business_date", "businessDate")},
+          ${selectColumn(orderColumns, "o", "handover_confirmed_at", "handoverConfirmedAt")},
+          ${selectColumn(orderColumns, "o", "customer_name", "customerNameSnapshot")},
+          ${selectColumn(orderColumns, "o", "customer_phone", "customerPhoneSnapshot")},
+          COALESCE(o.customer_name, c.name) AS customerName,
+          COALESCE(o.customer_phone, c.phone) AS customerPhone,
+          st.name AS storeName,
+          st.code AS storeCode
+        FROM orders o
+        LEFT JOIN customers c ON c.id = o.customer_id
+        LEFT JOIN stores st ON st.id = o.store_id
+        WHERE o.id = ?
+          AND o.store_id = ?
+          AND o.deleted_at IS NULL
+        LIMIT 1
+      `,
+      [orderId, storeId]
+    );
+
+    const order = orderRows[0];
+    if (!order) {
+      throw createError("找不到訂單", 404);
+    }
+
+    const isRepairQuote = String(order.source || "").trim().toLowerCase() === "repair_quote" || Boolean(order.repairOrderId);
+    const [itemRows] = await pool.query(
+      `
+        SELECT
+          oi.id AS orderItemId,
+          oi.product_id AS productId,
+          oi.sku_snapshot AS sku,
+          oi.product_name_snapshot AS name,
+          oi.product_category_snapshot AS category,
+          oi.quantity
+        FROM order_items oi
+        WHERE oi.order_id = ?
+          AND oi.store_id = ?
+        ORDER BY oi.id ASC
+      `,
+      [orderId, storeId]
+    );
+
+    const hasEbike = itemRows.some((item) => ["EB", "EBIKE"].includes(String(item.category || "").trim().toUpperCase()));
+    const vehicleItem = itemRows.find((item) => ["EB", "EBIKE"].includes(String(item.category || "").trim().toUpperCase())) || null;
+    const accessoryItems = itemRows.filter((item) => String(item.category || "").trim().toUpperCase() === "ACCESSORY");
+    let confirmationByOrderItemId = new Map();
+
+    const [tableRows] = await pool.query(
+      `
+        SELECT 1 AS existsFlag
+        FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'order_accessory_install_confirmations'
+        LIMIT 1
+      `
+    );
+
+    if (tableRows[0]) {
+      const [confirmationRows] = await pool.query(
+        `
+          SELECT
+            order_item_id AS orderItemId,
+            note,
+            is_installed AS isInstalled,
+            is_tested AS isTested,
+            is_photo_confirmed AS isPhotoConfirmed,
+            cross_checked_at AS crossCheckedAt
+          FROM order_accessory_install_confirmations
+          WHERE order_id = ?
+            AND store_id = ?
+        `,
+        [orderId, storeId]
+      );
+      confirmationByOrderItemId = new Map(confirmationRows.map((row) => [Number(row.orderItemId), row]));
+    }
+
+    const installItems = !isRepairQuote && hasEbike
+      ? accessoryItems.map((item) => {
+          const confirmation = confirmationByOrderItemId.get(Number(item.orderItemId)) || {};
+          const isInstalled = Boolean(confirmation.isInstalled);
+          const isTested = Boolean(confirmation.isTested);
+          const isPhotoConfirmed = Boolean(confirmation.isPhotoConfirmed);
+          const crossCheckedAt = confirmation.crossCheckedAt || null;
+          return {
+            name: item.name || "商品",
+            sku: item.sku || "",
+            quantity: Number(item.quantity || 0),
+            note: confirmation.note || "",
+            confirmation: {
+              isInstalled,
+              isTested,
+              isPhotoConfirmed,
+              crossCheckedAt,
+              completed: Boolean(isInstalled && isTested && isPhotoConfirmed && crossCheckedAt)
+            }
+          };
+        })
+      : [];
+
+    return res.json({
+      order: {
+        id: order.id,
+        orderNumber: order.orderNumber || `#${order.id}`,
+        status: order.status,
+        createdAt: order.createdAt,
+        completedAt: order.completedAt,
+        businessDate: order.businessDate,
+        handoverStatus: order.handoverConfirmedAt ? "confirmed" : "pending",
+        handoverConfirmedAt: order.handoverConfirmedAt || null,
+        repairQuote: isRepairQuote,
+        printable: Boolean(!isRepairQuote && hasEbike && accessoryItems.length)
+      },
+      customer: {
+        name: order.customerName || order.customerNameSnapshot || "",
+        phone: order.customerPhone || order.customerPhoneSnapshot || ""
+      },
+      store: {
+        name: order.storeName || "",
+        code: order.storeCode || ""
+      },
+      vehicle: vehicleItem ? {
+        name: vehicleItem.name || "",
+        sku: vehicleItem.sku || "",
+        quantity: Number(vehicleItem.quantity || 0)
+      } : null,
+      installItems
     });
   } catch (error) {
     return next(error);
