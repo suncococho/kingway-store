@@ -5410,6 +5410,7 @@ function mapRegistrationTypeLabel(type) {
 
 module.exports = {
   applyRepairEstimateCustomerResponse,
+  ensureRepairJobOrder,
   backfillApprovedRepairOrders,
   backfillMissingRepairQuoteOrderItems,
   bindPhoneAndIssueNewFriendCoupon,

@@ -18,6 +18,7 @@ const {
 } = require("../services/staffLineNotify");
 const {
   applyRepairEstimateCustomerResponse,
+  ensureRepairJobOrder,
   createButtonMessage,
   createConfirmTemplate,
   createPostbackAction,
@@ -1190,6 +1191,8 @@ router.post("/:id/approve", async (req, res, next) => {
       throw createError("客戶尚未同意報價，無法開始維修", 400);
     }
 
+    const linkedOrder = await ensureRepairJobOrder(req.params.id, req.user.id, pool, { storeId });
+
     await pool.query(
       `
         UPDATE repair_orders
@@ -1246,7 +1249,18 @@ router.post("/:id/approve", async (req, res, next) => {
 
     await logKpi(req.user.id, "REPAIR_ESTIMATE_APPROVED", "REPAIR_ORDER", req.params.id, 3);
     await logWorkflowEvent("repair_started", "REPAIR_ORDER", req.params.id, null, req.user.id);
-    return res.json({ message: "已開始維修" });
+    return res.json({
+      message: "已開始維修",
+      orderId: linkedOrder?.orderId || null,
+      itemSync: linkedOrder?.itemSync
+        ? {
+            synced: Boolean(linkedOrder.itemSync.synced),
+            reason: linkedOrder.itemSync.reason || null,
+            insertedCount: Number(linkedOrder.itemSync.insertedCount || 0),
+            existingItemCount: Number(linkedOrder.itemSync.existingItemCount || 0)
+          }
+        : null
+    });
   } catch (error) {
     return next(error);
   }
