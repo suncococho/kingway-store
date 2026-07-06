@@ -805,14 +805,15 @@ function RepairDetailPage() {
   const currentUserId = Number(currentUser?.id || 0);
   const currentUserCanManagerCrossCheck = isManagerOrAboveUser(currentUser);
 
+  const quoteWritten = quoteAccepted || canStartRepair || Number(detail.estimate_amount || 0) > 0;
   const repairSteps = [
     { label: "建立維修單", done: detail.reservation_status !== "pending_approval" },
     { 
       label: "填寫檢查內容", 
       done: Boolean(detail.inspectionNotes && detail.inspectionNotes.trim()) 
     },
-    { label: "填寫報價", done: Number(detail.estimate_amount || 0) > 0 },
-    { label: "等待客戶同意", done: quoteAccepted },
+    { label: "填寫報價", done: quoteWritten },
+    { label: "等待客戶同意", done: quoteAccepted || canStartRepair },
     { label: "維修中", done: detail.status === "repairing" || detail.status === "completed_waiting_pickup" || detail.status === "picked_up" },
     ...(hasReplacementItems ? [{ label: "更換項目確認", done: replacementConfirmationsReady || detail.status === "completed_waiting_pickup" || detail.status === "picked_up" }] : []),
     { label: "完成通知取車", done: detail.status === "completed_waiting_pickup" || detail.status === "picked_up" }
