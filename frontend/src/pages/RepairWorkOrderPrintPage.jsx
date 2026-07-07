@@ -93,7 +93,7 @@ function RepairWorkOrderPrintPage() {
 
   const { repair, store, customer, mediaSummary } = data;
   const attachments = Array.isArray(data.attachments) ? data.attachments : [];
-  const imageAttachments = attachments.filter((item) => !isVideoAttachment(item)).slice(0, 4);
+  const imageAttachments = attachments.filter((item) => !isVideoAttachment(item)).slice(0, 2);
 
   return (
     <main className="work-order-page">
@@ -217,9 +217,9 @@ function RepairWorkOrderPrintPage() {
             <span>實際維修擔當：__________________</span>
             <span>交叉確認人員：__________________</span>
           </div>
-          <NoteBox title="實際維修內容 memo" lines={5} />
-          <NoteBox title="追加發現問題" lines={4} />
-          <NoteBox title="需告知客戶事項" lines={4} />
+          <NoteBox title="實際維修內容 memo" lines={2} />
+          <NoteBox title="追加發現問題" lines={2} />
+          <NoteBox title="需告知客戶事項" lines={2} />
           <div className="work-order-sign-row">
             <span>員工簽名：__________________</span>
             <span>日期：__________________</span>
