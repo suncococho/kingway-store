@@ -312,8 +312,14 @@ function resolvePaymentStatus(row) {
   const hasCompletionAt = Boolean(row.finalPaymentCompletedAt || row.finalPaidAt);
   const isPaid = status === "PAID" || hasCompletionAt || rawUnpaidBalance <= 0;
 
+  const hasFinalReceivedAmount = row.finalPaymentReceivedAmount !== null && row.finalPaymentReceivedAmount !== undefined && String(row.finalPaymentReceivedAmount).trim() !== "";
+  const paidReceivedSource = hasFinalReceivedAmount
+    ? finalReceivedAmount
+    : recordTotal > 0
+      ? recordTotal
+      : totalAmount;
   const actualReceivedAmount = isPaid
-    ? Math.max(totalAmount, recordTotal, finalReceivedAmount, 0)
+    ? Math.min(totalAmount, Math.max(paidReceivedSource, 0))
     : Math.max(recordTotal, depositAmount, totalAmount - rawUnpaidBalance, 0);
   const unpaidAmount = isPaid ? 0 : Math.max(totalAmount - actualReceivedAmount, rawUnpaidBalance, 0);
   const isDepositOnly = !isPaid && actualReceivedAmount > 0;

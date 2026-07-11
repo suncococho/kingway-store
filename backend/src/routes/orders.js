@@ -1877,9 +1877,10 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
         throw createError("找不到訂單", 404);
       }
 
+      const finalPaymentStatus = String(order.finalPaymentStatus || "").trim().toUpperCase();
       const unpaidBalance = Math.max(Number(order.unpaidBalance || 0), 0);
-      if (unpaidBalance <= 0) {
-        throw createError("此訂單目前已結清，不需要補收尾款。", 400);
+      if (finalPaymentStatus === "PAID" || unpaidBalance <= 0) {
+        throw createError("此訂單已完款，請勿重複收款。", 400);
       }
 
       const unpaidCents = Math.round(unpaidBalance * 100);
