@@ -1,26 +1,14 @@
-const { pool } = require("../db");
 const config = require("../config");
 const { sendLineMessage } = require("../utils/line");
 const { sendInternalTelegram } = require("./telegramService");
+const { listPickupReminderCandidates } = require("./repairPickupReminderService");
 
 async function sendRepairPickupReminders() {
-  const [rows] = await pool.query(
-    `
-      SELECT
-        ro.id,
-        ro.completed_at AS completedAt,
-        ro.storage_fee AS storageFee,
-        c.name AS customerName,
-        c.line_user_id AS lineUserId,
-        TIMESTAMPDIFF(DAY, ro.completed_at, NOW()) AS daysAfterComplete
-      FROM repair_orders ro
-      INNER JOIN customers c ON c.id = ro.customer_id
-      WHERE ro.status = 'completed_waiting_pickup'
-        AND ro.completed_at IS NOT NULL
-        AND ro.picked_up_at IS NULL
-        AND c.line_user_id IS NOT NULL
-    `
-  );
+  const rows = await listPickupReminderCandidates(undefined, {
+    includeCustomerLineUser: true,
+    includeSuppression: true,
+    includeCompletedConfirmation: true
+  });
 
   let lineSent = 0;
   let adminAlerts = 0;

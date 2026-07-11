@@ -36,6 +36,7 @@ const {
   createOrReuseRepairConfirmationForCompletedRepair,
   getRepairConfirmationBlockReason
 } = require("../services/repairConfirmationService");
+const { suppressPickupReminder } = require("../services/repairPickupReminderService");
 const {
   assertReplacementConfirmationsComplete,
   crossCheckReplacementConfirmation,
@@ -1509,13 +1510,26 @@ router.post("/:id/pickup",  async (req, res, next) => {
     }
 
     const storageFee = calculateStorageFee(repairs[0].completedAt, new Date());
+    const pickupColumns = await getTableColumns(pool, "repair_orders");
+    const pickupUpdates = [
+      "status = 'picked_up'",
+      "picked_up_at = NOW()",
+      "storage_fee = ?"
+    ];
+    if (hasColumn(pickupColumns, "pickup_reminder_suppressed")) {
+      pickupUpdates.push("pickup_reminder_suppressed = 1");
+    }
+    if (hasColumn(pickupColumns, "pickup_reminder_suppressed_at")) {
+      pickupUpdates.push("pickup_reminder_suppressed_at = COALESCE(pickup_reminder_suppressed_at, NOW())");
+    }
+    if (hasColumn(pickupColumns, "updated_at")) {
+      pickupUpdates.push("updated_at = NOW()");
+    }
 
     await pool.query(
       `
         UPDATE repair_orders
-        SET status = 'picked_up',
-            picked_up_at = NOW(),
-            storage_fee = ?
+        SET ${pickupUpdates.join(", ")}
         WHERE id = ?
           AND store_id = ?
       `,
@@ -1550,6 +1564,50 @@ router.post("/:id/pickup",  async (req, res, next) => {
 
     await logKpi(req.user.id, "REPAIR_PICKED_UP", "REPAIR_ORDER", req.params.id, 4);
     return res.json({ message: "已完成取車", storageFee });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/:id/suppress-pickup-reminder", async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    await assertRepairBelongsToStore(req.params.id, storeId);
+    const [repairs] = await pool.query(
+      `
+        SELECT status, completed_at AS completedAt, picked_up_at AS pickedUpAt
+        FROM repair_orders
+        WHERE id = ?
+          AND store_id = ?
+        LIMIT 1
+      `,
+      [req.params.id, storeId]
+    );
+
+    if (!repairs[0]) {
+      throw createError("找不到維修工單", 404);
+    }
+
+    const currentStatus = String(repairs[0].status || "").trim();
+    if (currentStatus === "picked_up" || currentStatus === "completed" || repairs[0].pickedUpAt) {
+      throw createError("已完成或已取車的維修單無法停止提醒", 400);
+    }
+    if (currentStatus !== "completed_waiting_pickup") {
+      throw createError("需先完成維修後才能停止提醒", 400);
+    }
+
+    await suppressPickupReminder(req.params.id, pool, { storeId, suppressedBy: String(req.user?.id || "") });
+
+    await pool.query(
+      `
+        INSERT INTO repair_logs (repair_order_id, action, note)
+        VALUES (?, 'pickup_reminder_suppressed', ?)
+      `,
+      [req.params.id, "已停止保管提醒"]
+    );
+
+    await logWorkflowEvent("repair_pickup_reminder_suppressed", "REPAIR_ORDER", req.params.id, null, req.user.id);
+    return res.json({ message: "已停止保管提醒" });
   } catch (error) {
     return next(error);
   }
