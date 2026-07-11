@@ -82,8 +82,14 @@ router.put("/:id/items", requireStoreFeature("orders_enabled"), async (req, res,
 
       const subtotal = normalized.reduce((sum, item) => sum + item.lineTotal, 0);
       const totalAmount = Math.max(subtotal - keepDiscount, 0);
-      const unpaidBalance = Math.max(totalAmount - Number(order.depositAmount || 0), 0);
-      const finalPaymentStatus = unpaidBalance > 0 ? (Number(order.depositAmount || 0) > 0 ? "PARTIAL" : "UNPAID") : "PAID";
+      const currentFinalPaymentStatus = String(order.finalPaymentStatus || "").trim().toUpperCase();
+      const recalculatedUnpaidBalance = Math.max(totalAmount - Number(order.depositAmount || 0), 0);
+      const unpaidBalance = currentFinalPaymentStatus === "PAID" ? 0 : recalculatedUnpaidBalance;
+      const finalPaymentStatus = currentFinalPaymentStatus === "PAID"
+        ? "PAID"
+        : unpaidBalance > 0
+          ? (Number(order.depositAmount || 0) > 0 ? "PARTIAL" : "UNPAID")
+          : "PAID";
 
       await tx.query(
         `UPDATE orders

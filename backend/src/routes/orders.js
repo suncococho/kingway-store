@@ -1392,12 +1392,19 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
     const currentOtherDiscount = Number(rows[0].otherDiscount || 0);
     const couponDiscount = Math.max(itemTotal - currentPayable - currentOtherDiscount, 0);
     const nextTotalAmount = Math.max(itemTotal - couponDiscount - nextOtherDiscount, 0);
-    const nextUnpaidBalance = Math.max(nextTotalAmount - nextDepositAmount, 0);
+    const currentFinalPaymentStatus = String(rows[0].finalPaymentStatus || "").trim().toUpperCase();
+    const requestedFinalPaymentStatus = hasFinalPaymentStatus ? String(finalPaymentStatus || "").trim().toUpperCase() : "";
+    const recalculatedUnpaidBalance = Math.max(nextTotalAmount - nextDepositAmount, 0);
+    const nextFinalPaymentStatus = hasFinalPaymentStatus
+      ? requestedFinalPaymentStatus
+      : currentFinalPaymentStatus === "PAID"
+        ? "PAID"
+        : recalculatedUnpaidBalance > 0
+          ? "PARTIAL"
+          : "PAID";
+    const nextUnpaidBalance = nextFinalPaymentStatus === "PAID" ? 0 : recalculatedUnpaidBalance;
 
-    const nextFinalPaymentStatus =
-      hasFinalPaymentStatus ? finalPaymentStatus : nextUnpaidBalance > 0 ? "PARTIAL" : "PAID";
-
-    const wasPaid = rows[0].finalPaymentStatus === "PAID";
+    const wasPaid = currentFinalPaymentStatus === "PAID";
 
     await pool.query(
       `
@@ -1642,9 +1649,16 @@ router.put("/:id/items", requireOrderManagementFeature, async (req, res, next) =
       const otherDiscount = Number(payRows[0]?.otherDiscount || 0);
       const couponDiscount = 0;
       const payableAmount = Math.max(totalAmount - couponDiscount - otherDiscount, 0);
-      const unpaidBalance = Math.max(payableAmount - depositAmount, 0);
-      const finalPaymentStatus =
-        unpaidBalance <= 0 ? "PAID" : depositAmount > 0 ? "PARTIAL" : "UNPAID";
+      const currentFinalPaymentStatus = String(order.finalPaymentStatus || "").trim().toUpperCase();
+      const recalculatedUnpaidBalance = Math.max(payableAmount - depositAmount, 0);
+      const unpaidBalance = currentFinalPaymentStatus === "PAID" ? 0 : recalculatedUnpaidBalance;
+      const finalPaymentStatus = currentFinalPaymentStatus === "PAID"
+        ? "PAID"
+        : unpaidBalance <= 0
+          ? "PAID"
+          : depositAmount > 0
+            ? "PARTIAL"
+            : "UNPAID";
 
       await connection.query(
         `UPDATE orders
