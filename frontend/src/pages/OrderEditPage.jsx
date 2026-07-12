@@ -3,13 +3,21 @@ import { useNavigate, useParams } from "react-router-dom";
 import { apiRequest } from "../lib/api";
 
 const money = (v) => `NT$ ${Number(v || 0).toLocaleString()}`;
+const categoryLabel = (value) => {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "EB" || normalized === "EBIKE") return "電動自行車";
+  if (normalized === "RP" || normalized === "REPAIR") return "維修";
+  if (["AC", "ACCESSORY", "PT", "FP", "LC", "HG", "BG", "CL", "TN"].includes(normalized)) return "配件";
+  return "其他";
+};
 
 function OrderEditPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [form, setForm] = useState(null);
   const [products, setProducts] = useState([]);
-  const [productSearch, setProductSearch] = useState("");
+  const [addProductSearch, setAddProductSearch] = useState("");
+  const [selectedProductForAdd, setSelectedProductForAdd] = useState(null);
   const [items, setItems] = useState([]);
   const [error, setError] = useState("");
 
@@ -34,6 +42,7 @@ function OrderEditPage() {
 
         setItems((o.items || []).map((x) => ({
           productId: Number(x.productId),
+          sku: x.sku || x.skuSnapshot || "",
           productName: x.productName,
           quantity: Number(x.quantity || 1),
           unitPrice: Number(x.unitPrice || 0)
@@ -53,41 +62,34 @@ function OrderEditPage() {
   function updateItem(index, key, value) {
     setItems((list) => list.map((item, i) => {
       if (i !== index) return item;
-
-      if (key === "productId") {
-        const p = products.find((x) => Number(x.id) === Number(value));
-        return {
-          ...item,
-          productId: Number(value),
-          productName: p?.name || item.productName,
-          unitPrice: Number(p?.price || item.unitPrice || 0)
-        };
-      }
-
       return { ...item, [key]: value };
     }));
   }
 
-  function addItem() {
-    const p = products[0];
+  function addSelectedProductToOrder() {
+    const p = selectedProductForAdd;
     if (!p) return;
     setItems((list) => [...list, {
       productId: Number(p.id),
+      sku: p.sku || "",
       productName: p.name,
       quantity: 1,
       unitPrice: Number(p.price || 0)
     }]);
+    setAddProductSearch("");
+    setSelectedProductForAdd(null);
   }
 
   function removeItem(index) {
     setItems((list) => list.filter((_, i) => i !== index));
   }
 
-  const filteredProducts = products.filter((p) => {
-    const text = productSearch.trim().toLowerCase();
-    if (!text) return true;
-    return `${p.name || ""} ${p.sku || ""}`.toLowerCase().includes(text);
-  });
+  const addProductKeyword = addProductSearch.trim().toLowerCase();
+  const filteredAddProducts = addProductKeyword
+    ? products
+        .filter((p) => `${p.name || ""} ${p.sku || ""} ${p.categoryName || ""} ${p.categoryLabel || ""}`.toLowerCase().includes(addProductKeyword))
+        .slice(0, 12)
+    : [];
 
   const itemTotal = items.reduce(
     (sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0),
@@ -252,7 +254,7 @@ async function requestGoogleReviewCoupon() {
         }
         .kw-product-toolbar {
           display: flex;
-          justify-content: space-between;
+          justify-content: flex-start;
           align-items: center;
           gap: 12px;
           margin-bottom: 16px;
@@ -283,6 +285,18 @@ async function requestGoogleReviewCoupon() {
           font-size: 14px;
           margin-top: 4px;
         }
+        .kw-readonly-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border-radius: 999px;
+          background: #eef2ff;
+          color: #3730a3;
+          font-size: 13px;
+          font-weight: 900;
+          padding: 5px 10px;
+          margin-top: 8px;
+        }
         .kw-product-card input,
         .kw-product-card select {
           width: 100%;
@@ -297,8 +311,87 @@ async function requestGoogleReviewCoupon() {
           border-top: 1px solid #e2e8f0;
           padding: 14px 16px;
           display: grid;
-          grid-template-columns: 1fr 90px 130px;
+          grid-template-columns: 1fr 1fr;
           gap: 12px;
+        }
+        .kw-edit-field {
+          display: grid;
+          gap: 6px;
+        }
+        .kw-edit-field span {
+          color: #64748b;
+          font-size: 13px;
+          font-weight: 900;
+        }
+        .kw-add-card {
+          border: 2px solid #bbf7d0;
+          background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 72%);
+        }
+        .kw-add-description {
+          margin: -8px 0 16px;
+          color: #166534;
+          font-weight: 700;
+          line-height: 1.6;
+        }
+        .kw-product-search {
+          margin-bottom: 14px;
+        }
+        .kw-search-results {
+          display: grid;
+          gap: 10px;
+          margin-bottom: 14px;
+        }
+        .kw-search-result {
+          width: 100%;
+          border: 1px solid #dbeafe;
+          border-radius: 16px;
+          padding: 14px;
+          background: #fff;
+          color: #172033;
+          text-align: left;
+          cursor: pointer;
+        }
+        .kw-search-result.selected {
+          border-color: #2563eb;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+        }
+        .kw-search-result-title {
+          font-size: 16px;
+          font-weight: 900;
+          margin-bottom: 8px;
+        }
+        .kw-search-result-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          color: #475569;
+          font-size: 14px;
+          font-weight: 700;
+        }
+        .kw-selected-product {
+          border: 1px solid #86efac;
+          border-radius: 16px;
+          background: #f7fee7;
+          padding: 14px;
+          margin-bottom: 14px;
+        }
+        .kw-selected-label {
+          color: #166534;
+          font-size: 13px;
+          font-weight: 900;
+          margin-bottom: 6px;
+        }
+        .kw-btn:disabled {
+          cursor: not-allowed;
+          opacity: 0.45;
+        }
+        .kw-empty-state {
+          border: 1px dashed #cbd5e1;
+          border-radius: 16px;
+          color: #64748b;
+          padding: 18px;
+          text-align: center;
+          font-weight: 800;
         }
         .kw-total-box {
           margin-top: 16px;
@@ -416,6 +509,13 @@ async function requestGoogleReviewCoupon() {
           .kw-product-edit {
             grid-template-columns: 1fr;
           }
+          .kw-search-result {
+            padding: 16px;
+          }
+          .kw-search-result-meta {
+            display: grid;
+            gap: 6px;
+          }
           .kw-total-box {
             font-size: 22px;
           }
@@ -508,21 +608,12 @@ async function requestGoogleReviewCoupon() {
           <section className="kw-card">
             <div className="kw-product-toolbar">
               <h2 className="kw-card-title" style={{ margin: 0 }}>商品項目</h2>
-              <button type="button" className="kw-btn green" onClick={addItem}>＋ 新增商品</button>
             </div>
 
             {showRepairQuoteItemsWarning && (
               <div className="kw-warning">此維修訂單尚未同步品項，請先完成維修品項同步後再收款。</div>
             )}
 
-            <input
-              className="kw-product-search"
-              value={productSearch}
-              onChange={(e) => setProductSearch(e.target.value)}
-              placeholder="輸入商品名稱或 SKU"
-            />
-
-            <div style={{ height: 16 }} />
 
             <div className="kw-product-list">
               {items.map((item, index) => (
@@ -530,7 +621,10 @@ async function requestGoogleReviewCoupon() {
                   <div className="kw-product-main">
                     <div>
                       <div className="kw-product-name">{item.productName || "商品"}</div>
-                      <div className="kw-product-meta">小計：{money(Number(item.quantity || 0) * Number(item.unitPrice || 0))}</div>
+                      <div className="kw-product-meta">
+                        SKU：{item.sku || "-"} / 小計：{money(Number(item.quantity || 0) * Number(item.unitPrice || 0))}
+                      </div>
+                      <span className="kw-readonly-chip">商品名稱不可在此搜尋變更</span>
                     </div>
                     <div><strong>{Number(item.quantity || 0)}</strong></div>
                     <div>{money(item.unitPrice)}</div>
@@ -539,22 +633,76 @@ async function requestGoogleReviewCoupon() {
                   </div>
 
                   <div className="kw-product-edit">
-                    <select value={item.productId} onChange={(e) => updateItem(index, "productId", e.target.value)}>
-                      {filteredProducts.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name} / {money(p.price)}</option>
-                      ))}
-                    </select>
-                    <input type="number" value={item.quantity} onChange={(e) => updateItem(index, "quantity", Number(e.target.value))} />
-                    <input type="number" value={item.unitPrice} onChange={(e) => updateItem(index, "unitPrice", Number(e.target.value))} />
+                    <label className="kw-edit-field">
+                      <span>數量</span>
+                      <input type="number" min="1" value={item.quantity} onChange={(e) => updateItem(index, "quantity", Number(e.target.value))} />
+                    </label>
+                    <label className="kw-edit-field">
+                      <span>單價</span>
+                      <input type="number" min="0" value={item.unitPrice} onChange={(e) => updateItem(index, "unitPrice", Number(e.target.value))} />
+                    </label>
                   </div>
                 </div>
               ))}
+              {!items.length && <div className="kw-empty-state">目前沒有商品項目，請在下方「新增商品到訂單」選擇商品後加入。</div>}
             </div>
 
             <div className="kw-total-box">
               <span>商品總額</span>
               <span>{money(itemTotal)}</span>
             </div>
+          </section>
+
+          <section className="kw-card kw-add-card">
+            <h2 className="kw-card-title">新增商品到訂單</h2>
+            <p className="kw-add-description">請先搜尋並選擇商品，確認「已選擇商品」後再按「加入訂單」。搜尋不會改動上方既有商品。</p>
+
+            <input
+              className="kw-product-search"
+              value={addProductSearch}
+              onChange={(e) => {
+                setAddProductSearch(e.target.value);
+                setSelectedProductForAdd(null);
+              }}
+              placeholder="搜尋商品名稱或 SKU"
+            />
+
+            {filteredAddProducts.length ? (
+              <div className="kw-search-results">
+                {filteredAddProducts.map((product) => (
+                  <button
+                    type="button"
+                    key={product.id}
+                    className={`kw-search-result${selectedProductForAdd?.id === product.id ? " selected" : ""}`}
+                    onClick={() => setSelectedProductForAdd(product)}
+                  >
+                    <div className="kw-search-result-title">{product.name || "商品"}</div>
+                    <div className="kw-search-result-meta">
+                      <span>SKU：{product.sku || "-"}</span>
+                      <span>價格：{money(product.price)}</span>
+                      <span>庫存：{Number(product.stock || 0).toLocaleString()}</span>
+                      <span>分類：{product.categoryName || product.categoryLabel || categoryLabel(product.categoryCode || product.category)}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="kw-empty-state">{addProductKeyword ? "找不到符合的商品。" : "輸入商品名稱或 SKU 後會顯示搜尋結果。"}</div>
+            )}
+
+            {selectedProductForAdd && (
+              <div className="kw-selected-product">
+                <div className="kw-selected-label">已選擇商品</div>
+                <div className="kw-product-name">{selectedProductForAdd.name || "商品"}</div>
+                <div className="kw-product-meta">
+                  SKU：{selectedProductForAdd.sku || "-"} / 價格：{money(selectedProductForAdd.price)} / 庫存：{Number(selectedProductForAdd.stock || 0).toLocaleString()} / 分類：{selectedProductForAdd.categoryName || selectedProductForAdd.categoryLabel || categoryLabel(selectedProductForAdd.categoryCode || selectedProductForAdd.category)}
+                </div>
+              </div>
+            )}
+
+            <button type="button" className="kw-btn green" onClick={addSelectedProductToOrder} disabled={!selectedProductForAdd}>
+              ＋ 加入訂單
+            </button>
           </section>
 
           <section className="kw-help">
