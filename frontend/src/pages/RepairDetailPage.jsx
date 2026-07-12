@@ -640,6 +640,24 @@ function RepairDetailPage() {
     });
   }
 
+  function requestSuppressPickupReminder() {
+    if (detail.status !== "completed_waiting_pickup" || detail.picked_up_at) {
+      warnPreviousStep("完成通知取車");
+      return;
+    }
+    requestAction({
+      title: "暫停取車提醒",
+      message: "此操作只會停止 LINE 取車提醒與保管費提醒，不代表已取車，也不代表免收保管費。",
+      confirmText: "暫停取車提醒",
+      action: async () => {
+        const response = await callAction(`/repairs/${id}/suppress-pickup-reminder`);
+        if (response) {
+          setDetail((current) => current ? { ...current, pickup_reminder_suppressed: 1 } : current);
+        }
+      }
+    });
+  }
+
   async function sendRepairConfirmation() {
     try {
       const response = await apiRequest(`/repair-confirmations/repairs/${id}/send`, {
@@ -756,6 +774,8 @@ function RepairDetailPage() {
   const quoteStatusValue = String(detail.quote_status || "").trim();
   const hasCompletedAt = Boolean(detail.completed_at);
   const hasPickedUpAt = Boolean(detail.picked_up_at);
+  const pickupReminderSuppressed = detail.pickup_reminder_suppressed === true || Number(detail.pickup_reminder_suppressed || 0) === 1;
+  const canSuppressPickupReminder = repairStatusValue === "completed_waiting_pickup" && !hasPickedUpAt && !pickupReminderSuppressed;
   const isFinalizedRepair =
     ["completed", "completed_waiting_pickup", "picked_up"].includes(repairStatusValue) ||
     hasCompletedAt ||
@@ -1111,6 +1131,16 @@ function RepairDetailPage() {
             <button type="button" className="secondary-button" onClick={() => setSystemInfoOpen((current) => !current)}>
               系統資訊
             </button>
+            {canSuppressPickupReminder ? (
+              <button type="button" className="secondary-button" onClick={requestSuppressPickupReminder}>
+                暫停取車提醒
+              </button>
+            ) : repairStatusValue === "completed_waiting_pickup" && !hasPickedUpAt && pickupReminderSuppressed ? (
+              <div className="status-stack">
+                <StatusBadge tone="info">已暫停取車提醒</StatusBadge>
+                <span className="muted-text">此車尚未取車，僅停止提醒</span>
+              </div>
+            ) : null}
             <button type="button" className="secondary-button" onClick={() => navigate("/repairs")}>
               返回列表
             </button>
