@@ -11,6 +11,54 @@ const categoryLabel = (value) => {
   return "其他";
 };
 
+const DEFAULT_WARRANTY_TERMS_VERSION = "KINGWAY_WARRANTY_REPAIR_TERMS_2026_07";
+
+function getWarrantySuggestion(amount) {
+  const price = Number(amount || 0);
+  if (price <= 50000) return { months: 6, mileageLimitKm: 800 };
+  if (price <= 60000) return { months: 9, mileageLimitKm: 1200 };
+  if (price <= 70000) return { months: 12, mileageLimitKm: 1500 };
+  if (price <= 90000) return { months: 12, mileageLimitKm: 2000 };
+  return { months: 12, mileageLimitKm: 2500 };
+}
+
+function toDateInputValue(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : "";
+}
+
+function addMonthsToDate(dateText, months) {
+  if (!dateText || !Number.isInteger(Number(months))) return "";
+  const date = new Date(`${dateText}T00:00:00+08:00`);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setMonth(date.getMonth() + Number(months));
+  return date.toISOString().slice(0, 10);
+}
+
+function buildWarrantyFormValues(order) {
+  const suggestion = getWarrantySuggestion(order?.displayFinalAmount || order?.totalAmount);
+  const defaultStartDate = toDateInputValue(order?.handoverConfirmedAt || order?.finalPaymentCompletedAt || order?.finalPaidAt || "");
+  return {
+    warrantyStartDate: toDateInputValue(order?.warrantyStartDate) || defaultStartDate,
+    warrantyMonths: order?.warrantyMonths === null || order?.warrantyMonths === undefined || order?.warrantyMonths === "" ? String(suggestion.months) : String(order.warrantyMonths),
+    warrantyMileageLimitKm: order?.warrantyMileageLimitKm === null || order?.warrantyMileageLimitKm === undefined || order?.warrantyMileageLimitKm === "" ? String(suggestion.mileageLimitKm) : String(order.warrantyMileageLimitKm),
+    warrantyNote: order?.warrantyNote || "",
+    warrantyTermsVersion: order?.warrantyTermsVersion || DEFAULT_WARRANTY_TERMS_VERSION,
+    warrantySchemaReady: Boolean(Number(order?.warrantySchemaReady || 0))
+  };
+}
+
+function formatWarrantyDisplay(form) {
+  const start = toDateInputValue(form?.warrantyStartDate);
+  const months = form?.warrantyMonths;
+  const mileage = form?.warrantyMileageLimitKm;
+  if (!start && !months && !mileage) return "未設定";
+  const endDate = start && months ? addMonthsToDate(start, Number(months)) : "";
+  const mileageText = mileage ? `${Number(mileage).toLocaleString()} km` : "未設定里程";
+  return endDate ? `保固至：${endDate} 或 ${mileageText}，以先屆至者為準` : `保固期間：${months || "未設定"} 個月 / ${mileageText}`;
+}
+
 function OrderEditPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -37,7 +85,8 @@ function OrderEditPage() {
           finalPaymentStatus: o.finalPaymentStatus || "UNPAID",
           orderType: o.orderType || o.order_type || "",
           source: o.source || "",
-          notes: o.notes || ""
+          notes: o.notes || "",
+          ...buildWarrantyFormValues(o)
         });
 
         setItems((o.items || []).map((x) => ({
@@ -133,15 +182,32 @@ async function requestGoogleReviewCoupon() {
         body: JSON.stringify({ items })
       });
 
+      const payload = {
+        ...form,
+        unpaidBalance,
+        otherDiscount,
+        depositAmount,
+        finalPaymentStatus: unpaidBalance <= 0 ? "PAID" : depositAmount > 0 ? "PARTIAL" : form.finalPaymentStatus
+      };
+      if (form.warrantySchemaReady) {
+        Object.assign(payload, {
+          warrantyStartDate: form.warrantyStartDate || null,
+          warrantyMonths: form.warrantyMonths === "" ? null : Number(form.warrantyMonths),
+          warrantyMileageLimitKm: form.warrantyMileageLimitKm === "" ? null : Number(form.warrantyMileageLimitKm),
+          warrantyNote: form.warrantyNote || null,
+          warrantyTermsVersion: form.warrantyTermsVersion || DEFAULT_WARRANTY_TERMS_VERSION
+        });
+      } else {
+        delete payload.warrantyStartDate;
+        delete payload.warrantyMonths;
+        delete payload.warrantyMileageLimitKm;
+        delete payload.warrantyNote;
+        delete payload.warrantyTermsVersion;
+        delete payload.warrantySchemaReady;
+      }
       await apiRequest(`/orders/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          ...form,
-          unpaidBalance,
-          otherDiscount,
-          depositAmount,
-          finalPaymentStatus: unpaidBalance <= 0 ? "PAID" : depositAmount > 0 ? "PARTIAL" : form.finalPaymentStatus
-        })
+        body: JSON.stringify(payload)
       });
 
       navigate("/orders");
@@ -595,6 +661,28 @@ async function requestGoogleReviewCoupon() {
             <div className="kw-field" style={{ display: "block" }}>
               <textarea value={form.notes} onChange={(e) => update("notes", e.target.value)} />
             </div>
+          </section>
+
+          <section className="kw-card">
+            <h2 className="kw-card-title">保固資訊</h2>
+            <div className="kw-help" style={{ marginBottom: 14 }}>{form.warrantySchemaReady ? "" : "保固欄位 migration 尚未套用，暫不可儲存。"}{formatWarrantyDisplay(form)}</div>
+            <div className="kw-field">
+              <label>保固起算日</label>
+              <input type="date" disabled={!form.warrantySchemaReady} value={form.warrantyStartDate} onChange={(e) => update("warrantyStartDate", e.target.value)} />
+            </div>
+            <div className="kw-field">
+              <label>保固期間</label>
+              <input type="number" min="0" step="1" disabled={!form.warrantySchemaReady} value={form.warrantyMonths} onChange={(e) => update("warrantyMonths", e.target.value)} />
+            </div>
+            <div className="kw-field">
+              <label>里程上限</label>
+              <input type="number" min="0" step="1" disabled={!form.warrantySchemaReady} value={form.warrantyMileageLimitKm} onChange={(e) => update("warrantyMileageLimitKm", e.target.value)} />
+            </div>
+            <div className="kw-field">
+              <label>保固備註</label>
+              <textarea disabled={!form.warrantySchemaReady} value={form.warrantyNote} placeholder="特別保固、展示車、二手車、零件另計、客製條件" onChange={(e) => update("warrantyNote", e.target.value)} />
+            </div>
+            <div className="kw-summary-row"><span>保固版本</span><strong>{form.warrantyTermsVersion || DEFAULT_WARRANTY_TERMS_VERSION}</strong></div>
           </section>
 
           <section className="kw-card kw-actions">

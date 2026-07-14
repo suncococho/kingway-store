@@ -1,4 +1,4 @@
-import warrantyRepairAdditionalTerms from "../../../shared/warrantyRepairAdditionalTerms.json";
+import warrantyRepairAdditionalTerms from "../content/warrantyRepairAdditionalTerms.json";
 
 export { warrantyRepairAdditionalTerms };
 

@@ -97,6 +97,57 @@ function formatOrderFinalAmount(order) {
   return formatAmount(getDisplayFinalAmount(order));
 }
 
+const DEFAULT_WARRANTY_TERMS_VERSION = "KINGWAY_WARRANTY_REPAIR_TERMS_2026_07";
+
+function getWarrantySuggestion(amount) {
+  const price = Number(amount || 0);
+  if (price <= 50000) return { months: 6, mileageLimitKm: 800 };
+  if (price <= 60000) return { months: 9, mileageLimitKm: 1200 };
+  if (price <= 70000) return { months: 12, mileageLimitKm: 1500 };
+  if (price <= 90000) return { months: 12, mileageLimitKm: 2000 };
+  return { months: 12, mileageLimitKm: 2500 };
+}
+
+function toDateInputValue(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : "";
+}
+
+function addMonthsToDate(dateText, months) {
+  if (!dateText || !Number.isInteger(Number(months))) return "";
+  const date = new Date(`${dateText}T00:00:00+08:00`);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setMonth(date.getMonth() + Number(months));
+  return date.toISOString().slice(0, 10);
+}
+
+function getWarrantyDefaultStartDate(order) {
+  return toDateInputValue(order?.handoverConfirmedAt || order?.finalPaymentCompletedAt || order?.finalPaidAt || "");
+}
+
+function buildWarrantyFormValues(order) {
+  const suggestion = getWarrantySuggestion(getDisplayFinalAmount(order));
+  return {
+    warrantyStartDate: toDateInputValue(order?.warrantyStartDate) || getWarrantyDefaultStartDate(order),
+    warrantyMonths: order?.warrantyMonths === null || order?.warrantyMonths === undefined || order?.warrantyMonths === "" ? String(suggestion.months) : String(order.warrantyMonths),
+    warrantyMileageLimitKm: order?.warrantyMileageLimitKm === null || order?.warrantyMileageLimitKm === undefined || order?.warrantyMileageLimitKm === "" ? String(suggestion.mileageLimitKm) : String(order.warrantyMileageLimitKm),
+    warrantyNote: order?.warrantyNote || "",
+    warrantyTermsVersion: order?.warrantyTermsVersion || DEFAULT_WARRANTY_TERMS_VERSION,
+    warrantySchemaReady: Boolean(Number(order?.warrantySchemaReady || 0))
+  };
+}
+
+function formatWarrantyDisplay(detail) {
+  const start = toDateInputValue(detail?.warrantyStartDate);
+  const months = detail?.warrantyMonths;
+  const mileage = detail?.warrantyMileageLimitKm;
+  if (!start && !months && !mileage) return "未設定";
+  const endDate = start && months ? addMonthsToDate(start, Number(months)) : "";
+  const mileageText = mileage ? `${Number(mileage).toLocaleString()} km` : "未設定里程";
+  return endDate ? `保固至：${endDate} 或 ${mileageText}，以先屆至者為準` : `保固期間：${months || "未設定"} 個月 / ${mileageText}`;
+}
+
 function getOrderCardDescription(row) {
   return `${row.customerName || row.customerNameSnapshot || "-"} / ${row.customerPhone || row.customerPhoneSnapshot || "未留電話"}`;
 }
@@ -230,7 +281,12 @@ function OrdersPage() {
     depositAmount: "",
     unpaidBalance: "",
     finalPaymentStatus: "PAID",
-    notes: ""
+    notes: "",
+    warrantyStartDate: "",
+    warrantyMonths: "",
+    warrantyMileageLimitKm: "",
+    warrantyNote: "",
+    warrantyTermsVersion: DEFAULT_WARRANTY_TERMS_VERSION
   });
   const [accessoryChecklist, setAccessoryChecklist] = useState(buildEmptyAccessoryChecklistState());
   const [searchMode, setSearchMode] = useState(false);
@@ -598,18 +654,28 @@ function OrdersPage() {
     }
 
     await runWithProcessing(async () => {
+      const payload = {
+        customerName: detailForm.customerName,
+        customerPhone: detailForm.customerPhone,
+        paymentMethod: detailForm.paymentMethod,
+        isReservationOrder: detailForm.isReservationOrder,
+        depositAmount: detailForm.depositAmount === "" ? null : Number(detailForm.depositAmount),
+        unpaidBalance: detailForm.unpaidBalance === "" ? null : Number(detailForm.unpaidBalance),
+        finalPaymentStatus: detailForm.finalPaymentStatus,
+        notes: detailForm.notes
+      };
+      if (detailForm.warrantySchemaReady) {
+        Object.assign(payload, {
+          warrantyStartDate: detailForm.warrantyStartDate || null,
+          warrantyMonths: detailForm.warrantyMonths === "" ? null : Number(detailForm.warrantyMonths),
+          warrantyMileageLimitKm: detailForm.warrantyMileageLimitKm === "" ? null : Number(detailForm.warrantyMileageLimitKm),
+          warrantyNote: detailForm.warrantyNote || null,
+          warrantyTermsVersion: detailForm.warrantyTermsVersion || DEFAULT_WARRANTY_TERMS_VERSION
+        });
+      }
       await apiRequest(`/orders/${detail.id}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          customerName: detailForm.customerName,
-          customerPhone: detailForm.customerPhone,
-          paymentMethod: detailForm.paymentMethod,
-          isReservationOrder: detailForm.isReservationOrder,
-          depositAmount: detailForm.depositAmount === "" ? null : Number(detailForm.depositAmount),
-          unpaidBalance: detailForm.unpaidBalance === "" ? null : Number(detailForm.unpaidBalance),
-          finalPaymentStatus: detailForm.finalPaymentStatus,
-          notes: detailForm.notes
-        })
+        body: JSON.stringify(payload)
       });
       refetch();
       setDetail((current) => (current ? { ...current, ...detailForm } : current));
@@ -709,7 +775,8 @@ function OrdersPage() {
       depositAmount: String(row.depositAmount ?? ""),
       unpaidBalance: String(row.unpaidBalance ?? ""),
       finalPaymentStatus: row.finalPaymentStatus || "PAID",
-      notes: row.notes || ""
+      notes: row.notes || "",
+      ...buildWarrantyFormValues(row)
     });
     try {
       const loaded = await apiRequest("/orders/" + row.id);
@@ -731,7 +798,8 @@ function OrdersPage() {
         depositAmount: String(nextDetail.depositAmount ?? ""),
         unpaidBalance: String(nextDetail.unpaidBalance ?? ""),
         finalPaymentStatus: nextDetail.finalPaymentStatus || "PAID",
-        notes: nextDetail.notes || ""
+        notes: nextDetail.notes || "",
+        ...buildWarrantyFormValues(nextDetail)
       });
       if (isAccessoryChecklistEligible(nextDetail)) {
         setAccessoryChecklist((current) => ({ ...current, loading: true, error: "" }));
@@ -1621,6 +1689,16 @@ if (!window.confirm(
               </div>
             </section>
             <section className="stack-card">
+              <div className="section-title">保固資訊</div>
+              <div className="field-grid">
+                <div className="field-item"><div className="field-label">保固起算日</div><div className="field-value">{detailForm.warrantyStartDate ? formatTaipeiDate(detailForm.warrantyStartDate) : "未設定"}</div></div>
+                <div className="field-item"><div className="field-label">保固期間</div><div className="field-value">{detailForm.warrantyMonths ? `${detailForm.warrantyMonths} 個月` : "未設定"}</div></div>
+                <div className="field-item"><div className="field-label">里程上限</div><div className="field-value">{detailForm.warrantyMileageLimitKm ? `${Number(detailForm.warrantyMileageLimitKm).toLocaleString()} km` : "未設定"}</div></div>
+                <div className="field-item field-item-wide"><div className="field-label">保固至</div><div className="field-value">{formatWarrantyDisplay({ warrantyStartDate: detailForm.warrantyStartDate, warrantyMonths: detailForm.warrantyMonths, warrantyMileageLimitKm: detailForm.warrantyMileageLimitKm })}</div></div>
+                <div className="field-item field-item-wide"><div className="field-label">備註</div><div className="field-value">{detailForm.warrantyNote || "未設定"}</div></div>
+              </div>
+            </section>
+            <section className="stack-card">
               <div className="section-title">操作</div>
               {accessoryChecklist.applicable && accessoryChecklist.hasAccessoryItems && !accessoryChecklist.readyForHandoverChecklist ? (
                 <div className="error-banner">{accessoryChecklist.blockReason || "配件安裝確認尚未完成，請先完成安裝、測試、照片確認與交叉確認。"}</div>
@@ -1683,6 +1761,12 @@ if (!window.confirm(
                   <label className="form-field"><span>未付款金額</span><input type="number" min="0" value={detailForm.unpaidBalance} onChange={(event) => setDetailForm((current) => ({ ...current, unpaidBalance: event.target.value }))} /></label>
                   <label className="form-field"><span>完款狀態</span><select value={detailForm.finalPaymentStatus} onChange={(event) => setDetailForm((current) => ({ ...current, finalPaymentStatus: event.target.value }))}><option value="UNPAID">未付款</option><option value="PARTIAL">部分付款</option><option value="PAID">已完款</option></select></label>
                   <label className="form-field form-field-wide"><span>備註</span><input value={detailForm.notes} onChange={(event) => setDetailForm((current) => ({ ...current, notes: event.target.value }))} /></label>
+                  <div className="form-field form-field-wide"><span>保固資訊</span><div className="muted-text">依目前訂單金額自動建議，可手動調整。{detailForm.warrantySchemaReady ? "" : "保固欄位 migration 尚未套用，暫不可儲存。"}{formatWarrantyDisplay({ warrantyStartDate: detailForm.warrantyStartDate, warrantyMonths: detailForm.warrantyMonths, warrantyMileageLimitKm: detailForm.warrantyMileageLimitKm })}</div></div>
+                  <label className="form-field"><span>保固起算日</span><input type="date" disabled={!detailForm.warrantySchemaReady} value={detailForm.warrantyStartDate} onChange={(event) => setDetailForm((current) => ({ ...current, warrantyStartDate: event.target.value }))} /></label>
+                  <label className="form-field"><span>保固期間（月）</span><input type="number" min="0" step="1" disabled={!detailForm.warrantySchemaReady} value={detailForm.warrantyMonths} onChange={(event) => setDetailForm((current) => ({ ...current, warrantyMonths: event.target.value }))} /></label>
+                  <label className="form-field"><span>保固里程上限（km）</span><input type="number" min="0" step="1" disabled={!detailForm.warrantySchemaReady} value={detailForm.warrantyMileageLimitKm} onChange={(event) => setDetailForm((current) => ({ ...current, warrantyMileageLimitKm: event.target.value }))} /></label>
+                  <label className="form-field form-field-wide"><span>保固備註</span><textarea rows="2" disabled={!detailForm.warrantySchemaReady} placeholder="特別保固、展示車、二手車、零件另計、客製條件" value={detailForm.warrantyNote} onChange={(event) => setDetailForm((current) => ({ ...current, warrantyNote: event.target.value }))} /></label>
+                  <div className="form-field form-field-wide"><span>保固版本</span><div className="field-value">{detailForm.warrantyTermsVersion || DEFAULT_WARRANTY_TERMS_VERSION}</div></div>
                   <button type="submit" className="primary-button inline-submit" disabled={isProcessing}>{pendingAction?.id === `order-save-${detail.id}` ? "處理中..." : "儲存"}</button>
                 </form>
               </section>

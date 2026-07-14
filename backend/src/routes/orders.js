@@ -55,6 +55,14 @@ const requireOrderManagementFeature = requireStoreFeature("orders_enabled");
 const requirePosFeature = requireStoreFeature("pos_enabled");
 const ORDER_CREATE_GUARD_TTL_MS = 60 * 1000;
 const recentOrderCreateRequests = new Map();
+const DEFAULT_WARRANTY_TERMS_VERSION = "KINGWAY_WARRANTY_REPAIR_TERMS_2026_07";
+const WARRANTY_COLUMNS = [
+  "warranty_start_date",
+  "warranty_months",
+  "warranty_mileage_limit_km",
+  "warranty_note",
+  "warranty_terms_version"
+];
 
 function pruneOrderCreateGuards(now = Date.now()) {
   for (const [key, entry] of recentOrderCreateRequests.entries()) {
@@ -108,6 +116,107 @@ function normalizeOrderCustomerSnapshot(value) {
   if (value === undefined) return undefined;
   if (value === null) return null;
   return String(value).trim();
+}
+
+function normalizeNullableWarrantyDate(value, label) {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  const text = String(value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    throw createError(`${label}格式需為 YYYY-MM-DD`, 400);
+  }
+  return text;
+}
+
+function normalizeNullableUnsignedInteger(value, label) {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  if (typeof value === "number" && !Number.isInteger(value)) {
+    throw createError(`${label}必須為非負整數`, 400);
+  }
+  const text = String(value).trim();
+  if (!/^\d+$/.test(text)) {
+    throw createError(`${label}必須為非負整數`, 400);
+  }
+  return Number(text);
+}
+
+function normalizeNullableText(value) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
+function normalizeWarrantyPayload(body = {}) {
+  const payload = {};
+
+  if (hasOwnPropertyValue(body, "warrantyStartDate") || hasOwnPropertyValue(body, "warranty_start_date")) {
+    payload.warranty_start_date = normalizeNullableWarrantyDate(
+      body.warranty_start_date !== undefined ? body.warranty_start_date : body.warrantyStartDate,
+      "保固起算日"
+    );
+  }
+
+  if (hasOwnPropertyValue(body, "warrantyMonths") || hasOwnPropertyValue(body, "warranty_months")) {
+    payload.warranty_months = normalizeNullableUnsignedInteger(
+      body.warranty_months !== undefined ? body.warranty_months : body.warrantyMonths,
+      "保固期間"
+    );
+  }
+
+  if (hasOwnPropertyValue(body, "warrantyMileageLimitKm") || hasOwnPropertyValue(body, "warranty_mileage_limit_km")) {
+    payload.warranty_mileage_limit_km = normalizeNullableUnsignedInteger(
+      body.warranty_mileage_limit_km !== undefined ? body.warranty_mileage_limit_km : body.warrantyMileageLimitKm,
+      "保固里程上限"
+    );
+  }
+
+  if (hasOwnPropertyValue(body, "warrantyNote") || hasOwnPropertyValue(body, "warranty_note")) {
+    payload.warranty_note = normalizeNullableText(
+      body.warranty_note !== undefined ? body.warranty_note : body.warrantyNote
+    );
+  }
+
+  if (hasOwnPropertyValue(body, "warrantyTermsVersion") || hasOwnPropertyValue(body, "warranty_terms_version")) {
+    payload.warranty_terms_version =
+      normalizeNullableText(body.warranty_terms_version !== undefined ? body.warranty_terms_version : body.warrantyTermsVersion) ||
+      DEFAULT_WARRANTY_TERMS_VERSION;
+  } else if (Object.keys(payload).length > 0) {
+    payload.warranty_terms_version = DEFAULT_WARRANTY_TERMS_VERSION;
+  }
+
+  return payload;
+}
+
+function hasWarrantyPayload(body = {}) {
+  return [
+    "warrantyStartDate",
+    "warranty_start_date",
+    "warrantyMonths",
+    "warranty_months",
+    "warrantyMileageLimitKm",
+    "warranty_mileage_limit_km",
+    "warrantyNote",
+    "warranty_note",
+    "warrantyTermsVersion",
+    "warranty_terms_version"
+  ].some((key) => hasOwnPropertyValue(body, key));
+}
+
+function hasOrderWarrantyColumns(orderColumns) {
+  return WARRANTY_COLUMNS.every((column) => hasColumn(orderColumns, column));
+}
+
+function buildWarrantySelects(orderColumns) {
+  return [
+    selectColumn(orderColumns, "o", "warranty_start_date", "warrantyStartDate"),
+    selectColumn(orderColumns, "o", "warranty_months", "warrantyMonths"),
+    selectColumn(orderColumns, "o", "warranty_mileage_limit_km", "warrantyMileageLimitKm"),
+    selectColumn(orderColumns, "o", "warranty_note", "warrantyNote"),
+    selectColumn(orderColumns, "o", "warranty_terms_version", "warrantyTermsVersion"),
+    `${hasOrderWarrantyColumns(orderColumns) ? "1" : "0"} AS warrantySchemaReady`
+  ].join(",\n          ");
 }
 
 function startOrderCreateGuard(storeId, body = {}) {
@@ -480,6 +589,7 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
           paid_staff.display_name AS finalPaymentCompletedByName,
           ${selectColumn(orderColumns, "o", "purchase_confirmation_sent_at", "purchaseConfirmationSentAt")},
           ${selectColumn(orderColumns, "o", "handover_confirmed_at", "handoverConfirmedAt")},
+          ${buildWarrantySelects(orderColumns)},
           ${selectColumn(orderColumns, "o", "notes", "notes")},
           ${selectColumn(orderColumns, "o", "created_at", "createdAt")},
           ${selectColumn(customerColumns, "c", "id", "customerId")},
@@ -812,6 +922,7 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const orderId = req.params.id;
+    const orderColumns = await getTableColumns(pool, "orders");
 
     const [rows] = await pool.query(
       `
@@ -868,6 +979,7 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
           paid_staff.display_name AS finalPaymentCompletedByName,
           o.purchase_confirmation_sent_at AS purchaseConfirmationSentAt,
           o.handover_confirmed_at AS handoverConfirmedAt,
+          ${buildWarrantySelects(orderColumns)},
           o.notes,
           o.created_at AS createdAt,
           COALESCE(o.customer_name, c.name) AS customerName,
@@ -1375,6 +1487,15 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
       finalPaymentStatus,
       notes
     } = req.body;
+    const orderColumns = await getTableColumns(pool, "orders");
+    const warrantyPayload = normalizeWarrantyPayload(req.body || {});
+    const shouldUpdateWarranty = hasWarrantyPayload(req.body || {}) && hasOrderWarrantyColumns(orderColumns);
+    if (hasWarrantyPayload(req.body || {}) && !shouldUpdateWarranty) {
+      const hasNonEmptyWarrantyValue = Object.values(warrantyPayload).some((value) => value !== null && value !== undefined && value !== DEFAULT_WARRANTY_TERMS_VERSION);
+      if (hasNonEmptyWarrantyValue) {
+        throw createError("保固欄位尚未建立，請先套用訂單保固 migration", 400);
+      }
+    }
     const hasCustomerName = hasOwnPropertyValue(req.body, "customerName") || hasOwnPropertyValue(req.body, "customer_name");
     const hasCustomerPhone = hasOwnPropertyValue(req.body, "customerPhone") || hasOwnPropertyValue(req.body, "customer_phone");
     const nextCustomerName = normalizeOrderCustomerSnapshot(customerNameSnake !== undefined ? customerNameSnake : customerName);
@@ -1443,6 +1564,12 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
             ELSE NULL
           END,
           notes = COALESCE(?, notes)
+          ${shouldUpdateWarranty ? `,
+          warranty_start_date = ?,
+          warranty_months = ?,
+          warranty_mileage_limit_km = ?,
+          warranty_note = ?,
+          warranty_terms_version = ?` : ""}
         WHERE id = ?
           AND store_id = ?
       `,
@@ -1458,6 +1585,13 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
         nextFinalPaymentStatus,
         nextFinalPaymentStatus,
         notes === undefined ? null : notes,
+        ...(shouldUpdateWarranty ? [
+          warrantyPayload.warranty_start_date,
+          warrantyPayload.warranty_months,
+          warrantyPayload.warranty_mileage_limit_km,
+          warrantyPayload.warranty_note,
+          warrantyPayload.warranty_terms_version || DEFAULT_WARRANTY_TERMS_VERSION
+        ] : []),
         orderId,
         storeId
       ]
@@ -1532,6 +1666,7 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
           paid_staff.display_name AS finalPaymentCompletedByName,
           o.purchase_confirmation_sent_at AS purchaseConfirmationSentAt,
           o.handover_confirmed_at AS handoverConfirmedAt,
+          ${buildWarrantySelects(orderColumns)},
           o.notes,
           o.created_at AS createdAt,
           COALESCE(o.customer_name, c.name) AS customerName,
