@@ -339,6 +339,28 @@ async function pushPurchaseConfirmationLineMessage(confirmation, options = {}) {
   return true;
 }
 
+function isCanceledOrDeletedOrderStatus(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return ["CANCELED", "CANCELLED", "DELETED", "VOID"].includes(normalized);
+}
+
+function isOrderPaidForPickup(order = {}) {
+  return String(order.finalPaymentStatus || "").trim().toUpperCase() === "PAID" || Number(order.unpaidBalance || 0) <= 0;
+}
+
+function buildPickupItemSummary(items = []) {
+  const names = items
+    .map((item) => String(item.productName || item.sku || "商品").trim())
+    .filter(Boolean);
+
+  if (!names.length) {
+    return "商品/車輛";
+  }
+
+  const summary = names.slice(0, 3).join("、");
+  return names.length > 3 ? `${summary} 等 ${names.length} 項` : summary;
+}
+
 router.get("/", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
@@ -2214,6 +2236,113 @@ async function createKingwayAutoPurchaseOrderOnHandover(orderId, storeId, staffI
   return requestId;
 }
 
+
+router.post("/:id/notify-pickup", requireOrderManagementFeature, async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    const storeId = req.storeId;
+
+    if (!orderId) {
+      return res.status(404).json({ sent: false, message: "找不到訂單" });
+    }
+
+    const [orderRows] = await pool.query(
+      `
+        SELECT
+          o.id,
+          o.order_no AS orderNo,
+          o.customer_id AS customerId,
+          o.status,
+          o.unpaid_balance AS unpaidBalance,
+          o.final_payment_status AS finalPaymentStatus,
+          o.handover_confirmed_at AS handoverConfirmedAt,
+          COALESCE(o.customer_name, c.name) AS customerName,
+          c.line_user_id AS lineUserId,
+          st.name AS storeName
+        FROM orders o
+        LEFT JOIN customers c ON c.id = o.customer_id
+        LEFT JOIN stores st ON st.id = o.store_id
+        WHERE o.id = ?
+          AND o.store_id = ?
+          AND o.deleted_at IS NULL
+        LIMIT 1
+      `,
+      [orderId, storeId]
+    );
+
+    const order = orderRows[0];
+    if (!order) {
+      return res.status(404).json({ sent: false, message: "找不到訂單" });
+    }
+    if (isCanceledOrDeletedOrderStatus(order.status)) {
+      return res.status(409).json({ sent: false, message: "此訂單已取消或刪除，無法發送取車通知。" });
+    }
+    if (order.handoverConfirmedAt) {
+      return res.status(409).json({ sent: false, message: "此訂單已完成交車，不需發送取車通知。" });
+    }
+    if (!isOrderPaidForPickup(order)) {
+      return res.status(409).json({ sent: false, message: "此訂單尚有未收款，請先確認收款後再通知取車。" });
+    }
+    if (!order.lineUserId) {
+      return res.status(409).json({ sent: false, message: "此客戶尚未綁定 LINE，無法發送取車通知。" });
+    }
+
+    const [items] = await pool.query(
+      `
+        SELECT
+          sku_snapshot AS sku,
+          product_name_snapshot AS productName,
+          product_category_snapshot AS productCategory,
+          quantity
+        FROM order_items
+        WHERE order_id = ?
+          AND store_id = ?
+        ORDER BY id ASC
+      `,
+      [orderId, storeId]
+    );
+    const itemSummary = buildPickupItemSummary(items);
+    const orderNo = order.orderNo || `#${orderId}`;
+    const storeName = order.storeName || "KINGWAY";
+
+    try {
+      await sendLineMessage(config, order.lineUserId, [
+        {
+          type: "text",
+          text: [
+            "您好，您的 KINGWAY 訂單已準備完成，可以安排取車。",
+            "",
+            `訂單編號：${orderNo}`,
+            `商品/車款：${itemSummary}`,
+            `門市：${storeName}`,
+            "",
+            "取車前如需確認時間，請直接回覆此訊息，謝謝。"
+          ].join("\n")
+        }
+      ]);
+    } catch (lineError) {
+      return res.status(502).json({
+        sent: false,
+        message: "LINE 取車通知發送失敗，請稍後再試。",
+        lineError: lineError.safeDetails || lineError.message || "LINE_PUSH_FAILED"
+      });
+    }
+
+    await logWorkflowEvent("order_pickup_notified", "ORDER", orderId, {
+      action: "order_pickup_notified",
+      orderNo,
+      customerId: order.customerId || null,
+      hasLineUserId: Boolean(order.lineUserId),
+      itemSummary,
+      storeId,
+      storeName
+    }, req.user?.id || null);
+
+    return res.json({ sent: true, message: "已發送取車通知" });
+  } catch (error) {
+    return next(error);
+  }
+});
 
 router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), requireOrderManagementFeature, async (req, res, next) => {
   try {

@@ -392,6 +392,28 @@ function OrdersPage() {
     return String(row?.finalPaymentStatus || "").toUpperCase() === "PAID";
   }
 
+  function isCanceledOrDeletedOrder(row) {
+    const status = String(row?.status || "").trim().toUpperCase();
+    return ["CANCELED", "CANCELLED", "DELETED", "VOID"].includes(status);
+  }
+
+  function isPickupNotifyPaid(row) {
+    return isPaidOrder(row) || Number(row?.unpaidBalance || 0) <= 0;
+  }
+
+  function getPickupNotifyBlockReason(row) {
+    if (!row) return "";
+    if (isCanceledOrDeletedOrder(row)) return "此訂單已取消或刪除";
+    if (row.handoverConfirmedAt) return "已完成交車";
+    if (!isPickupNotifyPaid(row)) return "尚有未收款";
+    if (!row.lineUserId) return "客戶尚未綁定 LINE";
+    return "";
+  }
+
+  function shouldShowPickupNotifyButton(row) {
+    return Boolean(row && !isCanceledOrDeletedOrder(row) && !row.handoverConfirmedAt && isPickupNotifyPaid(row));
+  }
+
   function openPaymentDateModal(row) {
     if (!row || !canEditCompletedPaymentDate || !isPaidOrder(row)) {
       return;
@@ -518,6 +540,30 @@ function OrdersPage() {
       alert("已確認交車");
     }, { id: `order-handover-${row.id}`, label: "交車確認中..." }).catch((error) => {
       alert(error.message);
+    });
+  }
+
+  async function notifyPickup(row) {
+    if (!row) return;
+    const blockReason = getPickupNotifyBlockReason(row);
+    if (blockReason) {
+      alert(blockReason);
+      return;
+    }
+    if (!window.confirm("確定要發送 LINE 取車通知給客戶嗎？")) {
+      return;
+    }
+
+    await runWithProcessing(async () => {
+      const data = await apiRequest(`/orders/${row.id}/notify-pickup`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      await refetch();
+      setToastMessage(data.message || "已發送取車通知");
+      alert(data.message || "已發送取車通知");
+    }, { id: `order-pickup-notify-${row.id}`, label: "發送中..." }).catch((error) => {
+      alert(error.message || "取車通知發送失敗");
     });
   }
 
@@ -1595,6 +1641,17 @@ if (!window.confirm(
               {canPrintInstallCheck(detail) || accessoryChecklist.applicable || accessoryChecklist.hasAccessoryItems ? (
                 <button type="button" className="secondary-button" onClick={() => printInstallCheck(detail)}>
                   列印安裝品項確認單
+                </button>
+              ) : null}
+              {shouldShowPickupNotifyButton(detail) ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => notifyPickup(detail)}
+                  disabled={isProcessing || Boolean(getPickupNotifyBlockReason(detail))}
+                  title={getPickupNotifyBlockReason(detail) || "通知客戶可以取車"}
+                >
+                  {pendingAction?.id === `order-pickup-notify-${detail.id}` ? "發送中..." : getPickupNotifyBlockReason(detail) ? `通知取車（${getPickupNotifyBlockReason(detail)}）` : "通知取車"}
                 </button>
               ) : null}
               {!detail.handoverConfirmedAt ? (
