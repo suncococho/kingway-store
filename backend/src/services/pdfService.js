@@ -3,6 +3,7 @@ const path = require("path");
 const PDFDocument = require("pdfkit");
 const purchaseConfirmationContent = require("../content/purchaseConfirmationContent.json");
 const repairConfirmationContent = require("../content/repairConfirmationContent.json");
+const warrantyRepairAdditionalTerms = require("../../../shared/warrantyRepairAdditionalTerms.json");
 
 const storageDir = path.join(__dirname, "..", "..", "storage", "pdfs");
 const PURCHASE_CONFIRMATION_PDF_PUBLIC_PREFIX = "/files/pdfs/";
@@ -92,6 +93,18 @@ function writeBodyText(doc, text, options = {}) {
   });
 }
 
+function writeWarrantyRepairAdditionalTerms(doc) {
+  writeBodyText(doc, warrantyRepairAdditionalTerms.title, { fontSize: 12 });
+  writeBodyText(doc, warrantyRepairAdditionalTerms.version, { fontSize: 9 });
+  warrantyRepairAdditionalTerms.sections.forEach((section) => {
+    writeBodyText(doc, section.title, { fontSize: 11 });
+    section.paragraphs.forEach((paragraph) => {
+      writeBodyText(doc, paragraph);
+    });
+    doc.moveDown(0.2);
+  });
+}
+
 function writePurchaseConfirmationContent(doc, payload) {
   const {
     confirmationId,
@@ -162,6 +175,7 @@ function writePurchaseConfirmationContent(doc, payload) {
     }
     doc.moveDown(0.2);
   });
+  writeWarrantyRepairAdditionalTerms(doc);
   writeBodyText(doc, `[已確認] ${purchaseConfirmationContent.termsAgreement}`);
 
   writeSectionTitle(doc, "5. 店員說明確認");
@@ -245,6 +259,7 @@ function writeRepairConfirmationContent(doc, payload) {
     }
     doc.moveDown(0.2);
   });
+  writeWarrantyRepairAdditionalTerms(doc);
   writeBodyText(doc, `警告：${repairConfirmationContent.warning}`);
   writeBodyText(doc, `[已確認] ${repairConfirmationContent.finalStatement}`);
 

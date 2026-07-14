@@ -45,7 +45,8 @@ const resolvePublicStoreContext = createPublicStoreContextMiddleware({
 
 const REPAIR_RESERVATION_FLOW = "repair_reservation";
 const REPAIR_RESERVATION_DUPLICATE_WINDOW_MS = 10 * 1000;
-const REPAIR_WARRANTY_TERMS_VERSION = "KINGWAY_REPAIR_WARRANTY_V2026_06";
+const warrantyRepairAdditionalTerms = require("../../../shared/warrantyRepairAdditionalTerms.json");
+const REPAIR_WARRANTY_TERMS_VERSION = warrantyRepairAdditionalTerms.version;
 const REPAIR_WARRANTY_TERMS_ERROR_MESSAGE = "請先確認保固維修範圍說明";
 const recentRepairReservationRequests = new Map();
 

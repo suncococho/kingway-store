@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import liff from "@line/liff";
 import { useLocation, useParams } from "react-router-dom";
 import SignaturePad from "../components/SignaturePad";
+import WarrantyRepairAdditionalTerms from "../components/WarrantyRepairAdditionalTerms";
 import { apiRequest } from "../lib/api";
 import { resolveLineContext } from "../lib/lineContext";
 
@@ -320,6 +321,7 @@ function TermsContent({ content }) {
           {section.warning ? <p className="terms-warning">{section.warning}</p> : null}
         </div>
       ))}
+      <WarrantyRepairAdditionalTerms />
     </div>
   );
 }

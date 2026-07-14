@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import SignaturePad from "../components/SignaturePad";
+import WarrantyRepairAdditionalTerms from "../components/WarrantyRepairAdditionalTerms";
 import { apiRequest } from "../lib/api";
 
 const SIGNATURE_MAX_WIDTH = 900;
@@ -99,6 +100,7 @@ function TermsContent({ content }) {
         </div>
       ))}
       <p className="warning-text">{content.warning}</p>
+      <WarrantyRepairAdditionalTerms />
     </div>
   );
 }

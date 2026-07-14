@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import liff from "@line/liff";
 import { apiRequest, apiUploadFile } from "../lib/api";
+import WarrantyRepairAdditionalTerms, { warrantyRepairAdditionalTerms } from "../components/WarrantyRepairAdditionalTerms";
 import { resolveLineContext } from "../lib/lineContext";
 import LinePhoneBindGate from "./LinePhoneBindGate";
 import {
@@ -19,7 +20,7 @@ const LEGACY_STORE_CONTEXT = {
   isExplicitStore: false
 };
 
-const REPAIR_WARRANTY_VERSION = "KINGWAY_REPAIR_WARRANTY_V2026_06";
+const REPAIR_WARRANTY_VERSION = warrantyRepairAdditionalTerms.version;
 const REPAIR_WARRANTY_ERROR_MESSAGE = "請先確認保固維修範圍說明";
 const REPAIR_RESERVATION_SLOT_EXPIRED_MESSAGE = "選擇的預約時段已經過去，請重新選擇未來時段。";
 const REPAIR_DUPLICATE_REUSED_MESSAGE = "已存在相同時段的維修預約，系統已使用既有預約紀錄。";
@@ -760,6 +761,8 @@ function LineRepairRequestPage() {
 
           <h3>提醒：</h3>
           <p>經檢查後若不屬於保固範圍，本公司將提供維修報價；顧客同意後才會進行維修。顧客不得以購買未滿一年為由，要求所有維修均免費處理。</p>
+
+          <WarrantyRepairAdditionalTerms />
 
           <label className="checklist-item" htmlFor="repair-warranty-accepted">
             <input
