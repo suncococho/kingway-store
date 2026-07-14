@@ -34,6 +34,14 @@ function formatCurrency(value) {
   return `NT$${Number(value || 0).toFixed(0)}`;
 }
 
+function formatMileageKm(value) {
+  if (value === undefined || value === null || value === "") {
+    return "未確認";
+  }
+  const mileage = Number(value);
+  return Number.isFinite(mileage) ? `${mileage.toFixed(0)} km` : "未確認";
+}
+
 function formatFileSize(size) {
   const bytes = Number(size || 0);
   if (bytes >= 1024 * 1024) {
@@ -222,6 +230,8 @@ function RepairDetailPage() {
   const navigate = useNavigate();
   const [detail, setDetail] = useState(null);
   const [inspectionFee, setInspectionFee] = useState("");
+  const [mileageKm, setMileageKm] = useState("");
+  const [mileageSaving, setMileageSaving] = useState(false);
 
   const [laborFee, setLaborFee] = useState("");
   const [inspectionNotes, setInspectionNotes] = useState("");
@@ -314,6 +324,7 @@ function RepairDetailPage() {
       return;
     }
     setInspectionFee(detail.inspection_fee !== undefined && detail.inspection_fee !== null ? String(Number(detail.inspection_fee || 0)) : "");
+    setMileageKm(detail.mileageKm !== undefined && detail.mileageKm !== null ? String(Number(detail.mileageKm || 0)) : "");
     setInspectionNotes(detail.inspectionNotes || "");
 
     setLaborFee(detail.labor_fee !== undefined && detail.labor_fee !== null ? String(Number(detail.labor_fee || 0)) : "");
@@ -518,6 +529,29 @@ function RepairDetailPage() {
       window.alert("檢查內容已儲存，可以進入下一步填寫報價");
     } catch (error) {
       window.alert(error.message || "檢查內容儲存失敗");
+    }
+  }
+
+  async function saveMileage() {
+    const value = String(mileageKm || "").trim();
+    if (value && !/^\d+$/.test(value)) {
+      window.alert("目前行駛里程請填寫 0 以上整數");
+      return;
+    }
+    setMileageSaving(true);
+    try {
+      await apiRequest(`/repairs/${id}/mileage`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          mileageKm: value === "" ? null : Number(value)
+        })
+      });
+      await loadDetail();
+      window.alert("目前行駛里程已儲存");
+    } catch (error) {
+      window.alert(error.message || "目前行駛里程儲存失敗");
+    } finally {
+      setMileageSaving(false);
     }
   }
 
@@ -1114,6 +1148,10 @@ function RepairDetailPage() {
               </div>
             </div>
             <div className="field-item">
+              <div className="field-label">目前行駛里程</div>
+              <div className="field-value">{formatMileageKm(detail.mileageKm ?? detail.mileage_km)}</div>
+            </div>
+            <div className="field-item">
               <div className="field-label">報價狀態</div>
               <div className="field-value">
                 <StatusBadge tone={getEstimateTone(detail)}>{getEstimateLabel(detail)}</StatusBadge>
@@ -1170,6 +1208,16 @@ function RepairDetailPage() {
                 <div className="field-value">
                   <StatusBadge tone={isOfflineCustomerType(detail.customerType) ? "neutral" : "info"}>{getCustomerTypeLabel(detail.customerType)}</StatusBadge>
                 </div>
+              </div>
+              <label className="form-field">
+                <span>目前行駛里程（km）</span>
+                <input type="number" min="0" step="1" inputMode="numeric" value={mileageKm} onChange={(event) => setMileageKm(event.target.value)} placeholder="未確認" />
+              </label>
+              <div className="form-field">
+                <span>里程狀態</span>
+                <button type="button" className="secondary-button" onClick={saveMileage} disabled={mileageSaving}>
+                  {mileageSaving ? "儲存中" : "儲存里程"}
+                </button>
               </div>
               {!isOfflineCustomerType(detail.customerType) ? (
                 <div className="field-item">
@@ -1314,6 +1362,10 @@ function RepairDetailPage() {
                   <div className="field-value">{detail.bike_model || "-"} / {detail.issue_description || "-"}</div>
                 </div>
                 <div className="field-item">
+                  <div className="field-label">目前行駛里程</div>
+                  <div className="field-value">{formatMileageKm(detail.mileageKm ?? detail.mileage_km)}</div>
+                </div>
+                <div className="field-item">
                   <div className="field-label">報價狀態</div>
                   <div className="field-value"><StatusBadge tone={getEstimateTone(detail)}>{getEstimateLabel(detail)}</StatusBadge></div>
                 </div>
@@ -1422,6 +1474,16 @@ function RepairDetailPage() {
                   <div className="field-value">
                     <StatusBadge tone={isOfflineCustomerType(detail.customerType) ? "neutral" : "info"}>{getCustomerTypeLabel(detail.customerType)}</StatusBadge>
                   </div>
+                </div>
+                <label className="form-field">
+                  <span>目前行駛里程（km）</span>
+                  <input type="number" min="0" step="1" inputMode="numeric" value={mileageKm} onChange={(event) => setMileageKm(event.target.value)} placeholder="未確認" />
+                </label>
+                <div className="form-field">
+                  <span>里程狀態</span>
+                  <button type="button" className="secondary-button" onClick={saveMileage} disabled={mileageSaving}>
+                    {mileageSaving ? "儲存中" : "儲存里程"}
+                  </button>
                 </div>
                 {!isOfflineCustomerType(detail.customerType) ? (
                   <div className="field-item">

@@ -66,6 +66,14 @@ function formatAmount(value) {
   return `NT$${Number(value || 0).toFixed(0)}`;
 }
 
+function formatMileageKm(value) {
+  if (value === undefined || value === null || value === "") {
+    return "未確認";
+  }
+  const mileage = Number(value);
+  return Number.isFinite(mileage) ? `${mileage.toFixed(0)} km` : "未確認";
+}
+
 function formatDateTime(value) {
   if (!value) {
     return "";
@@ -264,6 +272,7 @@ function RepairConfirmPublicPage() {
             <div className="field-item"><div className="field-label">電話</div><div className="field-value">{data.customerPhone || "-"}</div></div>
             <div className="field-item"><div className="field-label">維修單號</div><div className="field-value">#{data.repairOrderId}</div></div>
             <div className="field-item"><div className="field-label">車款 / 車輛資訊</div><div className="field-value">{data.vehicleModel || "-"}</div></div>
+            <div className="field-item"><div className="field-label">目前行駛里程</div><div className="field-value">{formatMileageKm(data.mileageKm)}</div></div>
             <div className="field-item form-field-wide"><div className="field-label">送修問題</div><div className="field-value">{data.issue || "-"}</div></div>
             <div className="field-item form-field-wide"><div className="field-label">本次維修內容</div><div className="field-value">{data.repairSummary || "-"}</div></div>
             <div className="field-item"><div className="field-label">維修費用</div><div className="field-value">{formatAmount(data.amountTotal)}</div></div>

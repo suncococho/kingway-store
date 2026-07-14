@@ -21,6 +21,7 @@ const repairConfirmationService = require("../services/repairConfirmationService
 const repairConfirmationContent = require("../content/repairConfirmationContent.json");
 const { getReplacementConfirmationBlockReason } = require("../services/repairReplacementConfirmationService");
 const { notifyRepairConfirmationSubmitted } = require("../services/notificationEventService");
+const { getTableColumns, selectColumn } = require("../utils/schema");
 
 const router = express.Router();
 const storageRoot = path.join(__dirname, "..", "..", "storage");
@@ -101,6 +102,7 @@ function getPaymentStatus(row) {
 
 async function fetchRepairForConfirmation(repairOrderId, storeId, connection = pool, options = {}) {
   const lockClause = options.forUpdate ? "FOR UPDATE" : "";
+  const repairColumns = await getTableColumns(connection, "repair_orders");
   const [rows] = await connection.query(
     `
       SELECT
@@ -109,6 +111,7 @@ async function fetchRepairForConfirmation(repairOrderId, storeId, connection = p
         ro.customer_id AS customerId,
         ro.status,
         ro.bike_model AS bikeModel,
+        ${selectColumn(repairColumns, "ro", "mileage_km", "mileageKm", "NULL")},
         ro.issue_description AS issueDescription,
         ro.estimate_amount AS estimateAmount,
         ro.estimate_details AS estimateDetails,
@@ -160,6 +163,7 @@ function mapConfirmation(row) {
     customerName: row.customerNameSnapshot,
     customerPhone: row.customerPhoneSnapshot,
     vehicleModel: row.vehicleModelSnapshot,
+    mileageKm: row.mileageKm === undefined || row.mileageKm === null ? null : Number(row.mileageKm),
     issue: row.issueSnapshot,
     repairSummary: row.repairSummarySnapshot,
     amountTotal: Number(row.amountTotalSnapshot || 0),
@@ -179,42 +183,7 @@ function mapConfirmation(row) {
 
 async function fetchConfirmationByRepair(repairOrderId, storeId, connection = pool, options = {}) {
   const lockClause = options.forUpdate ? "FOR UPDATE" : "";
-  const [rows] = await connection.query(
-    `
-      SELECT
-        id,
-        store_id AS storeId,
-        repair_order_id AS repairOrderId,
-        customer_id AS customerId,
-        token,
-        status,
-        customer_name_snapshot AS customerNameSnapshot,
-        customer_phone_snapshot AS customerPhoneSnapshot,
-        vehicle_model_snapshot AS vehicleModelSnapshot,
-        issue_snapshot AS issueSnapshot,
-        repair_summary_snapshot AS repairSummarySnapshot,
-        amount_total_snapshot AS amountTotalSnapshot,
-        payment_status_snapshot AS paymentStatusSnapshot,
-        terms_version AS termsVersion,
-        confirmation_payload_json AS confirmationPayloadJson,
-        signature_image_path AS signatureImagePath,
-        pdf_path AS pdfPath,
-        pdf_url AS pdfUrl,
-        sent_at AS sentAt,
-        submitted_at AS submittedAt
-      FROM repair_confirmations
-      WHERE repair_order_id = ?
-        AND store_id = ?
-      LIMIT 1
-      ${lockClause}
-    `,
-    [repairOrderId, storeId]
-  );
-  return rows[0] || null;
-}
-
-async function fetchConfirmationByToken(token, connection = pool, options = {}) {
-  const lockClause = options.forUpdate ? "FOR UPDATE" : "";
+  const repairColumns = await getTableColumns(connection, "repair_orders");
   const [rows] = await connection.query(
     `
       SELECT
@@ -227,6 +196,49 @@ async function fetchConfirmationByToken(token, connection = pool, options = {}) 
         rc.customer_name_snapshot AS customerNameSnapshot,
         rc.customer_phone_snapshot AS customerPhoneSnapshot,
         rc.vehicle_model_snapshot AS vehicleModelSnapshot,
+        ${selectColumn(repairColumns, "ro", "mileage_km", "mileageKm", "NULL")},
+        rc.issue_snapshot AS issueSnapshot,
+        rc.repair_summary_snapshot AS repairSummarySnapshot,
+        rc.amount_total_snapshot AS amountTotalSnapshot,
+        rc.payment_status_snapshot AS paymentStatusSnapshot,
+        rc.terms_version AS termsVersion,
+        rc.confirmation_payload_json AS confirmationPayloadJson,
+        rc.signature_image_path AS signatureImagePath,
+        rc.pdf_path AS pdfPath,
+        rc.pdf_url AS pdfUrl,
+        rc.sent_at AS sentAt,
+        rc.submitted_at AS submittedAt
+      FROM repair_confirmations rc
+      INNER JOIN repair_orders ro ON ro.id = rc.repair_order_id AND ro.store_id = rc.store_id
+      LEFT JOIN orders o ON o.id = ro.order_id AND o.store_id = ro.store_id
+      WHERE rc.repair_order_id = ?
+        AND rc.store_id = ?
+        AND ro.deleted_at IS NULL
+        AND (ro.order_id IS NULL OR (o.id IS NOT NULL AND o.deleted_at IS NULL))
+      LIMIT 1
+      ${lockClause}
+    `,
+    [repairOrderId, storeId]
+  );
+  return rows[0] || null;
+}
+
+async function fetchConfirmationByToken(token, connection = pool, options = {}) {
+  const lockClause = options.forUpdate ? "FOR UPDATE" : "";
+  const repairColumns = await getTableColumns(connection, "repair_orders");
+  const [rows] = await connection.query(
+    `
+      SELECT
+        rc.id,
+        rc.store_id AS storeId,
+        rc.repair_order_id AS repairOrderId,
+        rc.customer_id AS customerId,
+        rc.token,
+        rc.status,
+        rc.customer_name_snapshot AS customerNameSnapshot,
+        rc.customer_phone_snapshot AS customerPhoneSnapshot,
+        rc.vehicle_model_snapshot AS vehicleModelSnapshot,
+        ${selectColumn(repairColumns, "ro", "mileage_km", "mileageKm", "NULL")},
         rc.issue_snapshot AS issueSnapshot,
         rc.repair_summary_snapshot AS repairSummarySnapshot,
         rc.amount_total_snapshot AS amountTotalSnapshot,
@@ -347,6 +359,7 @@ router.post("/public/:token/submit", async (req, res, next) => {
         customerName: row.customerNameSnapshot,
         customerPhone: row.customerPhoneSnapshot,
         vehicleModel: row.vehicleModelSnapshot,
+        mileageKm: row.mileageKm,
         issue: row.issueSnapshot,
         repairSummary: row.repairSummarySnapshot,
         amountTotal: row.amountTotalSnapshot,

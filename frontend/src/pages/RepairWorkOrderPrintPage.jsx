@@ -7,6 +7,14 @@ function formatCurrency(value) {
   return `NT$${Number(value || 0).toLocaleString()}`;
 }
 
+function formatMileageKm(value) {
+  if (value === undefined || value === null || value === "") {
+    return "未確認";
+  }
+  const mileage = Number(value);
+  return Number.isFinite(mileage) ? `${mileage.toFixed(0)} km` : "未確認";
+}
+
 function parseQuoteItemsJson(value) {
   if (!value) return [];
   try {
@@ -122,6 +130,7 @@ function RepairWorkOrderPrintPage() {
           <div><span>預約日</span><strong>{repair.reservation_date || "-"}</strong></div>
           <div><span>報價同意日</span><strong>{formatTaipeiDateTime(repair.quoteAcceptedAt)}</strong></div>
           <div><span>車款</span><strong>{repair.bike_model || "-"}</strong></div>
+          <div><span>目前行駛里程</span><strong>{formatMileageKm(repair.mileageKm ?? repair.mileage_km)}</strong></div>
           <div><span>狀態</span><strong>{repair.repairStatusLabel || repair.status || "-"}</strong></div>
         </section>
 

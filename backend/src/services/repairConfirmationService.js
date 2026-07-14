@@ -9,6 +9,7 @@ const {
 } = require("./lineWorkflowService");
 const repairConfirmationContent = require("../content/repairConfirmationContent.json");
 const { getReplacementConfirmationBlockReason } = require("./repairReplacementConfirmationService");
+const { getTableColumns, selectColumn } = require("../utils/schema");
 
 const COMPLETED_REPAIR_STATUSES = new Set(["completed_waiting_pickup", "picked_up", "completed"]);
 
@@ -83,6 +84,7 @@ function mapConfirmation(row) {
 
 async function fetchRepairForConfirmation(repairOrderId, storeId, connection = pool, options = {}) {
   const lockClause = options.forUpdate ? "FOR UPDATE" : "";
+  const repairColumns = await getTableColumns(connection, "repair_orders");
   const [rows] = await connection.query(
     `
       SELECT
@@ -91,6 +93,7 @@ async function fetchRepairForConfirmation(repairOrderId, storeId, connection = p
         ro.customer_id AS customerId,
         ro.status,
         ro.bike_model AS bikeModel,
+        ${selectColumn(repairColumns, "ro", "mileage_km", "mileageKm", "NULL")},
         ro.issue_description AS issueDescription,
         ro.estimate_amount AS estimateAmount,
         ro.estimate_details AS estimateDetails,

@@ -211,6 +211,7 @@ function writeRepairConfirmationContent(doc, payload) {
     customerName,
     customerPhone,
     vehicleModel,
+    mileageKm,
     issue,
     repairSummary,
     amountTotal,
@@ -232,6 +233,7 @@ function writeRepairConfirmationContent(doc, payload) {
   writeBodyText(doc, `電話：${customerPhone || "-"}`);
   writeBodyText(doc, `維修單號：#${repairOrderId}`);
   writeBodyText(doc, `車款 / 車輛資訊：${vehicleModel || "-"}`);
+  writeBodyText(doc, `目前行駛里程：${mileageKm === undefined || mileageKm === null || mileageKm === "" ? "未確認" : `${Number(mileageKm).toFixed(0)} km`}`);
   writeBodyText(doc, `送修問題：${issue || "-"}`);
   writeBodyText(doc, `維修完成日期：${submittedAt || "-"}`);
   writeBodyText(doc, `本次維修內容：${repairSummary || "-"}`);
@@ -335,6 +337,7 @@ async function writeRepairConfirmationPdf({
   customerName,
   customerPhone,
   vehicleModel,
+  mileageKm,
   issue,
   repairSummary,
   amountTotal,
@@ -363,6 +366,7 @@ async function writeRepairConfirmationPdf({
       customerName,
       customerPhone,
       vehicleModel,
+      mileageKm,
       issue,
       repairSummary,
       amountTotal,

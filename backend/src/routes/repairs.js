@@ -148,6 +148,20 @@ function assertRepairEditable(row) {
   }
 }
 
+function normalizeMileageKm(value) {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return null;
+  }
+  if (!/^\d+$/.test(String(value).trim())) {
+    throw createError("目前行駛里程請填寫 0 以上整數", 400);
+  }
+  const mileage = Number(String(value).trim());
+  if (!Number.isSafeInteger(mileage) || mileage < 0) {
+    throw createError("目前行駛里程請填寫 0 以上整數", 400);
+  }
+  return mileage;
+}
+
 async function assertRepairBelongsToStore(repairId, storeId, connection = pool) {
   if (!storeId) {
     throw createError("缺少門市範圍", 403);
@@ -193,6 +207,7 @@ router.get("/",  async (req, res, next) => {
           COALESCE(${selectColumn(repairColumns, "ro", "customer_type", "repairCustomerType", "NULL").replace(" AS `repairCustomerType`", "")}, ${selectColumn(customerColumns, "c", "customer_type", "customerCustomerType", "'LINE'").replace(" AS `customerCustomerType`", "")}) AS customerType,
           ${selectColumn(repairColumns, "ro", "source", "source", "'WEB'")},
           ${selectColumn(repairColumns, "ro", "bike_model", "bikeModel")},
+          ${selectColumn(repairColumns, "ro", "mileage_km", "mileageKm", "NULL")},
           ${selectColumn(repairColumns, "ro", "issue_description", "issueDescription")},
           ${selectColumn(repairColumns, "ro", "reservation_date", "reservationDate")},
           ${selectColumn(repairColumns, "ro", "reservation_day", "reservationDay")},
@@ -268,6 +283,7 @@ router.get("/",  async (req, res, next) => {
             COALESCE(${hasColumn(orderColumns, "customer_type") ? "o.customer_type" : "NULL"}, ${hasColumn(customerColumns, "customer_type") ? "c.customer_type" : "'LINE'"}) AS customerType,
             'POS' AS source,
             GROUP_CONCAT(DISTINCT ${hasColumn(orderItemColumns, "product_name_snapshot") ? "oi.product_name_snapshot" : "oi.id"} ORDER BY oi.id SEPARATOR ' / ') AS bikeModel,
+            NULL AS mileageKm,
             ${selectColumn(orderColumns, "o", "notes", "issueDescription")},
             ${selectColumn(orderColumns, "o", "business_date", "reservationDate")},
             NULL AS reservationDay,
@@ -481,6 +497,37 @@ router.patch("/:id/inspection", async (req, res, next) => {
   }
 });
 
+router.patch("/:id/mileage", async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const repairColumns = await getTableColumns(pool, "repair_orders");
+    if (!hasColumn(repairColumns, "mileage_km")) {
+      throw createError("目前行駛里程欄位尚未建立，請先執行 staging migration。", 503);
+    }
+
+    await assertRepairBelongsToStore(req.params.id, storeId);
+    const mileageKm = normalizeMileageKm(req.body?.mileageKm ?? req.body?.mileage_km);
+    await pool.query(
+      `
+        UPDATE repair_orders
+        SET mileage_km = ?,
+            updated_at = NOW()
+        WHERE id = ?
+          AND store_id = ?
+      `,
+      [mileageKm, req.params.id, storeId]
+    );
+
+    return res.json({
+      ok: true,
+      mileage_km: mileageKm,
+      mileageKm
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 
 router.delete("/:id", async (req, res, next) => {
   try {
@@ -544,11 +591,13 @@ router.delete("/:id/permanent", async (req, res, next) => {
 router.get("/:id",  async (req, res, next) => {
   try {
     const storeId = req.storeId;
+    const repairColumns = await getTableColumns(pool, "repair_orders");
     const [rows] = await pool.query(
       `
         SELECT
           ro.*,
           ro.inspection_notes AS inspectionNotes,
+          ${selectColumn(repairColumns, "ro", "mileage_km", "mileageKm", "NULL")},
           c.name AS customerName,
           c.phone AS customerPhone,
           c.line_user_id AS lineUserId,
@@ -894,11 +943,13 @@ router.post("/:id/send-quote-confirmation", async (req, res, next) => {
 router.get("/:id/work-order", async (req, res, next) => {
   try {
     const storeId = req.storeId;
+    const repairColumns = await getTableColumns(pool, "repair_orders");
     const [rows] = await pool.query(
       `
         SELECT
           ro.*,
           ro.inspection_notes AS inspectionNotes,
+          ${selectColumn(repairColumns, "ro", "mileage_km", "mileageKm", "NULL")},
           c.name AS customerName,
           c.phone AS customerPhone,
           c.line_user_id AS lineUserId,
