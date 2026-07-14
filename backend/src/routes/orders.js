@@ -487,6 +487,7 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
           ${selectColumn(orderColumns, "o", "notes", "notes")},
           ${selectColumn(orderColumns, "o", "created_at", "createdAt")},
           ${selectColumn(customerColumns, "c", "id", "customerId")},
+          c.line_user_id AS lineUserId,
           COALESCE(o.customer_name, ${hasColumn(customerColumns, "name") ? "c.name" : "NULL"}) AS customerName,
           COALESCE(o.customer_phone, ${hasColumn(customerColumns, "phone") ? "c.phone" : "NULL"}) AS customerPhone,
           ${selectColumn(staffColumns, "s", "id", "staffId")},
@@ -2310,7 +2311,8 @@ router.post("/:id/notify-pickup", requireOrderManagementFeature, async (req, res
         {
           type: "text",
           text: [
-            "您好，您的 KINGWAY 訂單已準備完成，可以安排取車。",
+            "親愛的客戶您好！",
+            "您的訂車已經送達門市，可以預約時間來牽車了。",
             "",
             `訂單編號：${orderNo}`,
             `商品/車款：${itemSummary}`,

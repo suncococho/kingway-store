@@ -1180,6 +1180,15 @@ if (!window.confirm(
               {pendingAction?.id === `order-payment-date-${row.id}` ? "處理中..." : "修改付款完成日期"}
             </button>
           ) : null}
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => notifyPickup(row)}
+            disabled={isProcessing || Boolean(getPickupNotifyBlockReason(row))}
+            title={getPickupNotifyBlockReason(row) || "通知客戶可以取車"}
+          >
+            {pendingAction?.id === `order-pickup-notify-${row.id}` ? "發送中..." : "通知取車"}
+          </button>
           {!row.handoverConfirmedAt ? (
             <button type="button" className="secondary-button" onClick={() => requestHandover(row)} disabled={isProcessing}>
               {pendingAction?.id === `order-handover-${row.id}` ? "處理中..." : "確認交車"}
