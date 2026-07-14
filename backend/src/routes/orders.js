@@ -344,10 +344,6 @@ function isCanceledOrDeletedOrderStatus(value) {
   return ["CANCELED", "CANCELLED", "DELETED", "VOID"].includes(normalized);
 }
 
-function isOrderPaidForPickup(order = {}) {
-  return String(order.finalPaymentStatus || "").trim().toUpperCase() === "PAID" || Number(order.unpaidBalance || 0) <= 0;
-}
-
 function buildPickupItemSummary(items = []) {
   const names = items
     .map((item) => String(item.productName || item.sku || "商品").trim())
@@ -2281,9 +2277,6 @@ router.post("/:id/notify-pickup", requireOrderManagementFeature, async (req, res
     if (order.handoverConfirmedAt) {
       return res.status(409).json({ sent: false, message: "此訂單已完成交車，不需發送取車通知。" });
     }
-    if (!isOrderPaidForPickup(order)) {
-      return res.status(409).json({ sent: false, message: "此訂單尚有未收款，請先確認收款後再通知取車。" });
-    }
     if (!order.lineUserId) {
       return res.status(409).json({ sent: false, message: "此客戶尚未綁定 LINE，無法發送取車通知。" });
     }
@@ -2318,6 +2311,7 @@ router.post("/:id/notify-pickup", requireOrderManagementFeature, async (req, res
             `商品/車款：${itemSummary}`,
             `門市：${storeName}`,
             "",
+            "取車時請完成尾款與交車確認。",
             "取車前如需確認時間，請直接回覆此訊息，謝謝。"
           ].join("\n")
         }

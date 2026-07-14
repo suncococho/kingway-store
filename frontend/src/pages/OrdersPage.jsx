@@ -397,21 +397,16 @@ function OrdersPage() {
     return ["CANCELED", "CANCELLED", "DELETED", "VOID"].includes(status);
   }
 
-  function isPickupNotifyPaid(row) {
-    return isPaidOrder(row) || Number(row?.unpaidBalance || 0) <= 0;
-  }
-
   function getPickupNotifyBlockReason(row) {
     if (!row) return "";
     if (isCanceledOrDeletedOrder(row)) return "此訂單已取消或刪除";
     if (row.handoverConfirmedAt) return "已完成交車";
-    if (!isPickupNotifyPaid(row)) return "尚有未收款";
     if (!row.lineUserId) return "客戶尚未綁定 LINE";
     return "";
   }
 
   function shouldShowPickupNotifyButton(row) {
-    return Boolean(row && !isCanceledOrDeletedOrder(row) && !row.handoverConfirmedAt && isPickupNotifyPaid(row));
+    return Boolean(row && !isCanceledOrDeletedOrder(row) && !row.handoverConfirmedAt);
   }
 
   function openPaymentDateModal(row) {
