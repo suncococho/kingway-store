@@ -144,6 +144,14 @@ function formatReservationDateTime(row) {
   return `${dateText} ${timeText}`;
 }
 
+function hasMileageKm(value) {
+  return value !== undefined && value !== null && String(value).trim() !== "" && Number.isFinite(Number(value));
+}
+
+function formatMileageKm(value) {
+  return hasMileageKm(value) ? `${Number(value).toFixed(0)} km` : "未確認";
+}
+
 function isPendingReservation(row) {
   return ["checking", "new", "pending"].includes(String(row.status || "").trim()) || row.reservationStatus === "pending_approval";
 }
@@ -404,7 +412,8 @@ function RepairsPage() {
         customerType: normalizeCustomerType(item.customerType || (item.lineUserId ? "LINE" : item.customerPhone ? "OFFLINE_WITH_PHONE" : "OFFLINE_NO_PHONE")),
         detailPath: item.repairSource === "REPAIR_ORDER" ? `/repairs/${item.id}` : null,
         statusTone: getRepairStatusTone(item.status),
-        reservationDateLabel: formatTaipeiDate(item.reservationDate)
+        reservationDateLabel: formatTaipeiDate(item.reservationDate),
+        mileageLabel: `目前行駛里程：${formatMileageKm(item.mileageKm)}`
       })),
     [repairs.items]
   );
@@ -635,6 +644,19 @@ function RepairsPage() {
     { key: "reservationDate", label: "預約日期", render: (row) => row.reservationDateLabel, mobileHidden: true },
     { key: "reservationTime", label: "預約時間", render: (row) => row.reservationTime || "-", mobileHidden: true },
     { key: "bikeModel", label: "車款", mobileHidden: true },
+    {
+      key: "mileageKm",
+      label: "目前行駛里程",
+      render: (row) => (
+        <div className="status-stack">
+          <span>{row.mileageLabel}</span>
+          {hasMileageKm(row.mileageKm) ? (
+            <span className="muted-text">維修保固參考：本次維修後 500 km 內</span>
+          ) : null}
+        </div>
+      ),
+      mobileHidden: true
+    },
     {
       key: "repairStatus",
       label: "維修狀態",
@@ -944,6 +966,10 @@ function RepairsPage() {
                 <div className="compact-card-meta">
                   <strong>{row.bikeModel || "未填車款"}</strong>
                   <span>{formatReservationDateTime(row)}</span>
+                  <span>{row.mileageLabel}</span>
+                  {hasMileageKm(row.mileageKm) ? (
+                    <span>維修保固參考：本次維修後 500 km 內</span>
+                  ) : null}
                 </div>
                 <div className="compact-card-actions">
                   <StatusBadge tone={getEstimateTone(row)}>{row.estimateStatusLabel}</StatusBadge>
