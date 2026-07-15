@@ -5,7 +5,7 @@ const { pool, withTransaction } = require("../db");
 const { logKpi } = require("./kpiService");
 const { sendLineMessage } = require("../utils/line");
 const { getTableColumns, hasColumn } = require("../utils/schema");
-const { applyRepairReservationDecision, notifyRepairCustomer } = require("./repairReservationService");
+const { applyRepairReservationDecision, notifyRepairCustomerSafely } = require("./repairReservationService");
 
 const BOT_NOTIFY = "notify";
 const BOT_STOCK = "stock";
@@ -435,9 +435,17 @@ async function handleRepairApprovalCallback(bot, callbackQuery, action, id) {
     return false;
   }
 
+  let notifyWarning = null;
   if (!result.alreadyProcessed) {
     console.log("Telegram confirm → updated repair:", repairId);
-    await notifyRepairCustomer(repairId, result.customerMessage);
+    const notifyResult = await notifyRepairCustomerSafely(repairId, result.customerMessage, {
+      source: "telegram_callback",
+      context: approved ? "reservation_approved" : "reservation_rejected",
+      failureAction: "repair_reservation_notify_failed",
+      lineUserId: result.lineUserId,
+      warning: "LINE 預約結果通知發送失敗，狀態已更新，請手動聯繫顧客。"
+    });
+    notifyWarning = notifyResult.warning || null;
   }
 
   await answerCallbackQuery(
@@ -445,7 +453,9 @@ async function handleRepairApprovalCallback(bot, callbackQuery, action, id) {
     callbackQuery.id,
     result.alreadyProcessed
       ? `維修單 #${repairId} 已是${approved ? "已確認" : "已拒絕"}`
-      : approved ? "已確認維修預約" : "已拒絕維修預約"
+      : notifyWarning
+        ? `${approved ? "已確認維修預約" : "已拒絕維修預約"}，但客戶 LINE 通知失敗`
+        : approved ? "已確認維修預約" : "已拒絕維修預約"
   );
 
   const chatId = callbackQuery.message?.chat?.id;
@@ -459,7 +469,11 @@ async function handleRepairApprovalCallback(bot, callbackQuery, action, id) {
         `工單 #${repairId}`,
         `處理人：${actorLabel}`,
         `時間：${confirmedTime}`,
-        result.alreadyProcessed ? "狀態：重複點擊，未重送客戶通知" : "狀態：已同步更新到 POS"
+        result.alreadyProcessed
+          ? "狀態：重複點擊，未重送客戶通知"
+          : notifyWarning
+            ? "狀態：已同步更新到 POS；客戶 LINE 通知失敗，請手動聯繫"
+            : "狀態：已同步更新到 POS"
       ].join("\n"),
       [],
       { replyToMessageId: callbackQuery.message?.message_id }

@@ -195,14 +195,81 @@ async function notifyRepairCustomer(repairId, text, storeId) {
     [repairId, scopedStoreId]
   );
 
-  if (rows[0]?.lineUserId && config.line.channelAccessToken) {
+  if (rows[0]?.lineUserId) {
     await sendLineMessage(config, rows[0].lineUserId, [{ type: "text", text }]);
+  }
+}
+
+function buildRepairLineNotifyFailureNote(error, options = {}) {
+  const lineApiStatus = error?.lineApiStatus || error?.status || null;
+  const safeDetails = error?.safeDetails || null;
+  const message = error?.message || "LINE_PUSH_FAILED";
+  const isQuotaOrRateLimit =
+    Number(lineApiStatus) === 429 ||
+    /quota|rate limit|too many requests|429/i.test(`${message} ${safeDetails || ""}`);
+
+  return JSON.stringify({
+    error: message,
+    lineApiStatus,
+    safeDetails,
+    quotaOrRateLimit: isQuotaOrRateLimit,
+    context: options.context || options.source || null,
+    source: options.source || null,
+    lineUserStatus: options.lineUserId ? "HAS_LINE_USER" : "NO_LINE_USER"
+  });
+}
+
+async function logRepairLineNotifyFailure(repairId, action, error, options = {}, connection = pool) {
+  await connection.query(
+    `
+      INSERT INTO repair_logs (repair_order_id, action, note)
+      VALUES (?, ?, ?)
+    `,
+    [
+      repairId,
+      action,
+      buildRepairLineNotifyFailureNote(error, options)
+    ]
+  );
+}
+
+async function notifyRepairCustomerSafely(repairId, text, options = {}) {
+  try {
+    await notifyRepairCustomer(repairId, text, options.storeId);
+    return { ok: true };
+  } catch (error) {
+    try {
+      await logRepairLineNotifyFailure(
+        repairId,
+        options.failureAction || "repair_customer_notify_failed",
+        error,
+        {
+          source: options.source || null,
+          context: options.context || null,
+          lineUserId: options.lineUserId || null
+        },
+        options.connection || pool
+      );
+    } catch (notifyLogError) {
+      console.warn("[repair-notify] log customer notification failure failed", {
+        repairId,
+        message: notifyLogError.message
+      });
+    }
+    return {
+      ok: false,
+      warning: options.warning || "LINE 客戶通知發送失敗，請手動聯繫顧客。",
+      error
+    };
   }
 }
 
 module.exports = {
   applyRepairReservationDecision,
+  buildRepairLineNotifyFailureNote,
   isLineCustomerType,
+  logRepairLineNotifyFailure,
   normalizeCustomerType,
-  notifyRepairCustomer
+  notifyRepairCustomer,
+  notifyRepairCustomerSafely
 };

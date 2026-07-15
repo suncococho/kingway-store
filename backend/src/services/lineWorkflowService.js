@@ -17,7 +17,7 @@ const {
 const { getPublicStoreSettings } = require("./settingsService");
 const { assertRepairReservationDateAvailable } = require("./repairReservationAvailabilityService");
 const { sendInternalTelegram } = require("./telegramService");
-const { applyRepairReservationDecision, notifyRepairCustomer } = require("./repairReservationService");
+const { applyRepairReservationDecision, notifyRepairCustomerSafely } = require("./repairReservationService");
 const { getTableColumns, hasColumn } = require("../utils/schema");
 const { notifyRepairReservationCreated } = require("./staffLineNotify");
 const { assertOrderAccessoryInstallConfirmationsComplete } = require("./orderAccessoryInstallConfirmationService");
@@ -5154,8 +5154,17 @@ async function handleLinePostback(event) {
     if (!result) {
       return true;
     }
+    let notifyWarning = null;
     if (!result.alreadyProcessed) {
-      await notifyRepairCustomer(id, result.customerMessage, reservationPostbackStoreContext.storeId);
+      const notifyResult = await notifyRepairCustomerSafely(id, result.customerMessage, {
+        storeId: reservationPostbackStoreContext.storeId,
+        source: "line_postback",
+        context: approved ? "reservation_approved" : "reservation_rejected",
+        failureAction: "repair_reservation_notify_failed",
+        lineUserId: result.lineUserId,
+        warning: "LINE 預約結果通知發送失敗，狀態已更新，請手動聯繫顧客。"
+      });
+      notifyWarning = notifyResult.warning || null;
     }
     if (event.replyToken) {
       await replyToLine(
@@ -5165,7 +5174,9 @@ async function handleLinePostback(event) {
             type: "text",
             text: result.alreadyProcessed
               ? `這筆維修預約已是${approved ? "已確認" : "已拒絕"}狀態。`
-              : approved ? "已確認維修預約。" : "已拒絕維修預約。"
+              : notifyWarning
+                ? `${approved ? "已確認維修預約" : "已拒絕維修預約"}，但客戶 LINE 通知發送失敗，請手動聯繫顧客。`
+                : approved ? "已確認維修預約。" : "已拒絕維修預約。"
           }
         ])
       );

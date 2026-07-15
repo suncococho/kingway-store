@@ -10,7 +10,12 @@ const { sendLineMessage } = require("../utils/line");
 const config = require("../config");
 const { mapRepairStatusLabel, mapOrderStatusLabel, mapCategoryLabel } = require("../utils/displayLabels");
 const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
-const { applyRepairReservationDecision, isLineCustomerType, normalizeCustomerType } = require("../services/repairReservationService");
+const {
+  applyRepairReservationDecision,
+  isLineCustomerType,
+  logRepairLineNotifyFailure,
+  normalizeCustomerType
+} = require("../services/repairReservationService");
 const { listRepairAttachments } = require("../services/repairAttachmentService");
 const {
   isStaffLineNotifySuppressed,
@@ -840,30 +845,67 @@ router.post("/:id/reservation/respond",  async (req, res, next) => {
       throw createError("找不到維修工單", 404);
     }
 
-    if (!result.alreadyProcessed && isLineCustomerType(result.customerType) && result.lineUserId && config.line.channelAccessToken) {
-      await sendLineMessage(config, result.lineUserId, [
-        {
-          type: "text",
-          text: result.customerMessage
+    let warning = null;
+    if (!result.alreadyProcessed && isLineCustomerType(result.customerType) && result.lineUserId) {
+      try {
+        await sendLineMessage(config, result.lineUserId, [
+          {
+            type: "text",
+            text: result.customerMessage
+          }
+        ]);
+      } catch (lineError) {
+        warning = {
+          customerNotifyFailed: true,
+          message: "고객 LINE 알림 발송 실패, 수동 연락 필요"
+        };
+        console.warn("[repair-reservation] customer decision notification failed", {
+          repairId: req.params.id,
+          message: lineError.message
+        });
+        try {
+          await logRepairLineNotifyFailure(
+            req.params.id,
+            "repair_reservation_notify_failed",
+            lineError,
+            {
+              source: "web_admin",
+              context: approved ? "reservation_approved" : "reservation_rejected",
+              lineUserId: result.lineUserId
+            }
+          );
+        } catch (notifyLogError) {
+          console.warn("[repair-reservation] log customer decision notification failure failed", {
+            repairId: req.params.id,
+            message: notifyLogError.message
+          });
         }
-      ]);
+      }
     }
 
     if (isLineCustomerType(result.customerType)) {
-      await sendToGroups(["repair", "admin"], [
-        {
-          type: "text",
-          text: result.alreadyProcessed
-            ? `維修預約 #${req.params.id} 已是${approved ? "已確認" : "已拒絕"}狀態，略過重複通知。`
-            : `維修預約 #${req.params.id} 已由後台${approved ? "確認" : "拒絕"}。`
-        }
-      ]);
+      try {
+        await sendToGroups(["repair", "admin"], [
+          {
+            type: "text",
+            text: result.alreadyProcessed
+              ? `維修預約 #${req.params.id} 已是${approved ? "已確認" : "已拒絕"}狀態，略過重複通知。`
+              : `維修預約 #${req.params.id} 已由後台${approved ? "確認" : "拒絕"}。`
+          }
+        ]);
+      } catch (lineGroupError) {
+        console.warn("[repair-reservation] staff group notification failed", {
+          repairId: req.params.id,
+          message: lineGroupError.message
+        });
+      }
     }
     return res.json({
       message: result.alreadyProcessed ? `維修預約原本就是${approved ? "已確認" : "已拒絕"}狀態` : approved ? "已確認維修預約" : "已拒絕維修預約",
       repairId: Number(req.params.id),
       reservationStatus: approved ? "approved" : "rejected",
-      status: approved ? "reserved" : "canceled"
+      status: approved ? "reserved" : "canceled",
+      warning
     });
   } catch (error) {
     return next(error);
@@ -1421,7 +1463,8 @@ router.post("/:id/complete",  async (req, res, next) => {
       [req.params.id, "維修完成，待取車"]
     );
 
-    if (isLineCustomerType(repairs[0].customerType) && repairs[0].lineUserId && config.line.channelAccessToken) {
+    let warning = null;
+    if (isLineCustomerType(repairs[0].customerType) && repairs[0].lineUserId) {
       const surveyToken = require("crypto").randomBytes(20).toString("hex");
       const [surveyResult] = await pool.query(
         `
@@ -1435,26 +1478,63 @@ router.post("/:id/complete",  async (req, res, next) => {
         [surveyResult.insertId, req.params.id, storeId]
       );
       const surveyLink = `${config.frontendBaseUrl}/surveys/${surveyToken}`;
-      await sendLineMessage(config, repairs[0].lineUserId, [
-        {
-          type: "text",
-          text: [
-            "您的自行車維修已完成。",
-            "請到店付款 / 取車。",
-            "通知後超過 3 日未取車，每日將收取保管費 NT$80。",
-            `維修問卷：${surveyLink}`
-          ].join("\n")
+      try {
+        await sendLineMessage(config, repairs[0].lineUserId, [
+          {
+            type: "text",
+            text: [
+              "您的自行車維修已完成。",
+              "請到店付款 / 取車。",
+              "通知後超過 3 日未取車，每日將收取保管費 NT$80。",
+              `維修問卷：${surveyLink}`
+            ].join("\n")
+          }
+        ]);
+      } catch (lineError) {
+        warning = {
+          customerNotifyFailed: true,
+          message: "고객 LINE 알림 발송 실패, 수동 연락 필요"
+        };
+        console.warn("[repair-completed] customer notification failed", {
+          repairId: req.params.id,
+          message: lineError.message
+        });
+        try {
+          await logRepairLineNotifyFailure(
+            req.params.id,
+            "repair_completed_notify_failed",
+            lineError,
+            {
+              source: "web_admin",
+              context: "repair_completed",
+              lineUserId: repairs[0].lineUserId
+            }
+          );
+        } catch (notifyLogError) {
+          console.warn("[repair-completed] log customer notification failure failed", {
+            repairId: req.params.id,
+            message: notifyLogError.message
+          });
         }
-      ]);
+      }
     }
 
     if (isLineCustomerType(repairs[0].customerType)) {
-      await sendToGroups(["repair", "admin"], [
-        {
-          type: "text",
-          text: `維修單 #${req.params.id} 已標記完修，已通知客戶取車與填寫問卷。`
-        }
-      ]);
+      try {
+        await sendToGroups(["repair", "admin"], [
+          {
+            type: "text",
+            text: warning
+              ? `維修單 #${req.params.id} 已標記完修；客戶 LINE 通知失敗，請手動聯繫。`
+              : `維修單 #${req.params.id} 已標記完修，已通知客戶取車與填寫問卷。`
+          }
+        ]);
+      } catch (lineGroupError) {
+        console.warn("[repair-completed] staff group notification failed", {
+          repairId: req.params.id,
+          message: lineGroupError.message
+        });
+      }
     }
     await logWorkflowEvent("repair_completed", "REPAIR_ORDER", req.params.id, null, req.user.id);
 
@@ -1482,7 +1562,8 @@ router.post("/:id/complete",  async (req, res, next) => {
     return res.json({
       message: "已標記為完修待取車",
       repairConfirmation,
-      repairConfirmationWarning
+      repairConfirmationWarning,
+      warning
     });
   } catch (error) {
     return next(error);

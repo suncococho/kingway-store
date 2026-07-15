@@ -67,6 +67,7 @@ services:
       - "3010:3000"
     volumes:
       - ./backend:/app
+      - ./shared:/shared:ro
       - kingway-staging-uploads:/app/uploads
     command: sh -c "npm install && npm start"
     networks:

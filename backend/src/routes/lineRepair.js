@@ -15,6 +15,8 @@ const {
   resolveLineWorkflowStoreContext
 } = require("../services/lineWorkflowService");
 const { notifyRepairReservationCreated } = require("../services/staffLineNotify");
+const { logRepairLineNotifyFailure } = require("../services/repairReservationService");
+const { sendLineMessage } = require("../utils/line");
 const {
   notifyLineRepairCreated,
   notifyRepairQuoteAcceptedWorkOrder
@@ -684,6 +686,44 @@ router.post("/create", async (req, res, next) => {
         ]
       );
 
+      let customerNotifyWarning = null;
+      if (lineUserId) {
+        try {
+          await sendLineMessage(config, lineUserId, [
+            {
+              type: "text",
+              text: [
+                "KINGWAY 已收到您的維修預約。",
+                "門市確認後會再通知您預約結果。",
+                "到店後我們會先檢查車況；如需更換零件或產生費用，會先報價並取得同意後再維修。"
+              ].join("\n")
+            }
+          ]);
+        } catch (customerNotifyError) {
+          customerNotifyWarning = "LINE 預約接收通知發送失敗，維修預約已建立，請手動確認顧客是否收到通知。";
+          console.warn("[line-repair] customer create notification failed", {
+            repairId: result.repairId,
+            message: customerNotifyError.message
+          });
+          try {
+            await logRepairLineNotifyFailure(
+              result.repairId,
+              "line_repair_create_notify_failed",
+              customerNotifyError,
+              {
+                source: "line_repair_page",
+                lineUserId
+              }
+            );
+          } catch (notifyLogError) {
+            console.warn("[line-repair] log customer create notification failure failed", {
+              repairId: result.repairId,
+              message: notifyLogError.message
+            });
+          }
+        }
+      }
+
       try {
         const lineNotificationResult = await notifyRepairReservationCreated({
           repairId: result.repairId,
@@ -774,7 +814,8 @@ router.post("/create", async (req, res, next) => {
         duplicate: false,
         message: "維修預約已建立。",
         repairId: result.repairId,
-        reservationDay: getReservationDay(reservationDate)
+        reservationDay: getReservationDay(reservationDate),
+        warning: customerNotifyWarning
       };
       });
 
