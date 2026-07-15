@@ -43,6 +43,7 @@ services:
       - "3000:3000"
     volumes:
       - ./backend:/app
+      - ./shared:/shared:ro
     command: sh -c "npm install && npm start"
 
   frontend:
