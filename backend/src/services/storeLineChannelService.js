@@ -11,7 +11,8 @@ const COMPANY_WRITE_ROLES = new Set(["company_owner", "hq_admin", "inventory_man
 const OWNERSHIP_TYPES = new Set(["HQ_MANAGED", "FRANCHISE_OWNED", "INDEPENDENT_OWNED"]);
 const CONNECTION_STATUSES = new Set(["NOT_TESTED", "DRY_RUN_OK", "DRY_RUN_FAILED", "DISABLED"]);
 const REF_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:(\/\/)?/i;
-const WEBHOOK_PREFIX = "/api/line/webhook/channel/";
+const CHANNEL_WEBHOOK_PREFIX = "/api/line/webhook/channel/";
+const LEGACY_WEBHOOK_PREFIX = "/api/line/webhook/";
 
 function createError(message, statusCode = 400) {
   const error = new Error(message);
@@ -121,18 +122,40 @@ function getRefScheme(value) {
 }
 
 function normalizeWebhookPath(value) {
-  const raw = normalizeText(value, 255);
-  if (!raw) {
+  const raw = String(value || "");
+  const trimmed = raw.trim();
+  if (raw !== trimmed || /\s/.test(trimmed)) {
+    throw createError("webhook_path 格式不正確，不能包含空白", 400);
+  }
+  if (trimmed.length > 500) {
+    throw createError("webhook_path 格式不正確，長度不可超過 500", 400);
+  }
+
+  const rawPath = normalizeText(trimmed, 500);
+  if (!rawPath) {
     throw createError("請輸入 webhook path", 400);
   }
 
-  let token = raw;
-  if (token.startsWith(WEBHOOK_PREFIX)) {
-    token = token.slice(WEBHOOK_PREFIX.length);
-  } else if (token.startsWith("/api/line/webhook/")) {
-    token = token.slice("/api/line/webhook/".length);
+  let token = rawPath;
+  try {
+    const parsed = new URL(token);
+    if (parsed.search || parsed.hash) {
+      throw createError("webhook_path 格式不正確，網址不可包含 query 或 fragment", 400);
+    }
+    if (!parsed.pathname.startsWith(CHANNEL_WEBHOOK_PREFIX) && !parsed.pathname.startsWith(LEGACY_WEBHOOK_PREFIX)) {
+      throw createError("webhook_path 格式不正確，網址路徑不在允許的 LINE webhook 路徑內", 400);
+    }
+    token = parsed.pathname;
+  } catch (error) {
+    if (error.statusCode) throw error;
+    // Not a full URL; continue with the raw path or token.
   }
-  token = token.replace(/^\/+/, "");
+
+  if (token.startsWith(CHANNEL_WEBHOOK_PREFIX)) {
+    token = token.slice(CHANNEL_WEBHOOK_PREFIX.length);
+  } else if (token.startsWith(LEGACY_WEBHOOK_PREFIX)) {
+    token = token.slice(LEGACY_WEBHOOK_PREFIX.length);
+  }
 
   if (!/^[A-Za-z0-9_-]{6,160}$/.test(token)) {
     throw createError("webhook_path 格式不正確，需為 6-160 字元英數、底線或連字號", 400);
@@ -161,7 +184,7 @@ function buildWebhookUrl(payload = {}) {
 
   const webhookPath = normalizeWebhookPath(payload.webhookPath || payload.webhook_path);
   const base = String(payload.baseUrl || config.frontendBaseUrl || "").replace(/\/$/, "");
-  return `${base}${WEBHOOK_PREFIX}${webhookPath}`;
+  return `${base}${CHANNEL_WEBHOOK_PREFIX}${webhookPath}`;
 }
 
 function defaultOwnershipForRelationship(relationshipType) {
@@ -505,23 +528,56 @@ async function fetchStoreLineChannelById(connection, id, forUpdate = false) {
 
 async function resolveStoreLineChannelByWebhookPath(webhookPath, connection = pool) {
   const normalizedPath = normalizeWebhookPath(webhookPath);
+  const configuredBase = String(config.frontendBaseUrl || "");
+  const frontendBase = configuredBase.endsWith("/") ? configuredBase.slice(0, -1) : configuredBase;
+  const candidateWebhookPaths = [
+    normalizedPath,
+    CHANNEL_WEBHOOK_PREFIX + normalizedPath,
+    LEGACY_WEBHOOK_PREFIX + normalizedPath
+  ];
+  const candidateWebhookUrls = [
+    frontendBase + CHANNEL_WEBHOOK_PREFIX + normalizedPath,
+    frontendBase + LEGACY_WEBHOOK_PREFIX + normalizedPath
+  ].filter((item) => item.startsWith("http://") || item.startsWith("https://"));
+
   const [rows] = await connection.query(
     `
       ${selectStoreLineChannelSql(`
-        WHERE slc.webhook_path = ?
+        WHERE (
+            slc.webhook_path = ?
+            OR slc.webhook_path = ?
+            OR slc.webhook_path = ?
+            OR slc.webhook_url = ?
+            OR slc.webhook_url = ?
+          )
           AND slc.enabled = 1
           AND s.status = 'active'
       `)}
-      LIMIT 2
+      LIMIT 20
     `,
-    [normalizedPath]
+    [
+      candidateWebhookPaths[0],
+      candidateWebhookPaths[1],
+      candidateWebhookPaths[2],
+      candidateWebhookUrls[0] || "",
+      candidateWebhookUrls[1] || ""
+    ]
   );
 
-  if (rows.length > 1) {
+  const matchingRows = rows.filter((candidate) => {
+    try {
+      return normalizeWebhookPath(candidate.webhookPath || candidate.webhook_path || "") === normalizedPath
+        || normalizeWebhookPath(candidate.webhookUrl || candidate.webhook_url || "") === normalizedPath;
+    } catch (_error) {
+      return false;
+    }
+  });
+
+  if (matchingRows.length > 1) {
     throw createError("LINE Channel webhook path 設定重複", 409);
   }
 
-  const row = rows[0] || null;
+  const row = matchingRows[0] || null;
   if (!row) {
     throw createError("找不到啟用中的 LINE Channel webhook 設定", 404);
   }

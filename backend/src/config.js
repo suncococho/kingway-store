@@ -77,6 +77,8 @@ module.exports = {
     database: requireEnv("MYSQL_DATABASE", "kingway_store")
   },
   line: {
+    stagingChannelWebhookAllowedPrefixes: parseCsvList(process.env.STAGING_LINE_CHANNEL_WEBHOOK_ALLOWED_PREFIXES || "kwstg_"),
+    stagingCredentialRefAllowPatterns: parseCsvList(process.env.STAGING_LINE_CREDENTIAL_REF_ALLOW_PATTERNS || "staging,stg"),
     channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || "",
     channelSecret: process.env.LINE_CHANNEL_SECRET || "",
     unifiedQaGroupMode: ["1", "true", "yes", "on"].includes((process.env.LINE_UNIFIED_QA_GROUP_MODE || "").trim().toLowerCase()),

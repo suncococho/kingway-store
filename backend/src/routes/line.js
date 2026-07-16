@@ -40,7 +40,40 @@ const {
 const router = express.Router();
 
 function normalizeWebhookPathToken(value) {
-  return String(value || "").trim();
+  const raw = String(value || "");
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (raw !== trimmed || /\s/.test(trimmed)) {
+    throw createHttpError("webhook_path 格式不正確", 400);
+  }
+  if (trimmed.length > 500) {
+    throw createHttpError("webhook_path 格式不正確", 400);
+  }
+
+  let token = trimmed;
+  const channelPrefix = "/api/line/webhook/channel/";
+  const legacyPrefix = "/api/line/webhook/";
+  try {
+    const parsed = new URL(token);
+    if (parsed.search || parsed.hash) {
+      throw createHttpError("webhook_path 格式不正確", 400);
+    }
+    if (!parsed.pathname.startsWith(channelPrefix) && !parsed.pathname.startsWith(legacyPrefix)) {
+      throw createHttpError("webhook_path 格式不正確", 400);
+    }
+    token = parsed.pathname;
+  } catch (error) {
+    if (error.statusCode) throw error;
+    // Not a full URL; continue with the raw path/token.
+  }
+
+  if (token.startsWith(channelPrefix)) {
+    token = token.slice(channelPrefix.length);
+  } else if (token.startsWith(legacyPrefix)) {
+    token = token.slice(legacyPrefix.length);
+  }
+
+  return token;
 }
 
 function buildWebhookPathFromToken(webhookPathToken) {
@@ -122,6 +155,172 @@ function isLimitedTokenizedReplyEvent(event) {
   );
 }
 
+
+function createHttpError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function assertValidWebhookPathToken(webhookPathToken) {
+  if (!/^[A-Za-z0-9_-]{6,160}$/.test(webhookPathToken)) {
+    throw createHttpError("webhook_path 格式不正確", 400);
+  }
+}
+
+function isStagingRuntime() {
+  const marker = `${config.nodeEnv || ""} ${config.appEnv || ""}`.toLowerCase();
+  return marker.includes("staging");
+}
+
+function refMatchesStagingAllowPattern(ref) {
+  const normalizedRef = String(ref || "").toLowerCase();
+  if (!normalizedRef) return false;
+  const patterns = config.line.stagingCredentialRefAllowPatterns || [];
+  const refMarkers = normalizedRef.split(/[^a-z0-9]+/).filter(Boolean);
+  return patterns.some((pattern) => {
+    const normalizedPattern = String(pattern || "").trim().toLowerCase();
+    return normalizedPattern && refMarkers.includes(normalizedPattern);
+  });
+}
+
+function assertStagingStoreLineChannelAllowed(channel, webhookPath) {
+  if (!isStagingRuntime()) return;
+
+  const token = normalizeWebhookPathToken(webhookPath || channel.webhookPath);
+  const allowedPrefixes = config.line.stagingChannelWebhookAllowedPrefixes || ["kwstg_"];
+  const hasAllowedPrefix = allowedPrefixes.some((prefix) => token.startsWith(prefix));
+  if (!hasAllowedPrefix) {
+    throw createHttpError("staging LINE webhook token 未在允許清單內", 403);
+  }
+
+  if (!refMatchesStagingAllowPattern(channel.lineChannelSecretRef) || !refMatchesStagingAllowPattern(channel.channelAccessTokenRef)) {
+    throw createHttpError("staging LINE channel credentials ref 不符合 staging 命名規則", 403);
+  }
+}
+
+async function findAuthorizedLineGroupRegistrar(storeId, lineUserId) {
+  if (!storeId || !lineUserId) return null;
+
+  const [rows] = await pool.query(
+    `
+      SELECT id, role, display_name AS displayName
+      FROM staff_users
+      WHERE store_id = ?
+        AND line_user_id = ?
+        AND is_active = 1
+        AND role IN ('ADMIN')
+      LIMIT 1
+    `,
+    [storeId, lineUserId]
+  );
+
+  return rows[0] || null;
+}
+
+async function handleScopedStaffGroupRegistration(event, lineContext) {
+  const sourceType = event.source && event.source.type;
+  const lineGroupId = sourceType === "group" ? event.source.groupId : event.source.roomId;
+  const lineUserId = event.source && event.source.userId;
+  const storeId = Number(lineContext.storeId || 0);
+
+  if ((sourceType !== "group" && sourceType !== "room") || !lineGroupId || !lineUserId) {
+    return { ok: false, message: "無權限註冊群組，請由門市管理員操作。" };
+  }
+
+  const registrar = await findAuthorizedLineGroupRegistrar(storeId, lineUserId);
+  if (!registrar) {
+    return { ok: false, message: "無權限註冊群組，請由門市管理員操作。" };
+  }
+
+  const groupName = `${sourceType}:${lineGroupId.slice(0, 8)}`;
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [existingRows] = await connection.query(
+      `
+        SELECT id, registration_type AS registrationType
+        FROM line_group_registrations
+        WHERE line_group_id = ?
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [lineGroupId]
+    );
+    const existing = existingRows[0] || null;
+
+    if (existing && existing.registrationType !== "staff") {
+      await connection.rollback();
+      const typeLabel = mapRegistrationTypeLabel(existing.registrationType) || existing.registrationType || "其他用途";
+      return { ok: false, message: `此群組已註冊為 ${typeLabel}，請建立另一個測試群組後再註冊 staff。` };
+    }
+
+    if (existing) {
+      await connection.query(
+        `
+          UPDATE line_group_registrations
+          SET source_type = ?,
+              group_name = ?,
+              registered_by_line_user_id = ?,
+              is_active = 1
+          WHERE id = ?
+            AND registration_type = 'staff'
+        `,
+        [sourceType, groupName, lineUserId, existing.id]
+      );
+    } else {
+      try {
+        await connection.query(
+          `
+            INSERT INTO line_group_registrations (line_group_id, source_type, registration_type, group_name, registered_by_line_user_id, is_active)
+            VALUES (?, ?, 'staff', ?, ?, 1)
+          `,
+          [lineGroupId, sourceType, groupName, lineUserId]
+        );
+      } catch (error) {
+        if (error.code !== "ER_DUP_ENTRY") throw error;
+
+        const [raceRows] = await connection.query(
+          `
+            SELECT id, registration_type AS registrationType
+            FROM line_group_registrations
+            WHERE line_group_id = ?
+            LIMIT 1
+            FOR UPDATE
+          `,
+          [lineGroupId]
+        );
+        const raceExisting = raceRows[0] || null;
+        if (!raceExisting || raceExisting.registrationType !== "staff") {
+          await connection.rollback();
+          const typeLabel = mapRegistrationTypeLabel(raceExisting?.registrationType) || raceExisting?.registrationType || "其他用途";
+          return { ok: false, message: `此群組已註冊為 ${typeLabel}，請建立另一個測試群組後再註冊 staff。` };
+        }
+        await connection.query(
+          `
+            UPDATE line_group_registrations
+            SET source_type = ?,
+                group_name = ?,
+                registered_by_line_user_id = ?,
+                is_active = 1
+            WHERE id = ?
+              AND registration_type = 'staff'
+          `,
+          [sourceType, groupName, lineUserId, raceExisting.id]
+        );
+      }
+    }
+
+    await connection.commit();
+    return { ok: true, registrationType: "staff" };
+  } catch (error) {
+    try { await connection.rollback(); } catch (_rollbackError) {}
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
 
 async function handleLineWebhookEvents({ req, events, lineContext = {} }) {
   const scopedLineContext = {
@@ -226,8 +425,46 @@ async function handleLineWebhookEvents({ req, events, lineContext = {} }) {
       if ((sourceType === "group" || sourceType === "room") && messageText.startsWith("/register")) {
         console.log("[line:webhook] route register", {
           sourceType,
-          messageText
+          messageText,
+          scopedPolicy: scopedLineContext.registrationPolicy || null
         });
+
+        if (scopedLineContext.registrationPolicy === "staging_staff_only") {
+          const parts = messageText.split(/\s+/);
+          const requestedType = parts[1] || "";
+          if (requestedType !== "staff") {
+            if (event.replyToken) {
+              await replyToLine(event.replyToken, [
+                {
+                  type: "text",
+                  text: "staging 測試頻道目前只支援 /register staff。"
+                }
+              ]);
+            }
+            continue;
+          }
+
+          const registrationResult = await handleScopedStaffGroupRegistration(event, scopedLineContext);
+          if (event.replyToken) {
+            const responseMessages = registrationResult.ok
+              ? [
+                  {
+                    type: "text",
+                    text: `群組已註冊為 ${mapRegistrationTypeLabel("staff")}。`
+                  },
+                  ...buildStaffLauncherMessages()
+                ]
+              : [
+                  {
+                    type: "text",
+                    text: registrationResult.message || "無權限註冊群組，請由門市管理員操作。"
+                  }
+                ];
+            await replyToLine(event.replyToken, responseMessages);
+          }
+          continue;
+        }
+
         const lineGroupId = sourceType === "group" ? event.source.groupId : event.source.roomId;
         const groupName = `${sourceType}:${lineGroupId.slice(0, 8)}`;
         const parts = messageText.split(/\s+/);
@@ -424,9 +661,11 @@ async function handleLineWebhookEvents({ req, events, lineContext = {} }) {
 router.post("/webhook/channel/:webhookPath", async (req, res, next) => {
   try {
     const webhookPath = normalizeWebhookPathToken(req.params.webhookPath);
+    assertValidWebhookPathToken(webhookPath);
     const webhookPathHash = hashWebhookPathToken(webhookPath);
     const resolved = await resolveStoreLineChannelByWebhookPath(webhookPath);
     const { channel } = resolved;
+    assertStagingStoreLineChannelAllowed(channel, webhookPath);
     const signature = req.headers["x-line-signature"];
     const rawBody = req.rawBody || "";
 
@@ -471,6 +710,7 @@ router.post("/webhook/channel/:webhookPath", async (req, res, next) => {
       channelSecretRef: channel.lineChannelSecretRef || null,
       credentialsResolved: true,
       allowConfigFallback: false,
+      registrationPolicy: isStagingRuntime() ? "staging_staff_only" : null,
       channelAccessToken: resolved.channelAccessToken.secret
     };
     req.lineContext = lineContext;
