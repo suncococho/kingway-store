@@ -4,6 +4,11 @@ const {
   getStoreLineSettings,
   resolveStoreLineCredentials
 } = require("./storeLineSettingsService");
+const {
+  buildIdempotencyKey,
+  createStaffLineNotification,
+  markStaffLineNotificationDelivery
+} = require("./staffLineNotificationService");
 
 const LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push";
 const STAFF_GROUP_TYPES = ["repair", "staff", "admin"];
@@ -18,6 +23,18 @@ function maskLineGroupId(value) {
 function formatValue(value, fallback = "-") {
   const normalized = String(value || "").trim();
   return normalized || fallback;
+}
+
+function maskPhone(value) {
+  const text = String(value || "").trim();
+  if (!text) return "-";
+  if (text.length <= 6) return "***";
+  return `${text.slice(0, 2)}*****${text.slice(-3)}`;
+}
+
+function formatCurrency(value) {
+  const amount = Number(value || 0);
+  return Number.isFinite(amount) ? amount.toLocaleString("zh-TW") : "0";
 }
 
 function normalizeRecordId(value) {
@@ -46,6 +63,90 @@ function buildOrderDetailLink(orderId, options = {}) {
 
   const baseUrl = String(options.baseUrl || resolveFrontendBaseUrl()).trim().replace(/\/$/, "");
   return `${baseUrl}/orders/${normalizedOrderId}/edit`;
+}
+
+function buildStaffPageUrl(pathname = "/", query = "") {
+  const baseUrl = resolveFrontendBaseUrl();
+  const normalizedPath = String(pathname || "/").startsWith("/") ? String(pathname || "/") : `/${pathname}`;
+  const normalizedQuery = String(query || "").trim();
+  return `${baseUrl}${normalizedPath}${normalizedQuery ? `?${normalizedQuery.replace(/^\?/, "")}` : ""}`;
+}
+
+function createPostbackAction(label, action, id, extra = {}) {
+  const params = new URLSearchParams({
+    action,
+    id: String(id),
+    ...Object.fromEntries(
+      Object.entries(extra)
+        .filter(([, value]) => value !== undefined && value !== null && value !== "")
+        .map(([key, value]) => [key, String(value)])
+    )
+  });
+
+  return {
+    type: "postback",
+    label,
+    data: params.toString(),
+    displayText: label
+  };
+}
+
+function createUriAction(label, uri) {
+  return {
+    type: "uri",
+    label,
+    uri
+  };
+}
+
+function createFlexMessage(altText, title, bodyLines, actions = []) {
+  const bubble = {
+    type: "bubble",
+    size: "mega",
+    body: {
+      type: "box",
+      layout: "vertical",
+      spacing: "sm",
+      contents: [
+        {
+          type: "text",
+          text: String(title || altText || "KINGWAY 通知").slice(0, 80),
+          weight: "bold",
+          size: "lg",
+          wrap: true,
+          color: "#111827"
+        },
+        ...bodyLines.filter(Boolean).map((line) => ({
+          type: "text",
+          text: String(line),
+          size: "sm",
+          wrap: true,
+          color: "#374151",
+          margin: "md"
+        }))
+      ]
+    }
+  };
+
+  if (actions.length > 0) {
+    bubble.footer = {
+      type: "box",
+      layout: "vertical",
+      spacing: "sm",
+      contents: actions.slice(0, 4).map((action, index) => ({
+        type: "button",
+        style: index === 0 ? "primary" : "secondary",
+        height: "sm",
+        action
+      }))
+    };
+  }
+
+  return {
+    type: "flex",
+    altText: String(altText || title || "KINGWAY 通知").slice(0, 400),
+    contents: bubble
+  };
 }
 
 function parseBoolean(value, fallback) {
@@ -234,7 +335,7 @@ async function resolveStaffLineGroupTarget(connection = pool, registrationTypes 
   const orderCases = resolvedRegistrationTypes.map((type, index) => `WHEN '${type}' THEN ${index + 1}`).join(" ");
   const [rows] = await connection.query(
     `
-      SELECT line_group_id AS lineGroupId, registration_type AS registrationType, group_name AS groupName
+      SELECT id, line_group_id AS lineGroupId, registration_type AS registrationType, group_name AS groupName
       FROM line_group_registrations
       WHERE is_active = 1
         AND registration_type IN (?)
@@ -248,6 +349,10 @@ async function resolveStaffLineGroupTarget(connection = pool, registrationTypes 
 }
 
 async function pushTextToLineGroup(lineGroupId, text, accessToken) {
+  return pushMessagesToLineGroup(lineGroupId, [{ type: "text", text }], accessToken);
+}
+
+async function pushMessagesToLineGroup(lineGroupId, messages, accessToken) {
   if (!accessToken) {
     return { delivered: 0, skipped: true, reason: "missing_line_channel_access_token" };
   }
@@ -264,7 +369,7 @@ async function pushTextToLineGroup(lineGroupId, text, accessToken) {
     },
     body: JSON.stringify({
       to: lineGroupId,
-      messages: [{ type: "text", text }]
+      messages: Array.isArray(messages) ? messages.slice(0, 5) : []
     })
   });
 
@@ -273,6 +378,137 @@ async function pushTextToLineGroup(lineGroupId, text, accessToken) {
   }
 
   return { delivered: 1, skipped: false };
+}
+
+async function pushStaffLineGroupMessages(storeId, messages, options = {}) {
+  const normalizedStoreId = normalizeStoreId(storeId);
+  const targetRegistrationTypes = Array.isArray(options.registrationTypes) && options.registrationTypes.length > 0
+    ? options.registrationTypes
+    : STAFF_GROUP_TYPES;
+
+  if (!normalizedStoreId) {
+    return { delivered: 0, skipped: true, reason: "missing_store_scope" };
+  }
+
+  const target = await resolveStaffLineGroupTarget(pool, targetRegistrationTypes);
+
+  if (isStaffLineNotifySuppressed()) {
+    return {
+      delivered: 0,
+      skipped: true,
+      reason: "environment_suppressed",
+      targetGroupIds: target?.lineGroupId ? [target.lineGroupId] : [],
+      registrationType: target?.registrationType || null,
+      lineGroupId: target?.lineGroupId ? maskLineGroupId(target.lineGroupId) : null,
+      lineGroupRegistrationId: target?.id || null,
+      storeId: normalizedStoreId
+    };
+  }
+
+  const [storeSettings, credentials] = await Promise.all([
+    getStoreLineSettings(normalizedStoreId),
+    resolveStoreLineCredentials({ storeId: normalizedStoreId, purpose: options.purpose || "staff_group_notify" })
+  ]);
+
+  if (!storeSettings.lineEnabled || !storeSettings.staffGroupEnabled || !credentials.credentialsResolved) {
+    return { delivered: 0, skipped: true, reason: "store_line_settings_incomplete", storeId: normalizedStoreId };
+  }
+
+  if (!target?.lineGroupId) {
+    return { delivered: 0, skipped: true, reason: "no_active_line_group_registration", targetGroupIds: [], storeId: normalizedStoreId };
+  }
+
+  const result = await pushMessagesToLineGroup(target.lineGroupId, messages, credentials.channelAccessToken);
+  return {
+    ...result,
+    targetGroupIds: [target.lineGroupId],
+    registrationType: target.registrationType,
+    lineGroupId: maskLineGroupId(target.lineGroupId),
+    lineGroupRegistrationId: target.id || null,
+    storeId: normalizedStoreId
+  };
+}
+
+async function sendStaffLineFollowup(storeId, text, options = {}) {
+  return pushStaffLineGroupMessages(
+    storeId,
+    [{ type: "text", text }],
+    { ...options, purpose: options.purpose || "staff_group_followup" }
+  );
+}
+
+async function notifyStaffActionRequired(input = {}, options = {}) {
+  const storeId = normalizeStoreId(input.storeId);
+  const relatedId = normalizeRecordId(input.relatedId);
+  const eventType = String(input.eventType || "").trim().toUpperCase();
+  const relatedType = String(input.relatedType || "").trim().toUpperCase();
+  if (!storeId || !relatedId || !eventType || !relatedType) {
+    return { delivered: 0, skipped: true, reason: "missing_required_fields" };
+  }
+
+  const targetRegistrationTypes = Array.isArray(options.registrationTypes) && options.registrationTypes.length > 0
+    ? options.registrationTypes
+    : STAFF_GROUP_TYPES;
+  const target = await resolveStaffLineGroupTarget(pool, targetRegistrationTypes);
+  const idempotencyKey = input.idempotencyKey || buildIdempotencyKey(eventType, storeId, relatedId, "GROUP_NOTIFY");
+  const notificationRecord = await createStaffLineNotification({
+    storeId,
+    eventType,
+    relatedType,
+    relatedId,
+    idempotencyKey,
+    lineGroupRegistrationId: target?.id || null,
+    payloadJson: input.payload || null
+  });
+
+  if (notificationRecord.available && notificationRecord.duplicate && !notificationRecord.shouldSend) {
+    return {
+      delivered: 0,
+      skipped: true,
+      reason: "duplicate_idempotency_key",
+      notificationId: notificationRecord.notification?.id || null,
+      idempotencyKey
+    };
+  }
+
+  const notificationId = notificationRecord.notification?.id || null;
+  const actionMeta = {
+    notificationId: notificationId || "",
+    notificationKey: idempotencyKey,
+    storeId
+  };
+  const actions = (Array.isArray(input.actions) ? input.actions : []).map((action) => {
+    if (action?.type === "uri") return action;
+    return createPostbackAction(action.label, action.action, relatedId, {
+      ...actionMeta,
+      ...(action.extra || {})
+    });
+  });
+
+  const message = createFlexMessage(
+    input.altText || input.title || "KINGWAY 通知",
+    input.title || "KINGWAY 通知",
+    Array.isArray(input.bodyLines) ? input.bodyLines : [],
+    actions
+  );
+
+  const result = await pushStaffLineGroupMessages(storeId, [message], {
+    registrationTypes: targetRegistrationTypes,
+    purpose: options.purpose || `${eventType.toLowerCase()}_staff_group_notify`
+  });
+
+  if (notificationId) {
+    await markStaffLineNotificationDelivery(notificationId, {
+      delivered: result.delivered,
+      lineGroupRegistrationId: result.lineGroupRegistrationId
+    });
+  }
+
+  return {
+    ...result,
+    notificationId,
+    idempotencyKey
+  };
 }
 
 async function notifyRepairReservationCreated(payload = {}, options = {}) {
@@ -290,85 +526,31 @@ async function notifyRepairReservationCreated(payload = {}, options = {}) {
       return { delivered: 0, skipped: true, reason: "missing_store_scope" };
     }
 
-    if (isStaffLineNotifySuppressed()) {
-      const target = await resolveStaffLineGroupTarget(
-        pool,
-        targetRegistrationTypes
-      );
-      console.info("[staff-line] repair_notify_skipped", {
-        repairId: payload.repairId || null,
-        storeId
-      });
-      return {
-        delivered: 0,
-        skipped: true,
-        reason: "environment_suppressed",
-        targetGroupIds: target?.lineGroupId ? [target.lineGroupId] : [],
-        registrationType: target?.registrationType || null,
-        lineGroupId: target?.lineGroupId ? maskLineGroupId(target.lineGroupId) : null
-      };
-    }
-
-    const [storeSettings, credentials] = await Promise.all([
-      getStoreLineSettings(storeId),
-      resolveStoreLineCredentials({ storeId, purpose: "repair_staff_group_notify" })
-    ]);
-
-    if (!storeSettings.lineEnabled || !storeSettings.staffGroupEnabled || !credentials.credentialsResolved) {
-      console.info("[staff-line] repair_notify_skipped", {
-        repairId: payload.repairId || null,
-        storeId
-      });
-      return { delivered: 0, skipped: true, reason: "store_line_settings_incomplete" };
-    }
-
-    const target = await resolveStaffLineGroupTarget(
-      pool,
-      targetRegistrationTypes
-    );
-    if (!target?.lineGroupId) {
-      console.info("[staff-line] repair_notify_skipped", {
-        repairId: payload.repairId || null,
-        storeId
-      });
-      return {
-        delivered: 0,
-        skipped: true,
-        reason: "no_active_line_group_registration",
-        targetGroupIds: [],
-        registrationType: null,
-        lineGroupId: null
-      };
-    }
-
-    const result = await pushTextToLineGroup(
-      target.lineGroupId,
-      buildRepairReservationMessage({
-        ...payload,
-        storeId
-      }),
-      credentials.channelAccessToken
-    );
-
-    if (result.delivered > 0) {
-      console.info("[staff-line] repair_notify_sent", {
-        repairId: payload.repairId || null,
-        storeId
-      });
-    } else {
-      console.info("[staff-line] repair_notify_skipped", {
-        repairId: payload.repairId || null,
-        storeId
-      });
-    }
-
-    return {
-      ...result,
-      targetGroupIds: [target.lineGroupId],
-      registrationType: target.registrationType,
-      lineGroupId: maskLineGroupId(target.lineGroupId),
-      storeId
-    };
+    return notifyStaffActionRequired({
+      eventType: "REPAIR_CREATED",
+      relatedType: "REPAIR",
+      relatedId: payload.repairId,
+      storeId,
+      title: "🔧 新增維修預約",
+      altText: "新增維修預約",
+      bodyLines: [
+        `維修單：#${formatValue(payload.repairId)}`,
+        `客戶：${formatValue(payload.customerName)}`,
+        `電話：${maskPhone(payload.customerPhone)}`,
+        `預約時間：${[formatValue(payload.reservationDate), formatValue(payload.reservationTime, "")].filter(Boolean).join(" ") || "-"}`,
+        `車型：${formatValue(payload.bikeModel)}`,
+        `問題：${formatValue(payload.issueDescription)}`
+      ],
+      actions: [
+        { label: "✅ 已確認預約", action: "repair_reservation_approve" },
+        { label: "🙋 我來處理", action: "staff_line_assign" },
+        createUriAction("📋 查看詳情", payload.adminUrl || buildStaffPageUrl(`/repairs/${payload.repairId}`))
+      ],
+      payload
+    }, {
+      registrationTypes: targetRegistrationTypes,
+      purpose: "repair_created_staff_group_notify"
+    });
   } catch (error) {
     console.info("[staff-line] repair_notify_skipped", {
       repairId: payload.repairId || null,
@@ -539,102 +721,30 @@ async function notifyOrderReservationCreated(payload = {}, options = {}) {
       };
     }
 
-    if (isStaffLineNotifySuppressed()) {
-      const target = await resolveStaffLineGroupTarget(
-        pool,
-        targetRegistrationTypes
-      );
-      console.info("[staff-line] order_reservation_notify_skipped", {
-        orderNo: payload.orderNo || null,
-        storeId
-      });
-      return {
-        delivered: 0,
-        skipped: true,
-        reason: "environment_suppressed",
-        orderId: resolvedOrderId || null,
-        orderLink: orderUrl,
-        targetGroupIds: target?.lineGroupId ? [target.lineGroupId] : [],
-        registrationType: target?.registrationType || null,
-        lineGroupId: target?.lineGroupId ? maskLineGroupId(target.lineGroupId) : null
-      };
-    }
-
-    const [storeSettings, credentials] = await Promise.all([
-      getStoreLineSettings(storeId),
-      resolveStoreLineCredentials({ storeId, purpose: "order_reservation_staff_group_notify" })
-    ]);
-
-    if (!storeSettings.lineEnabled || !storeSettings.staffGroupEnabled || !credentials.credentialsResolved) {
-      console.info("[staff-line] order_reservation_notify_skipped", {
-        orderNo: payload.orderNo || null,
-        storeId
-      });
-      return {
-        delivered: 0,
-        skipped: true,
-        reason: "store_line_settings_incomplete",
-        orderId: resolvedOrderId || null,
-        orderLink: orderUrl,
-        targetGroupIds: [],
-        registrationType: null,
-        lineGroupId: null
-      };
-    }
-
-    const target = await resolveStaffLineGroupTarget(
-      pool,
-      targetRegistrationTypes
-    );
-    if (!target?.lineGroupId) {
-      console.info("[staff-line] order_reservation_notify_skipped", {
-        orderNo: payload.orderNo || null,
-        storeId
-      });
-      return {
-        delivered: 0,
-        skipped: true,
-        reason: "no_active_line_group_registration",
-        orderId: resolvedOrderId || null,
-        orderLink: orderUrl,
-        targetGroupIds: [],
-        registrationType: null,
-        lineGroupId: null
-      };
-    }
-
-    const result = await pushTextToLineGroup(
-      target.lineGroupId,
-      buildOrderReservationMessage({
-        ...payload,
-        customerName: payload.customerName || payload.name,
-        orderId: resolvedOrderId,
-        orderLink: orderUrl
-      }),
-      credentials.channelAccessToken
-    );
-
-    if (result.delivered > 0) {
-      console.info("[staff-line] order_reservation_notify_sent", {
-        orderNo: payload.orderNo || null,
-        storeId
-      });
-    } else {
-      console.info("[staff-line] order_reservation_notify_skipped", {
-        orderNo: payload.orderNo || null,
-        storeId
-      });
-    }
-
-    return {
-      ...result,
-      targetGroupIds: [target.lineGroupId],
-      registrationType: target.registrationType,
-      lineGroupId: maskLineGroupId(target.lineGroupId),
-      orderId: resolvedOrderId || null,
-      orderLink: orderUrl,
-      storeId
-    };
+    return notifyStaffActionRequired({
+      eventType: "NEW_BIKE_ORDER",
+      relatedType: "ORDER",
+      relatedId: resolvedOrderId,
+      storeId,
+      title: "🛒 新增客戶訂單",
+      altText: "新增客戶訂單",
+      bodyLines: [
+        `訂單：#${formatValue(resolvedOrderId || payload.orderNo)}`,
+        `客戶：${formatValue(payload.customerName || payload.name)}`,
+        `商品：${formatValue(payload.productName)}`,
+        payload.color ? `顏色：${formatValue(payload.color)}` : null,
+        `數量：${formatValue(payload.quantity || 1)}`
+      ].filter(Boolean),
+      actions: [
+        { label: "✅ 確認訂單", action: "staff_line_order_confirm" },
+        { label: "🙋 我來處理", action: "staff_line_assign" },
+        createUriAction("📋 查看詳情", orderUrl || buildStaffPageUrl("/orders"))
+      ],
+      payload: { ...payload, orderId: resolvedOrderId, orderLink: orderUrl }
+    }, {
+      registrationTypes: targetRegistrationTypes,
+      purpose: "new_bike_order_staff_group_notify"
+    });
   } catch (error) {
     console.info("[staff-line] order_reservation_notify_skipped", {
         orderNo: payload.orderNo || null,
@@ -653,9 +763,16 @@ async function notifyOrderReservationCreated(payload = {}, options = {}) {
 module.exports = {
   buildOrderDetailLink,
   buildRepairReservationMessage,
+  buildStaffPageUrl,
+  createFlexMessage,
+  createPostbackAction,
+  createUriAction,
   isStaffLineNotifySuppressed,
+  notifyStaffActionRequired,
   notifyOrderReservationCreated,
   notifyPaymentInquiryCreated,
   notifyRepairReservationCreated,
-  resolveStaffLineGroupTarget
+  pushStaffLineGroupMessages,
+  resolveStaffLineGroupTarget,
+  sendStaffLineFollowup
 };

@@ -18,8 +18,11 @@ const {
 } = require("../services/repairReservationService");
 const { listRepairAttachments } = require("../services/repairAttachmentService");
 const {
+  buildStaffPageUrl,
+  createUriAction: createStaffLineUriAction,
   isStaffLineNotifySuppressed,
-  notifyRepairReservationCreated
+  notifyRepairReservationCreated,
+  notifyStaffActionRequired
 } = require("../services/staffLineNotify");
 const {
   applyRepairEstimateCustomerResponse,
@@ -748,47 +751,16 @@ router.post("/",  async (req, res, next) => {
       ]
     );
 
-    const notificationResult = !isLineCustomerType(normalizedCustomerType)
-      ? { delivered: 0, targetGroupIds: [], skipped: true }
-      : await sendToGroupsWithResult(["repair", "admin"], [
-          buildGroupApprovalMessage("repair_reservation", {
-            id: result.insertId,
-            customerName: customer.name || `#${customerId}`,
-            customerPhone: customer.phone || null,
-            reservationDate,
-            reservationTime,
-            sourceLabel: fromLine ? "LINE 維修預約" : "後台維修預約"
-          })
-        ]);
-
-    await logWorkflowEvent(
-      "repair_reservation_group_notified",
-      "REPAIR_ORDER",
-      result.insertId,
-      {
-        delivered: notificationResult.delivered,
-        targetGroupIds: notificationResult.targetGroupIds,
-        fromLine: Boolean(fromLine),
-        customerType: normalizedCustomerType,
-        skipped: Boolean(notificationResult.skipped)
-      },
-      req.user.id
-    );
-
-    if (!notificationResult.skipped && notificationResult.delivered === 0) {
-      console.error(
-        `[LINE][repair_reservation] no target groups resolved for repair #${result.insertId} (requested: repair,admin)`
-      );
-    }
-
+    let notificationResult = { delivered: 0, targetGroupIds: [], skipped: true, reason: "not_attempted" };
     if (isStaffLineNotifySuppressed()) {
       console.info("[staff-line] repair_notify_skipped", {
         repairId: result.insertId,
         storeId
       });
+      notificationResult = { delivered: 0, targetGroupIds: [], skipped: true, reason: "environment_suppressed" };
     } else {
       try {
-        await notifyRepairReservationCreated({
+        notificationResult = await notifyRepairReservationCreated({
           repairId: result.insertId,
           customerName: customer.name || `#${customerId}`,
           customerPhone: customer.phone || null,
@@ -801,11 +773,33 @@ router.post("/",  async (req, res, next) => {
           adminUrl: `${config.frontendBaseUrl}/repairs/${result.insertId}`
         });
       } catch (staffLineError) {
+        notificationResult = { delivered: 0, targetGroupIds: [], skipped: false, error: staffLineError.message };
         console.warn("[staff-line] repair reservation notification failed after creation", {
           repairId: result.insertId,
           message: staffLineError.message
         });
       }
+    }
+
+    await logWorkflowEvent(
+      "repair_reservation_group_notified",
+      "REPAIR_ORDER",
+      result.insertId,
+      {
+        delivered: notificationResult.delivered || 0,
+        targetGroupIds: notificationResult.targetGroupIds || [],
+        fromLine: Boolean(fromLine),
+        customerType: normalizedCustomerType,
+        skipped: Boolean(notificationResult.skipped),
+        reason: notificationResult.reason || null
+      },
+      req.user.id
+    );
+
+    if (!notificationResult.skipped && Number(notificationResult.delivered || 0) === 0) {
+      console.error(
+        `[LINE][repair_reservation] no target groups resolved for repair #${result.insertId} (requested: repair,admin)`
+      );
     }
 
     return res.status(201).json({
@@ -1412,7 +1406,7 @@ router.post("/:id/complete",  async (req, res, next) => {
     await assertRepairBelongsToStore(req.params.id, storeId);
     const [repairs] = await pool.query(
       `
-        SELECT ro.id, ro.customer_id AS customerId, ro.order_id AS orderId, COALESCE(ro.customer_type, c.customer_type, 'LINE') AS customerType, c.line_user_id AS lineUserId
+        SELECT ro.id, ro.customer_id AS customerId, ro.order_id AS orderId, ro.bike_model AS bikeModel, ro.estimate_amount AS estimateAmount, ro.completed_at AS completedAt, c.name AS customerName, COALESCE(ro.customer_type, c.customer_type, 'LINE') AS customerType, c.line_user_id AS lineUserId
         FROM repair_orders ro
         INNER JOIN customers c ON c.id = ro.customer_id
         WHERE ro.id = ?
@@ -1462,6 +1456,40 @@ router.post("/:id/complete",  async (req, res, next) => {
       `,
       [req.params.id, "維修完成，待取車"]
     );
+
+
+    try {
+      await notifyStaffActionRequired({
+        eventType: "REPAIR_COMPLETION",
+        relatedType: "REPAIR",
+        relatedId: req.params.id,
+        storeId,
+        title: "🔧 維修已完成，等待確認",
+        altText: "維修已完成，等待確認",
+        bodyLines: [
+          `維修單：#${req.params.id}`,
+          `客戶：${repairs[0].customerName || "-"}`,
+          `車型：${repairs[0].bikeModel || "-"}`,
+          `維修金額：NT$${Number(repairs[0].estimateAmount || 0).toLocaleString("zh-TW")}`,
+          "完成時間：剛剛",
+          "請確認維修內容及完工確認書後通知客戶。"
+        ],
+        actions: [
+          { label: "✅ 確認並傳送給客戶", action: "staff_line_repair_completion_customer_send" },
+          createStaffLineUriAction("📄 查看完工確認書", buildStaffPageUrl(`/repairs/${req.params.id}`)),
+          createStaffLineUriAction("✏️ 返回修改", buildStaffPageUrl(`/repairs/${req.params.id}`))
+        ],
+        payload: { repairId: Number(req.params.id), source: "repair_complete" }
+      }, {
+        registrationTypes: ["repair", "staff", "admin"],
+        purpose: "repair_completion_staff_group_notify"
+      });
+    } catch (staffLineError) {
+      console.warn("[staff-line] repair completion review notification failed", {
+        repairId: req.params.id,
+        message: staffLineError.message
+      });
+    }
 
     let warning = null;
     if (isLineCustomerType(repairs[0].customerType) && repairs[0].lineUserId) {

@@ -29,6 +29,11 @@ const {
 } = require("../utils/displayLabels");
 const { getTableColumns, hasColumn, selectColumn } = require("../utils/schema");
 const { sendOrderCreationNotification } = require("../services/telegramService");
+const {
+  buildStaffPageUrl,
+  createUriAction: createStaffLineUriAction,
+  notifyStaffActionRequired
+} = require("../services/staffLineNotify");
 const { canEditPaymentCompletionDate } = require("../utils/roleAccess");
 const { createOrReuseRepairConfirmationForPaidOrder } = require("../services/repairConfirmationService");
 const {
@@ -1108,6 +1113,50 @@ router.post("/:orderId/accessory-install-confirmations/:confirmationId/cross-che
         connection
       )
     );
+
+    if (result.readyForHandoverChecklist) {
+      try {
+        const [orderRows] = await pool.query(
+          `
+            SELECT o.id, o.order_no AS orderNo, COALESCE(o.customer_name, c.name) AS customerName
+            FROM orders o
+            LEFT JOIN customers c ON c.id = o.customer_id AND c.store_id = o.store_id
+            WHERE o.id = ?
+              AND o.store_id = ?
+            LIMIT 1
+          `,
+          [orderId, storeId]
+        );
+        const order = orderRows[0] || {};
+        await notifyStaffActionRequired({
+          eventType: "ORDER_READY",
+          relatedType: "ORDER",
+          relatedId: orderId,
+          storeId,
+          title: "🚲 交車檢查待確認",
+          altText: "交車檢查待確認",
+          bodyLines: [
+            `訂單：#${orderId}`,
+            `客戶：${order.customerName || "-"}`,
+            "配件安裝交叉確認已完成，請在後台確認交車前檢查。"
+          ],
+          actions: [
+            { label: "✅ 已確認", action: "staff_line_ack" },
+            { label: "🙋 我來處理", action: "staff_line_assign" },
+            createStaffLineUriAction("📋 查看詳情", buildStaffPageUrl(`/orders/${orderId}/edit`))
+          ],
+          payload: { orderId, orderNo: order.orderNo || null, source: "accessory_install_cross_check", scope: "internal_handover_check" }
+        }, {
+          registrationTypes: ["staff", "admin"],
+          purpose: "order_ready_staff_group_notify"
+        });
+      } catch (staffLineError) {
+        console.warn("[staff-line] order ready notification failed", {
+          orderId,
+          message: staffLineError.message
+        });
+      }
+    }
 
     return res.json({
       message: "交叉確認已完成",
@@ -2547,6 +2596,39 @@ router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), requireOrd
       autoPoId = await createKingwayAutoPurchaseOrderOnHandover(req.params.id, storeId, req.user?.id || 1);
     } catch (autoPoError) {
       console.error("[auto-kingway-po handover failed]", autoPoError.message);
+    }
+
+    if (autoPoId) {
+      try {
+        await notifyStaffActionRequired({
+          eventType: "STOCK_ZERO_AUTO_PO_CREATED",
+          relatedType: "SUPPLIER_REQUEST",
+          relatedId: autoPoId,
+          storeId,
+          title: "📦 庫存 0，已建立自動發注",
+          altText: "庫存 0，已建立自動發注",
+          bodyLines: [
+            `發注單：#${autoPoId}`,
+            `來源訂單：#${req.params.id}`,
+            "系統已依交車確認建立 KINGWAY 自動發注，請確認後續入庫。"
+          ],
+          actions: [
+            { label: "✅ 已確認", action: "staff_line_ack" },
+            { label: "🙋 我來處理", action: "staff_line_assign" },
+            createStaffLineUriAction("📋 查看詳情", buildStaffPageUrl("/suppliers"))
+          ],
+          payload: { orderId: Number(req.params.id), autoPoId }
+        }, {
+          registrationTypes: ["staff", "admin"],
+          purpose: "stock_zero_auto_po_staff_group_notify"
+        });
+      } catch (staffLineError) {
+        console.warn("[staff-line] auto PO notification failed", {
+          orderId: req.params.id,
+          autoPoId,
+          message: staffLineError.message
+        });
+      }
     }
 
     await logWorkflowEvent("order_handover_confirmed", "ORDER", req.params.id, { autoKingwayPurchaseOrderId: autoPoId }, req.user.id);

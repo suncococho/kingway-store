@@ -19,7 +19,20 @@ const { assertRepairReservationDateAvailable } = require("./repairReservationAva
 const { sendInternalTelegram } = require("./telegramService");
 const { applyRepairReservationDecision, notifyRepairCustomerSafely } = require("./repairReservationService");
 const { getTableColumns, hasColumn } = require("../utils/schema");
-const { notifyRepairReservationCreated } = require("./staffLineNotify");
+const {
+  createUriAction: createStaffLineUriAction,
+  notifyRepairReservationCreated,
+  notifyStaffActionRequired,
+  sendStaffLineFollowup
+} = require("./staffLineNotify");
+const {
+  claimCustomerLineSend,
+  finalizeCustomerLineSend,
+  loadNotificationById,
+  loadNotificationByKey,
+  recordStaffLineAction,
+  resolveStaffByLineUserId
+} = require("./staffLineNotificationService");
 const { assertOrderAccessoryInstallConfirmationsComplete } = require("./orderAccessoryInstallConfirmationService");
 const { notifyRepairQuoteAcceptedWorkOrder } = require("./notificationEventService");
 
@@ -1858,17 +1871,17 @@ async function logLegacyLineWorkflowStoreFallback(reason, payload = {}, connecti
 }
 
 async function resolveLineWorkflowStoreContext({ storeId = null, lineUserId = null, staffId = null, connection = pool, reason = "line_workflow" } = {}) {
-  const explicitStoreId = normalizeStoreId(storeId) || normalizeStoreId(lineAccessTokenOptionsStorage.getStore()?.storeId);
-  if (explicitStoreId) {
-    return { storeId: explicitStoreId, source: "explicit", legacyFallback: false };
-  }
-
   if (staffId) {
     const [[staff]] = await connection.query("SELECT store_id AS storeId FROM staff_users WHERE id = ? LIMIT 1", [staffId]);
     const staffStoreId = normalizeStoreId(staff?.storeId);
     if (staffStoreId) {
       return { storeId: staffStoreId, source: "staff", legacyFallback: false };
     }
+  }
+
+  const explicitStoreId = normalizeStoreId(storeId) || normalizeStoreId(lineAccessTokenOptionsStorage.getStore()?.storeId);
+  if (explicitStoreId) {
+    return { storeId: explicitStoreId, source: "explicit", legacyFallback: false };
   }
 
   if (lineUserId) {
@@ -4443,6 +4456,57 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
       ? await withTransaction(async (tx) => run(tx))
       : await run(connection);
 
+  try {
+    const [notificationRows] = await pool.query(
+      `
+        SELECT ro.id, ro.store_id AS storeId, ro.estimate_amount AS estimateAmount, c.name AS customerName
+        FROM repair_orders ro
+        INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
+        WHERE ro.id = ?
+          AND ro.store_id = ?
+        LIMIT 1
+      `,
+      [repairId, scopedStoreId]
+    );
+    const repairForNotification = notificationRows[0];
+    if (repairForNotification) {
+      await notifyStaffActionRequired({
+        eventType: approved ? "CUSTOMER_ESTIMATE_APPROVED" : "CUSTOMER_ESTIMATE_REJECTED",
+        relatedType: "REPAIR",
+        relatedId: repairId,
+        storeId: scopedStoreId,
+        title: approved ? "✅ 客戶已同意報價" : "❌ 客戶拒絕報價",
+        altText: approved ? "客戶已同意報價" : "客戶拒絕報價",
+        bodyLines: [
+          `維修單：#${repairId}`,
+          `客戶：${repairForNotification.customerName || "-"}`,
+          `報價：NT$${Number(repairForNotification.estimateAmount || 0).toLocaleString("zh-TW")}`
+        ],
+        actions: approved
+          ? [
+              { label: "🔧 開始維修", action: "staff_line_action_done" },
+              { label: "🙋 我來處理", action: "staff_line_assign" },
+              createStaffLineUriAction("📋 查看詳情", buildStaffPageUrl(`/repairs/${repairId}`))
+            ]
+          : [
+              { label: "📞 已聯絡客戶", action: "staff_line_action_done" },
+              createStaffLineUriAction("✏️ 修改報價", buildStaffPageUrl(`/repairs/${repairId}`)),
+              createStaffLineUriAction("📋 查看詳情", buildStaffPageUrl(`/repairs/${repairId}`))
+            ],
+        payload: { approved, source, orderId: result.linkedOrder?.orderId || null }
+      }, {
+        registrationTypes: ["repair", "staff", "admin"],
+        purpose: approved ? "customer_estimate_approved_staff_group_notify" : "customer_estimate_rejected_staff_group_notify"
+      });
+    }
+  } catch (staffLineError) {
+    console.warn("[staff-line] estimate response notification failed", {
+      repairId,
+      approved,
+      message: staffLineError.message
+    });
+  }
+
   await sendToGroups(["repair", "admin"], [
     {
       type: "text",
@@ -5074,6 +5138,294 @@ async function handleCustomerMessageEvent(event) {
   return false;
 }
 
+
+const STAFF_POSTBACK_ACTIONS = new Set([
+  "staff_line_ack",
+  "staff_line_assign",
+  "staff_line_action_done",
+  "staff_line_order_confirm",
+  "staff_line_repair_completion_customer_send",
+  "repair_reservation_approve",
+  "repair_reservation_reject",
+  "google_review_approve",
+  "google_review_reject",
+  "purchase_handover_confirm"
+]);
+
+const STAFF_POSTBACK_DENIED_TEXT = "無權限執行此操作，請聯絡管理員。";
+const CUSTOMER_SEND_TABLE_MISSING_TEXT = "系統尚未完成通知記錄設定，暫時無法傳送給客戶。\n請聯絡管理員。";
+
+function normalizePostbackNotificationId(params) {
+  const notificationId = Number(params.get("notificationId") || 0);
+  return Number.isSafeInteger(notificationId) && notificationId > 0 ? notificationId : null;
+}
+
+function normalizePostbackNotificationKey(params) {
+  return String(params.get("notificationKey") || params.get("idempotencyKey") || "").trim();
+}
+
+async function assertStaffPostbackAuthorized({ action, params, event, id, relatedType = null }) {
+  const sourceLineUserId = event.source?.userId || null;
+  if (!sourceLineUserId) {
+    return { ok: false, message: STAFF_POSTBACK_DENIED_TEXT };
+  }
+
+  const staff = await resolveStaffByLineUserId(sourceLineUserId, pool);
+  const staffStoreId = normalizeStoreId(staff?.storeId);
+  if (!staff?.id || !staff?.isActive || !staffStoreId) {
+    return { ok: false, message: STAFF_POSTBACK_DENIED_TEXT };
+  }
+
+  const postbackStoreId = normalizeStoreId(params.get("storeId") || params.get("store_id"));
+  if (postbackStoreId && postbackStoreId !== staffStoreId) {
+    return { ok: false, message: STAFF_POSTBACK_DENIED_TEXT };
+  }
+
+  const notificationId = normalizePostbackNotificationId(params);
+  const notificationKey = normalizePostbackNotificationKey(params);
+  let notification = null;
+  if (notificationId || notificationKey) {
+    notification = notificationId
+      ? await loadNotificationById(notificationId, pool, { storeId: staffStoreId })
+      : await loadNotificationByKey(notificationKey, pool, { storeId: staffStoreId });
+    if (!notification) {
+      if (action === "staff_line_repair_completion_customer_send") {
+        return {
+          ok: true,
+          staff,
+          staffId: staff.id,
+          staffStoreId,
+          sourceLineUserId,
+          notification: null,
+          notificationId,
+          notificationKey
+        };
+      }
+      return { ok: false, message: STAFF_POSTBACK_DENIED_TEXT };
+    }
+    if (notification.relatedId && id && Number(notification.relatedId) !== Number(id)) {
+      return { ok: false, message: STAFF_POSTBACK_DENIED_TEXT };
+    }
+    if (relatedType && String(notification.relatedType || "").toUpperCase() !== String(relatedType).toUpperCase()) {
+      return { ok: false, message: STAFF_POSTBACK_DENIED_TEXT };
+    }
+  }
+
+  return {
+    ok: true,
+    staff,
+    staffId: staff.id,
+    staffStoreId,
+    sourceLineUserId,
+    notification,
+    notificationId,
+    notificationKey
+  };
+}
+
+async function assertRecordBelongsToStore(tableName, id, storeId) {
+  const tableMap = {
+    orders: "orders",
+    repair_orders: "repair_orders",
+    coupons: "coupons"
+  };
+  const table = tableMap[tableName];
+  if (!table || !id || !storeId) return false;
+  const [rows] = await pool.query(
+    `SELECT id FROM ${table} WHERE id = ? AND store_id = ? LIMIT 1`,
+    [id, storeId]
+  );
+  return Boolean(rows[0]);
+}
+
+function customerSendErrorCode(result = {}) {
+  const reason = String(result.reason || result.lineError || "").toLowerCase();
+  if (result.lineSkipped || reason.includes("line_user") || reason.includes("未綁定 line")) return "CUSTOMER_LINE_NOT_BOUND";
+  if (reason.includes("payment")) return "PAYMENT_NOT_COMPLETED";
+  if (reason.includes("not_found") || reason.includes("找不到")) return "RECORD_NOT_FOUND";
+  if (reason.includes("timeout")) return "CUSTOMER_SEND_TIMEOUT";
+  return "LINE_PUSH_FAILED";
+}
+
+async function replyStaffPostback(event, text) {
+  if (!event.replyToken) return;
+  await replyToLine(event.replyToken, withStaffQuickReply([{ type: "text", text }]));
+}
+
+async function handleStaffLineSimpleAction({ action, params, event, auth }) {
+  const actionMap = {
+    staff_line_ack: "ACKNOWLEDGE",
+    staff_line_assign: "ASSIGN",
+    staff_line_action_done: "ACTION_COMPLETED"
+  };
+  const recordAction = actionMap[action];
+  if (!recordAction) return false;
+
+  const result = await recordStaffLineAction({
+    notificationId: params.get("notificationId"),
+    idempotencyKey: params.get("notificationKey"),
+    storeId: auth.staffStoreId,
+    lineUserId: auth.sourceLineUserId,
+    staffId: auth.staffId,
+    action: recordAction
+  });
+
+  const storeId = result.notification?.storeId || auth.staffStoreId;
+  const actorName = result.notification?.acknowledgedName
+    || result.notification?.assignedStaffName
+    || result.staff?.name
+    || "LINE 群組成員";
+
+  if (storeId) {
+    const followupText = action === "staff_line_assign"
+      ? `🙋 ${actorName} 已接手處理。`
+      : action === "staff_line_ack"
+        ? `✅ ${actorName} 已確認此通知。`
+        : `✅ ${actorName} 已完成此項處理。`;
+    await sendStaffLineFollowup(storeId, followupText, { registrationTypes: ["repair", "staff", "admin"] });
+  }
+
+  await replyStaffPostback(
+    event,
+    action === "staff_line_assign" ? "已記錄負責人。" : action === "staff_line_ack" ? "已記錄確認。" : "已記錄完成。"
+  );
+  return true;
+}
+
+async function handleRepairCompletionCustomerSend({ id, params, event, auth }) {
+  const storeId = auth.staffStoreId;
+  const notificationId = auth.notification?.id || auth.notificationId;
+  if (!notificationId) {
+    await replyStaffPostback(event, CUSTOMER_SEND_TABLE_MISSING_TEXT);
+    return true;
+  }
+  if (auth.notification?.status === "CUSTOMER_SENT") {
+    await replyStaffPostback(event, "此維修完工通知已發送過，已略過重複發送。");
+    return true;
+  }
+
+  const [repairStateRows] = await pool.query(
+    `
+      SELECT status
+      FROM repair_orders
+      WHERE id = ?
+        AND store_id = ?
+      LIMIT 1
+    `,
+    [id, storeId]
+  );
+  if (String(repairStateRows[0]?.status || "").trim() !== "completed_waiting_pickup") {
+    await replyStaffPostback(event, "維修單目前不是已完修待取車狀態，未發送客戶通知。");
+    return true;
+  }
+
+  let claim;
+  try {
+    claim = await claimCustomerLineSend({
+      notificationId,
+      idempotencyKey: auth.notificationKey,
+      storeId,
+      staffId: auth.staffId
+    });
+  } catch (error) {
+    console.warn("[staff-line] customer send claim failed", sanitizeLogObject({
+      action: "staff_line_repair_completion_customer_send",
+      repairId: id,
+      storeId,
+      code: error?.code || null,
+      message: error?.message || String(error)
+    }));
+    await replyStaffPostback(
+      event,
+      error?.code === "ER_NO_SUCH_TABLE" ? CUSTOMER_SEND_TABLE_MISSING_TEXT : "系統暫時無法傳送給客戶，請稍後再試或聯絡管理員。"
+    );
+    return true;
+  }
+  if (!claim.available) {
+    await replyStaffPostback(event, CUSTOMER_SEND_TABLE_MISSING_TEXT);
+    return true;
+  }
+  if (claim.alreadySent) {
+    await replyStaffPostback(event, "此維修完工通知已發送過，已略過重複發送。");
+    return true;
+  }
+  if (claim.inProgress) {
+    await replyStaffPostback(event, "其他員工正在處理中，請稍後再確認。");
+    return true;
+  }
+  if (!claim.claimed) {
+    await replyStaffPostback(event, "無法取得傳送鎖定，請重新整理後再試。");
+    return true;
+  }
+
+  const { createOrReuseRepairConfirmationForCompletedRepair } = require("./repairConfirmationService");
+  const result = await createOrReuseRepairConfirmationForCompletedRepair(id, storeId, auth.staffId, {
+    source: "staff_line_group",
+    purpose: "repair_completion_staff_confirmed_customer_send",
+    allowCompletionDocumentBeforePayment: true
+  });
+
+  if (!result.ok) {
+    const missingLine = result.reason === "missing_line_user_id" || result.reason === "顧客未綁定 LINE";
+    if (missingLine || /LINE/.test(String(result.reason || ""))) {
+      await sendStaffLineFollowup(storeId, [
+        "⚠️ 客戶尚未綁定 LINE，無法自動傳送。",
+        "請由門市人員聯絡客戶。"
+      ].join("\n"), { registrationTypes: ["repair", "staff", "admin"] });
+    }
+    await finalizeCustomerLineSend({ notificationId, storeId, staffId: auth.staffId, success: false, errorCode: customerSendErrorCode(result) });
+    await replyStaffPostback(event, result.reason || "維修完成確認書尚未送出。");
+    return true;
+  }
+
+  if (result.lineDelivered) {
+    await finalizeCustomerLineSend({ notificationId, storeId, staffId: auth.staffId, success: true });
+    await sendStaffLineFollowup(storeId, `✅ 維修單 #${id} 完工確認書已發送給客戶。`, { registrationTypes: ["repair", "staff", "admin"] });
+    await replyStaffPostback(event, "已發送維修完工確認書給客戶。");
+    return true;
+  }
+
+  if (result.lineSkipped) {
+    await sendStaffLineFollowup(storeId, [
+      "⚠️ 客戶尚未綁定 LINE，無法自動傳送。",
+      "請由門市人員聯絡客戶。"
+    ].join("\n"), { registrationTypes: ["repair", "staff", "admin"] });
+    await finalizeCustomerLineSend({ notificationId, storeId, staffId: auth.staffId, success: false, errorCode: "CUSTOMER_LINE_NOT_BOUND" });
+    await replyStaffPostback(event, "客戶尚未綁定 LINE，請手動聯絡客戶。");
+    return true;
+  }
+
+  await finalizeCustomerLineSend({ notificationId, storeId, staffId: auth.staffId, success: false, errorCode: customerSendErrorCode(result) });
+  await replyStaffPostback(event, result.lineError || "LINE 發送失敗，請稍後再試或手動聯絡客戶。");
+  return true;
+}
+
+async function handleStaffLineOrderConfirm({ id, params, event, auth }) {
+  const storeId = auth.staffStoreId;
+  const [result] = await pool.query(
+    `
+      UPDATE orders
+      SET status = 'PENDING_PAYMENT'
+      WHERE id = ?
+        AND store_id = ?
+        AND status = 'PENDING_CONFIRM'
+    `,
+    [id, storeId]
+  );
+  await recordStaffLineAction({
+    notificationId: params.get("notificationId"),
+    idempotencyKey: params.get("notificationKey"),
+    storeId: auth.staffStoreId,
+    lineUserId: auth.sourceLineUserId,
+    staffId: auth.staffId,
+    action: "ACTION_COMPLETED"
+  });
+  await logWorkflowEvent("staff_line_order_confirmed", "ORDER", id, { storeId, updated: result.affectedRows > 0 }, auth.staffId);
+  await sendStaffLineFollowup(storeId, `✅ 訂單 #${id} 已確認。`, { registrationTypes: ["staff", "admin"] });
+  await replyStaffPostback(event, result.affectedRows > 0 ? "已確認訂單。" : "訂單已不是待確認狀態，已記錄操作。");
+  return true;
+}
+
 async function handleLinePostback(event) {
   const params = new URLSearchParams(event.postback.data || "");
   const action = params.get("action");
@@ -5124,40 +5476,78 @@ async function handleLinePostback(event) {
 
   let staffId = null;
   let staffStoreId = null;
-  if (sourceLineUserId) {
-    const [staffRows] = await pool.query(
-      `
-        SELECT id, store_id AS storeId
-        FROM staff_users
-        WHERE line_user_id = ?
-        LIMIT 1
-      `,
-      [sourceLineUserId]
-    );
-    staffId = staffRows[0]?.id || null;
-    staffStoreId = normalizeStoreId(staffRows[0]?.storeId);
+  let staffAuth = null;
+  if (STAFF_POSTBACK_ACTIONS.has(action)) {
+    const relatedType = action === "staff_line_order_confirm" || action === "purchase_handover_confirm"
+      ? "ORDER"
+      : action === "google_review_approve" || action === "google_review_reject"
+        ? "COUPON"
+        : action === "staff_line_repair_completion_customer_send" || action.startsWith("repair_reservation_")
+          ? "REPAIR"
+          : null;
+    staffAuth = await assertStaffPostbackAuthorized({ action, params, event, id, relatedType });
+    if (!staffAuth.ok) {
+      await replyStaffPostback(event, staffAuth.message || STAFF_POSTBACK_DENIED_TEXT);
+      return true;
+    }
+    staffId = staffAuth.staffId;
+    staffStoreId = staffAuth.staffStoreId;
+  }
+
+  if (["staff_line_ack", "staff_line_assign", "staff_line_action_done"].includes(action)) {
+    const handled = await handleStaffLineSimpleAction({
+      action,
+      params,
+      event,
+      auth: staffAuth
+    });
+    if (handled) return true;
+  }
+
+  if (action === "staff_line_repair_completion_customer_send") {
+    return handleRepairCompletionCustomerSend({
+      id,
+      params,
+      event,
+      auth: staffAuth
+    });
+  }
+
+  if (action === "staff_line_order_confirm") {
+    return handleStaffLineOrderConfirm({
+      id,
+      params,
+      event,
+      auth: staffAuth
+    });
   }
 
   if (action === "repair_reservation_approve" || action === "repair_reservation_reject") {
     const approved = action === "repair_reservation_approve";
-    const reservationPostbackStoreContext = await resolveLineWorkflowStoreContext({
-      storeId: postbackStoreId || staffStoreId,
-      lineUserId: sourceLineUserId,
-      staffId,
-      connection: pool,
-      reason: "line_repair_reservation_postback"
-    });
-    const result = await applyRepairReservationDecision(id, approved, staffId, "line_postback", pool, {
+    const reservationStoreId = staffAuth.staffStoreId;
+    if (!(await assertRecordBelongsToStore("repair_orders", id, reservationStoreId))) {
+      await replyStaffPostback(event, STAFF_POSTBACK_DENIED_TEXT);
+      return true;
+    }
+    const result = await applyRepairReservationDecision(id, approved, staffAuth.staffId, "line_postback", pool, {
       logWorkflowEvent,
-      storeId: reservationPostbackStoreContext.storeId
+      storeId: reservationStoreId
     });
     if (!result) {
       return true;
     }
+    await recordStaffLineAction({
+      notificationId: params.get("notificationId"),
+      idempotencyKey: params.get("notificationKey"),
+      storeId: staffAuth.staffStoreId,
+      lineUserId: staffAuth.sourceLineUserId,
+      staffId: staffAuth.staffId,
+      action: approved ? "ACTION_COMPLETED" : "ACKNOWLEDGE"
+    });
     let notifyWarning = null;
     if (!result.alreadyProcessed) {
       const notifyResult = await notifyRepairCustomerSafely(id, result.customerMessage, {
-        storeId: reservationPostbackStoreContext.storeId,
+        storeId: reservationStoreId,
         source: "line_postback",
         context: approved ? "reservation_approved" : "reservation_rejected",
         failureAction: "repair_reservation_notify_failed",
@@ -5253,13 +5643,7 @@ async function handleLinePostback(event) {
 
   if (action === "google_review_approve" || action === "google_review_reject") {
     const approved = action === "google_review_approve";
-    const googleReviewStoreContext = await resolveLineWorkflowStoreContext({
-      storeId: staffStoreId || postbackStoreId,
-      staffId,
-      connection: pool,
-      reason: "google_review_postback"
-    });
-    const googleReviewStoreId = googleReviewStoreContext.storeId;
+    const googleReviewStoreId = staffAuth.staffStoreId;
     const [rows] = await pool.query(
       `
         SELECT cp.id, cp.code, cp.amount, cp.order_id AS orderId, cp.customer_id AS customerId, c.line_user_id AS lineUserId
@@ -5290,7 +5674,7 @@ async function handleLinePostback(event) {
       `,
       [
         approved ? "approved" : "rejected",
-        staffId,
+        staffAuth.staffId,
         approved ? new Date() : null,
         approved ? null : new Date(),
         approved ? null : "內部群組審核拒絕",
@@ -5312,7 +5696,7 @@ async function handleLinePostback(event) {
 
 
     await sendToGroups(["admin", "staff", "daily"], [{ type: "text", text: `Google 評論 #${id} 已${approved ? "核准" : "拒絕"}。` }]);
-    await logWorkflowEvent(approved ? "google_review_confirmed" : "google_review_rejected", "COUPON", id, { source: "line_postback", couponIssued: false }, staffId);
+    await logWorkflowEvent(approved ? "google_review_confirmed" : "google_review_rejected", "COUPON", id, { source: "line_postback", couponIssued: false }, staffAuth.staffId);
     if (event.replyToken) {
       await replyToLine(
         event.replyToken,
@@ -5328,13 +5712,7 @@ async function handleLinePostback(event) {
   }
 
   if (action === "purchase_handover_confirm") {
-    const handoverStoreContext = await resolveLineWorkflowStoreContext({
-      storeId: postbackStoreId || staffStoreId,
-      staffId,
-      connection: pool,
-      reason: "purchase_handover_postback"
-    });
-    const handoverStoreId = handoverStoreContext.storeId;
+    const handoverStoreId = staffAuth.staffStoreId;
     const result = await withTransaction(async (connection) => {
       try {
         await assertOrderAccessoryInstallConfirmationsComplete(Number(id), handoverStoreId, connection);
@@ -5344,7 +5722,7 @@ async function handleLinePostback(event) {
           storeId: handoverStoreId,
           reason: "accessory_install_incomplete",
           message: error.message
-        }, staffId, connection);
+        }, staffAuth.staffId, connection);
         return { updated: false, blockedMessage: error.message || "配件安裝確認尚未完成。" };
       }
 
@@ -5356,7 +5734,7 @@ async function handleLinePostback(event) {
           WHERE id = ?
             AND store_id = ?
         `,
-        [staffId, id, handoverStoreId]
+        [staffAuth.staffId, id, handoverStoreId]
       );
 
       if (!orderUpdate.affectedRows) {
@@ -5364,7 +5742,7 @@ async function handleLinePostback(event) {
           source: "line_postback",
           storeId: handoverStoreId,
           reason: "order_not_in_store_scope"
-        }, staffId, connection);
+        }, staffAuth.staffId, connection);
         return { updated: false };
       }
 
@@ -5376,10 +5754,10 @@ async function handleLinePostback(event) {
           WHERE order_id = ?
             AND store_id = ?
         `,
-        [staffId, id, handoverStoreId]
+        [staffAuth.staffId, id, handoverStoreId]
       );
 
-      await logWorkflowEvent("order_handover_confirmed", "ORDER", id, { source: "line_postback", storeId: handoverStoreId }, staffId, connection);
+      await logWorkflowEvent("order_handover_confirmed", "ORDER", id, { source: "line_postback", storeId: handoverStoreId }, staffAuth.staffId, connection);
       return { updated: true };
     });
 

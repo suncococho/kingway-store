@@ -477,7 +477,6 @@ router.post("/repairs/:repairOrderId/send", async (req, res, next) => {
       req.storeId,
       req.user?.id || null,
       {
-        forceSend: true,
         source: "manual",
         purpose: "repair_confirmation_manual_send"
       }

@@ -33,14 +33,16 @@ function isRepairPaymentCompleted(row) {
   return String(row.finalPaymentStatus || "").trim() === "PAID" || Number(row.unpaidBalance || 0) <= 0;
 }
 
-function getRepairConfirmationBlockReason(row) {
+function getRepairConfirmationBlockReason(row, options = {}) {
   if (!row) {
     return "找不到維修工單";
   }
   if (!isRepairCompleted(row)) {
     return "維修完成後可發送確認書";
   }
-  if (!isRepairPaymentCompleted(row)) {
+  const allowCompletionDocumentBeforePayment = Boolean(options.allowCompletionDocumentBeforePayment)
+    && String(row.status || "").trim() === "completed_waiting_pickup";
+  if (!allowCompletionDocumentBeforePayment && !isRepairPaymentCompleted(row)) {
     return "完成付款後自動發送維修確認書";
   }
   return "";
@@ -186,9 +188,17 @@ async function sendRepairConfirmationLineMessage(repair, confirmation, options =
     });
     await sendLineMessage(config, repair.lineUserId, [
       createButtonMessage(
-        "維修完成確認書",
-        "您好，您的車輛維修已完成。請現場確認本次維修內容與車輛狀態；確認無誤後，請點選下方連結完成簽名。",
-        [createUriAction("簽署維修確認書", confirmation.link)]
+        "您的車輛維修已完成",
+        [
+          `維修單：#${repair.id}`,
+          repair.bikeModel ? `車型：${repair.bikeModel}` : null,
+          `維修金額：NT$${Number(getAmountTotal(repair) || 0).toLocaleString("zh-TW")}`,
+          "您的車輛已完成維修，歡迎與門市聯絡安排取車。"
+        ].filter(Boolean).join("\n"),
+        [
+          createUriAction("查看維修完工確認書", confirmation.link),
+          createUriAction("聯絡門市", `${config.frontendBaseUrl}/store-info`)
+        ]
       )
     ], {
       channelAccessToken: credentials.channelAccessToken,
@@ -211,13 +221,18 @@ async function sendRepairConfirmationLineMessage(repair, confirmation, options =
 
 async function createOrReuseRepairConfirmationForCompletedRepair(repairOrderId, storeId, staffId = null, options = {}) {
   let repairForLine = null;
-  const forceSend = Boolean(options.forceSend);
   const source = String(options.source || "auto").trim() || "auto";
+  // This option only permits creating/reusing the customer-visible repair completion document/link
+  // for completed_waiting_pickup repairs before payment. It must not change repair, payment,
+  // pickup, order, inventory, or accounting state.
+  const allowCompletionDocumentBeforePayment = Boolean(options.allowCompletionDocumentBeforePayment);
 
   const result = await withTransaction(async (connection) => {
     const repair = await fetchRepairForConfirmation(repairOrderId, storeId, connection, { forUpdate: true });
     repairForLine = repair;
-    const blockReason = getRepairConfirmationBlockReason(repair);
+    const blockReason = getRepairConfirmationBlockReason(repair, {
+      allowCompletionDocumentBeforePayment
+    });
     if (blockReason) {
       return {
         ok: false,
@@ -249,7 +264,7 @@ async function createOrReuseRepairConfirmationForCompletedRepair(repairOrderId, 
       };
     }
     if (existing?.status === "PENDING") {
-      const shouldTouchSentAt = forceSend || !existing.sentAt;
+      const shouldTouchSentAt = !existing.sentAt;
       if (shouldTouchSentAt) {
         await connection.query(
           "UPDATE repair_confirmations SET sent_at = NOW() WHERE id = ?",
@@ -263,13 +278,13 @@ async function createOrReuseRepairConfirmationForCompletedRepair(repairOrderId, 
         `,
         [
           repairOrderId,
-          forceSend ? "已重新發送維修完成確認書連結" : "系統已確認維修完成確認書連結"
+          "系統已確認維修完成確認書連結"
         ]
       );
       return {
         ok: true,
         reused: true,
-        shouldSendLine: forceSend || !existing.sentAt,
+        shouldSendLine: !existing.sentAt,
         confirmation: mapConfirmation({ ...existing, sentAt: shouldTouchSentAt ? new Date() : existing.sentAt }),
         repair
       };
