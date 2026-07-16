@@ -3,6 +3,11 @@ const { pool } = require("../db");
 const TABLE_NAME = "staff_line_notifications";
 const FINAL_SUCCESS_STATUSES = new Set(["ACTION_COMPLETED", "CUSTOMER_SENT"]);
 const CUSTOMER_SEND_CLAIM_STATUSES = ["PENDING", "ACKNOWLEDGED", "ASSIGNED"];
+const SUPPRESSED_DELIVERY_REASONS = new Set([
+  "environment_suppressed",
+  "dry_run_suppressed",
+  "staging_suppressed"
+]);
 let tableAvailability = null;
 
 function toPositiveInteger(value) {
@@ -12,6 +17,16 @@ function toPositiveInteger(value) {
 
 function normalizeText(value) {
   return String(value || "").trim();
+}
+
+function normalizeErrorCode(value, fallback = "LINE_PUSH_FAILED") {
+  const normalized = normalizeText(value)
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+  return normalized || fallback;
 }
 
 function buildIdempotencyKey(eventType, storeId, relatedId, action) {
@@ -53,7 +68,7 @@ async function requireStaffLineNotificationTable(connection = pool) {
   return hasStaffLineNotificationTable(connection);
 }
 
-function normalizeNotification(row = {}) {
+function normalizeNotification(row) {
   if (!row) return null;
   return {
     id: Number(row.id),
@@ -197,22 +212,62 @@ async function markStaffLineNotificationDelivery(notificationId, delivery = {}, 
   if (!id || !(await hasStaffLineNotificationTable(connection))) {
     return null;
   }
-  const delivered = Number(delivery.delivered || 0) > 0;
-  await connection.query(
-    `
-      UPDATE ${TABLE_NAME}
-      SET status = ?,
-          line_group_registration_id = COALESCE(?, line_group_registration_id),
-          line_message_id = COALESCE(?, line_message_id)
-      WHERE id = ?
-    `,
-    [
-      delivered ? "PENDING" : "FAILED",
-      toPositiveInteger(delivery.lineGroupRegistrationId),
-      normalizeText(delivery.lineMessageId) || null,
-      id
-    ]
-  );
+  const deliveredCount = Number(delivery.delivered || 0);
+  const delivered = deliveredCount > 0;
+  const reason = normalizeText(delivery.reason);
+  const isSuppressedDelivery = !delivered && SUPPRESSED_DELIVERY_REASONS.has(reason);
+  const status = delivered ? "PENDING" : (isSuppressedDelivery ? "ACTION_COMPLETED" : "FAILED");
+  const errorCode = delivered || isSuppressedDelivery
+    ? null
+    : normalizeErrorCode(delivery.errorCode || delivery.reason || delivery.error);
+
+  if (isSuppressedDelivery) {
+    await connection.query(
+      `
+        UPDATE ${TABLE_NAME}
+        SET status = ?,
+            line_group_registration_id = COALESCE(?, line_group_registration_id),
+            line_message_id = COALESCE(?, line_message_id),
+            last_error_code = NULL,
+            payload_json = JSON_SET(
+              COALESCE(payload_json, JSON_OBJECT()),
+              ?, ?,
+              ?, ?
+            ),
+            updated_at = NOW()
+        WHERE id = ?
+      `,
+      [
+        status,
+        toPositiveInteger(delivery.lineGroupRegistrationId),
+        normalizeText(delivery.lineMessageId) || null,
+        "$.deliveryOutcome",
+        reason,
+        "$.delivered",
+        deliveredCount,
+        id
+      ]
+    );
+  } else {
+    await connection.query(
+      `
+        UPDATE ${TABLE_NAME}
+        SET status = ?,
+            line_group_registration_id = COALESCE(?, line_group_registration_id),
+            line_message_id = COALESCE(?, line_message_id),
+            last_error_code = ?,
+            updated_at = NOW()
+        WHERE id = ?
+      `,
+      [
+        status,
+        toPositiveInteger(delivery.lineGroupRegistrationId),
+        normalizeText(delivery.lineMessageId) || null,
+        errorCode,
+        id
+      ]
+    );
+  }
   return loadNotificationById(id, connection);
 }
 

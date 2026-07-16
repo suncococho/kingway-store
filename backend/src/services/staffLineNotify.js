@@ -500,6 +500,8 @@ async function notifyStaffActionRequired(input = {}, options = {}) {
   if (notificationId) {
     await markStaffLineNotificationDelivery(notificationId, {
       delivered: result.delivered,
+      reason: result.reason,
+      error: result.error,
       lineGroupRegistrationId: result.lineGroupRegistrationId
     });
   }
