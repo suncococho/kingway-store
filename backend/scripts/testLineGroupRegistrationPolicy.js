@@ -6,9 +6,13 @@ const {
   getLineGroupRegistrationDeniedMessage
 } = require("../src/services/lineGroupRegistrationPolicy");
 
+const EMPLOYEE_ROLES = ["MANAGER", "CASHIER", "REPAIR", "INVENTORY"];
+const STAFF_REGISTRATION_ROLES = ["ADMIN", ...EMPLOYEE_ROLES];
+const ADMIN_ONLY_REGISTRATION_TYPES = ["daily", "admin", "repair"];
+
 function policy(overrides) {
   return {
-    role: "STAFF",
+    role: "CASHIER",
     isActive: 1,
     staffStoreId: 1,
     targetStoreId: 1,
@@ -18,26 +22,41 @@ function policy(overrides) {
 }
 
 const cases = [
-  ["ADMIN -> staff allowed", policy({ role: "ADMIN", registrationType: "staff" }), true],
-  ["ADMIN -> daily allowed", policy({ role: "ADMIN", registrationType: "daily" }), true],
-  ["ADMIN -> admin allowed", policy({ role: "ADMIN", registrationType: "admin" }), true],
-  ["STAFF -> staff allowed", policy({ role: "STAFF", registrationType: "staff" }), true],
-  ["STAFF -> daily denied", policy({ role: "STAFF", registrationType: "daily" }), false],
-  ["STAFF -> admin denied", policy({ role: "STAFF", registrationType: "admin" }), false],
-  ["inactive STAFF -> staff denied", policy({ role: "STAFF", isActive: 0, registrationType: "staff" }), false],
-  ["other store STAFF -> staff denied", policy({ role: "STAFF", staffStoreId: 2, registrationType: "staff" }), false],
-  ["no matching staff -> denied", policy({ role: null, isActive: null, staffStoreId: null, registrationType: "staff" }), false]
+  ...STAFF_REGISTRATION_ROLES.map((role) => [
+    `${role} -> staff allowed`,
+    policy({ role, registrationType: "staff" }),
+    true
+  ]),
+  ...ADMIN_ONLY_REGISTRATION_TYPES.map((registrationType) => [
+    `ADMIN -> ${registrationType} allowed`,
+    policy({ role: "ADMIN", registrationType }),
+    true
+  ]),
+  ...EMPLOYEE_ROLES.flatMap((role) => ADMIN_ONLY_REGISTRATION_TYPES.map((registrationType) => [
+    `${role} -> ${registrationType} denied`,
+    policy({ role, registrationType }),
+    false
+  ])),
+  ["inactive employee -> staff denied", policy({ role: "CASHIER", isActive: 0, registrationType: "staff" }), false],
+  ["other store employee -> staff denied", policy({ role: "CASHIER", staffStoreId: 2, registrationType: "staff" }), false],
+  ["unknown role -> staff denied", policy({ role: "STAFF", registrationType: "staff" }), false],
+  ["no matching account -> denied", policy({ role: null, isActive: null, staffStoreId: null, registrationType: "staff" }), false]
 ];
 
 for (const [name, input, expected] of cases) {
   assert.strictEqual(canRegisterLineGroup(input), expected, name);
 }
 
-assert.strictEqual(
-  getLineGroupRegistrationDeniedMessage(policy({ role: "STAFF", registrationType: "daily" })),
-  LINE_GROUP_REGISTRATION_TYPE_DENIED_MESSAGE,
-  "STAFF daily denial should use type-specific message"
-);
+for (const role of EMPLOYEE_ROLES) {
+  for (const registrationType of ADMIN_ONLY_REGISTRATION_TYPES) {
+    assert.strictEqual(
+      getLineGroupRegistrationDeniedMessage(policy({ role, registrationType })),
+      LINE_GROUP_REGISTRATION_TYPE_DENIED_MESSAGE,
+      `${role} ${registrationType} denial should use type-specific message`
+    );
+  }
+}
+
 assert.strictEqual(
   getLineGroupRegistrationDeniedMessage(policy({ role: null, isActive: null, staffStoreId: null, registrationType: "staff" })),
   LINE_GROUP_REGISTRATION_DENIED_MESSAGE,

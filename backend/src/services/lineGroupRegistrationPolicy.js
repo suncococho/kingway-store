@@ -1,5 +1,7 @@
 const LINE_GROUP_REGISTRATION_DENIED_MESSAGE = "無權限註冊群組，請由門市管理員操作。";
 const LINE_GROUP_REGISTRATION_TYPE_DENIED_MESSAGE = "無權限註冊此類群組，請由門市管理員操作。";
+const ADMIN_LINE_GROUP_REGISTRATION_TYPES = new Set(["daily", "admin", "repair"]);
+const STAFF_LINE_GROUP_REGISTRATION_ROLES = new Set(["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"]);
 
 function normalizeRole(role) {
   return String(role || "").trim().toUpperCase();
@@ -21,7 +23,7 @@ function canRegisterLineGroup({
 
   const normalizedRole = normalizeRole(role);
   if (normalizedRole === "ADMIN") return true;
-  if (normalizedRole === "STAFF" && registrationType === "staff") return true;
+  if (registrationType === "staff" && STAFF_LINE_GROUP_REGISTRATION_ROLES.has(normalizedRole)) return true;
 
   return false;
 }
@@ -30,8 +32,8 @@ function getLineGroupRegistrationDeniedMessage({ role, isActive, staffStoreId, t
   if (
     isActiveStaffValue(isActive) &&
     Number(staffStoreId) === Number(targetStoreId) &&
-    normalizeRole(role) === "STAFF" &&
-    (registrationType === "daily" || registrationType === "admin")
+    STAFF_LINE_GROUP_REGISTRATION_ROLES.has(normalizeRole(role)) &&
+    ADMIN_LINE_GROUP_REGISTRATION_TYPES.has(registrationType)
   ) {
     return LINE_GROUP_REGISTRATION_TYPE_DENIED_MESSAGE;
   }
@@ -42,6 +44,7 @@ function getLineGroupRegistrationDeniedMessage({ role, isActive, staffStoreId, t
 module.exports = {
   LINE_GROUP_REGISTRATION_DENIED_MESSAGE,
   LINE_GROUP_REGISTRATION_TYPE_DENIED_MESSAGE,
+  STAFF_LINE_GROUP_REGISTRATION_ROLES,
   canRegisterLineGroup,
   getLineGroupRegistrationDeniedMessage
 };

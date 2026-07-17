@@ -218,7 +218,7 @@ async function findLineGroupRegistrar(storeId, lineUserId) {
       FROM staff_users
       WHERE line_user_id = ?
         AND store_id = ?
-      ORDER BY is_active DESC, FIELD(role, 'ADMIN', 'STAFF') DESC, id ASC
+      ORDER BY is_active DESC, FIELD(role, 'ADMIN', 'MANAGER', 'CASHIER', 'REPAIR', 'INVENTORY') DESC, id ASC
       LIMIT 1
     `,
     [lineUserId, storeId]
