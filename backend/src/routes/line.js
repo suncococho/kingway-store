@@ -10,6 +10,11 @@ const {
   resolveStoreLineChannelByWebhookPath
 } = require("../services/storeLineChannelService");
 const {
+  LINE_GROUP_REGISTRATION_DENIED_MESSAGE,
+  canRegisterLineGroup,
+  getLineGroupRegistrationDeniedMessage
+} = require("../services/lineGroupRegistrationPolicy");
+const {
   detectGroupTypeHint,
   getEventGroupId,
   maskLineId,
@@ -199,20 +204,24 @@ function assertStagingStoreLineChannelAllowed(channel, webhookPath) {
   }
 }
 
-async function findAuthorizedLineGroupRegistrar(storeId, lineUserId) {
+async function findLineGroupRegistrar(storeId, lineUserId) {
   if (!storeId || !lineUserId) return null;
 
   const [rows] = await pool.query(
     `
-      SELECT id, role, display_name AS displayName
+      SELECT
+        id,
+        role,
+        display_name AS displayName,
+        is_active AS isActive,
+        store_id AS storeId
       FROM staff_users
-      WHERE store_id = ?
-        AND line_user_id = ?
-        AND is_active = 1
-        AND role IN ('ADMIN')
+      WHERE line_user_id = ?
+        AND store_id = ?
+      ORDER BY is_active DESC, FIELD(role, 'ADMIN', 'STAFF') DESC, id ASC
       LIMIT 1
     `,
-    [storeId, lineUserId]
+    [lineUserId, storeId]
   );
 
   return rows[0] || null;
@@ -241,12 +250,28 @@ async function handleLineGroupRegistration(event, lineContext, registrationType)
   }
 
   if ((sourceType !== "group" && sourceType !== "room") || !lineGroupId || !lineUserId || !storeId) {
-    return { ok: false, message: "無權限註冊群組，請由門市管理員操作。" };
+    return { ok: false, message: LINE_GROUP_REGISTRATION_DENIED_MESSAGE };
   }
 
-  const registrar = await findAuthorizedLineGroupRegistrar(storeId, lineUserId);
-  if (!registrar) {
-    return { ok: false, message: "無權限註冊群組，請由門市管理員操作。" };
+  const registrar = await findLineGroupRegistrar(storeId, lineUserId);
+  const canRegister = canRegisterLineGroup({
+    role: registrar?.role,
+    isActive: registrar?.isActive,
+    staffStoreId: registrar?.storeId,
+    targetStoreId: storeId,
+    registrationType
+  });
+  if (!canRegister) {
+    return {
+      ok: false,
+      message: getLineGroupRegistrationDeniedMessage({
+        role: registrar?.role,
+        isActive: registrar?.isActive,
+        staffStoreId: registrar?.storeId,
+        targetStoreId: storeId,
+        registrationType
+      })
+    };
   }
 
   const groupName = `${sourceType}:${lineGroupId.slice(0, 8)}`;
