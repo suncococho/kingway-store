@@ -218,13 +218,29 @@ async function findAuthorizedLineGroupRegistrar(storeId, lineUserId) {
   return rows[0] || null;
 }
 
-async function handleScopedStaffGroupRegistration(event, lineContext) {
+const REGISTER_USAGE_MESSAGE = "請使用：\n/register daily\n/register repair\n/register staff\n/register admin";
+const LINE_GROUP_REGISTRATION_TYPES = new Set(["daily", "repair", "staff", "admin"]);
+const STAFF_LAUNCHER_REGISTRATION_TYPES = new Set(["admin", "staff", "repair"]);
+
+function parseLineGroupRegistrationType(messageText) {
+  const parts = String(messageText || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length !== 2 || !LINE_GROUP_REGISTRATION_TYPES.has(parts[1])) {
+    return { ok: false, message: REGISTER_USAGE_MESSAGE };
+  }
+  return { ok: true, registrationType: parts[1] };
+}
+
+async function handleLineGroupRegistration(event, lineContext, registrationType) {
   const sourceType = event.source && event.source.type;
   const lineGroupId = sourceType === "group" ? event.source.groupId : event.source.roomId;
   const lineUserId = event.source && event.source.userId;
-  const storeId = Number(lineContext.storeId || 0);
+  const storeId = Number(lineContext.storeId || 1);
 
-  if ((sourceType !== "group" && sourceType !== "room") || !lineGroupId || !lineUserId) {
+  if (!LINE_GROUP_REGISTRATION_TYPES.has(registrationType)) {
+    return { ok: false, code: "invalid_type", message: REGISTER_USAGE_MESSAGE };
+  }
+
+  if ((sourceType !== "group" && sourceType !== "room") || !lineGroupId || !lineUserId || !storeId) {
     return { ok: false, message: "無權限註冊群組，請由門市管理員操作。" };
   }
 
@@ -250,10 +266,11 @@ async function handleScopedStaffGroupRegistration(event, lineContext) {
     );
     const existing = existingRows[0] || null;
 
-    if (existing && existing.registrationType !== "staff") {
+    if (existing && existing.registrationType !== registrationType) {
       await connection.rollback();
       const typeLabel = mapRegistrationTypeLabel(existing.registrationType) || existing.registrationType || "其他用途";
-      return { ok: false, message: `此群組已註冊為 ${typeLabel}，請建立另一個測試群組後再註冊 staff。` };
+      return { ok: false, code: "type_conflict", message: `此群組已註冊為 ${typeLabel}。
+如需不同用途，請建立另一個 LINE 群組。` };
     }
 
     if (existing) {
@@ -265,18 +282,18 @@ async function handleScopedStaffGroupRegistration(event, lineContext) {
               registered_by_line_user_id = ?,
               is_active = 1
           WHERE id = ?
-            AND registration_type = 'staff'
+            AND registration_type = ?
         `,
-        [sourceType, groupName, lineUserId, existing.id]
+        [sourceType, groupName, lineUserId, existing.id, registrationType]
       );
     } else {
       try {
         await connection.query(
           `
             INSERT INTO line_group_registrations (line_group_id, source_type, registration_type, group_name, registered_by_line_user_id, is_active)
-            VALUES (?, ?, 'staff', ?, ?, 1)
+            VALUES (?, ?, ?, ?, ?, 1)
           `,
-          [lineGroupId, sourceType, groupName, lineUserId]
+          [lineGroupId, sourceType, registrationType, groupName, lineUserId]
         );
       } catch (error) {
         if (error.code !== "ER_DUP_ENTRY") throw error;
@@ -292,10 +309,11 @@ async function handleScopedStaffGroupRegistration(event, lineContext) {
           [lineGroupId]
         );
         const raceExisting = raceRows[0] || null;
-        if (!raceExisting || raceExisting.registrationType !== "staff") {
+        if (!raceExisting || raceExisting.registrationType !== registrationType) {
           await connection.rollback();
           const typeLabel = mapRegistrationTypeLabel(raceExisting?.registrationType) || raceExisting?.registrationType || "其他用途";
-          return { ok: false, message: `此群組已註冊為 ${typeLabel}，請建立另一個測試群組後再註冊 staff。` };
+          return { ok: false, code: "type_conflict", message: `此群組已註冊為 ${typeLabel}。
+如需不同用途，請建立另一個 LINE 群組。` };
         }
         await connection.query(
           `
@@ -305,15 +323,15 @@ async function handleScopedStaffGroupRegistration(event, lineContext) {
                 registered_by_line_user_id = ?,
                 is_active = 1
             WHERE id = ?
-              AND registration_type = 'staff'
+              AND registration_type = ?
           `,
-          [sourceType, groupName, lineUserId, raceExisting.id]
+          [sourceType, groupName, lineUserId, raceExisting.id, registrationType]
         );
       }
     }
 
     await connection.commit();
-    return { ok: true, registrationType: "staff" };
+    return { ok: true, registrationType };
   } catch (error) {
     try { await connection.rollback(); } catch (_rollbackError) {}
     throw error;
@@ -430,21 +448,20 @@ async function handleLineWebhookEvents({ req, events, lineContext = {} }) {
         });
 
         if (scopedLineContext.registrationPolicy === "staging_staff_only") {
-          const parts = messageText.split(/\s+/);
-          const requestedType = parts[1] || "";
-          if (requestedType !== "staff") {
+          const parsed = parseLineGroupRegistrationType(messageText);
+          if (!parsed.ok || parsed.registrationType !== "staff") {
             if (event.replyToken) {
               await replyToLine(event.replyToken, [
                 {
                   type: "text",
-                  text: "staging 測試頻道目前只支援 /register staff。"
+                  text: parsed.ok ? "staging 測試頻道目前只支援 /register staff。" : parsed.message
                 }
               ]);
             }
             continue;
           }
 
-          const registrationResult = await handleScopedStaffGroupRegistration(event, scopedLineContext);
+          const registrationResult = await handleLineGroupRegistration(event, scopedLineContext, "staff");
           if (event.replyToken) {
             const responseMessages = registrationResult.ok
               ? [
@@ -465,38 +482,40 @@ async function handleLineWebhookEvents({ req, events, lineContext = {} }) {
           continue;
         }
 
-        const lineGroupId = sourceType === "group" ? event.source.groupId : event.source.roomId;
-        const groupName = `${sourceType}:${lineGroupId.slice(0, 8)}`;
-        const parts = messageText.split(/\s+/);
-        const registrationType = ["admin", "staff", "repair", "inventory", "daily"].includes(parts[1])
-          ? parts[1]
-          : "daily";
+        const parsed = parseLineGroupRegistrationType(messageText);
+        if (!parsed.ok) {
+          if (event.replyToken) {
+            await replyToLine(event.replyToken, [
+              {
+                type: "text",
+                text: parsed.message
+              }
+            ]);
+          }
+          continue;
+        }
 
-        await pool.query(
-          `
-            INSERT INTO line_group_registrations (line_group_id, source_type, registration_type, group_name, registered_by_line_user_id, is_active)
-            VALUES (?, ?, ?, ?, ?, 1)
-            ON DUPLICATE KEY UPDATE
-              source_type = VALUES(source_type),
-              registration_type = VALUES(registration_type),
-              group_name = VALUES(group_name),
-              registered_by_line_user_id = VALUES(registered_by_line_user_id),
-              is_active = 1
-          `,
-          [lineGroupId, sourceType, registrationType, groupName, event.source.userId || null]
-        );
+        const registrationResult = await handleLineGroupRegistration(event, scopedLineContext, parsed.registrationType);
 
         if (event.replyToken) {
-          const qaModeNote = config.line.unifiedQaGroupMode
-            ? "\n目前已啟用單一 LINE 測試群組模式，其他群組通知會暫時統一路由到這個測試群組。"
-            : "";
-          const responseMessages = [
-            {
-              type: "text",
-              text: `群組已註冊為 ${mapRegistrationTypeLabel(registrationType)}。${qaModeNote}`
-            }
-          ];
-          if (["admin", "staff", "repair", "inventory"].includes(registrationType)) {
+          const responseMessages = registrationResult.ok
+            ? [
+                {
+                  type: "text",
+                  text: `群組已註冊為 ${mapRegistrationTypeLabel(registrationResult.registrationType)}。${
+                    config.line.unifiedQaGroupMode
+                      ? "\n目前已啟用單一 LINE 測試群組模式，其他群組通知會暫時統一路由到這個測試群組。"
+                      : ""
+                  }`
+                }
+              ]
+            : [
+                {
+                  type: "text",
+                  text: registrationResult.message || "無權限註冊群組，請由門市管理員操作。"
+                }
+              ];
+          if (registrationResult.ok && STAFF_LAUNCHER_REGISTRATION_TYPES.has(registrationResult.registrationType)) {
             responseMessages.push(...buildStaffLauncherMessages());
           }
           await replyToLine(event.replyToken, responseMessages);
