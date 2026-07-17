@@ -19,10 +19,8 @@ const {
 const { listRepairAttachments } = require("../services/repairAttachmentService");
 const {
   buildStaffPageUrl,
-  createUriAction: createStaffLineUriAction,
-  isStaffLineNotifySuppressed,
   notifyRepairReservationCreated,
-  notifyStaffActionRequired
+  notifyRepairStaffWorkflowEvent
 } = require("../services/staffLineNotify");
 const {
   applyRepairEstimateCustomerResponse,
@@ -34,9 +32,7 @@ const {
   buildRepairQuoteConfirmationUrl,
   logWorkflowEvent,
   saveRepairEstimateDraft,
-  sendRepairQuoteConfirmationIfNeeded,
-  sendToGroups,
-  sendToGroupsWithResult
+  sendRepairQuoteConfirmationIfNeeded
 } = require("../services/lineWorkflowService");
 const {
   buildRepairConfirmationLink,
@@ -66,6 +62,23 @@ const REPAIR_CROSS_CHECK_STATUS = {
   NEEDS_REVISION: "NEEDS_REVISION"
 };
 const INITIAL_DIAGNOSIS_REQUIRED_MESSAGE = "請先填寫並儲存初步診斷內容，才能進行報價。";
+
+function getRequestStaffName(req) {
+  return String(req.user?.displayName || req.user?.display_name || req.user?.name || req.user?.username || `staff#${req.user?.id || "-"}`).trim();
+}
+
+async function notifyRepairStaffWorkflowSafely(input = {}, options = {}) {
+  try {
+    return await notifyRepairStaffWorkflowEvent(input, options);
+  } catch (error) {
+    console.warn("[staff-line] repair workflow notification failed", {
+      repairId: input.repairId || null,
+      event: input.event || input.eventType || null,
+      message: error.message
+    });
+    return { delivered: 0, skipped: false, error: error.message };
+  }
+}
 
 function createCodedRepairError(message, statusCode, code) {
   return createError(message, statusCode, code);
@@ -713,6 +726,16 @@ router.patch("/:id/inspection", async (req, res, next) => {
       [req.params.id, diagnosisChanged ? "已儲存初步診斷，交叉確認重設為待確認" : "已儲存初步診斷"]
     );
 
+    await notifyRepairStaffWorkflowSafely({
+      event: "diagnosis_saved",
+      repairId: req.params.id,
+      storeId,
+      staffName: getRequestStaffName(req),
+      diagnosisSummary: notes,
+      diagnosisUpdatedAt: new Date().toISOString(),
+      source: "web_admin"
+    });
+
     return res.json({ ok: true, inspectionNotes: notes, crossCheckStatus: diagnosisChanged ? "PENDING" : undefined });
   } catch (error) {
     return next(error);
@@ -1174,33 +1197,25 @@ router.post("/",  async (req, res, next) => {
     );
 
     let notificationResult = { delivered: 0, targetGroupIds: [], skipped: true, reason: "not_attempted" };
-    if (isStaffLineNotifySuppressed()) {
-      console.info("[staff-line] repair_notify_skipped", {
+    try {
+      notificationResult = await notifyRepairReservationCreated({
         repairId: result.insertId,
-        storeId
+        customerName: customer.name || `#${customerId}`,
+        customerPhone: customer.phone || null,
+        reservationDate,
+        reservationTime,
+        bikeModel,
+        issueDescription,
+        storeId,
+        sourceLabel: fromLine ? "LINE 維修預約" : "後台維修預約",
+        adminUrl: `${config.frontendBaseUrl}/repairs/${result.insertId}`
       });
-      notificationResult = { delivered: 0, targetGroupIds: [], skipped: true, reason: "environment_suppressed" };
-    } else {
-      try {
-        notificationResult = await notifyRepairReservationCreated({
-          repairId: result.insertId,
-          customerName: customer.name || `#${customerId}`,
-          customerPhone: customer.phone || null,
-          reservationDate,
-          reservationTime,
-          bikeModel,
-          issueDescription,
-          storeId,
-          sourceLabel: fromLine ? "LINE 維修預約" : "後台維修預約",
-          adminUrl: `${config.frontendBaseUrl}/repairs/${result.insertId}`
-        });
-      } catch (staffLineError) {
-        notificationResult = { delivered: 0, targetGroupIds: [], skipped: false, error: staffLineError.message };
-        console.warn("[staff-line] repair reservation notification failed after creation", {
-          repairId: result.insertId,
-          message: staffLineError.message
-        });
-      }
+    } catch (staffLineError) {
+      notificationResult = { delivered: 0, targetGroupIds: [], skipped: false, error: staffLineError.message };
+      console.warn("[staff-line] repair reservation notification failed after creation", {
+        repairId: result.insertId,
+        message: staffLineError.message
+      });
     }
 
     await logWorkflowEvent(
@@ -1299,23 +1314,16 @@ router.post("/:id/reservation/respond",  async (req, res, next) => {
       }
     }
 
-    if (isLineCustomerType(result.customerType)) {
-      try {
-        await sendToGroups(["repair", "admin"], [
-          {
-            type: "text",
-            text: result.alreadyProcessed
-              ? `維修預約 #${req.params.id} 已是${approved ? "已確認" : "已拒絕"}狀態，略過重複通知。`
-              : `維修預約 #${req.params.id} 已由後台${approved ? "確認" : "拒絕"}。`
-          }
-        ]);
-      } catch (lineGroupError) {
-        console.warn("[repair-reservation] staff group notification failed", {
-          repairId: req.params.id,
-          message: lineGroupError.message
-        });
-      }
+    if (approved && !result.alreadyProcessed) {
+      await notifyRepairStaffWorkflowSafely({
+        event: "reservation_confirmed",
+        repairId: req.params.id,
+        storeId,
+        staffName: getRequestStaffName(req),
+        source: "web_admin"
+      });
     }
+
     return res.json({
       message: result.alreadyProcessed ? `維修預約原本就是${approved ? "已確認" : "已拒絕"}狀態` : approved ? "已確認維修預約" : "已拒絕維修預約",
       repairId: Number(req.params.id),
@@ -1349,6 +1357,14 @@ router.post("/:id/estimate",  async (req, res, next) => {
       { storeId }
     );
     await syncReplacementConfirmationsFromQuote(req.params.id, storeId);
+    await notifyRepairStaffWorkflowSafely({
+      event: "quote_draft_saved",
+      repairId: req.params.id,
+      storeId,
+      amount: result?.totalAmount || Number(totalAmount || estimateAmount || 0),
+      updatedAt: new Date().toISOString(),
+      source: "web_admin"
+    });
     return res.json({
       message: result?.quoteCoreChanged ? "報價草稿已儲存，交叉確認已重設為待確認" : "報價草稿已儲存",
       quoteStatus: "pending",
@@ -1372,6 +1388,13 @@ router.post("/:id/send-quote-confirmation", async (req, res, next) => {
       source: "manual_resend"
     });
     const quoteConfirmationStatus = result.sent ? "SENT" : result.warning ? "FAILED" : "NOT_SENT";
+    await notifyRepairStaffWorkflowSafely({
+      event: "customer_quote_ready",
+      repairId: req.params.id,
+      storeId,
+      updatedAt: new Date().toISOString(),
+      source: "web_admin"
+    });
     return res.json({
       message: result.sent ? "已發送報價確認通知" : result.warning || result.message || "已產生報價確認連結",
       quoteConfirmation: {
@@ -1607,6 +1630,16 @@ router.post("/:id/cross-check", async (req, res, next) => {
       ]
     );
 
+    await notifyRepairStaffWorkflowSafely({
+      event: crossCheckStatus === REPAIR_CROSS_CHECK_STATUS.APPROVED ? "cross_check_approved" : "cross_check_needs_revision",
+      repairId: req.params.id,
+      storeId,
+      staffName: staff.name,
+      note,
+      crossCheckedAt: new Date().toISOString(),
+      source: "web_admin"
+    });
+
     return res.json({
       message: crossCheckStatus === REPAIR_CROSS_CHECK_STATUS.APPROVED ? "交叉確認已完成" : "已標記需要修正",
       crossCheckStatus,
@@ -1834,6 +1867,13 @@ router.post("/:id/approve", async (req, res, next) => {
 
     await logKpi(req.user.id, "REPAIR_ESTIMATE_APPROVED", "REPAIR_ORDER", req.params.id, 3);
     await logWorkflowEvent("repair_started", "REPAIR_ORDER", req.params.id, null, req.user.id);
+    await notifyRepairStaffWorkflowSafely({
+      event: "repair_started",
+      repairId: req.params.id,
+      storeId,
+      staffName: getRequestStaffName(req),
+      source: "web_admin"
+    });
     return res.json({
       message: "已開始維修",
       orderId: linkedOrder?.orderId || null,
@@ -1955,38 +1995,12 @@ router.post("/:id/complete",  async (req, res, next) => {
     );
 
 
-    try {
-      await notifyStaffActionRequired({
-        eventType: "REPAIR_COMPLETION",
-        relatedType: "REPAIR",
-        relatedId: req.params.id,
-        storeId,
-        title: "🔧 維修已完成，等待確認",
-        altText: "維修已完成，等待確認",
-        bodyLines: [
-          `維修單：#${req.params.id}`,
-          `客戶：${repairs[0].customerName || "-"}`,
-          `車型：${repairs[0].bikeModel || "-"}`,
-          `維修金額：NT$${Number(repairs[0].estimateAmount || 0).toLocaleString("zh-TW")}`,
-          "完成時間：剛剛",
-          "請確認維修內容及完工確認書後通知客戶。"
-        ],
-        actions: [
-          { label: "✅ 確認並傳送給客戶", action: "staff_line_repair_completion_customer_send" },
-          createStaffLineUriAction("📄 查看完工確認書", buildStaffPageUrl(`/repairs/${req.params.id}`)),
-          createStaffLineUriAction("✏️ 返回修改", buildStaffPageUrl(`/repairs/${req.params.id}`))
-        ],
-        payload: { repairId: Number(req.params.id), source: "repair_complete" }
-      }, {
-        registrationTypes: ["repair", "staff", "admin"],
-        purpose: "repair_completion_staff_group_notify"
-      });
-    } catch (staffLineError) {
-      console.warn("[staff-line] repair completion review notification failed", {
-        repairId: req.params.id,
-        message: staffLineError.message
-      });
-    }
+    await notifyRepairStaffWorkflowSafely({
+      event: "repair_completed",
+      repairId: req.params.id,
+      storeId,
+      source: "web_admin"
+    });
 
     let warning = null;
     if (isLineCustomerType(repairs[0].customerType) && repairs[0].lineUserId) {
@@ -2044,23 +2058,6 @@ router.post("/:id/complete",  async (req, res, next) => {
       }
     }
 
-    if (isLineCustomerType(repairs[0].customerType)) {
-      try {
-        await sendToGroups(["repair", "admin"], [
-          {
-            type: "text",
-            text: warning
-              ? `維修單 #${req.params.id} 已標記完修；客戶 LINE 通知失敗，請手動聯繫。`
-              : `維修單 #${req.params.id} 已標記完修，已通知客戶取車與填寫問卷。`
-          }
-        ]);
-      } catch (lineGroupError) {
-        console.warn("[repair-completed] staff group notification failed", {
-          repairId: req.params.id,
-          message: lineGroupError.message
-        });
-      }
-    }
     await logWorkflowEvent("repair_completed", "REPAIR_ORDER", req.params.id, null, req.user.id);
 
     let repairConfirmation = null;
@@ -2220,6 +2217,12 @@ router.post("/:id/pickup",  async (req, res, next) => {
     );
 
     await logKpi(req.user.id, "REPAIR_PICKED_UP", "REPAIR_ORDER", req.params.id, 4);
+    await notifyRepairStaffWorkflowSafely({
+      event: "picked_up",
+      repairId: req.params.id,
+      storeId,
+      source: "web_admin"
+    });
     return res.json({ message: "已完成取車", storageFee });
   } catch (error) {
     return next(error);

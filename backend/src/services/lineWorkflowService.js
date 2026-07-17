@@ -20,9 +20,8 @@ const { sendInternalTelegram } = require("./telegramService");
 const { applyRepairReservationDecision, notifyRepairCustomerSafely } = require("./repairReservationService");
 const { getTableColumns, hasColumn } = require("../utils/schema");
 const {
-  createUriAction: createStaffLineUriAction,
   notifyRepairReservationCreated,
-  notifyStaffActionRequired,
+  notifyRepairStaffWorkflowEvent,
   sendStaffLineFollowup
 } = require("./staffLineNotify");
 const {
@@ -3488,24 +3487,6 @@ async function handleRepairReservationWizard(event) {
       return true;
     }
 
-    const deliveryResult = await sendToGroupsWithResult(["repair", "admin"], [
-      buildGroupApprovalMessage("repair_reservation", {
-        id: result.repairId,
-        customerName: result.customer.name || "LINE 客戶",
-        customerPhone: result.customer.phone || null,
-        reservationDate: result.payload.reservationDate,
-        reservationTime: result.payload.reservationTime,
-        bikeModel: result.payload.bikeModel,
-        issueDescription: result.payload.issueDescription
-      })
-    ]);
-
-    await logWorkflowEvent("repair_reservation_group_notified", "REPAIR_ORDER", result.repairId, {
-      delivered: deliveryResult.delivered,
-      targetGroupIds: deliveryResult.targetGroupIds,
-      fromLine: true
-    }, null);
-
     try {
       await notifyRepairReservationCreated({
         repairId: result.repairId,
@@ -4485,9 +4466,8 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
   try {
     const [notificationRows] = await pool.query(
       `
-        SELECT ro.id, ro.store_id AS storeId, ro.estimate_amount AS estimateAmount, c.name AS customerName
+        SELECT ro.id, ro.store_id AS storeId, ro.estimate_amount AS estimateAmount
         FROM repair_orders ro
-        INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
         WHERE ro.id = ?
           AND ro.store_id = ?
         LIMIT 1
@@ -4496,33 +4476,14 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
     );
     const repairForNotification = notificationRows[0];
     if (repairForNotification) {
-      await notifyStaffActionRequired({
-        eventType: approved ? "CUSTOMER_ESTIMATE_APPROVED" : "CUSTOMER_ESTIMATE_REJECTED",
-        relatedType: "REPAIR",
-        relatedId: repairId,
+      await notifyRepairStaffWorkflowEvent({
+        event: approved ? "customer_approved" : "customer_rejected",
+        repairId,
         storeId: scopedStoreId,
-        title: approved ? "✅ 客戶已同意報價" : "❌ 客戶拒絕報價",
-        altText: approved ? "客戶已同意報價" : "客戶拒絕報價",
-        bodyLines: [
-          `維修單：#${repairId}`,
-          `客戶：${repairForNotification.customerName || "-"}`,
-          `報價：NT$${Number(repairForNotification.estimateAmount || 0).toLocaleString("zh-TW")}`
-        ],
-        actions: approved
-          ? [
-              { label: "🔧 開始維修", action: "staff_line_action_done" },
-              { label: "🙋 我來處理", action: "staff_line_assign" },
-              createStaffLineUriAction("📋 查看詳情", buildStaffPageUrl(`/repairs/${repairId}`))
-            ]
-          : [
-              { label: "📞 已聯絡客戶", action: "staff_line_action_done" },
-              createStaffLineUriAction("✏️ 修改報價", buildStaffPageUrl(`/repairs/${repairId}`)),
-              createStaffLineUriAction("📋 查看詳情", buildStaffPageUrl(`/repairs/${repairId}`))
-            ],
-        payload: { approved, source, orderId: result.linkedOrder?.orderId || null }
+        amount: repairForNotification.estimateAmount || 0,
+        source
       }, {
-        registrationTypes: ["repair", "staff", "admin"],
-        purpose: approved ? "customer_estimate_approved_staff_group_notify" : "customer_estimate_rejected_staff_group_notify"
+        purpose: approved ? "repair_customer_approved_staff_group_notify" : "repair_customer_rejected_staff_group_notify"
       });
     }
   } catch (staffLineError) {
@@ -4533,14 +4494,6 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
     });
   }
 
-  await sendToGroups(["repair", "admin"], [
-    {
-      type: "text",
-      text: approved
-        ? `維修單 #${repairId} 客戶已同意報價。${result.linkedOrder?.orderId ? ` 已連結訂單 #${result.linkedOrder.orderId}。` : ""}${result.alreadyProcessed ? " 已略過重複建立。" : ""}`
-        : `維修單 #${repairId} 客戶已拒絕報價。${result.alreadyProcessed ? " 已略過重複處理。" : ""}`
-    }
-  ]);
 
   return result;
 }
@@ -4992,17 +4945,23 @@ async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = 
     connection
   });
 
-  await sendToGroups(["repair", "admin"], [
-    {
-      type: "text",
-      text: [
-        `維修單 #${repairId} 已送出報價。`,
-        `客戶：${repairInfo.customerName || "-"}`,
-        `總額：${formatCurrency(draft.totalAmount)}`,
-        source ? `來源：${source === "line_staff" ? "LINE Staff" : source === "web_admin" ? "Web Admin" : source}` : null
-      ].filter(Boolean).join("\n")
-    }
-  ]);
+  try {
+    await notifyRepairStaffWorkflowEvent({
+      event: "customer_quote_ready",
+      repairId,
+      storeId: scopedStoreId,
+      amount: draft.totalAmount,
+      updatedAt: new Date().toISOString(),
+      source
+    }, {
+      purpose: "repair_customer_quote_ready_staff_group_notify"
+    });
+  } catch (staffLineError) {
+    console.warn("[staff-line] repair quote ready notification failed", {
+      repairId,
+      message: staffLineError.message
+    });
+  }
 
   await logWorkflowEvent(
     "repair_estimate_sent",

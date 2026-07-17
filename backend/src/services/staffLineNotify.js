@@ -11,7 +11,7 @@ const {
 } = require("./staffLineNotificationService");
 
 const LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push";
-const STAFF_GROUP_TYPES = ["repair", "staff", "admin"];
+const STAFF_GROUP_TYPES = ["staff"];
 
 function maskLineGroupId(value) {
   const text = String(value || "").trim();
@@ -35,6 +35,20 @@ function maskPhone(value) {
 function formatCurrency(value) {
   const amount = Number(value || 0);
   return Number.isFinite(amount) ? amount.toLocaleString("zh-TW") : "0";
+}
+
+function formatStaffName(value) {
+  return formatValue(value || "門市人員");
+}
+
+function formatRepairDate(value) {
+  return formatValue(value);
+}
+
+function compactText(value, maxLength = 80) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "-";
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
 }
 
 function normalizeRecordId(value) {
@@ -189,13 +203,219 @@ function buildRepairReservationMessage(payload = {}) {
   return [
     "🔧 維修預約接收",
     `工單：#${formatValue(payload.repairId)}`,
-    `客戶：${formatValue(payload.customerName)}`,
-    `電話：${formatValue(payload.customerPhone)}`,
     `預約：${reservationDateTime || "-"}`,
     `內容：${formatValue(repairContent)}`,
     payload.storeName ? `門市：${formatValue(payload.storeName)}` : `store_id：${formatValue(payload.storeId)}`,
     payload.adminUrl ? `管理連結：${payload.adminUrl}` : null
   ].filter(Boolean).join("\n");
+}
+
+function buildRepairStaffWorkflowNotification(input = {}) {
+  const repairId = normalizeRecordId(input.repairId);
+  const event = String(input.event || input.eventType || "").trim();
+  const amount = `NT$ ${formatCurrency(input.amount ?? input.estimateAmount ?? input.totalAmount)}`;
+  const staffName = formatStaffName(input.staffName);
+  const updatedAt = String(input.updatedAt || input.diagnosisUpdatedAt || input.crossCheckedAt || "").trim();
+  const eventKeySuffix = updatedAt ? `:${updatedAt}` : "";
+  const repairKey = `repair:${repairId || 0}`;
+
+  if (event === "reservation_created") {
+    return {
+      eventType: "REPAIR_RESERVATION_CREATED",
+      title: "【新維修預約】",
+      altText: "新維修預約",
+      bodyLines: [
+        `維修單號：#${formatValue(repairId)}`,
+        `車型：${formatValue(input.bikeModel)}`,
+        `預約日期：${formatRepairDate(input.date || input.reservationDate)}`,
+        "狀態：待門市確認"
+      ],
+      idempotencyKey: `${repairKey}:reservation_created`
+    };
+  }
+
+  if (event === "reservation_confirmed") {
+    return {
+      eventType: "REPAIR_RESERVATION_CONFIRMED",
+      title: "【維修預約已確認】",
+      altText: "維修預約已確認",
+      bodyLines: [
+        `維修單號：#${formatValue(repairId)}`,
+        `確認人員：${staffName}`,
+        "下一步：請填寫初步診斷"
+      ],
+      idempotencyKey: `${repairKey}:reservation_confirmed`
+    };
+  }
+
+  if (event === "diagnosis_saved") {
+    return {
+      eventType: "REPAIR_DIAGNOSIS_SAVED",
+      title: "【初步診斷已完成】",
+      altText: "初步診斷已完成",
+      bodyLines: [
+        `維修單號：#${formatValue(repairId)}`,
+        `診斷人員：${staffName}`,
+        input.diagnosisSummary ? `診斷摘要：${compactText(input.diagnosisSummary, 60)}` : null,
+        "下一步：請建立維修報價草稿"
+      ],
+      idempotencyKey: `${repairKey}:diagnosis_saved${eventKeySuffix}`
+    };
+  }
+
+  if (event === "quote_draft_saved") {
+    return {
+      eventType: "REPAIR_QUOTE_DRAFT_SAVED",
+      title: "【維修報價草稿已儲存】",
+      altText: "維修報價草稿已儲存",
+      bodyLines: [
+        `維修單號：#${formatValue(repairId)}`,
+        `報價金額：${amount}`,
+        "下一步：請完成交叉確認"
+      ],
+      idempotencyKey: `${repairKey}:quote_draft_saved${eventKeySuffix}`
+    };
+  }
+
+  if (event === "cross_check_approved") {
+    return {
+      eventType: "REPAIR_CROSS_CHECK_APPROVED",
+      title: "【交叉確認完成】",
+      altText: "交叉確認完成",
+      bodyLines: [
+        `維修單號：#${formatValue(repairId)}`,
+        `確認人員：${staffName}`,
+        "結果：確認無誤",
+        "下一步：可發送報價給客戶"
+      ],
+      idempotencyKey: `${repairKey}:cross_check${eventKeySuffix}`
+    };
+  }
+
+  if (event === "cross_check_needs_revision") {
+    return {
+      eventType: "REPAIR_CROSS_CHECK_NEEDS_REVISION",
+      title: "【交叉確認結果】",
+      altText: "交叉確認結果",
+      bodyLines: [
+        `維修單號：#${formatValue(repairId)}`,
+        "結果：需要修正",
+        `備註：${compactText(input.note, 80)}`
+      ],
+      idempotencyKey: `${repairKey}:cross_check${eventKeySuffix}`
+    };
+  }
+
+  if (event === "customer_quote_ready") {
+    return {
+      eventType: "REPAIR_CUSTOMER_QUOTE_READY",
+      title: "【客戶報價發送準備完成】",
+      altText: "客戶報價發送準備完成",
+      bodyLines: [
+        `維修單號：#${formatValue(repairId)}`,
+        "狀態：可發送報價給客戶"
+      ],
+      idempotencyKey: `${repairKey}:customer_quote_ready${eventKeySuffix}`
+    };
+  }
+
+  if (event === "customer_approved") {
+    return {
+      eventType: "REPAIR_CUSTOMER_APPROVED",
+      title: "【客戶已同意維修報價】",
+      altText: "客戶已同意維修報價",
+      bodyLines: [
+        `維修單號：#${formatValue(repairId)}`,
+        `報價金額：${amount}`,
+        "下一步：等待相關零件到店後開始維修"
+      ],
+      idempotencyKey: `${repairKey}:customer_approved`
+    };
+  }
+
+  if (event === "customer_rejected") {
+    return {
+      eventType: "REPAIR_CUSTOMER_REJECTED",
+      title: "【客戶拒絕維修報價】",
+      altText: "客戶拒絕維修報價",
+      bodyLines: [
+        `維修單號：#${formatValue(repairId)}`,
+        "請由門市聯絡客戶確認後續處理"
+      ],
+      idempotencyKey: `${repairKey}:customer_rejected`
+    };
+  }
+
+  if (event === "repair_started") {
+    return {
+      eventType: "REPAIR_STARTED",
+      title: "【維修已開始】",
+      altText: "維修已開始",
+      bodyLines: [
+        `維修單號：#${formatValue(repairId)}`,
+        `處理人員：${staffName}`
+      ],
+      idempotencyKey: `${repairKey}:repair_started`
+    };
+  }
+
+  if (event === "repair_completed") {
+    return {
+      eventType: "REPAIR_COMPLETED",
+      title: "【維修已完成】",
+      altText: "維修已完成",
+      bodyLines: [
+        `維修單號：#${formatValue(repairId)}`,
+        "狀態：等待客戶取車"
+      ],
+      idempotencyKey: `${repairKey}:repair_completed`
+    };
+  }
+
+  if (event === "picked_up") {
+    return {
+      eventType: "REPAIR_PICKED_UP",
+      title: "【客戶已取車】",
+      altText: "客戶已取車",
+      bodyLines: [
+        `維修單號：#${formatValue(repairId)}`,
+        "本次維修流程已完成"
+      ],
+      idempotencyKey: `${repairKey}:picked_up`
+    };
+  }
+
+  return null;
+}
+
+async function notifyRepairStaffWorkflowEvent(input = {}, options = {}) {
+  const repairId = normalizeRecordId(input.repairId);
+  const storeId = normalizeStoreId(input.storeId) || await resolveRepairStoreId({ repairId });
+  const notification = buildRepairStaffWorkflowNotification(input);
+  if (!repairId || !storeId || !notification) {
+    return { delivered: 0, skipped: true, reason: "missing_repair_staff_workflow_fields" };
+  }
+
+  return notifyStaffActionRequired({
+    eventType: notification.eventType,
+    relatedType: "REPAIR",
+    relatedId: repairId,
+    storeId,
+    title: notification.title,
+    altText: notification.altText,
+    bodyLines: notification.bodyLines,
+    idempotencyKey: notification.idempotencyKey,
+    actions: Array.isArray(input.actions) ? input.actions : [],
+    payload: {
+      repairId,
+      event: input.event || input.eventType,
+      amount: input.amount ?? input.estimateAmount ?? input.totalAmount ?? null,
+      source: input.source || null
+    }
+  }, {
+    registrationTypes: ["staff"],
+    purpose: options.purpose || `${notification.eventType.toLowerCase()}_staff_group_notify`
+  });
 }
 
 function buildPaymentInquiryMessage(payload = {}) {
@@ -327,10 +547,15 @@ async function resolveRepairStoreId(payload = {}, connection = pool) {
   return normalizeStoreId(rows[0]?.storeId);
 }
 
-async function resolveStaffLineGroupTarget(connection = pool, registrationTypes = STAFF_GROUP_TYPES) {
+async function resolveStaffLineGroupTarget(connection = pool, registrationTypes = STAFF_GROUP_TYPES, options = {}) {
   const resolvedRegistrationTypes = Array.isArray(registrationTypes) && registrationTypes.length > 0
     ? [...registrationTypes]
     : [...STAFF_GROUP_TYPES];
+  const scopedStoreId = normalizeStoreId(options.storeId);
+  const storeClause = scopedStoreId ? "AND store_id = ?" : "";
+  const params = scopedStoreId
+    ? [resolvedRegistrationTypes, scopedStoreId]
+    : [resolvedRegistrationTypes];
 
   const orderCases = resolvedRegistrationTypes.map((type, index) => `WHEN '${type}' THEN ${index + 1}`).join(" ");
   const [rows] = await connection.query(
@@ -339,10 +564,11 @@ async function resolveStaffLineGroupTarget(connection = pool, registrationTypes 
       FROM line_group_registrations
       WHERE is_active = 1
         AND registration_type IN (?)
+        ${storeClause}
       ORDER BY CASE registration_type ${orderCases} ELSE 99 END, updated_at DESC, id DESC
       LIMIT 1
     `,
-    [resolvedRegistrationTypes]
+    params
   );
 
   return rows[0] || null;
@@ -390,7 +616,7 @@ async function pushStaffLineGroupMessages(storeId, messages, options = {}) {
     return { delivered: 0, skipped: true, reason: "missing_store_scope" };
   }
 
-  const target = await resolveStaffLineGroupTarget(pool, targetRegistrationTypes);
+  const target = await resolveStaffLineGroupTarget(pool, targetRegistrationTypes, { storeId: normalizedStoreId });
 
   if (isStaffLineNotifySuppressed()) {
     return {
@@ -449,7 +675,7 @@ async function notifyStaffActionRequired(input = {}, options = {}) {
   const targetRegistrationTypes = Array.isArray(options.registrationTypes) && options.registrationTypes.length > 0
     ? options.registrationTypes
     : STAFF_GROUP_TYPES;
-  const target = await resolveStaffLineGroupTarget(pool, targetRegistrationTypes);
+  const target = await resolveStaffLineGroupTarget(pool, targetRegistrationTypes, { storeId });
   const idempotencyKey = input.idempotencyKey || buildIdempotencyKey(eventType, storeId, relatedId, "GROUP_NOTIFY");
   const notificationRecord = await createStaffLineNotification({
     storeId,
@@ -528,27 +754,15 @@ async function notifyRepairReservationCreated(payload = {}, options = {}) {
       return { delivered: 0, skipped: true, reason: "missing_store_scope" };
     }
 
-    return notifyStaffActionRequired({
-      eventType: "REPAIR_CREATED",
-      relatedType: "REPAIR",
-      relatedId: payload.repairId,
+    return notifyRepairStaffWorkflowEvent({
+      ...payload,
+      event: "reservation_created",
       storeId,
-      title: "🔧 新增維修預約",
-      altText: "新增維修預約",
-      bodyLines: [
-        `維修單：#${formatValue(payload.repairId)}`,
-        `客戶：${formatValue(payload.customerName)}`,
-        `電話：${maskPhone(payload.customerPhone)}`,
-        `預約時間：${[formatValue(payload.reservationDate), formatValue(payload.reservationTime, "")].filter(Boolean).join(" ") || "-"}`,
-        `車型：${formatValue(payload.bikeModel)}`,
-        `問題：${formatValue(payload.issueDescription)}`
-      ],
       actions: [
         { label: "✅ 已確認預約", action: "repair_reservation_approve" },
         { label: "🙋 我來處理", action: "staff_line_assign" },
         createUriAction("📋 查看詳情", payload.adminUrl || buildStaffPageUrl(`/repairs/${payload.repairId}`))
-      ],
-      payload
+      ]
     }, {
       registrationTypes: targetRegistrationTypes,
       purpose: "repair_created_staff_group_notify"
@@ -590,7 +804,8 @@ async function notifyPaymentInquiryCreated(payload = {}, options = {}) {
     if (isStaffLineNotifySuppressed()) {
       const target = await resolveStaffLineGroupTarget(
         pool,
-        targetRegistrationTypes
+        targetRegistrationTypes,
+        { storeId }
       );
       console.info("[staff-line] payment_inquiry_notify_skipped", {
         orderNo: payload.orderNo || null,
@@ -632,7 +847,8 @@ async function notifyPaymentInquiryCreated(payload = {}, options = {}) {
 
     const target = await resolveStaffLineGroupTarget(
       pool,
-      targetRegistrationTypes
+      targetRegistrationTypes,
+      { storeId }
     );
     if (!target?.lineGroupId) {
       console.info("[staff-line] payment_inquiry_notify_skipped", {
@@ -765,6 +981,7 @@ async function notifyOrderReservationCreated(payload = {}, options = {}) {
 module.exports = {
   buildOrderDetailLink,
   buildRepairReservationMessage,
+  buildRepairStaffWorkflowNotification,
   buildStaffPageUrl,
   createFlexMessage,
   createPostbackAction,
@@ -774,6 +991,7 @@ module.exports = {
   notifyOrderReservationCreated,
   notifyPaymentInquiryCreated,
   notifyRepairReservationCreated,
+  notifyRepairStaffWorkflowEvent,
   pushStaffLineGroupMessages,
   resolveStaffLineGroupTarget,
   sendStaffLineFollowup
