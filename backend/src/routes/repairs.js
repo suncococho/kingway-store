@@ -33,7 +33,7 @@ const {
   buildGroupApprovalMessage,
   buildRepairQuoteConfirmationUrl,
   logWorkflowEvent,
-  sendRepairEstimateQuotation,
+  saveRepairEstimateDraft,
   sendRepairQuoteConfirmationIfNeeded,
   sendToGroups,
   sendToGroupsWithResult
@@ -59,6 +59,68 @@ const {
 
 const router = express.Router();
 const REPAIR_ALLOWED_ROLES = ["ADMIN", "MANAGER", "STAFF", "CASHIER", "REPAIR", "USER", "EMPLOYEE"];
+const REPAIR_CROSS_CHECK_ALLOWED_ROLES = ["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"];
+const REPAIR_CROSS_CHECK_STATUS = {
+  PENDING: "PENDING",
+  APPROVED: "APPROVED",
+  NEEDS_REVISION: "NEEDS_REVISION"
+};
+const INITIAL_DIAGNOSIS_REQUIRED_MESSAGE = "請先填寫並儲存初步診斷內容，才能進行報價。";
+
+function createCodedRepairError(message, statusCode, code) {
+  return createError(message, statusCode, code);
+}
+
+function normalizeCrossCheckStatus(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === REPAIR_CROSS_CHECK_STATUS.APPROVED || normalized === "確認無誤") {
+    return REPAIR_CROSS_CHECK_STATUS.APPROVED;
+  }
+  if (normalized === REPAIR_CROSS_CHECK_STATUS.NEEDS_REVISION || normalized === "需要修正") {
+    return REPAIR_CROSS_CHECK_STATUS.NEEDS_REVISION;
+  }
+  throw createCodedRepairError("請選擇交叉確認結果", 400, "INVALID_CROSS_CHECK_STATUS");
+}
+
+function hasInitialDiagnosis(row = {}) {
+  return Boolean(String(row.inspectionNotes || row.inspection_notes || "").trim());
+}
+
+function assertCrossCheckColumns(repairColumns) {
+  const requiredColumns = [
+    "cross_check_status",
+    "cross_checked_by_staff_id",
+    "cross_checked_at",
+    "cross_check_note"
+  ];
+  const missing = requiredColumns.filter((column) => !hasColumn(repairColumns, column));
+  if (missing.length) {
+    throw createCodedRepairError("交叉確認欄位尚未建立，請先執行 staging migration。", 503, "REPAIR_CROSS_CHECK_SCHEMA_REQUIRED");
+  }
+}
+
+async function getCrossCheckStaff(staffUserId, storeId, connection = pool) {
+  const [rows] = await connection.query(
+    `
+      SELECT id, username, display_name AS displayName, role, is_active AS isActive, store_id AS storeId
+      FROM staff_users
+      WHERE id = ?
+        AND store_id = ?
+        AND is_active = 1
+        AND role IN (?)
+      LIMIT 1
+    `,
+    [staffUserId, storeId, REPAIR_CROSS_CHECK_ALLOWED_ROLES]
+  );
+  if (!rows[0]) {
+    throw createCodedRepairError("目前帳號沒有交叉確認權限", 403, "CROSS_CHECK_ROLE_FORBIDDEN");
+  }
+  return {
+    id: rows[0].id,
+    name: String(rows[0].displayName || rows[0].username || rows[0].id).trim(),
+    role: rows[0].role
+  };
+}
 
 function getRepairAssignmentActorName(req) {
   return String(
@@ -308,6 +370,11 @@ router.get("/",  async (req, res, next) => {
           ${selectColumn(repairColumns, "ro", "group_confirmed_at", "groupConfirmedAt")},
           ${selectColumn(repairColumns, "ro", "group_confirmed_by", "groupConfirmedBy")},
           ${buildRepairStaffSelects(repairColumns)},
+          ${selectColumn(repairColumns, "ro", "inspection_notes", "inspectionNotes")},
+          ${selectColumn(repairColumns, "ro", "cross_check_status", "crossCheckStatus", "'PENDING'")},
+          ${selectColumn(repairColumns, "ro", "cross_checked_by_staff_id", "crossCheckedByStaffId", "NULL")},
+          ${selectColumn(repairColumns, "ro", "cross_checked_at", "crossCheckedAt", "NULL")},
+          ${selectColumn(repairColumns, "ro", "cross_check_note", "crossCheckNote", "NULL")},
           ${selectColumn(repairColumns, "ro", "customer_estimate_response", "customerEstimateResponse", "'pending'")},
           ${selectColumn(repairColumns, "ro", "customer_estimate_responded_at", "customerEstimateRespondedAt")},
           ${selectColumn(repairColumns, "ro", "survey_id", "surveyId")},
@@ -567,23 +634,62 @@ router.get("/trash/list", async (req, res, next) => {
 router.patch("/:id/inspection", async (req, res, next) => {
   try {
     const storeId = req.storeId;
+    const repairColumns = await getTableColumns(pool, "repair_orders");
     const { inspectionFee = 0, inspectionNotes = "" } = req.body || {};
     const notes = String(inspectionNotes || "").trim();
 
     if (!notes) {
-      return res.status(400).json({ message: "請先填寫檢查內容" });
+      throw createCodedRepairError(INITIAL_DIAGNOSIS_REQUIRED_MESSAGE, 400, "INITIAL_DIAGNOSIS_REQUIRED");
     }
+
+    await assertRepairBelongsToStore(req.params.id, storeId);
+    const [stateRows] = await pool.query(
+      `
+        SELECT status, completed_at AS completedAt, picked_up_at AS pickedUpAt, inspection_notes AS inspectionNotes
+        FROM repair_orders
+        WHERE id = ?
+          AND store_id = ?
+        LIMIT 1
+      `,
+      [req.params.id, storeId]
+    );
+    if (!stateRows[0]) {
+      throw createError("找不到維修工單", 404);
+    }
+    assertRepairEditable(stateRows[0]);
+
+    const updates = ["inspection_fee = ?", "inspection_notes = ?", "updated_at = NOW()"];
+    const params = [Number(inspectionFee || 0), notes];
+    const diagnosisChanged = String(stateRows[0].inspectionNotes || "").trim() !== notes;
+    if (hasColumn(repairColumns, "diagnosis_updated_by_staff_id")) {
+      updates.push("diagnosis_updated_by_staff_id = ?");
+      params.push(req.user?.id || null);
+    }
+    if (hasColumn(repairColumns, "diagnosis_updated_at")) {
+      updates.push("diagnosis_updated_at = NOW()");
+    }
+    if (diagnosisChanged && hasColumn(repairColumns, "cross_check_status")) {
+      updates.push("cross_check_status = 'PENDING'");
+    }
+    if (diagnosisChanged && hasColumn(repairColumns, "cross_checked_by_staff_id")) {
+      updates.push("cross_checked_by_staff_id = NULL");
+    }
+    if (diagnosisChanged && hasColumn(repairColumns, "cross_checked_at")) {
+      updates.push("cross_checked_at = NULL");
+    }
+    if (diagnosisChanged && hasColumn(repairColumns, "cross_check_note")) {
+      updates.push("cross_check_note = NULL");
+    }
+    params.push(req.params.id, storeId);
 
     await pool.query(
       `
-      UPDATE repair_orders
-      SET inspection_fee = ?,
-          inspection_notes = ?,
-          updated_at = NOW()
-      WHERE id = ?
-        AND customer_id IN (SELECT id FROM customers WHERE store_id = ?)
+        UPDATE repair_orders
+        SET ${updates.join(", ")}
+        WHERE id = ?
+          AND store_id = ?
       `,
-      [Number(inspectionFee || 0), notes, req.params.id, storeId]
+      params
     );
 
     const [repairRows] = await pool.query(
@@ -599,7 +705,15 @@ router.patch("/:id/inspection", async (req, res, next) => {
       });
     }
 
-    return res.json({ ok: true });
+    await pool.query(
+      `
+        INSERT INTO repair_logs (repair_order_id, action, note)
+        VALUES (?, 'initial_diagnosis_saved', ?)
+      `,
+      [req.params.id, diagnosisChanged ? "已儲存初步診斷，交叉確認重設為待確認" : "已儲存初步診斷"]
+    );
+
+    return res.json({ ok: true, inspectionNotes: notes, crossCheckStatus: diagnosisChanged ? "PENDING" : undefined });
   } catch (error) {
     return next(error);
   }
@@ -853,6 +967,14 @@ router.get("/:id",  async (req, res, next) => {
           ro.inspection_notes AS inspectionNotes,
           ${selectColumn(repairColumns, "ro", "mileage_km", "mileageKm", "NULL")},
           ${buildRepairStaffSelects(repairColumns)},
+          ${selectColumn(repairColumns, "ro", "cross_check_status", "crossCheckStatus", "'PENDING'")},
+          ${selectColumn(repairColumns, "ro", "cross_checked_by_staff_id", "crossCheckedByStaffId", "NULL")},
+          ${selectColumn(repairColumns, "ro", "cross_checked_at", "crossCheckedAt", "NULL")},
+          ${selectColumn(repairColumns, "ro", "cross_check_note", "crossCheckNote", "NULL")},
+          ${selectColumn(repairColumns, "ro", "diagnosis_updated_by_staff_id", "diagnosisUpdatedByStaffId", "NULL")},
+          ${selectColumn(repairColumns, "ro", "diagnosis_updated_at", "diagnosisUpdatedAt", "NULL")},
+          cross_staff.display_name AS crossCheckedByStaffName,
+          diagnosis_staff.display_name AS diagnosisUpdatedByStaffName,
           c.name AS customerName,
           c.phone AS customerPhone,
           c.line_user_id AS lineUserId,
@@ -861,6 +983,8 @@ router.get("/:id",  async (req, res, next) => {
         INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ?
         LEFT JOIN orders linked_o ON linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id
         ${buildRepairStaffJoin(repairColumns)}
+        LEFT JOIN staff_users cross_staff ON cross_staff.id = ro.cross_checked_by_staff_id
+        LEFT JOIN staff_users diagnosis_staff ON diagnosis_staff.id = ro.diagnosis_updated_by_staff_id
         WHERE ro.id = ?
           AND ro.deleted_at IS NULL
           AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
@@ -1209,7 +1333,7 @@ router.post("/:id/estimate",  async (req, res, next) => {
     const storeId = req.storeId;
     await assertRepairBelongsToStore(req.params.id, storeId);
     const { estimateAmount, note, details, items, inspectionFee, inspectionNotes, partsFee, laborFee, totalAmount, notes } = req.body;
-    const result = await sendRepairEstimateQuotation(
+    const result = await saveRepairEstimateDraft(
       req.params.id,
       {
         items: Array.isArray(items) ? items : [],
@@ -1225,23 +1349,14 @@ router.post("/:id/estimate",  async (req, res, next) => {
       { storeId }
     );
     await syncReplacementConfirmationsFromQuote(req.params.id, storeId);
-    const quoteConfirmation = result?.quoteConfirmation || null;
-    const quoteConfirmationStatus = quoteConfirmation?.sent ? "SENT" : quoteConfirmation?.warning ? "FAILED" : null;
     return res.json({
-      message: "已送出報價審核",
-      quoteStatus: "sent",
+      message: result?.quoteCoreChanged ? "報價草稿已儲存，交叉確認已重設為待確認" : "報價草稿已儲存",
+      quoteStatus: "pending",
       totalAmount: result?.totalAmount || Number(totalAmount || estimateAmount || 0),
-      quoteConfirmation: quoteConfirmation
-        ? {
-            ...quoteConfirmation,
-            quoteConfirmationStatus,
-            lineSent: Boolean(quoteConfirmation.sent)
-          }
-        : null,
-      quoteConfirmationStatus,
-      quoteConfirmationWarning: quoteConfirmation?.warning || null,
-      quoteConfirmationLink: quoteConfirmation?.link || buildRepairQuoteConfirmationUrl(req.params.id),
-      lineSent: Boolean(quoteConfirmation?.sent)
+      crossCheckStatus: result?.crossCheckStatus || "PENDING",
+      quoteConfirmationStatus: "NOT_SENT",
+      quoteConfirmationLink: buildRepairQuoteConfirmationUrl(req.params.id),
+      lineSent: false
     });
   } catch (error) {
     return next(error);
@@ -1284,6 +1399,14 @@ router.get("/:id/work-order", async (req, res, next) => {
           ro.*,
           ro.inspection_notes AS inspectionNotes,
           ${selectColumn(repairColumns, "ro", "mileage_km", "mileageKm", "NULL")},
+          ${selectColumn(repairColumns, "ro", "cross_check_status", "crossCheckStatus", "'PENDING'")},
+          ${selectColumn(repairColumns, "ro", "cross_checked_by_staff_id", "crossCheckedByStaffId", "NULL")},
+          ${selectColumn(repairColumns, "ro", "cross_checked_at", "crossCheckedAt", "NULL")},
+          ${selectColumn(repairColumns, "ro", "cross_check_note", "crossCheckNote", "NULL")},
+          ${selectColumn(repairColumns, "ro", "diagnosis_updated_by_staff_id", "diagnosisUpdatedByStaffId", "NULL")},
+          ${selectColumn(repairColumns, "ro", "diagnosis_updated_at", "diagnosisUpdatedAt", "NULL")},
+          cross_staff.display_name AS crossCheckedByStaffName,
+          diagnosis_staff.display_name AS diagnosisUpdatedByStaffName,
           c.name AS customerName,
           c.phone AS customerPhone,
           c.line_user_id AS lineUserId,
@@ -1294,6 +1417,8 @@ router.get("/:id/work-order", async (req, res, next) => {
         INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ro.store_id
         INNER JOIN stores s ON s.id = ro.store_id
         LEFT JOIN orders linked_o ON linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id
+        LEFT JOIN staff_users cross_staff ON cross_staff.id = ro.cross_checked_by_staff_id
+        LEFT JOIN staff_users diagnosis_staff ON diagnosis_staff.id = ro.diagnosis_updated_by_staff_id
         WHERE ro.id = ?
           AND ro.store_id = ?
           AND ro.deleted_at IS NULL
@@ -1415,6 +1540,80 @@ router.post("/:id/replacement-confirmations/:replacementId/cross-check", async (
     return res.json({
       message: "交叉確認已完成",
       ...result
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/:id/cross-check", async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const repairColumns = await getTableColumns(pool, "repair_orders");
+    assertCrossCheckColumns(repairColumns);
+    await assertRepairBelongsToStore(req.params.id, storeId);
+
+    const crossCheckStatus = normalizeCrossCheckStatus(req.body?.status || req.body?.crossCheckStatus || req.body?.result);
+    const note = String(req.body?.note || req.body?.crossCheckNote || "").trim() || null;
+    const staff = await getCrossCheckStaff(req.user?.id, storeId);
+
+    const [rows] = await pool.query(
+      `
+        SELECT reservation_status AS reservationStatus, status, inspection_notes AS inspectionNotes, estimate_amount AS estimateAmount, estimate_details AS estimateDetails, completed_at AS completedAt, picked_up_at AS pickedUpAt
+        FROM repair_orders
+        WHERE id = ?
+          AND store_id = ?
+        LIMIT 1
+      `,
+      [req.params.id, storeId]
+    );
+    const repair = rows[0];
+    if (!repair) {
+      throw createError("找不到維修工單", 404);
+    }
+    assertRepairEditable(repair);
+    if (String(repair.reservationStatus || "").trim() !== "approved") {
+      throw createCodedRepairError("需先確認預約後才能交叉確認", 400, "RESERVATION_CONFIRMATION_REQUIRED");
+    }
+    if (!hasInitialDiagnosis(repair)) {
+      throw createCodedRepairError(INITIAL_DIAGNOSIS_REQUIRED_MESSAGE, 400, "INITIAL_DIAGNOSIS_REQUIRED");
+    }
+    if (Number(repair.estimateAmount || 0) <= 0 && !String(repair.estimateDetails || "").trim()) {
+      throw createCodedRepairError("請先儲存維修報價草稿，才能進行交叉確認。", 400, "QUOTE_DRAFT_REQUIRED");
+    }
+
+    await pool.query(
+      `
+        UPDATE repair_orders
+        SET cross_check_status = ?,
+            cross_checked_by_staff_id = ?,
+            cross_checked_at = NOW(),
+            cross_check_note = ?,
+            updated_at = NOW()
+        WHERE id = ?
+          AND store_id = ?
+      `,
+      [crossCheckStatus, staff.id, note, req.params.id, storeId]
+    );
+
+    await pool.query(
+      `
+        INSERT INTO repair_logs (repair_order_id, action, note)
+        VALUES (?, 'repair_quote_cross_check', ?)
+      `,
+      [
+        req.params.id,
+        `${crossCheckStatus === REPAIR_CROSS_CHECK_STATUS.APPROVED ? "確認無誤" : "需要修正"}：${staff.name}${note ? `；${note}` : ""}`
+      ]
+    );
+
+    return res.json({
+      message: crossCheckStatus === REPAIR_CROSS_CHECK_STATUS.APPROVED ? "交叉確認已完成" : "已標記需要修正",
+      crossCheckStatus,
+      crossCheckedByStaffId: staff.id,
+      crossCheckedByStaffName: staff.name,
+      crossCheckedAt: new Date().toISOString(),
+      crossCheckNote: note
     });
   } catch (error) {
     return next(error);

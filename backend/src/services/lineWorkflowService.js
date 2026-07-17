@@ -1284,35 +1284,55 @@ function buildRepairEstimateCustomerMessages(repairInfo, payload) {
   const items = Array.isArray(payload.items) ? payload.items : [];
   const inspectionFee = Number(payload.inspectionFee || 0);
   const quoteUrl = payload.quoteUrl || buildRepairQuoteConfirmationUrl(repairInfo?.id);
+  const diagnosis = String(repairInfo?.inspectionNotes || "").trim();
+  const amountText = `NT$ ${Number(payload.totalAmount || 0).toFixed(0)}`;
   const lines = [
     "您好，您的車輛維修報價已完成。",
     repairInfo?.id ? `維修單號：#${repairInfo.id}` : null,
     repairInfo?.bikeModel ? `車款：${repairInfo.bikeModel}` : null,
+    "【初步診斷結果】",
+    diagnosis || "-",
+    "【維修報價】",
     items.length > 0 ? "品項：" : null,
     ...items.map((item, index) =>
       `${index + 1}. ${item.sku ? `${item.name} (${item.sku})` : item.name} x${Number(item.quantity || 0)} ${formatCurrency(Number(item.unitPrice || 0))} = ${formatCurrency(Number(item.total || 0))}`
     ),
     `檢查費：${formatCurrency(inspectionFee)}`,
     `工資：${formatCurrency(payload.laborFee || 0)}`,
-    `報價金額：${formatCurrency(payload.totalAmount || 0)}`,
+    `報價金額：${amountText}`,
     payload.notes ? `備註：${payload.notes}` : null,
+    "若您同意本次維修報價，門市將安排所需零件。",
+    "相關零件抵達門市後，我們將開始進行維修。",
+    "維修完成後，系統會再次發送通知，請您留意訊息。",
     "請點選下方連結確認報價內容，並選擇是否同意維修。"
   ].filter(Boolean);
+  const actions = [
+    createUriAction("確認維修報價", quoteUrl),
+    createPostbackAction("同意報價", "repair_estimate_approve", repairInfo.id),
+    createPostbackAction("拒絕報價", "repair_estimate_reject", repairInfo.id)
+  ];
 
   return withCustomerQuickReply([
+    createFlexMessage(
+      "維修報價確認",
+      "維修報價確認",
+      [
+        repairInfo?.id ? `維修單號：#${repairInfo.id}` : null,
+        repairInfo?.bikeModel ? `車款：${repairInfo.bikeModel}` : null,
+        "【初步診斷結果】",
+        diagnosis || "-",
+        "【維修報價】",
+        `報價金額：${amountText}`,
+        "若您同意本次維修報價，門市將安排所需零件。",
+        "相關零件抵達門市後，我們將開始進行維修。",
+        "維修完成後，系統會再次發送通知，請您留意訊息。"
+      ],
+      actions
+    ),
     {
       type: "text",
       text: lines.join("\n")
-    },
-    createButtonMessage(
-      "維修報價確認",
-      `總額 ${formatCurrency(payload.totalAmount || 0)}\n請確認本次維修報價。`,
-      [
-        createUriAction("確認維修報價", quoteUrl),
-        createPostbackAction("同意報價", "repair_estimate_approve", repairInfo.id),
-        createPostbackAction("拒絕報價", "repair_estimate_reject", repairInfo.id)
-      ]
-    )
+    }
   ]);
 }
 
@@ -1360,6 +1380,9 @@ async function getRepairOrderForQuotation(repairId, connection = pool, storeId =
         ${hasColumn(repairColumns, "quote_status") ? "ro.quote_status" : "'pending'"} AS quoteStatus,
         ${hasColumn(repairColumns, "quote_notes") ? "ro.quote_notes" : "NULL"} AS quoteNotes,
         ${hasColumn(repairColumns, "quote_items_json") ? "ro.quote_items_json" : "NULL"} AS quoteItemsJson,
+        ${hasColumn(repairColumns, "inspection_notes") ? "ro.inspection_notes" : "NULL"} AS inspectionNotes,
+        ${hasColumn(repairColumns, "cross_check_status") ? "ro.cross_check_status" : "'PENDING'"} AS crossCheckStatus,
+        ${hasColumn(repairColumns, "cross_checked_at") ? "ro.cross_checked_at" : "NULL"} AS crossCheckedAt,
         ${hasColumn(repairColumns, "customer_confirmed_at") ? "ro.customer_confirmed_at" : "NULL"} AS customerConfirmedAt,
         ro.customer_estimate_response AS customerEstimateResponse,
         ro.customer_estimate_responded_at AS customerEstimateRespondedAt,
@@ -4528,10 +4551,49 @@ function buildRepairQuoteSignature(repairInfo) {
     .update([
       Number(repairInfo?.estimateAmount || 0).toFixed(2),
       String(repairInfo?.estimateDetails || "").trim(),
-      String(repairInfo?.quoteNotes || "").trim()
+      String(repairInfo?.quoteNotes || "").trim(),
+      String(repairInfo?.inspectionNotes || "").trim()
     ].join("|"))
     .digest("hex")
     .slice(0, 24);
+}
+
+function assertRepairReadyForQuoteDraft(repairInfo = {}) {
+  if (String(repairInfo.reservationStatus || "").trim() !== "approved") {
+    throw createError("需先確認預約後才能儲存報價草稿", 400, "RESERVATION_CONFIRMATION_REQUIRED");
+  }
+  if (!String(repairInfo.inspectionNotes || "").trim()) {
+    throw createError("請先填寫並儲存初步診斷內容，才能進行報價。", 400, "INITIAL_DIAGNOSIS_REQUIRED");
+  }
+}
+
+function hasRepairEstimateDraft(repairInfo = {}) {
+  return Number(repairInfo.estimateAmount || 0) > 0 || Boolean(String(repairInfo.estimateDetails || "").trim());
+}
+
+function assertRepairReadyForCustomerQuote(repairInfo = {}) {
+  assertRepairReadyForQuoteDraft(repairInfo);
+  if (!hasRepairEstimateDraft(repairInfo)) {
+    throw createError("請先儲存維修報價草稿，才能進行交叉確認或發送給客戶。", 400, "QUOTE_DRAFT_REQUIRED");
+  }
+  if (String(repairInfo.crossCheckStatus || "PENDING").trim().toUpperCase() !== "APPROVED") {
+    throw createError("請先完成交叉確認，才能發送報價給客戶。", 400, "CROSS_CHECK_REQUIRED");
+  }
+}
+
+function buildRepairEstimateDraftSignature(payload = {}) {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify({
+      totalAmount: Number(payload.totalAmount || 0).toFixed(2),
+      inspectionFee: Number(payload.inspectionFee || 0).toFixed(2),
+      partsFee: Number(payload.partsFee || 0).toFixed(2),
+      laborFee: Number(payload.laborFee || 0).toFixed(2),
+      details: String(payload.details || "").trim(),
+      notes: String(payload.notes || "").trim(),
+      items: Array.isArray(payload.items) ? payload.items : []
+    }))
+    .digest("hex");
 }
 
 function buildRepairQuoteNotificationLogPayload(repairInfo, options = {}) {
@@ -4597,6 +4659,7 @@ async function sendRepairQuoteConfirmationIfNeeded(repairId, storeId, staffId = 
   if (!repairInfo) {
     throw createError("找不到維修工單", 404);
   }
+  assertRepairReadyForCustomerQuote(repairInfo);
 
   const link = buildRepairQuoteConfirmationUrl(repairInfo.id);
   const payload = buildRepairQuoteNotificationLogPayload(repairInfo, {
@@ -4660,6 +4723,23 @@ async function sendRepairQuoteConfirmationIfNeeded(repairId, storeId, staffId = 
       notes: repairInfo.quoteNotes || "",
       quoteUrl: link
     }));
+    const statusColumnType = String(await getColumnType(options.connection || pool, "repair_orders", "status") || "");
+    const estimatePendingStatus = statusColumnType.includes("'estimate_pending_approval'") ? "estimate_pending_approval" : "reserved";
+    const repairColumns = await getRepairOrdersTableColumns(options.connection || pool);
+    const updates = [
+      "status = ?",
+      "estimate_sent_at = NOW()",
+      "customer_estimate_response = 'pending'",
+      "customer_estimate_responded_at = NULL",
+      "updated_at = NOW()"
+    ];
+    if (hasColumn(repairColumns, "quote_status")) {
+      updates.push("quote_status = 'sent'");
+    }
+    await (options.connection || pool).query(
+      `UPDATE repair_orders SET ${updates.join(", ")} WHERE id = ? AND store_id = ?`,
+      [estimatePendingStatus, repairInfo.id, scopedStoreId]
+    );
     await insertRepairQuoteNotificationLog(options.connection || pool, repairInfo.id, "quote_confirmation_sent", payload);
     return {
       ok: true,
@@ -4684,42 +4764,7 @@ async function sendRepairQuoteConfirmationIfNeeded(repairId, storeId, staffId = 
   }
 }
 
-async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = null, source = "web_admin", connection = pool, options = {}) {
-  const storeContext = await resolveLineWorkflowStoreContext({
-    storeId: options.storeId,
-    staffId,
-    connection,
-    reason: "repair_estimate_send"
-  });
-  const scopedStoreId = requireScopedStoreId(storeContext.storeId, "維修報價送出門市範圍");
-  const repairInfo = await getRepairOrderForQuotation(repairId, connection, scopedStoreId);
-  if (!repairInfo) {
-    return null;
-  }
-  const currentStatus = String(repairInfo.status || "").trim();
-  const quoteStatus = String(repairInfo.quoteStatus || "").trim();
-  const isFinalizedRepair =
-    ["completed", "completed_waiting_pickup", "picked_up"].includes(currentStatus) ||
-    Boolean(repairInfo.completedAt) ||
-    Boolean(repairInfo.pickedUpAt);
-  const isQuoteAlreadySent =
-    Boolean(repairInfo.estimateSentAt) ||
-    quoteStatus === "sent" ||
-    quoteStatus === "approved" ||
-    quoteStatus === "accepted" ||
-    repairInfo.customerEstimateResponse === "approved";
-
-  if (isFinalizedRepair) {
-    throw createError("已完成或已取車的維修單無法再次送出報價", 400);
-  }
-  if (String(repairInfo.reservationStatus || "").trim() !== "approved") {
-    throw createError("需先確認預約後才能送出報價", 400);
-  }
-  if (currentStatus !== "reserved" || isQuoteAlreadySent) {
-    throw createError("此維修單已進入後續流程，無法再次送出報價", 400);
-  }
-  const repairColumns = await getRepairOrdersTableColumns(connection);
-
+function normalizeRepairEstimatePayload(estimatePayload = {}) {
   const itemsInput = Array.isArray(estimatePayload.items) ? estimatePayload.items : [];
   const items = itemsInput.map((item) => ({
     productId: item.productId !== undefined ? Number(item.productId) : item.product_id !== undefined ? Number(item.product_id) : null,
@@ -4748,42 +4793,188 @@ async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = 
     totalAmount
   });
 
-  const statusColumnType = String(await getColumnType(connection, "repair_orders", "status") || "");
-  const estimatePendingStatus = statusColumnType.includes("'estimate_pending_approval'") ? "estimate_pending_approval" : "reserved";
+  return { items, inspectionFee, partsFee, laborFee, totalAmount, notes, details };
+}
+
+async function saveRepairEstimateDraft(repairId, estimatePayload, staffId = null, source = "web_admin", connection = pool, options = {}) {
+  const storeContext = await resolveLineWorkflowStoreContext({
+    storeId: options.storeId,
+    staffId,
+    connection,
+    reason: "repair_estimate_draft_save"
+  });
+  const scopedStoreId = requireScopedStoreId(storeContext.storeId, "維修報價草稿門市範圍");
+  const repairInfo = await getRepairOrderForQuotation(repairId, connection, scopedStoreId);
+  if (!repairInfo) {
+    return null;
+  }
+
+  const currentStatus = String(repairInfo.status || "").trim();
+  const quoteStatus = String(repairInfo.quoteStatus || "").trim();
+  const isFinalizedRepair =
+    ["completed", "completed_waiting_pickup", "picked_up"].includes(currentStatus) ||
+    Boolean(repairInfo.completedAt) ||
+    Boolean(repairInfo.pickedUpAt);
+  const isQuoteAccepted = quoteStatus === "approved" || quoteStatus === "accepted" || repairInfo.customerEstimateResponse === "approved";
+
+  if (isFinalizedRepair) {
+    throw createError("已完成或已取車的維修單無法再次儲存報價", 400);
+  }
+  if (isQuoteAccepted) {
+    throw createError("客戶已同意報價，無法再次修改報價草稿", 400);
+  }
+  assertRepairReadyForQuoteDraft(repairInfo);
+
+  const repairColumns = await getRepairOrdersTableColumns(connection);
+  const normalized = normalizeRepairEstimatePayload(estimatePayload);
+  if (!Number.isFinite(normalized.totalAmount) || normalized.totalAmount <= 0) {
+    throw createError("請先完成報價金額，才能儲存報價草稿", 400, "QUOTE_DRAFT_AMOUNT_REQUIRED");
+  }
+
+  const previousSignature = buildRepairEstimateDraftSignature({
+    totalAmount: repairInfo.estimateAmount || 0,
+    inspectionFee: repairInfo.inspectionFee || 0,
+    partsFee: repairInfo.partsFee || 0,
+    laborFee: repairInfo.laborFee || 0,
+    details: repairInfo.estimateDetails || "",
+    notes: repairInfo.quoteNotes || "",
+    items: parseRepairQuoteItemsJson(repairInfo.quoteItemsJson)
+  });
+  const nextSignature = buildRepairEstimateDraftSignature(normalized);
+  const quoteCoreChanged = previousSignature !== nextSignature;
+
   const updates = [
-    "status = ?",
     "estimate_amount = ?",
     "estimate_details = ?",
-    "estimate_sent_at = NOW()",
     "customer_estimate_response = 'pending'",
     "customer_estimate_responded_at = NULL"
   ];
-  const params = [estimatePendingStatus, totalAmount, details];
+  const params = [normalized.totalAmount, normalized.details];
   if (hasColumn(repairColumns, "inspection_fee")) {
     updates.push("inspection_fee = ?");
-    params.push(inspectionFee);
+    params.push(normalized.inspectionFee);
   }
   if (hasColumn(repairColumns, "parts_fee")) {
     updates.push("parts_fee = ?");
-    params.push(partsFee);
+    params.push(normalized.partsFee);
   }
   if (hasColumn(repairColumns, "labor_fee")) {
     updates.push("labor_fee = ?");
-    params.push(laborFee);
+    params.push(normalized.laborFee);
   }
   if (hasColumn(repairColumns, "quote_status")) {
-    updates.push("quote_status = 'sent'");
+    updates.push("quote_status = 'pending'");
   }
   if (hasColumn(repairColumns, "quote_notes")) {
     updates.push("quote_notes = ?");
-    params.push(notes || null);
+    params.push(normalized.notes || null);
   }
   if (hasColumn(repairColumns, "quote_items_json")) {
     updates.push("quote_items_json = ?");
-    params.push(JSON.stringify(items));
+    params.push(JSON.stringify(normalized.items));
+  }
+  if (hasColumn(repairColumns, "estimate_sent_at") && quoteCoreChanged) {
+    updates.push("estimate_sent_at = NULL");
   }
   if (hasColumn(repairColumns, "customer_confirmed_at")) {
     updates.push("customer_confirmed_at = NULL");
+  }
+  if (quoteCoreChanged && hasColumn(repairColumns, "cross_check_status")) {
+    updates.push("cross_check_status = 'PENDING'");
+  }
+  if (quoteCoreChanged && hasColumn(repairColumns, "cross_checked_by_staff_id")) {
+    updates.push("cross_checked_by_staff_id = NULL");
+  }
+  if (quoteCoreChanged && hasColumn(repairColumns, "cross_checked_at")) {
+    updates.push("cross_checked_at = NULL");
+  }
+  if (quoteCoreChanged && hasColumn(repairColumns, "cross_check_note")) {
+    updates.push("cross_check_note = NULL");
+  }
+  updates.push("updated_at = NOW()");
+
+  params.push(repairId, scopedStoreId);
+  await connection.query(`UPDATE repair_orders SET ${updates.join(", ")} WHERE id = ? AND store_id = ?`, params);
+
+  await connection.query(
+    `
+      INSERT INTO repair_logs (repair_order_id, action, note)
+      VALUES (?, 'estimate_draft_saved', ?)
+    `,
+    [repairId, quoteCoreChanged ? `報價草稿已儲存，交叉確認重設為待確認（${source}）` : `報價草稿已儲存（${source}）`]
+  );
+
+  await logWorkflowEvent(
+    "repair_estimate_draft_saved",
+    "REPAIR_ORDER",
+    repairId,
+    {
+      totalAmount: normalized.totalAmount,
+      inspectionFee: normalized.inspectionFee,
+      partsFee: normalized.partsFee,
+      laborFee: normalized.laborFee,
+      items: normalized.items,
+      notes: normalized.notes,
+      source,
+      quoteCoreChanged
+    },
+    staffId,
+    connection
+  );
+
+  return {
+    repairInfo,
+    ...normalized,
+    quoteCoreChanged,
+    crossCheckStatus: quoteCoreChanged ? "PENDING" : repairInfo.crossCheckStatus || "PENDING"
+  };
+}
+
+async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = null, source = "web_admin", connection = pool, options = {}) {
+  const draft = await saveRepairEstimateDraft(repairId, estimatePayload, staffId, source, connection, options);
+  if (!draft) {
+    return null;
+  }
+  const scopedStoreId = requireScopedStoreId(draft.repairInfo.storeId, "維修報價送出門市範圍");
+  const repairInfo = await getRepairOrderForQuotation(repairId, connection, scopedStoreId);
+  if (!repairInfo) {
+    return null;
+  }
+
+  const currentStatus = String(repairInfo.status || "").trim();
+  const quoteStatus = String(repairInfo.quoteStatus || "").trim();
+  const isFinalizedRepair =
+    ["completed", "completed_waiting_pickup", "picked_up"].includes(currentStatus) ||
+    Boolean(repairInfo.completedAt) ||
+    Boolean(repairInfo.pickedUpAt);
+  const isQuoteAlreadySent =
+    Boolean(repairInfo.estimateSentAt) ||
+    quoteStatus === "sent" ||
+    quoteStatus === "approved" ||
+    quoteStatus === "accepted" ||
+    repairInfo.customerEstimateResponse === "approved";
+
+  if (isFinalizedRepair) {
+    throw createError("已完成或已取車的維修單無法再次送出報價", 400);
+  }
+  assertRepairReadyForCustomerQuote(repairInfo);
+  if (currentStatus !== "reserved" || isQuoteAlreadySent) {
+    throw createError("此維修單已進入後續流程，無法再次送出報價", 400);
+  }
+
+  const statusColumnType = String(await getColumnType(connection, "repair_orders", "status") || "");
+  const estimatePendingStatus = statusColumnType.includes("'estimate_pending_approval'") ? "estimate_pending_approval" : "reserved";
+  const repairColumns = await getRepairOrdersTableColumns(connection);
+  const updates = [
+    "status = ?",
+    "estimate_sent_at = NOW()",
+    "customer_estimate_response = 'pending'",
+    "customer_estimate_responded_at = NULL",
+    "updated_at = NOW()"
+  ];
+  const params = [estimatePendingStatus];
+  if (hasColumn(repairColumns, "quote_status")) {
+    updates.push("quote_status = 'sent'");
   }
   params.push(repairId, scopedStoreId);
   await connection.query(`UPDATE repair_orders SET ${updates.join(", ")} WHERE id = ? AND store_id = ?`, params);
@@ -4807,7 +4998,7 @@ async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = 
       text: [
         `維修單 #${repairId} 已送出報價。`,
         `客戶：${repairInfo.customerName || "-"}`,
-        `總額：${formatCurrency(totalAmount)}`,
+        `總額：${formatCurrency(draft.totalAmount)}`,
         source ? `來源：${source === "line_staff" ? "LINE Staff" : source === "web_admin" ? "Web Admin" : source}` : null
       ].filter(Boolean).join("\n")
     }
@@ -4818,12 +5009,12 @@ async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = 
     "REPAIR_ORDER",
     repairId,
     {
-      totalAmount,
-      inspectionFee,
-      partsFee,
-      laborFee,
-      items,
-      notes,
+      totalAmount: draft.totalAmount,
+      inspectionFee: draft.inspectionFee,
+      partsFee: draft.partsFee,
+      laborFee: draft.laborFee,
+      items: draft.items,
+      notes: draft.notes,
       source
     },
     staffId,
@@ -4832,12 +5023,12 @@ async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = 
 
   return {
     repairInfo,
-    items,
-    inspectionFee,
-    partsFee,
-    laborFee,
-    totalAmount,
-    details,
+    items: draft.items,
+    inspectionFee: draft.inspectionFee,
+    partsFee: draft.partsFee,
+    laborFee: draft.laborFee,
+    totalAmount: draft.totalAmount,
+    details: draft.details,
     quoteConfirmation
   };
 }
@@ -5849,6 +6040,7 @@ module.exports = {
   replyToLine,
   runWithLineAccessTokenOptions,
   resolveGroupTargets,
+  saveRepairEstimateDraft,
   sendRepairQuoteConfirmationIfNeeded,
   sendRepairEstimateQuotation,
   sendToGroups,

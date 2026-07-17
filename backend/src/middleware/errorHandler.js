@@ -14,7 +14,8 @@ function errorHandler(error, req, res, next) {
 
   const statusCode = error.statusCode || 500;
   return res.status(statusCode).json({
-    message: error.message || "Internal server error"
+    message: error.message || "Internal server error",
+    code: error.code || undefined
   });
 }
 

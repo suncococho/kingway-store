@@ -155,6 +155,13 @@ CREATE TABLE IF NOT EXISTS repair_orders (
   estimate_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
   base_fee DECIMAL(12,2) NOT NULL DEFAULT 400,
   storage_fee DECIMAL(12,2) NOT NULL DEFAULT 0,
+  inspection_notes TEXT NULL,
+  cross_check_status ENUM('PENDING','APPROVED','NEEDS_REVISION') NOT NULL DEFAULT 'PENDING',
+  cross_checked_by_staff_id BIGINT UNSIGNED NULL,
+  cross_checked_at DATETIME NULL,
+  cross_check_note TEXT NULL,
+  diagnosis_updated_by_staff_id BIGINT UNSIGNED NULL,
+  diagnosis_updated_at DATETIME NULL,
   approved_by_staff_id BIGINT UNSIGNED NULL,
   completed_at DATETIME NULL,
   picked_up_at DATETIME NULL,
@@ -237,6 +244,7 @@ CREATE INDEX idx_inventory_movements_product ON inventory_movements (product_id,
 CREATE INDEX idx_purchase_confirmations_order ON purchase_confirmations (order_id);
 CREATE INDEX idx_purchase_confirmations_status_created ON purchase_confirmations (status, created_at);
 CREATE INDEX idx_repair_orders_status ON repair_orders (status, reservation_date);
+CREATE INDEX idx_repair_orders_cross_check ON repair_orders (store_id, cross_check_status, cross_checked_at);
 CREATE INDEX idx_coupons_customer_type ON coupons (customer_id, coupon_type);
 CREATE INDEX idx_staff_attendance_staff ON staff_attendance (staff_user_id, check_in_at);
 CREATE INDEX idx_staff_kpi_logs_staff ON staff_kpi_logs (staff_user_id, created_at);

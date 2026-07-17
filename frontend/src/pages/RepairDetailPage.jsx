@@ -193,6 +193,25 @@ function getCustomerTypeLabel(value) {
   return normalizeCustomerType(value) === "LINE" ? "LINE 客戶" : "現場客戶";
 }
 
+function getCrossCheckStatusLabel(status) {
+  const normalized = String(status || "PENDING").trim().toUpperCase();
+  if (normalized === "APPROVED") return "確認無誤";
+  if (normalized === "NEEDS_REVISION") return "需要修正";
+  return "待交叉確認";
+}
+
+function getCrossCheckTone(status) {
+  const normalized = String(status || "PENDING").trim().toUpperCase();
+  if (normalized === "APPROVED") return "success";
+  if (normalized === "NEEDS_REVISION") return "danger";
+  return "warning";
+}
+
+function canCrossCheckRepairQuote(user) {
+  const role = String(user?.role || "").trim().toUpperCase();
+  return ["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"].includes(role);
+}
+
 function isOfflineCustomerType(value) {
   return normalizeCustomerType(value) !== "LINE";
 }
@@ -260,6 +279,9 @@ function RepairDetailPage() {
   const [replacementConfirmations, setReplacementConfirmations] = useState({ tableExists: true, items: [] });
   const [replacementConfirmationsLoading, setReplacementConfirmationsLoading] = useState(false);
   const [quoteConfirmationNotice, setQuoteConfirmationNotice] = useState(null);
+  const [crossCheckModalOpen, setCrossCheckModalOpen] = useState(false);
+  const [crossCheckResult, setCrossCheckResult] = useState("APPROVED");
+  const [crossCheckNote, setCrossCheckNote] = useState("");
 
   async function loadDetail() {
     try {
@@ -527,7 +549,7 @@ function RepairDetailPage() {
 
   async function saveInspection() {
     if (!inspectionNotes.trim()) {
-      window.alert("請先填寫檢查內容");
+      window.alert("請先填寫並儲存初步診斷內容，才能進行報價。");
       return;
     }
 
@@ -541,9 +563,9 @@ function RepairDetailPage() {
       });
 
       await loadDetail();
-      window.alert("檢查內容已儲存，可以進入下一步填寫報價");
+      window.alert("初步診斷已儲存，請完成交叉確認後再送出報價。");
     } catch (error) {
-      window.alert(error.message || "檢查內容儲存失敗");
+      window.alert(error.message || "初步診斷儲存失敗");
     }
   }
 
@@ -587,41 +609,128 @@ function RepairDetailPage() {
     }
   }
 
-  function requestSendEstimate() {
-    if (!canShowQuoteEditor) {
-      warnPreviousStep("維修報價");
-      return;
+  async function submitCrossCheck() {
+    try {
+      const response = await apiRequest(`/repairs/${id}/cross-check`, {
+        method: "POST",
+        body: JSON.stringify({
+          status: crossCheckResult,
+          note: crossCheckNote.trim()
+        })
+      });
+      setCrossCheckModalOpen(false);
+      setCrossCheckNote("");
+      await loadDetail();
+      window.alert(response?.message || "交叉確認已完成");
+    } catch (error) {
+      window.alert(getRepairActionErrorMessage(error));
     }
-    if (detail.reservation_status === "pending_approval") {
-      warnPreviousStep("建立維修單");
-      return;
-    }
+  }
+
+  function buildEstimatePayload() {
     const items = quoteItems.map(normalizeQuoteItem).filter((item) => item.name && Number(item.quantity || 0) > 0);
     const partsFee = items.reduce((sum, item) => sum + Number(item.total || 0), 0);
     const totalAmount = Number(inspectionFee || 0) + partsFee + Number(laborFee || 0);
-    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+    return {
+      estimateAmount: totalAmount,
+      inspectionFee: Number(inspectionFee || 0),
+      inspectionNotes,
+      partsFee,
+      laborFee: Number(laborFee || 0),
+      items,
+      note: estimateNote,
+      notes: estimateNote,
+      totalAmount
+    };
+  }
+
+  function validateEstimateDraftPayload(payload) {
+    if (!canShowQuoteEditor) {
+      warnPreviousStep("維修報價");
+      return false;
+    }
+    if (detail.reservation_status !== "approved") {
+      warnPreviousStep("確認預約");
+      return false;
+    }
+    if (!inspectionNotes.trim()) {
+      setWarningModal({
+        title: "請先完成初步診斷",
+        message: "請先填寫並儲存初步診斷內容，才能進行報價。"
+      });
+      return false;
+    }
+    if (!Number.isFinite(payload.totalAmount) || payload.totalAmount <= 0) {
       setWarningModal({
         title: "請先完成報價",
         message: "請先加入零件，或填入檢查費與工資，系統會自動計算總報價。"
       });
+      return false;
+    }
+    return true;
+  }
+
+  async function saveEstimateDraft({ quiet = false } = {}) {
+    const payload = buildEstimatePayload();
+    if (!validateEstimateDraftPayload(payload)) {
+      return null;
+    }
+    try {
+      const response = await apiRequest(`/repairs/${id}/estimate`, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      await loadDetail();
+      await loadReplacementConfirmations();
+      if (!quiet) {
+        window.alert(response?.message || "報價草稿已儲存");
+      }
+      return response;
+    } catch (error) {
+      alert(getRepairActionErrorMessage(error));
+      return null;
+    }
+  }
+
+  function requestSaveEstimateDraft() {
+    requestAction({
+      title: "儲存報價草稿",
+      message: "確認要儲存本次維修報價草稿嗎？儲存後即可進行交叉確認。",
+      confirmText: "儲存草稿",
+      action: () => saveEstimateDraft()
+    });
+  }
+
+  function requestSendEstimate() {
+    const payload = buildEstimatePayload();
+    if (!validateEstimateDraftPayload(payload)) {
+      return;
+    }
+    if (String(detail.crossCheckStatus || detail.cross_check_status || "PENDING").toUpperCase() !== "APPROVED") {
+      setWarningModal({
+        title: "請先完成交叉確認",
+        message: "報價草稿儲存後，需完成交叉確認，才能發送報價給客戶。"
+      });
       return;
     }
     requestAction({
-      title: "送出報價",
-      message: "確認要送出維修報價給客戶嗎？",
-      confirmText: "送出報價",
-      action: () =>
-        callAction(`/repairs/${id}/estimate`, {
-          estimateAmount: totalAmount,
-          inspectionFee: Number(inspectionFee || 0),
-          inspectionNotes,
-          partsFee,
-          laborFee: Number(laborFee || 0),
-          items,
-          note: estimateNote,
-          notes: estimateNote,
-          totalAmount
-        })
+      title: "發送報價給客戶",
+      message: "系統會先確認目前報價草稿未變更；若草稿有異動，交叉確認會重設為待確認，不會發送給客戶。",
+      confirmText: "發送報價",
+      action: async () => {
+        const draftResponse = await saveEstimateDraft({ quiet: true });
+        if (!draftResponse) {
+          return null;
+        }
+        if (String(draftResponse.crossCheckStatus || "PENDING").toUpperCase() !== "APPROVED") {
+          setWarningModal({
+            title: "請重新交叉確認",
+            message: "報價核心內容已更新，交叉確認已重設為待確認。請完成交叉確認後再發送給客戶。"
+          });
+          return draftResponse;
+        }
+        return callAction(`/repairs/${id}/send-quote-confirmation`);
+      }
     });
   }
 
@@ -846,9 +955,12 @@ function RepairDetailPage() {
     ["completed", "completed_waiting_pickup", "picked_up"].includes(repairStatusValue) ||
     hasCompletedAt ||
     hasPickedUpAt;
+  const crossCheckStatus = String(detail.crossCheckStatus || detail.cross_check_status || "PENDING").trim().toUpperCase();
+  const crossCheckApproved = crossCheckStatus === "APPROVED";
+  const diagnosisSaved = Boolean(detail.inspectionNotes && detail.inspectionNotes.trim());
   const canShowQuoteEditor =
     !isFinalizedRepair &&
-    Boolean(detail.inspectionNotes && detail.inspectionNotes.trim()) &&
+    diagnosisSaved &&
     detail.reservation_status === "approved" &&
     repairStatusValue === "reserved" &&
     !detail.estimate_sent_at &&
@@ -890,15 +1002,17 @@ function RepairDetailPage() {
     replacementRows.every((item) => item.isReplaced && item.isTested && item.isStockHandled && item.crossCheckedAt);
   const currentUserId = Number(currentUser?.id || 0);
   const currentUserCanManagerCrossCheck = isManagerOrAboveUser(currentUser);
+  const currentUserCanCrossCheckQuote = canCrossCheckRepairQuote(currentUser);
 
   const quoteWritten = quoteAccepted || canStartRepair || Number(detail.estimate_amount || 0) > 0;
   const repairSteps = [
     { label: "建立維修單", done: detail.reservation_status !== "pending_approval" },
-    { 
-      label: "填寫檢查內容", 
-      done: Boolean(detail.inspectionNotes && detail.inspectionNotes.trim()) 
+    {
+      label: "初步診斷",
+      done: diagnosisSaved
     },
     { label: "填寫報價", done: quoteWritten },
+    { label: "交叉確認", done: crossCheckApproved },
     { label: "等待客戶同意", done: quoteAccepted || canStartRepair },
     { label: "維修中", done: detail.status === "repairing" || detail.status === "completed_waiting_pickup" || detail.status === "picked_up" },
     ...(hasReplacementItems ? [{ label: "更換項目確認", done: replacementConfirmationsReady || detail.status === "completed_waiting_pickup" || detail.status === "picked_up" }] : []),
@@ -912,9 +1026,11 @@ function RepairDetailPage() {
         ? { label: "開始維修", action: requestStartRepair, tone: "blue" }
       : detail.reservation_status === "pending_approval"
         ? { label: "確認預約", action: () => respondReservation(true), tone: "blue" }
+        : currentStep.label === "交叉確認"
+          ? { label: "交叉確認", action: () => setCrossCheckModalOpen(true), tone: "blue" }
         : currentStep.label === "填寫報價"
           ? canShowQuoteEditor
-            ? { label: "送出報價", action: requestSendEstimate, tone: "blue" }
+            ? { label: "儲存報價草稿", action: requestSaveEstimateDraft, tone: "blue" }
             : null
           : currentStep.label === "等待客戶同意"
             ? { label: "等待客戶同意", action: () => warnPreviousStep("等待客戶同意"), tone: "yellow" }
@@ -1270,7 +1386,7 @@ function RepairDetailPage() {
                 <div className="field-value">NT${Number(detail.estimate_amount || 0).toFixed(0)}</div>
               </div>
               <div className="field-item">
-                <div className="field-label">檢查內容</div>
+                <div className="field-label">初步診斷</div>
                 <div className="field-value">{detail.inspectionNotes || "-"}</div>
               </div>
 
@@ -1426,16 +1542,16 @@ function RepairDetailPage() {
                 </div>
               </div>
 
-              {currentStep.label === "填寫檢查內容" ? (
+              {currentStep.label === "初步診斷" ? (
                 <div className="wizard-panel wizard-panel-blue sop-primary-action">
                   <div style={{ fontWeight: 800, marginBottom: 10 }}>
-                    填寫檢查內容
+                    初步診斷
                   </div>
                   <textarea
                     rows={6}
                     value={inspectionNotes}
                     onChange={(e) => setInspectionNotes(e.target.value)}
-                    placeholder="請直接在這裡填寫檢查內容，例如：輪胎、煞車、控制器、馬達、線路、電池狀況..."
+                    placeholder="請填寫車輛目前狀況、檢查結果及建議處理方式"
                     style={{
                       width: "100%",
                       minHeight: 150,
@@ -1454,14 +1570,27 @@ function RepairDetailPage() {
                     onClick={saveInspection}
                     disabled={!inspectionNotes.trim()}
                   >
-                    儲存檢查內容，進入下一步
+                    儲存初步診斷
                   </button>
                 </div>
               ) : null}
 
               {currentStep.label === "填寫報價" && !detail.inspectionNotes?.trim() ? (
                 <div className="wizard-panel wizard-panel-yellow sop-primary-action">
-                  請先完成 Step 2「填寫檢查內容」，才能進入 Step 3「填寫報價」。
+                  請先填寫並儲存初步診斷內容，才能進行報價。
+                </div>
+              ) : null}
+
+              {diagnosisSaved && quoteWritten && !crossCheckApproved && detail.reservation_status === "approved" && !isFinalizedRepair ? (
+                <div className="wizard-panel wizard-panel-yellow sop-primary-action">
+                  <div style={{ fontWeight: 800, marginBottom: 10 }}>交叉確認結果</div>
+                  <div className="muted-text" style={{ marginBottom: 12 }}>
+                    送出客戶報價前需完成交叉確認。確認者可以是本人或同門市任一有權限員工。
+                  </div>
+                  <button type="button" className="primary-button inline-submit" onClick={() => setCrossCheckModalOpen(true)} disabled={!currentUserCanCrossCheckQuote}>
+                    交叉確認
+                  </button>
+                  {!currentUserCanCrossCheckQuote ? <div className="muted-text">目前帳號沒有交叉確認權限。</div> : null}
                 </div>
               ) : null}
 
@@ -1575,6 +1704,19 @@ function RepairDetailPage() {
                   <div className="field-value">{formatTaipeiDateTime(detail.created_at)}</div>
                 </div>
               </div>
+              {diagnosisSaved && quoteWritten && !crossCheckApproved && detail.reservation_status === "approved" && !isFinalizedRepair ? (
+                <div className="wizard-panel wizard-panel-yellow sop-primary-action">
+                  <div style={{ fontWeight: 800, marginBottom: 10 }}>交叉確認結果</div>
+                  <div className="muted-text" style={{ marginBottom: 12 }}>
+                    送出客戶報價前需完成交叉確認。確認者可以是本人或同門市任一有權限員工。
+                  </div>
+                  <button type="button" className="primary-button inline-submit" onClick={() => setCrossCheckModalOpen(true)} disabled={!currentUserCanCrossCheckQuote}>
+                    交叉確認
+                  </button>
+                  {!currentUserCanCrossCheckQuote ? <div className="muted-text">目前帳號沒有交叉確認權限。</div> : null}
+                </div>
+              ) : null}
+
               {detail.reservation_status === "pending_approval" ? (
                 <div className="action-row" style={{ marginTop: 12 }}>
                   <button type="button" className="secondary-button" onClick={() => respondReservation(true)}>
@@ -1603,6 +1745,18 @@ function RepairDetailPage() {
                 <div className="field-item">
                   <div className="field-label">維修狀態</div>
                   <div className="field-value">{getRepairStatusLabel(detail.status)}</div>
+                </div>
+                <div className="field-item">
+                  <div className="field-label">初步診斷</div>
+                  <div className="field-value">{detail.inspectionNotes || "-"}</div>
+                </div>
+                <div className="field-item">
+                  <div className="field-label">交叉確認</div>
+                  <div className="field-value"><StatusBadge tone={getCrossCheckTone(crossCheckStatus)}>{getCrossCheckStatusLabel(crossCheckStatus)}</StatusBadge></div>
+                </div>
+                <div className="field-item">
+                  <div className="field-label">確認紀錄</div>
+                  <div className="field-value">{crossCheckApproved ? `已由 ${detail.crossCheckedByStaffName || detail.cross_checked_by_staff_id || "-"} 於 ${formatTaipeiDateTime(detail.crossCheckedAt || detail.cross_checked_at)} 完成交叉確認` : detail.crossCheckNote || "-"}</div>
                 </div>
                 <div className="field-item">
                   <div className="field-label">保管費</div>
@@ -1896,10 +2050,14 @@ function RepairDetailPage() {
                     <span>備註</span>
                     <input value={estimateNote} disabled={quoteLocked} onChange={(event) => setEstimateNote(event.target.value)} />
                   </label>
-                  {quoteLocked ? <div className="muted-text">待群組確認前不可編輯或送出報價。</div> : null}
+                  {quoteLocked ? <div className="muted-text">預約確認前不可編輯或儲存報價。</div> : null}
+                  {!crossCheckApproved ? <div className="muted-text">可先儲存報價草稿；發送給客戶前需完成交叉確認。</div> : null}
                   <div className="wizard-actions form-field-wide">
-                    <button type="button" className="primary-button inline-submit" disabled={quoteLocked || estimateTotal <= 0} onClick={requestSendEstimate}>
-                      下一步
+                    <button type="button" className="secondary-button" disabled={quoteLocked || estimateTotal <= 0} onClick={requestSaveEstimateDraft}>
+                      儲存報價草稿
+                    </button>
+                    <button type="button" className="primary-button inline-submit" disabled={quoteLocked || !crossCheckApproved || estimateTotal <= 0} onClick={requestSendEstimate}>
+                      發送報價給客戶
                     </button>
                   </div>
                 </div>
@@ -1915,6 +2073,28 @@ function RepairDetailPage() {
         message={warningModal?.message}
         onConfirm={() => setWarningModal(null)}
       />
+      <ActionModal
+        open={crossCheckModalOpen}
+        title="交叉確認結果"
+        confirmText="完成交叉確認"
+        cancelText="取消"
+        onCancel={() => setCrossCheckModalOpen(false)}
+        onConfirm={submitCrossCheck}
+      >
+        <div className="grid-form compact-grid">
+          <label className="form-field">
+            <span>確認結果</span>
+            <select value={crossCheckResult} onChange={(event) => setCrossCheckResult(event.target.value)}>
+              <option value="APPROVED">確認無誤</option>
+              <option value="NEEDS_REVISION">需要修正</option>
+            </select>
+          </label>
+          <label className="form-field form-field-wide">
+            <span>確認備註（選填）</span>
+            <textarea rows={4} value={crossCheckNote} onChange={(event) => setCrossCheckNote(event.target.value)} />
+          </label>
+        </div>
+      </ActionModal>
       <ActionModal
         open={Boolean(confirmModal)}
         title={confirmModal?.title}
