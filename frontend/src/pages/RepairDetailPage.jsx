@@ -7,7 +7,6 @@ import ProductImage from "../components/ProductImage";
 import StatusBadge from "../components/StatusBadge";
 import { apiRequest } from "../lib/api";
 import { getStoredUser } from "../lib/auth";
-import { isManagerOrAboveUser } from "../lib/roleAccess";
 import { formatTaipeiDate, formatTaipeiDateTime, getCategoryLabel, getRepairStatusLabel } from "../lib/display";
 
 function getStockTone(stock, reorderLevel) {
@@ -1012,8 +1011,6 @@ function RepairDetailPage() {
   const replacementConfirmationsReady =
     !hasReplacementItems ||
     replacementRows.every((item) => item.isReplaced && item.isTested && item.isStockHandled && item.crossCheckedAt);
-  const currentUserId = Number(currentUser?.id || 0);
-  const currentUserCanManagerCrossCheck = isManagerOrAboveUser(currentUser);
   const currentUserCanCrossCheckQuote = canCrossCheckRepairQuote(currentUser);
 
   const quoteWritten = quoteAccepted || canStartRepair || Number(detail.estimate_amount || 0) > 0;
@@ -1136,8 +1133,7 @@ function RepairDetailPage() {
         <div className="stack-list">
           {replacementRows.map((item) => {
             const requiredChecksDone = Boolean(item.isReplaced && item.isTested && item.isStockHandled);
-            const checkedByCurrentUser = currentUserId && item.checkedByStaffId && Number(item.checkedByStaffId) === currentUserId;
-            const canCrossCheckItem = requiredChecksDone && !item.crossCheckedAt && (currentUserCanManagerCrossCheck || !checkedByCurrentUser);
+            const canCrossCheckItem = requiredChecksDone && !item.crossCheckedAt && currentUserCanCrossCheckQuote;
             return (
               <div key={item.id || item.sourceKey} className="log-row">
                 <div className="section-header compact-header">
@@ -1202,8 +1198,8 @@ function RepairDetailPage() {
                     >
                       交叉確認
                     </button>
-                    {checkedByCurrentUser && !currentUserCanManagerCrossCheck && requiredChecksDone && !item.crossCheckedAt ? (
-                      <span className="muted-text">需由店長或另一位員工交叉確認。</span>
+                    {!currentUserCanCrossCheckQuote && requiredChecksDone && !item.crossCheckedAt ? (
+                      <span className="muted-text">目前帳號沒有交叉確認權限。</span>
                     ) : null}
                   </div>
                 ) : null}
@@ -1597,7 +1593,7 @@ function RepairDetailPage() {
                 <div className="wizard-panel wizard-panel-yellow sop-primary-action">
                   <div style={{ fontWeight: 800, marginBottom: 10 }}>交叉確認結果</div>
                   <div className="muted-text" style={{ marginBottom: 12 }}>
-                    送出客戶報價前需完成交叉確認。確認者可以是本人或同門市任一有權限員工。
+                    由門市員工確認診斷與報價內容無誤後即可送出。
                   </div>
                   <button type="button" className="primary-button inline-submit" onClick={() => setCrossCheckModalOpen(true)} disabled={!currentUserCanCrossCheckQuote}>
                     交叉確認
@@ -1720,7 +1716,7 @@ function RepairDetailPage() {
                 <div className="wizard-panel wizard-panel-yellow sop-primary-action">
                   <div style={{ fontWeight: 800, marginBottom: 10 }}>交叉確認結果</div>
                   <div className="muted-text" style={{ marginBottom: 12 }}>
-                    送出客戶報價前需完成交叉確認。確認者可以是本人或同門市任一有權限員工。
+                    由門市員工確認診斷與報價內容無誤後即可送出。
                   </div>
                   <button type="button" className="primary-button inline-submit" onClick={() => setCrossCheckModalOpen(true)} disabled={!currentUserCanCrossCheckQuote}>
                     交叉確認
@@ -1764,11 +1760,19 @@ function RepairDetailPage() {
                 </div>
                 <div className="field-item">
                   <div className="field-label">交叉確認</div>
-                  <div className="field-value"><StatusBadge tone={getCrossCheckTone(crossCheckStatus)}>{getCrossCheckStatusLabel(crossCheckStatus)}</StatusBadge></div>
+                  <div className="field-value">{crossCheckApproved ? "已完成" : <StatusBadge tone={getCrossCheckTone(crossCheckStatus)}>{getCrossCheckStatusLabel(crossCheckStatus)}</StatusBadge>}</div>
                 </div>
                 <div className="field-item">
-                  <div className="field-label">確認紀錄</div>
-                  <div className="field-value">{crossCheckApproved ? `已由 ${detail.crossCheckedByStaffName || detail.cross_checked_by_staff_id || "-"} 於 ${formatTaipeiDateTime(detail.crossCheckedAt || detail.cross_checked_at)} 完成交叉確認` : detail.crossCheckNote || "-"}</div>
+                  <div className="field-label">確認人員</div>
+                  <div className="field-value">{crossCheckApproved ? (detail.crossCheckedByStaffName || detail.cross_checked_by_staff_id || "-") : "-"}</div>
+                </div>
+                <div className="field-item">
+                  <div className="field-label">確認時間</div>
+                  <div className="field-value">{crossCheckApproved ? formatTaipeiDateTime(detail.crossCheckedAt || detail.cross_checked_at) : "-"}</div>
+                </div>
+                <div className="field-item">
+                  <div className="field-label">確認備註</div>
+                  <div className="field-value">{detail.crossCheckNote || "-"}</div>
                 </div>
                 <div className="field-item">
                   <div className="field-label">保管費</div>

@@ -54,7 +54,7 @@ const {
 } = require("../services/staffIncentiveEarningService");
 
 const router = express.Router();
-const REPAIR_ALLOWED_ROLES = ["ADMIN", "MANAGER", "STAFF", "CASHIER", "REPAIR", "USER", "EMPLOYEE"];
+const REPAIR_ALLOWED_ROLES = ["ADMIN", "MANAGER", "STAFF", "CASHIER", "REPAIR", "INVENTORY", "USER", "EMPLOYEE"];
 const REPAIR_CROSS_CHECK_ALLOWED_ROLES = ["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"];
 const REPAIR_CROSS_CHECK_STATUS = {
   PENDING: "PENDING",

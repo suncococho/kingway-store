@@ -2,6 +2,7 @@ const { pool } = require("../db");
 const { createError } = require("../utils/errors");
 
 const REPLACEMENT_BLOCK_MESSAGE = "尚有配件/零件更換項目未確認，請先完成更換確認後再結案。";
+const REPAIR_CROSS_CHECK_ALLOWED_ROLES = ["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"];
 let tableExistsCache = null;
 
 function normalizeBoolean(value) {
@@ -83,10 +84,31 @@ async function getStaffSnapshot(staffUserId, connection = pool) {
   };
 }
 
-function isManagerOrAbove(user = {}, staffSnapshot = {}) {
-  const role = normalizeText(user.role || staffSnapshot.role).toUpperCase();
-  const storeRole = normalizeText(user.storeRole || user.store_role).toLowerCase();
-  return ["ADMIN", "MANAGER"].includes(role) || ["owner", "admin", "manager"].includes(storeRole);
+async function getCrossCheckStaffSnapshot(staffUserId, storeId, connection = pool) {
+  if (!staffUserId || !storeId) {
+    throw createError("目前帳號沒有交叉確認權限", 403);
+  }
+  const [rows] = await connection.query(
+    `
+      SELECT id, username, display_name AS displayName, role
+      FROM staff_users
+      WHERE id = ?
+        AND store_id = ?
+        AND is_active = 1
+        AND role IN (?)
+      LIMIT 1
+    `,
+    [staffUserId, storeId, REPAIR_CROSS_CHECK_ALLOWED_ROLES]
+  );
+  const row = rows[0];
+  if (!row) {
+    throw createError("目前帳號沒有交叉確認權限", 403);
+  }
+  return {
+    staffId: row.id,
+    staffName: normalizeText(row.displayName || row.username || row.id),
+    role: normalizeText(row.role).toUpperCase()
+  };
 }
 
 async function fetchRepairQuoteItems(repairOrderId, storeId, connection = pool) {
@@ -311,11 +333,7 @@ async function crossCheckReplacementConfirmation(repairOrderId, replacementId, s
   if (!item.isReplaced || !item.isTested || !item.isStockHandled) {
     throw createError("請先完成已更換、已測試與庫存已處理確認", 400);
   }
-  const staff = await getStaffSnapshot(staffUserId, connection);
-  const sameStaff = staff.staffId && item.checkedByStaffId && Number(staff.staffId) === Number(item.checkedByStaffId);
-  if (sameStaff && !isManagerOrAbove(user, staff)) {
-    throw createError("交叉確認需由店長或另一位員工執行", 403);
-  }
+  const staff = await getCrossCheckStaffSnapshot(staffUserId, storeId, connection);
   await connection.query(
     `
       UPDATE repair_replacement_confirmations
