@@ -24,7 +24,8 @@ process.env.LINE_MESSAGING_ENABLED = "false";
 const {
   buildRepairStaffWorkflowNotification,
   isStaffLineNotifySuppressed,
-  resolveStaffLineGroupTarget
+  resolveStaffLineGroupTarget,
+  resolveStaffLineGroupTargets
 } = require("../src/services/staffLineNotify");
 const {
   createStaffLineNotification
@@ -39,18 +40,38 @@ async function testStaffGroupSelection() {
     async query(sql, params) {
       assert(sql.includes("WHERE store_id = ?"));
       assert(sql.includes("registration_type IN (?)"));
+      assert(!sql.includes("LIMIT 1"));
       assert.deepStrictEqual(params, [10, ["staff"]]);
-      return [[{
-        id: 7,
-        lineGroupId: "Cstaff-store10",
-        registrationType: "staff",
-        groupName: "門市員工"
-      }]];
+      return [[
+        {
+          id: 8,
+          lineGroupId: "Cstaff-store10-b",
+          registrationType: "staff",
+          groupName: "門市員工 B"
+        },
+        {
+          id: 7,
+          lineGroupId: "Cstaff-store10-a",
+          registrationType: "staff",
+          groupName: "門市員工 A"
+        },
+        {
+          id: 6,
+          lineGroupId: "Cstaff-store10-a",
+          registrationType: "staff",
+          groupName: "重複 destination"
+        }
+      ]];
     }
   };
+  const targets = await resolveStaffLineGroupTargets(connection, ["staff"], { storeId: 10 });
+  assert.strictEqual(targets.length, 2);
+  assert.deepStrictEqual(targets.map((target) => target.lineGroupId), ["Cstaff-store10-b", "Cstaff-store10-a"]);
+  assert(targets.every((target) => target.registrationType === "staff"));
+
   const target = await resolveStaffLineGroupTarget(connection, ["staff"], { storeId: 10 });
   assert.strictEqual(target.registrationType, "staff");
-  assert.strictEqual(target.lineGroupId, "Cstaff-store10");
+  assert.strictEqual(target.lineGroupId, "Cstaff-store10-b");
 }
 
 async function testDuplicateRecordOnce() {
@@ -101,7 +122,7 @@ async function testDuplicateRecordOnce() {
     eventType: "REPAIR_STARTED",
     relatedType: "REPAIR",
     relatedId: 42,
-    idempotencyKey: "repair:42:repair_started",
+    idempotencyKey: "repair:42:repair_started:group:7",
     lineGroupRegistrationId: 7
   };
   const first = await createStaffLineNotification(input, connection);
@@ -120,7 +141,7 @@ function testMessages() {
     ["quote_draft_saved", "【維修報價草稿已儲存】", "repair:42:quote_draft_saved:2026-07-18T01:02:03.000Z"],
     ["cross_check_approved", "【交叉確認完成】", "repair:42:cross_check:2026-07-18T01:02:03.000Z"],
     ["cross_check_needs_revision", "【交叉確認結果】", "repair:42:cross_check:2026-07-18T01:02:03.000Z"],
-    ["customer_quote_ready", "【客戶報價發送準備完成】", "repair:42:customer_quote_ready:2026-07-18T01:02:03.000Z"],
+    ["quote_sent_to_customer", "【維修報價已發送】", "repair:42:quote_sent_to_customer:2026-07-18T01:02:03.000Z"],
     ["customer_approved", "【客戶已同意維修報價】", "repair:42:customer_approved"],
     ["customer_rejected", "【客戶拒絕維修報價】", "repair:42:customer_rejected"],
     ["repair_started", "【維修已開始】", "repair:42:repair_started"],
@@ -147,6 +168,8 @@ function testMessages() {
     assert(!text.includes("0912345678"));
     assert(!text.includes("U1234567890abcdef"));
     assert(!text.includes("地址"));
+    assert(!text.includes("客戶："));
+    assert(!text.includes("電話："));
   }
 }
 

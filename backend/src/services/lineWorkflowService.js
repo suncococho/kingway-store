@@ -3498,8 +3498,6 @@ async function handleRepairReservationWizard(event) {
       await notifyRepairReservationCreated({
         repairId: result.repairId,
         storeId: result.payload.storeId || result.customer.storeId || null,
-        customerName: result.customer.name || "LINE 客戶",
-        customerPhone: result.customer.phone || null,
         reservationDate: result.payload.reservationDate,
         reservationTime: result.payload.reservationTime,
         bikeModel: result.payload.bikeModel,
@@ -4470,6 +4468,7 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
       ? await withTransaction(async (tx) => run(tx))
       : await run(connection);
 
+  let notificationEstimateAmount = 0;
   try {
     const [notificationRows] = await pool.query(
       `
@@ -4482,7 +4481,8 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
       [repairId, scopedStoreId]
     );
     const repairForNotification = notificationRows[0];
-    if (repairForNotification) {
+    notificationEstimateAmount = Number(repairForNotification?.estimateAmount || 0);
+    if (repairForNotification && !result?.alreadyProcessed) {
       await notifyRepairStaffWorkflowEvent({
         event: approved ? "customer_approved" : "customer_rejected",
         repairId,
@@ -4502,7 +4502,10 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
   }
 
 
-  return result;
+  return {
+    ...result,
+    estimateAmount: notificationEstimateAmount
+  };
 }
 
 function buildRepairQuoteSignature(repairInfo) {
@@ -4642,7 +4645,8 @@ async function sendRepairQuoteConfirmationIfNeeded(repairId, storeId, staffId = 
       reused: true,
       sent: false,
       link,
-      message: "已發送過相同報價確認通知，沿用既有連結"
+      message: "已發送過相同報價確認通知，沿用既有連結",
+      estimateAmount: Number(repairInfo.estimateAmount || 0)
     };
   }
 
@@ -4656,7 +4660,8 @@ async function sendRepairQuoteConfirmationIfNeeded(repairId, storeId, staffId = 
       ok: false,
       sent: false,
       link,
-      warning
+      warning,
+      estimateAmount: Number(repairInfo.estimateAmount || 0)
     };
   }
 
@@ -4670,7 +4675,8 @@ async function sendRepairQuoteConfirmationIfNeeded(repairId, storeId, staffId = 
       ok: false,
       sent: false,
       link,
-      warning
+      warning,
+      estimateAmount: Number(repairInfo.estimateAmount || 0)
     };
   }
 
@@ -4705,7 +4711,8 @@ async function sendRepairQuoteConfirmationIfNeeded(repairId, storeId, staffId = 
       ok: true,
       sent: true,
       link,
-      message: "已發送報價確認通知"
+      message: "已發送報價確認通知",
+      estimateAmount: Number(repairInfo.estimateAmount || 0)
     };
   } catch (error) {
     const warning = "LINE 報價確認通知發送失敗，請複製連結提供給顧客確認報價";
@@ -4719,7 +4726,8 @@ async function sendRepairQuoteConfirmationIfNeeded(repairId, storeId, staffId = 
       sent: false,
       link,
       warning,
-      lineError: error.message || "LINE_PUSH_FAILED"
+      lineError: error.message || "LINE_PUSH_FAILED",
+      estimateAmount: Number(repairInfo.estimateAmount || 0)
     };
   }
 }
@@ -4952,22 +4960,24 @@ async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = 
     connection
   });
 
-  try {
-    await notifyRepairStaffWorkflowEvent({
-      event: "customer_quote_ready",
-      repairId,
-      storeId: scopedStoreId,
-      amount: draft.totalAmount,
-      updatedAt: new Date().toISOString(),
-      source
-    }, {
-      purpose: "repair_customer_quote_ready_staff_group_notify"
-    });
-  } catch (staffLineError) {
-    console.warn("[staff-line] repair quote ready notification failed", {
-      repairId,
-      message: staffLineError.message
-    });
+  if (quoteConfirmation?.sent) {
+    try {
+      await notifyRepairStaffWorkflowEvent({
+        event: "quote_sent_to_customer",
+        repairId,
+        storeId: scopedStoreId,
+        amount: draft.totalAmount,
+        updatedAt: new Date().toISOString(),
+        source
+      }, {
+        purpose: "repair_quote_sent_to_customer_staff_group_notify"
+      });
+    } catch (staffLineError) {
+      console.warn("[staff-line] repair quote sent notification failed", {
+        repairId,
+        message: staffLineError.message
+      });
+    }
   }
 
   await logWorkflowEvent(
@@ -5442,7 +5452,7 @@ async function handleStaffLineSimpleAction({ action, params, event, auth }) {
       : action === "staff_line_ack"
         ? `✅ ${actorName} 已確認此通知。`
         : `✅ ${actorName} 已完成此項處理。`;
-    await sendStaffLineFollowup(storeId, followupText, { registrationTypes: ["repair", "staff", "admin"] });
+    await sendStaffLineFollowup(storeId, followupText, { registrationTypes: ["staff"] });
   }
 
   await replyStaffPostback(
@@ -5531,7 +5541,7 @@ async function handleRepairCompletionCustomerSend({ id, params, event, auth }) {
       await sendStaffLineFollowup(storeId, [
         "⚠️ 客戶尚未綁定 LINE，無法自動傳送。",
         "請由門市人員聯絡客戶。"
-      ].join("\n"), { registrationTypes: ["repair", "staff", "admin"] });
+      ].join("\n"), { registrationTypes: ["staff"] });
     }
     await finalizeCustomerLineSend({ notificationId, storeId, staffId: auth.staffId, success: false, errorCode: customerSendErrorCode(result) });
     await replyStaffPostback(event, result.reason || "維修完成確認書尚未送出。");
@@ -5540,7 +5550,7 @@ async function handleRepairCompletionCustomerSend({ id, params, event, auth }) {
 
   if (result.lineDelivered) {
     await finalizeCustomerLineSend({ notificationId, storeId, staffId: auth.staffId, success: true });
-    await sendStaffLineFollowup(storeId, `✅ 維修單 #${id} 完工確認書已發送給客戶。`, { registrationTypes: ["repair", "staff", "admin"] });
+    await sendStaffLineFollowup(storeId, `✅ 維修單 #${id} 完工確認書已發送給客戶。`, { registrationTypes: ["staff"] });
     await replyStaffPostback(event, "已發送維修完工確認書給客戶。");
     return true;
   }
@@ -5549,7 +5559,7 @@ async function handleRepairCompletionCustomerSend({ id, params, event, auth }) {
     await sendStaffLineFollowup(storeId, [
       "⚠️ 客戶尚未綁定 LINE，無法自動傳送。",
       "請由門市人員聯絡客戶。"
-    ].join("\n"), { registrationTypes: ["repair", "staff", "admin"] });
+    ].join("\n"), { registrationTypes: ["staff"] });
     await finalizeCustomerLineSend({ notificationId, storeId, staffId: auth.staffId, success: false, errorCode: "CUSTOMER_LINE_NOT_BOUND" });
     await replyStaffPostback(event, "客戶尚未綁定 LINE，請手動聯絡客戶。");
     return true;
@@ -5715,6 +5725,20 @@ async function handleLinePostback(event) {
         warning: "LINE 預約結果通知發送失敗，狀態已更新，請手動聯繫顧客。"
       });
       notifyWarning = notifyResult.warning || null;
+      if (approved) {
+        notifyRepairStaffWorkflowEvent({
+          event: "reservation_confirmed",
+          repairId: id,
+          storeId: reservationStoreId,
+          staffName: staffAuth.staff?.name || "LINE 群組成員",
+          source: "line_postback"
+        }).catch((staffLineError) => {
+          console.warn("[staff-line] repair reservation confirmed notification failed", {
+            repairId: id,
+            message: staffLineError.message
+          });
+        });
+      }
     }
     if (event.replyToken) {
       await replyToLine(

@@ -1200,8 +1200,6 @@ router.post("/",  async (req, res, next) => {
     try {
       notificationResult = await notifyRepairReservationCreated({
         repairId: result.insertId,
-        customerName: customer.name || `#${customerId}`,
-        customerPhone: customer.phone || null,
         reservationDate,
         reservationTime,
         bikeModel,
@@ -1235,7 +1233,7 @@ router.post("/",  async (req, res, next) => {
 
     if (!notificationResult.skipped && Number(notificationResult.delivered || 0) === 0) {
       console.error(
-        `[LINE][repair_reservation] no target groups resolved for repair #${result.insertId} (requested: repair,admin)`
+        `[LINE][repair_reservation] no active staff group delivered for repair #${result.insertId}`
       );
     }
 
@@ -1388,13 +1386,16 @@ router.post("/:id/send-quote-confirmation", async (req, res, next) => {
       source: "manual_resend"
     });
     const quoteConfirmationStatus = result.sent ? "SENT" : result.warning ? "FAILED" : "NOT_SENT";
-    await notifyRepairStaffWorkflowSafely({
-      event: "customer_quote_ready",
-      repairId: req.params.id,
-      storeId,
-      updatedAt: new Date().toISOString(),
-      source: "web_admin"
-    });
+    if (result.sent) {
+      await notifyRepairStaffWorkflowSafely({
+        event: "quote_sent_to_customer",
+        repairId: req.params.id,
+        storeId,
+        amount: result.estimateAmount || 0,
+        updatedAt: new Date().toISOString(),
+        source: "web_admin"
+      });
+    }
     return res.json({
       message: result.sent ? "已發送報價確認通知" : result.warning || result.message || "已產生報價確認連結",
       quoteConfirmation: {

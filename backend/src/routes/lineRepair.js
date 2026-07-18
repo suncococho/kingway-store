@@ -728,8 +728,6 @@ router.post("/create", async (req, res, next) => {
         const lineNotificationResult = await notifyRepairReservationCreated({
           repairId: result.repairId,
           storeId: resolvedStoreId,
-          customerName: result.customer.name || "LINE 客戶",
-          customerPhone: result.customer.phone || null,
           reservationDate: result.payload.reservationDate,
           reservationTime: result.payload.reservationTime,
           bikeModel: result.payload.bikeModel,
@@ -737,8 +735,6 @@ router.post("/create", async (req, res, next) => {
           sourceLabel: "LINE 維修預約",
           storeName: storeContext?.storeName,
           adminUrl: `${config.frontendBaseUrl}/repairs/${result.repairId}`
-        }, {
-          registrationTypes: ["repair", "staff", "admin"]
         });
         try {
           await logWorkflowEvent(
@@ -794,8 +790,6 @@ router.post("/create", async (req, res, next) => {
       notifyLineRepairCreated({
         repairId: result.repairId,
         storeId: resolvedStoreId,
-        customerName: result.customer.name || "LINE 客戶",
-        customerPhone: result.customer.phone || null,
         reservationDate: result.payload.reservationDate,
         reservationTime: result.payload.reservationTime,
         bikeModel: result.payload.bikeModel,
