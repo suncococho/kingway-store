@@ -50,6 +50,7 @@ const {
   updateOrderAccessoryInstallConfirmation
 } = require("../services/orderAccessoryInstallConfirmationService");
 const {
+  readExplicitNullableStaffId,
   resolveStaffAssignment,
   resolveSharedSalesAssignments
 } = require("../services/staffAssignmentService");
@@ -60,6 +61,7 @@ const {
   getOrderSalesFollowup,
   saveOrderSalesFollowup
 } = require("../services/orderSalesFollowupService");
+
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -1318,8 +1320,7 @@ router.patch("/:id/sales-staff", requireOrderManagementFeature, async (req, res,
       throw createError("找不到訂單", 404);
     }
     const orderColumns = await getTableColumns(pool, "orders");
-    const rawSalesStaffId =
-      req.body?.staffId ?? req.body?.salesStaffId;
+    const rawSalesStaffId = readExplicitNullableStaffId(req.body, "salesStaffId");
 
     if (rawSalesStaffId === undefined) {
       throw createError("請選擇銷售人員", 400);

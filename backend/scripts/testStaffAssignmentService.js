@@ -1,6 +1,7 @@
 const assert = require("assert");
 const {
   STAFF_ASSIGNMENT_ROLES,
+  readExplicitNullableStaffId,
   resolveStaffAssignment,
   resolveSharedSalesAssignments,
   listStaffSelectOptions
@@ -63,7 +64,24 @@ async function assertRejectsMessage(promise, message) {
   await assertRejectsMessage(resolveStaffAssignment(connection, 10, 5, "維修人員"), "只能選擇同門市啟用中的員工");
   await assertRejectsMessage(resolveStaffAssignment(connection, 10, 6, "銷售人員"), "只能選擇同門市啟用中的員工");
 
-  assert.deepStrictEqual(await resolveStaffAssignment(connection, 10, null, "銷售人員"), { id: null, name: null, role: null });
+  assert.strictEqual(readExplicitNullableStaffId({ staffId: 9 }, "salesStaffId"), 9);
+  assert.strictEqual(readExplicitNullableStaffId({ staffId: null }, "salesStaffId"), null);
+  assert.strictEqual(readExplicitNullableStaffId({ salesStaffId: null }, "salesStaffId"), null);
+  assert.strictEqual(readExplicitNullableStaffId({ staffId: null, salesStaffId: 2 }, "salesStaffId"), null);
+  assert.strictEqual(readExplicitNullableStaffId({ repairStaffId: null }, "repairStaffId"), null);
+  assert.strictEqual(readExplicitNullableStaffId({}, "salesStaffId"), undefined);
+  assert.strictEqual(readExplicitNullableStaffId(null, "repairStaffId"), undefined);
+
+  assert.deepStrictEqual(await resolveStaffAssignment(connection, 10, readExplicitNullableStaffId({ staffId: null }, "salesStaffId"), "銷售人員"), { id: null, name: null, role: null });
+  assert.deepStrictEqual(await resolveStaffAssignment(connection, 10, readExplicitNullableStaffId({ salesStaffId: null }, "salesStaffId"), "銷售人員"), { id: null, name: null, role: null });
+  assert.deepStrictEqual(await resolveStaffAssignment(connection, 10, readExplicitNullableStaffId({ staffId: null }, "repairStaffId"), "維修人員"), { id: null, name: null, role: null });
+  assert.deepStrictEqual(await resolveStaffAssignment(connection, 10, readExplicitNullableStaffId({ repairStaffId: null }, "repairStaffId"), "維修人員"), { id: null, name: null, role: null });
+  assert.deepStrictEqual(await resolveStaffAssignment(connection, 10, readExplicitNullableStaffId({ staffId: "" }, "salesStaffId"), "銷售人員"), { id: null, name: null, role: null });
+  assert.strictEqual(await resolveStaffAssignment(connection, 10, readExplicitNullableStaffId({}, "salesStaffId"), "銷售人員"), undefined);
+
+  const assignedThenCleared = await resolveStaffAssignment(connection, 10, 2, "銷售人員");
+  assert.strictEqual(assignedThenCleared.id, 2);
+  assert.deepStrictEqual(await resolveStaffAssignment(connection, 10, readExplicitNullableStaffId({ staffId: null }, "salesStaffId"), "銷售人員"), { id: null, name: null, role: null });
   assert.strictEqual(await resolveStaffAssignment(connection, 10, undefined, "銷售人員"), undefined);
 
   const primaryOnly = await resolveSharedSalesAssignments(

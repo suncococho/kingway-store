@@ -48,10 +48,14 @@ const {
   syncReplacementConfirmationsFromQuote,
   updateReplacementConfirmation
 } = require("../services/repairReplacementConfirmationService");
-const { resolveStaffAssignment } = require("../services/staffAssignmentService");
+const {
+  readExplicitNullableStaffId,
+  resolveStaffAssignment
+} = require("../services/staffAssignmentService");
 const {
   reconcileOrderSaleIncentivesSafely
 } = require("../services/staffIncentiveEarningService");
+
 
 const router = express.Router();
 const REPAIR_ALLOWED_ROLES = ["ADMIN", "MANAGER", "STAFF", "CASHIER", "REPAIR", "INVENTORY", "USER", "EMPLOYEE"];
@@ -783,26 +787,13 @@ router.patch("/:id/repair-staff", async (req, res, next) => {
       throw createError("找不到維修工單", 404);
     }
 
-    const body = req.body || {};
-    const rawStaffId = Object.prototype.hasOwnProperty.call(
-      body,
-      "staffId"
-    )
-      ? body.staffId
-      : body.repairStaffId;
-
-    const repairColumns = await getTableColumns(
-      pool,
-      "repair_orders"
-    );
-
+    const repairColumns = await getTableColumns(pool, "repair_orders");
     const assignment = await resolveRepairStaffAssignment(
       pool,
       storeId,
-      rawStaffId,
+      readExplicitNullableStaffId(req.body, "repairStaffId"),
       repairColumns
     );
-
     if (assignment === undefined) {
       throw createError("請選擇維修人員", 400);
     }

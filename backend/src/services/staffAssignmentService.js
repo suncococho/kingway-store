@@ -12,6 +12,17 @@ function normalizeOptionalStaffId(value, label) {
   return id;
 }
 
+function readExplicitNullableStaffId(body, fallbackKey) {
+  const payload = body || {};
+  if (Object.prototype.hasOwnProperty.call(payload, "staffId")) {
+    return payload.staffId;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, fallbackKey)) {
+    return payload[fallbackKey];
+  }
+  return undefined;
+}
+
 async function getAssignableStaffSnapshot(connection, storeId, staffId) {
   const [rows] = await connection.query(
     `
@@ -141,6 +152,7 @@ async function listStaffSelectOptions(connection, storeId) {
 module.exports = {
   STAFF_ASSIGNMENT_ROLES,
   normalizeOptionalStaffId,
+  readExplicitNullableStaffId,
   getAssignableStaffSnapshot,
   resolveStaffAssignment,
   assertSharedSalesAssignments,
