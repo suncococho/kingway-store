@@ -37,9 +37,9 @@ function flattenNotification(notification) {
 async function testStaffGroupSelection() {
   const connection = {
     async query(sql, params) {
+      assert(sql.includes("WHERE store_id = ?"));
       assert(sql.includes("registration_type IN (?)"));
-      assert(sql.includes("AND store_id = ?"));
-      assert.deepStrictEqual(params, [["staff"], 10]);
+      assert.deepStrictEqual(params, [10, ["staff"]]);
       return [[{
         id: 7,
         lineGroupId: "Cstaff-store10",

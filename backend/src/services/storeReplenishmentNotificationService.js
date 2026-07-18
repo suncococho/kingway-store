@@ -95,22 +95,28 @@ async function loadDirectRecipients(companyId, connection = pool) {
   return rows;
 }
 
-async function loadFallbackGroup(connection = pool) {
+async function loadFallbackGroup(storeId, connection = pool) {
+  const scopedStoreId = Number(storeId || 0) || null;
+  if (!scopedStoreId) return null;
+
   const [rows] = await connection.query(
     `
       SELECT line_group_id AS lineGroupId, registration_type AS registrationType
       FROM line_group_registrations
-      WHERE is_active = 1
+      WHERE store_id = ?
+        AND is_active = 1
         AND registration_type IN ('inventory', 'admin', 'staff')
       ORDER BY FIELD(registration_type, 'inventory', 'admin', 'staff'), updated_at DESC, id DESC
       LIMIT 1
-    `
+    `,
+    [scopedStoreId]
   );
   return rows[0] || null;
 }
 
 async function notifyStoreReplenishmentSubmitted(payload = {}) {
   const companyId = Number(payload.companyId || 0);
+  const storeId = Number(payload.storeId || payload.store_id || 0) || null;
   const requestId = Number(payload.requestId || 0);
   const requestNo = String(payload.requestNo || "").trim();
   const message = buildRequestMessage(payload);
@@ -170,7 +176,7 @@ async function notifyStoreReplenishmentSubmitted(payload = {}) {
       return { delivered, skipped: false, channel: "staff_direct" };
     }
 
-    const fallbackGroup = await loadFallbackGroup();
+    const fallbackGroup = await loadFallbackGroup(storeId);
     if (!fallbackGroup?.lineGroupId) {
       console.info("[store-replenishment] notify_skipped", {
         requestId,

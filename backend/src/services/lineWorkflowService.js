@@ -195,7 +195,10 @@ function createFlexMessage(altText, title, bodyLines, actions = []) {
   };
 }
 
-async function getRegisteredGroupsByTypes(registrationTypes) {
+async function getRegisteredGroupsByTypes(registrationTypes, options = {}) {
+  const scopedStoreId = Number(options.storeId || 0) || null;
+  if (!scopedStoreId) return [];
+
   const [groups] = await pool.query(
     `
       SELECT
@@ -204,15 +207,16 @@ async function getRegisteredGroupsByTypes(registrationTypes) {
         updated_at AS updatedAt,
         id
       FROM line_group_registrations
-      WHERE is_active = 1
+      WHERE store_id = ?
+        AND is_active = 1
         AND registration_type IN (?)
     `,
-    [registrationTypes]
+    [scopedStoreId, registrationTypes]
   );
   return groups;
 }
 
-async function resolveGroupTargets(registrationTypes) {
+async function resolveGroupTargets(registrationTypes, options = {}) {
   if (!config.line.channelAccessToken) {
     return [];
   }
@@ -223,7 +227,7 @@ async function resolveGroupTargets(registrationTypes) {
     }
 
     const qaTypes = ["admin", "staff", "repair", "inventory", "daily"];
-    const qaGroups = await getRegisteredGroupsByTypes(qaTypes);
+    const qaGroups = await getRegisteredGroupsByTypes(qaTypes, { storeId: options.storeId });
     const latestQaGroup = qaGroups
       .filter((group) => group.lineGroupId)
       .sort((left, right) => {
@@ -240,7 +244,7 @@ async function resolveGroupTargets(registrationTypes) {
     }
   }
 
-  const groups = await getRegisteredGroupsByTypes(registrationTypes);
+  const groups = await getRegisteredGroupsByTypes(registrationTypes, { storeId: options.storeId });
   return [...new Set(groups.map((group) => group.lineGroupId).filter(Boolean))];
 }
 
@@ -1401,15 +1405,17 @@ async function getRepairOrderForQuotation(repairId, connection = pool, storeId =
   return rows[0] || null;
 }
 
-async function getAuthorizedStaffGroupBySource(event, connection = pool) {
+async function getAuthorizedStaffGroupBySource(event, connection = pool, options = {}) {
   const sourceType = event.source?.type;
   const sourceId = sourceType === "group" ? event.source?.groupId : sourceType === "room" ? event.source?.roomId : null;
+  const scopedStoreId = Number(options.storeId || 0) || null;
   console.log("[line:slash] getAuthorizedStaffGroupBySource:start", sanitizeLogObject({
     sourceType,
-    sourceId: sourceId || null
+    sourceId: sourceId || null,
+    storeId: scopedStoreId
   }));
 
-  if (!sourceId || (sourceType !== "group" && sourceType !== "room")) {
+  if (!sourceId || !scopedStoreId || (sourceType !== "group" && sourceType !== "room")) {
     console.log("[line:slash] getAuthorizedStaffGroupBySource:skip", sanitizeLogObject({
       sourceType,
       sourceId: sourceId || null
@@ -1422,12 +1428,13 @@ async function getAuthorizedStaffGroupBySource(event, connection = pool) {
       SELECT id, line_group_id AS lineGroupId, registration_type AS registrationType
       FROM line_group_registrations
       WHERE line_group_id = ?
+        AND store_id = ?
         AND is_active = 1
         AND registration_type IN ('admin', 'staff', 'repair', 'inventory', 'daily')
       ORDER BY id DESC
       LIMIT 1
     `,
-    [sourceId]
+    [sourceId, scopedStoreId]
   );
 
   console.log("[line:slash] getAuthorizedStaffGroupBySource:done", sanitizeLogObject({
@@ -1621,7 +1628,7 @@ function buildSlashPermissionMessages(commandText) {
   ]);
 }
 
-async function handleLineSlashCommand(event) {
+async function handleLineSlashCommand(event, options = {}) {
   const messageText = event.message?.type === "text" ? event.message.text.trim() : "";
   const sourceType = event.source?.type;
   console.log("[line:slash] entry", sanitizeLogObject({
@@ -1666,7 +1673,7 @@ async function handleLineSlashCommand(event) {
       groupId: event.source?.groupId || null,
       roomId: event.source?.roomId || null
     }));
-    const staffGroup = isGroupContext ? await getAuthorizedStaffGroupBySource(event) : null;
+    const staffGroup = isGroupContext ? await getAuthorizedStaffGroupBySource(event, pool, { storeId: options.storeId }) : null;
     console.log("[line:slash] lookup staffGroup:done", {
       staffGroupId: staffGroup?.id || null,
       staffGroupType: staffGroup?.registrationType || null
@@ -1718,7 +1725,7 @@ async function handleLineSlashCommand(event) {
       return true;
     }
 
-    const handledByStaffCommand = await handleStaffOperationalCommand(event);
+    const handledByStaffCommand = await handleStaffOperationalCommand(event, { storeId: options.storeId });
     console.log("[line:slash] delegated staff-command", {
       messageText,
       handled: handledByStaffCommand
@@ -2176,7 +2183,7 @@ function buildPendingSummaryMessages(summary) {
   ]);
 }
 
-async function handleStaffOperationalCommand(event) {
+async function handleStaffOperationalCommand(event, options = {}) {
   const lineUserId = event.source?.userId;
   const messageText = event.message?.type === "text" ? event.message.text.trim() : "";
   const sourceType = event.source?.type;
@@ -2194,7 +2201,7 @@ async function handleStaffOperationalCommand(event) {
   }
 
   const staffUser = await getStaffUserByLineUserId(lineUserId);
-  const staffGroup = await getAuthorizedStaffGroupBySource(event);
+  const staffGroup = await getAuthorizedStaffGroupBySource(event, pool, { storeId: options.storeId });
   if (!staffUser && !staffGroup) {
     console.log("[line:staff] skip no-staff-access", sanitizeLogObject({
       lineUserId: lineUserId || null,

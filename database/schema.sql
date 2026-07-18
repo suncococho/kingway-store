@@ -89,12 +89,14 @@ CREATE TABLE IF NOT EXISTS line_group_registrations (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   line_group_id VARCHAR(100) NOT NULL UNIQUE,
   source_type ENUM('group', 'room') NOT NULL,
+  store_id BIGINT UNSIGNED NOT NULL,
   registration_type ENUM('admin', 'staff', 'repair', 'inventory', 'daily') NOT NULL DEFAULT 'daily',
   group_name VARCHAR(150) NOT NULL,
   registered_by_line_user_id VARCHAR(100) NULL,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_line_group_registrations_store_type_active (store_id, registration_type, is_active)
 );
 
 CREATE TABLE IF NOT EXISTS purchase_confirmations (

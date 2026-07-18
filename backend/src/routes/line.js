@@ -228,6 +228,7 @@ async function findLineGroupRegistrar(storeId, lineUserId) {
 }
 
 const REGISTER_USAGE_MESSAGE = "請使用：\n/register daily\n/register repair\n/register staff\n/register admin";
+const LINE_GROUP_STORE_CONFLICT_MESSAGE = "此 LINE 群組已登記於其他門市，無法重新綁定。\n請建立新的 LINE 群組，或由系統管理員確認原登記資料。";
 const LINE_GROUP_REGISTRATION_TYPES = new Set(["daily", "repair", "staff", "admin"]);
 const STAFF_LAUNCHER_REGISTRATION_TYPES = new Set(["admin", "staff", "repair"]);
 
@@ -281,7 +282,7 @@ async function handleLineGroupRegistration(event, lineContext, registrationType)
 
     const [existingRows] = await connection.query(
       `
-        SELECT id, registration_type AS registrationType
+        SELECT id, store_id AS storeId, registration_type AS registrationType
         FROM line_group_registrations
         WHERE line_group_id = ?
         LIMIT 1
@@ -290,6 +291,15 @@ async function handleLineGroupRegistration(event, lineContext, registrationType)
       [lineGroupId]
     );
     const existing = existingRows[0] || null;
+
+    if (existing?.storeId && Number(existing.storeId) !== storeId) {
+      await connection.rollback();
+      return {
+        ok: false,
+        code: "LINE_GROUP_STORE_CONFLICT",
+        message: LINE_GROUP_STORE_CONFLICT_MESSAGE
+      };
+    }
 
     if (existing && existing.registrationType !== registrationType) {
       await connection.rollback();
@@ -303,29 +313,31 @@ async function handleLineGroupRegistration(event, lineContext, registrationType)
         `
           UPDATE line_group_registrations
           SET source_type = ?,
+              store_id = COALESCE(store_id, ?),
               group_name = ?,
               registered_by_line_user_id = ?,
               is_active = 1
           WHERE id = ?
             AND registration_type = ?
+            AND (store_id IS NULL OR store_id = ?)
         `,
-        [sourceType, groupName, lineUserId, existing.id, registrationType]
+        [sourceType, storeId, groupName, lineUserId, existing.id, registrationType, storeId]
       );
     } else {
       try {
         await connection.query(
           `
-            INSERT INTO line_group_registrations (line_group_id, source_type, registration_type, group_name, registered_by_line_user_id, is_active)
-            VALUES (?, ?, ?, ?, ?, 1)
+            INSERT INTO line_group_registrations (line_group_id, source_type, store_id, registration_type, group_name, registered_by_line_user_id, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, 1)
           `,
-          [lineGroupId, sourceType, registrationType, groupName, lineUserId]
+          [lineGroupId, sourceType, storeId, registrationType, groupName, lineUserId]
         );
       } catch (error) {
         if (error.code !== "ER_DUP_ENTRY") throw error;
 
         const [raceRows] = await connection.query(
           `
-            SELECT id, registration_type AS registrationType
+            SELECT id, store_id AS storeId, registration_type AS registrationType
             FROM line_group_registrations
             WHERE line_group_id = ?
             LIMIT 1
@@ -334,6 +346,14 @@ async function handleLineGroupRegistration(event, lineContext, registrationType)
           [lineGroupId]
         );
         const raceExisting = raceRows[0] || null;
+        if (raceExisting?.storeId && Number(raceExisting.storeId) !== storeId) {
+          await connection.rollback();
+          return {
+            ok: false,
+            code: "LINE_GROUP_STORE_CONFLICT",
+            message: LINE_GROUP_STORE_CONFLICT_MESSAGE
+          };
+        }
         if (!raceExisting || raceExisting.registrationType !== registrationType) {
           await connection.rollback();
           const typeLabel = mapRegistrationTypeLabel(raceExisting?.registrationType) || raceExisting?.registrationType || "其他用途";
@@ -344,13 +364,15 @@ async function handleLineGroupRegistration(event, lineContext, registrationType)
           `
             UPDATE line_group_registrations
             SET source_type = ?,
+                store_id = COALESCE(store_id, ?),
                 group_name = ?,
                 registered_by_line_user_id = ?,
                 is_active = 1
             WHERE id = ?
               AND registration_type = ?
+              AND (store_id IS NULL OR store_id = ?)
           `,
-          [sourceType, groupName, lineUserId, raceExisting.id, registrationType]
+          [sourceType, storeId, groupName, lineUserId, raceExisting.id, registrationType, storeId]
         );
       }
     }
@@ -564,7 +586,7 @@ async function handleLineWebhookEvents({ req, events, lineContext = {} }) {
           sourceType,
           messageText
         });
-        const handledBySlash = await handleLineSlashCommand(event);
+        const handledBySlash = await handleLineSlashCommand(event, { storeId: scopedLineContext.storeId });
         console.log("[line:webhook] route slash:result", {
           sourceType,
           messageText,
@@ -1060,12 +1082,18 @@ router.post("/webhook", async (req, res, next) => {
 
 router.get("/groups", authenticate, authorize(["ADMIN", "MANAGER"]), async (req, res, next) => {
   try {
+    const storeId = Number(req.storeId || req.user?.storeId || 0);
+    if (!storeId) {
+      return res.status(400).json({ message: "缺少門市範圍，無法查詢 LINE 群組。" });
+    }
+
     const [rows] = await pool.query(
       `
         SELECT
           id,
           line_group_id AS lineGroupId,
           source_type AS sourceType,
+          store_id AS storeId,
           registration_type AS registrationType,
           group_name AS groupName,
           registered_by_line_user_id AS registeredByLineUserId,
@@ -1073,8 +1101,10 @@ router.get("/groups", authenticate, authorize(["ADMIN", "MANAGER"]), async (req,
           created_at AS createdAt,
           updated_at AS updatedAt
         FROM line_group_registrations
+        WHERE store_id = ?
         ORDER BY id DESC
-      `
+      `,
+      [storeId]
     );
 
     return res.json(rows);

@@ -156,7 +156,10 @@ function buildSupplierLineNotificationText({ requestType, supplierName, sku, pro
   ].join("\n");
 }
 
-async function resolveSupplierLineGroupTarget(connection = pool) {
+async function resolveSupplierLineGroupTarget(storeId, connection = pool) {
+  const scopedStoreId = Number(storeId || 0) || null;
+  if (!scopedStoreId) return null;
+
   const fallbackTypes = ["inventory", "daily", "staff", "admin"];
   const orderCases = fallbackTypes.map((type, index) => `WHEN '${type}' THEN ${index + 1}`).join(" ");
   const [rows] = await connection.query(
@@ -164,6 +167,7 @@ async function resolveSupplierLineGroupTarget(connection = pool) {
       SELECT line_group_id AS lineGroupId, registration_type AS registrationType, group_name AS groupName
       FROM line_group_registrations
       WHERE is_active = 1
+        AND store_id = ?
         AND (group_name = ? OR registration_type IN (?))
       ORDER BY
         CASE WHEN group_name = ? THEN 0 ELSE 1 END,
@@ -172,7 +176,7 @@ async function resolveSupplierLineGroupTarget(connection = pool) {
         id DESC
       LIMIT 1
     `,
-    ["kw-mini test", fallbackTypes, "kw-mini test"]
+    [scopedStoreId, "kw-mini test", fallbackTypes, "kw-mini test"]
   );
 
   return rows[0] || null;
@@ -180,7 +184,7 @@ async function resolveSupplierLineGroupTarget(connection = pool) {
 
 async function notifySupplierRequestLine({ requestId, requestType, supplierName, sku, productName, quantity, storeId }) {
   try {
-    const target = await resolveSupplierLineGroupTarget();
+    const target = await resolveSupplierLineGroupTarget(storeId);
     if (!target?.lineGroupId) {
       console.info("[supplier:line] skipped missing target", { requestId });
       return { delivered: 0, skipped: true, reason: "missing_line_group" };

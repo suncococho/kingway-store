@@ -552,23 +552,22 @@ async function resolveStaffLineGroupTarget(connection = pool, registrationTypes 
     ? [...registrationTypes]
     : [...STAFF_GROUP_TYPES];
   const scopedStoreId = normalizeStoreId(options.storeId);
-  const storeClause = scopedStoreId ? "AND store_id = ?" : "";
-  const params = scopedStoreId
-    ? [resolvedRegistrationTypes, scopedStoreId]
-    : [resolvedRegistrationTypes];
+  if (!scopedStoreId) {
+    return null;
+  }
 
   const orderCases = resolvedRegistrationTypes.map((type, index) => `WHEN '${type}' THEN ${index + 1}`).join(" ");
   const [rows] = await connection.query(
     `
-      SELECT id, line_group_id AS lineGroupId, registration_type AS registrationType, group_name AS groupName
+      SELECT id, store_id AS storeId, line_group_id AS lineGroupId, registration_type AS registrationType, group_name AS groupName
       FROM line_group_registrations
-      WHERE is_active = 1
+      WHERE store_id = ?
+        AND is_active = 1
         AND registration_type IN (?)
-        ${storeClause}
       ORDER BY CASE registration_type ${orderCases} ELSE 99 END, updated_at DESC, id DESC
       LIMIT 1
     `,
-    params
+    [scopedStoreId, resolvedRegistrationTypes]
   );
 
   return rows[0] || null;

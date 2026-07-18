@@ -458,13 +458,16 @@ async function getSettingsSnapshot(storeId) {
         id,
         line_group_id AS lineGroupId,
         source_type AS sourceType,
+        store_id AS storeId,
         registration_type AS registrationType,
         group_name AS groupName,
         is_active AS isActive,
         updated_at AS updatedAt
       FROM line_group_registrations
+      WHERE store_id = ?
       ORDER BY updated_at DESC, id DESC
-    `
+    `,
+    [storeId]
   );
 
   return {
