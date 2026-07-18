@@ -1310,9 +1310,9 @@ function buildRepairEstimateCustomerMessages(repairInfo, payload) {
     "請點選下方連結確認報價內容，並選擇是否同意維修。"
   ].filter(Boolean);
   const actions = [
-    createUriAction("確認維修報價", quoteUrl),
     createPostbackAction("同意報價", "repair_estimate_approve", repairInfo.id),
-    createPostbackAction("拒絕報價", "repair_estimate_reject", repairInfo.id)
+    createPostbackAction("拒絕報價", "repair_estimate_reject", repairInfo.id),
+    createUriAction("查看維修進度", quoteUrl)
   ];
 
   return withCustomerQuickReply([
@@ -1321,10 +1321,7 @@ function buildRepairEstimateCustomerMessages(repairInfo, payload) {
       "維修報價確認",
       [
         repairInfo?.id ? `維修單號：#${repairInfo.id}` : null,
-        repairInfo?.bikeModel ? `車款：${repairInfo.bikeModel}` : null,
-        "【初步診斷結果】",
-        diagnosis || "-",
-        "【維修報價】",
+        `初步診斷：${diagnosis || "-"}`,
         `報價金額：${amountText}`,
         "若您同意本次維修報價，門市將安排所需零件。",
         "相關零件抵達門市後，我們將開始進行維修。",
@@ -4544,6 +4541,19 @@ function assertRepairReadyForCustomerQuote(repairInfo = {}) {
   }
 }
 
+const CUSTOMER_LINE_BINDING_REQUIRED_MESSAGE = "找不到此客戶的 LINE 綁定資料，維修報價尚未發送。\n請先確認客戶使用同一個 LINE 帳號完成綁定，或由門市聯絡客戶。";
+
+function resolveRepairQuoteWaitingStatus(statusColumnType = "") {
+  const normalized = String(statusColumnType || "");
+  if (normalized.includes("'waiting_customer_confirm'")) {
+    return "waiting_customer_confirm";
+  }
+  if (normalized.includes("'estimate_pending_approval'")) {
+    return "estimate_pending_approval";
+  }
+  return "reserved";
+}
+
 function buildRepairEstimateDraftSignature(payload = {}) {
   return crypto
     .createHash("sha256")
@@ -4651,37 +4661,24 @@ async function sendRepairQuoteConfirmationIfNeeded(repairId, storeId, staffId = 
   }
 
   if (!repairInfo.lineUserId) {
-    const warning = "顧客未綁定 LINE，請複製連結提供給顧客確認報價";
     await insertRepairQuoteNotificationLog(options.connection || pool, repairInfo.id, "quote_confirmation_send_failed", {
       ...payload,
       reason: "NO_LINE_USER"
     });
-    return {
-      ok: false,
-      sent: false,
-      link,
-      warning,
-      estimateAmount: Number(repairInfo.estimateAmount || 0)
-    };
+    throw createError(CUSTOMER_LINE_BINDING_REQUIRED_MESSAGE, 400, "CUSTOMER_LINE_BINDING_REQUIRED");
   }
 
   if (!config.line.channelAccessToken) {
-    const warning = "LINE channel token 未設定，請複製連結提供給顧客確認報價";
     await insertRepairQuoteNotificationLog(options.connection || pool, repairInfo.id, "quote_confirmation_send_failed", {
       ...payload,
       reason: "NO_LINE_TOKEN"
     });
-    return {
-      ok: false,
-      sent: false,
-      link,
-      warning,
-      estimateAmount: Number(repairInfo.estimateAmount || 0)
-    };
+    throw createError("LINE 通知設定尚未完成，維修報價尚未發送。請確認 LINE channel token 後再重新發送。", 500, "LINE_TOKEN_REQUIRED");
   }
 
   try {
-    await sendLineMessage(config, repairInfo.lineUserId, buildRepairEstimateCustomerMessages(repairInfo, {
+    const sendCustomerLineMessage = options.sendLineMessage || sendLineMessage;
+    await sendCustomerLineMessage(config, repairInfo.lineUserId, buildRepairEstimateCustomerMessages(repairInfo, {
       items: parseRepairQuoteItemsJson(repairInfo.quoteItemsJson),
       inspectionFee: repairInfo.inspectionFee || 0,
       laborFee: repairInfo.laborFee || 0,
@@ -4689,47 +4686,40 @@ async function sendRepairQuoteConfirmationIfNeeded(repairId, storeId, staffId = 
       notes: repairInfo.quoteNotes || "",
       quoteUrl: link
     }));
-    const statusColumnType = String(await getColumnType(options.connection || pool, "repair_orders", "status") || "");
-    const estimatePendingStatus = statusColumnType.includes("'estimate_pending_approval'") ? "estimate_pending_approval" : "reserved";
-    const repairColumns = await getRepairOrdersTableColumns(options.connection || pool);
-    const updates = [
-      "status = ?",
-      "estimate_sent_at = NOW()",
-      "customer_estimate_response = 'pending'",
-      "customer_estimate_responded_at = NULL",
-      "updated_at = NOW()"
-    ];
-    if (hasColumn(repairColumns, "quote_status")) {
-      updates.push("quote_status = 'sent'");
-    }
-    await (options.connection || pool).query(
-      `UPDATE repair_orders SET ${updates.join(", ")} WHERE id = ? AND store_id = ?`,
-      [estimatePendingStatus, repairInfo.id, scopedStoreId]
-    );
-    await insertRepairQuoteNotificationLog(options.connection || pool, repairInfo.id, "quote_confirmation_sent", payload);
-    return {
-      ok: true,
-      sent: true,
-      link,
-      message: "已發送報價確認通知",
-      estimateAmount: Number(repairInfo.estimateAmount || 0)
-    };
   } catch (error) {
-    const warning = "LINE 報價確認通知發送失敗，請複製連結提供給顧客確認報價";
     await insertRepairQuoteNotificationLog(options.connection || pool, repairInfo.id, "quote_confirmation_send_failed", {
       ...payload,
       reason: "LINE_PUSH_FAILED",
       error: error.message || "LINE_PUSH_FAILED"
     });
-    return {
-      ok: false,
-      sent: false,
-      link,
-      warning,
-      lineError: error.message || "LINE_PUSH_FAILED",
-      estimateAmount: Number(repairInfo.estimateAmount || 0)
-    };
+    throw createError("LINE 維修報價通知發送失敗，維修報價尚未發送。請稍後重新發送。", 502, "LINE_PUSH_FAILED");
   }
+
+  const statusColumnType = String(await getColumnType(options.connection || pool, "repair_orders", "status") || "");
+  const estimatePendingStatus = resolveRepairQuoteWaitingStatus(statusColumnType);
+  const repairColumns = await getRepairOrdersTableColumns(options.connection || pool);
+  const updates = [
+    "status = ?",
+    "estimate_sent_at = NOW()",
+    "customer_estimate_response = 'pending'",
+    "customer_estimate_responded_at = NULL",
+    "updated_at = NOW()"
+  ];
+  if (hasColumn(repairColumns, "quote_status")) {
+    updates.push("quote_status = 'sent'");
+  }
+  await (options.connection || pool).query(
+    `UPDATE repair_orders SET ${updates.join(", ")} WHERE id = ? AND store_id = ?`,
+    [estimatePendingStatus, repairInfo.id, scopedStoreId]
+  );
+  await insertRepairQuoteNotificationLog(options.connection || pool, repairInfo.id, "quote_confirmation_sent", payload);
+  return {
+    ok: true,
+    sent: true,
+    link,
+    message: "已發送報價確認通知",
+    estimateAmount: Number(repairInfo.estimateAmount || 0)
+  };
 }
 
 function normalizeRepairEstimatePayload(estimatePayload = {}) {
@@ -4929,31 +4919,6 @@ async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = 
   if (currentStatus !== "reserved" || isQuoteAlreadySent) {
     throw createError("此維修單已進入後續流程，無法再次送出報價", 400);
   }
-
-  const statusColumnType = String(await getColumnType(connection, "repair_orders", "status") || "");
-  const estimatePendingStatus = statusColumnType.includes("'estimate_pending_approval'") ? "estimate_pending_approval" : "reserved";
-  const repairColumns = await getRepairOrdersTableColumns(connection);
-  const updates = [
-    "status = ?",
-    "estimate_sent_at = NOW()",
-    "customer_estimate_response = 'pending'",
-    "customer_estimate_responded_at = NULL",
-    "updated_at = NOW()"
-  ];
-  const params = [estimatePendingStatus];
-  if (hasColumn(repairColumns, "quote_status")) {
-    updates.push("quote_status = 'sent'");
-  }
-  params.push(repairId, scopedStoreId);
-  await connection.query(`UPDATE repair_orders SET ${updates.join(", ")} WHERE id = ? AND store_id = ?`, params);
-
-  await connection.query(
-    `
-      INSERT INTO repair_logs (repair_order_id, action, note)
-      VALUES (?, 'estimate_pending_approval', ?)
-    `,
-    [repairId, `報價已送出，待客戶確認（${source}）`]
-  );
 
   const quoteConfirmation = await sendRepairQuoteConfirmationIfNeeded(repairId, scopedStoreId, staffId, {
     source,

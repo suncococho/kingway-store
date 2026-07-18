@@ -25,6 +25,12 @@ function getReservationStatusLabel(status) {
   return labels[status] || status || "-";
 }
 
+function hasQuoteSentToCustomer(row) {
+  const status = String(row.status || "").trim();
+  const quoteStatus = String(row.quoteStatus || row.quote_status || "").trim();
+  return quoteStatus === "sent" || Boolean(row.estimateSentAt || row.estimate_sent_at) || ["estimate_pending_approval", "quoted", "waiting_customer_confirm"].includes(status);
+}
+
 function getEstimateStatusLabel(row) {
   if (row.customerEstimateResponse === "approved") {
     return "客戶已同意";
@@ -32,10 +38,10 @@ function getEstimateStatusLabel(row) {
   if (row.customerEstimateResponse === "rejected") {
     return "客戶已拒絕";
   }
-  if (row.customerEstimateResponse === "pending") {
+  if (row.customerEstimateResponse === "pending" && hasQuoteSentToCustomer(row)) {
     return "待客戶回覆";
   }
-  if (["estimate_pending_approval", "quoted", "waiting_customer_confirm"].includes(String(row.status || "").trim())) {
+  if (hasQuoteSentToCustomer(row)) {
     return "待客戶回覆";
   }
   return "尚未報價";
@@ -48,7 +54,7 @@ function getEstimateTone(row) {
   if (row.customerEstimateResponse === "rejected") {
     return "danger";
   }
-  if (row.customerEstimateResponse === "pending" || ["estimate_pending_approval", "quoted", "waiting_customer_confirm"].includes(String(row.status || "").trim())) {
+  if (row.customerEstimateResponse === "pending" && hasQuoteSentToCustomer(row)) {
     return "warning";
   }
   return "neutral";
@@ -162,7 +168,7 @@ function isReservedReservation(row) {
 }
 
 function isEstimatedReservation(row) {
-  return ["estimate_pending_approval", "quoted", "waiting_customer_confirm"].includes(String(row.status || "").trim());
+  return hasQuoteSentToCustomer(row);
 }
 
 function isQuoteAccepted(row) {
@@ -343,7 +349,7 @@ function RepairsPage() {
           delete next[row.id];
           return next;
         });
-        window.alert(response?.message || "已發送報價確認通知");
+        window.alert(response?.message || "維修報價已成功發送給客戶");
       }
       repairs.refetch();
     } catch (error) {

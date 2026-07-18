@@ -1382,10 +1382,9 @@ router.post("/:id/send-quote-confirmation", async (req, res, next) => {
     const storeId = req.storeId;
     await assertRepairBelongsToStore(req.params.id, storeId);
     const result = await sendRepairQuoteConfirmationIfNeeded(req.params.id, storeId, req.user.id, {
-      forceSend: true,
       source: "manual_resend"
     });
-    const quoteConfirmationStatus = result.sent ? "SENT" : result.warning ? "FAILED" : "NOT_SENT";
+    const quoteConfirmationStatus = result.sent || result.reused ? "SENT" : result.warning ? "FAILED" : "NOT_SENT";
     if (result.sent) {
       await notifyRepairStaffWorkflowSafely({
         event: "quote_sent_to_customer",
@@ -1397,7 +1396,7 @@ router.post("/:id/send-quote-confirmation", async (req, res, next) => {
       });
     }
     return res.json({
-      message: result.sent ? "已發送報價確認通知" : result.warning || result.message || "已產生報價確認連結",
+      message: result.sent ? "維修報價已成功發送給客戶" : result.message || "相同報價已發送給客戶，未重複發送",
       quoteConfirmation: {
         ...result,
         quoteConfirmationStatus,

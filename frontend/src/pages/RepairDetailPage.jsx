@@ -279,6 +279,7 @@ function RepairDetailPage() {
   const [replacementConfirmations, setReplacementConfirmations] = useState({ tableExists: true, items: [] });
   const [replacementConfirmationsLoading, setReplacementConfirmationsLoading] = useState(false);
   const [quoteConfirmationNotice, setQuoteConfirmationNotice] = useState(null);
+  const [quoteSending, setQuoteSending] = useState(false);
   const [crossCheckModalOpen, setCrossCheckModalOpen] = useState(false);
   const [crossCheckResult, setCrossCheckResult] = useState("APPROVED");
   const [crossCheckNote, setCrossCheckNote] = useState("");
@@ -426,13 +427,20 @@ function RepairDetailPage() {
   }
 
   async function sendQuoteConfirmation() {
-    const response = await callAction(`/repairs/${id}/send-quote-confirmation`);
-    if (response?.quoteConfirmationWarning) {
-      return;
+    if (quoteSending) {
+      return null;
     }
-    if (response?.message) {
+    setQuoteSending(true);
+    try {
+      const response = await callAction(`/repairs/${id}/send-quote-confirmation`);
+      if (!response) {
+        return null;
+      }
       setQuoteConfirmationNotice(null);
-      window.alert(response.message);
+      window.alert(response?.message || "維修報價已成功發送給客戶");
+      return response;
+    } finally {
+      setQuoteSending(false);
     }
   }
 
@@ -729,7 +737,7 @@ function RepairDetailPage() {
           });
           return draftResponse;
         }
-        return callAction(`/repairs/${id}/send-quote-confirmation`);
+        return sendQuoteConfirmation();
       }
     });
   }
@@ -972,6 +980,10 @@ function RepairDetailPage() {
     quoteStatusValue === "approved" ||
     quoteStatusValue === "accepted" ||
     ["estimate_approved", "customer_confirmed", "repair_order_created", "repairing", "completed_waiting_pickup", "picked_up"].includes(repairStatusValue);
+  const quoteSentWaiting =
+    quoteStatusValue === "sent" ||
+    Boolean(detail.estimate_sent_at) ||
+    ["estimate_pending_approval", "quoted", "waiting_customer_confirm"].includes(repairStatusValue);
   const canStartRepair =
     Boolean(detail.canStartRepair) ||
     (!isFinalizedRepair &&
@@ -1811,7 +1823,7 @@ function RepairDetailPage() {
                   <div className="field-value">{formatTaipeiDateTime(detail.quoteConfirmationSentAt || detail.quoteConfirmationFailedAt)}</div>
                 </div>
               </div>
-              {(detail.customer_estimate_response === "pending" || detail.status === "estimate_pending_approval") ? (
+              {quoteSentWaiting ? (
                 <>
                   {quoteConfirmationNotice?.warning || detail.quoteConfirmationWarning ? (
                     <div className="error-banner">
@@ -1824,8 +1836,8 @@ function RepairDetailPage() {
                     </div>
                   ) : null}
                   <div className="action-row" style={{ marginTop: 12 }}>
-                    <button type="button" className="secondary-button" onClick={sendQuoteConfirmation}>
-                      再次發送報價確認
+                    <button type="button" className="secondary-button" onClick={sendQuoteConfirmation} disabled={quoteSending}>
+                      {quoteSending ? "發送中..." : "再次發送報價確認"}
                     </button>
                     <button type="button" className="secondary-button" onClick={copyQuoteConfirmationLink}>
                       複製確認連結
@@ -2056,8 +2068,8 @@ function RepairDetailPage() {
                     <button type="button" className="secondary-button" disabled={quoteLocked || estimateTotal <= 0} onClick={requestSaveEstimateDraft}>
                       儲存報價草稿
                     </button>
-                    <button type="button" className="primary-button inline-submit" disabled={quoteLocked || !crossCheckApproved || estimateTotal <= 0} onClick={requestSendEstimate}>
-                      發送報價給客戶
+                    <button type="button" className="primary-button inline-submit" disabled={quoteLocked || !crossCheckApproved || estimateTotal <= 0 || quoteSending} onClick={requestSendEstimate}>
+                      {quoteSending ? "發送中..." : "發送報價給客戶"}
                     </button>
                   </div>
                 </div>
