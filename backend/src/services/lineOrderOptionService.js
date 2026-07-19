@@ -3,7 +3,7 @@ const DEFAULT_LINE_ORDER_OPTION_SETTINGS = {
   pageTitle: "選擇您需要的配件",
   pageDescription: "可依照需求選擇配件，也可以略過此步驟",
   allowSkip: true,
-  showOutOfStock: true,
+  showOutOfStock: false,
   showPrices: true
 };
 
@@ -46,9 +46,9 @@ function mapSettings(row) {
     isEnabled: toBool(row.isEnabled),
     pageTitle: row.pageTitle || DEFAULT_LINE_ORDER_OPTION_SETTINGS.pageTitle,
     pageDescription: row.pageDescription || DEFAULT_LINE_ORDER_OPTION_SETTINGS.pageDescription,
-    allowSkip: toBool(row.allowSkip, true),
-    showOutOfStock: toBool(row.showOutOfStock, true),
-    showPrices: toBool(row.showPrices, true),
+    allowSkip: toBool(row.allowSkip, DEFAULT_LINE_ORDER_OPTION_SETTINGS.allowSkip),
+    showOutOfStock: toBool(row.showOutOfStock, DEFAULT_LINE_ORDER_OPTION_SETTINGS.showOutOfStock),
+    showPrices: toBool(row.showPrices, DEFAULT_LINE_ORDER_OPTION_SETTINGS.showPrices),
     createdAt: row.createdAt || null,
     updatedAt: row.updatedAt || null
   };
@@ -118,18 +118,30 @@ async function getOptionSettings(connection, storeId) {
   return mapSettings(rows[0]);
 }
 
-async function ensureOptionSettings(connection, storeId, staffId = null) {
+async function upsertLineOrderOptionSettings(connection, storeId, payload, staffId = null) {
+  const settings = normalizeSettingsPayload(payload || {});
   await connection.query(
     `
       INSERT INTO line_order_option_settings
         (store_id, is_enabled, page_title, page_description, allow_skip, show_out_of_stock, show_prices, created_by_staff_id, updated_by_staff_id)
-      VALUES (?, 0, ?, ?, 1, 1, 1, ?, ?)
-      ON DUPLICATE KEY UPDATE store_id = VALUES(store_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        is_enabled = VALUES(is_enabled),
+        page_title = VALUES(page_title),
+        page_description = VALUES(page_description),
+        allow_skip = VALUES(allow_skip),
+        show_out_of_stock = VALUES(show_out_of_stock),
+        show_prices = VALUES(show_prices),
+        updated_by_staff_id = VALUES(updated_by_staff_id)
     `,
     [
       storeId,
-      DEFAULT_LINE_ORDER_OPTION_SETTINGS.pageTitle,
-      DEFAULT_LINE_ORDER_OPTION_SETTINGS.pageDescription,
+      settings.isEnabled ? 1 : 0,
+      settings.pageTitle,
+      settings.pageDescription,
+      settings.allowSkip ? 1 : 0,
+      settings.showOutOfStock ? 1 : 0,
+      settings.showPrices ? 1 : 0,
       staffId,
       staffId
     ]
@@ -225,9 +237,7 @@ async function listOptionGroups(connection, storeId, options = {}) {
 }
 
 async function getLineOrderOptionConfig(connection, storeId, options = {}) {
-  const settings = options.ensure
-    ? await ensureOptionSettings(connection, storeId, options.staffId || null)
-    : await getOptionSettings(connection, storeId);
+  const settings = await getOptionSettings(connection, storeId);
   const groups = await listOptionGroups(connection, storeId, {
     includeInactive: Boolean(options.includeInactive),
     customerMode: Boolean(options.customerMode),
@@ -339,9 +349,9 @@ function normalizeSettingsPayload(body = {}) {
     isEnabled: toBool(body.isEnabled),
     pageTitle: normalizeText(body.pageTitle, 150) || DEFAULT_LINE_ORDER_OPTION_SETTINGS.pageTitle,
     pageDescription: normalizeText(body.pageDescription, 500) || DEFAULT_LINE_ORDER_OPTION_SETTINGS.pageDescription,
-    allowSkip: toBool(body.allowSkip, true),
-    showOutOfStock: toBool(body.showOutOfStock, true),
-    showPrices: toBool(body.showPrices, true)
+    allowSkip: toBool(body.allowSkip, DEFAULT_LINE_ORDER_OPTION_SETTINGS.allowSkip),
+    showOutOfStock: toBool(body.showOutOfStock, DEFAULT_LINE_ORDER_OPTION_SETTINGS.showOutOfStock),
+    showPrices: toBool(body.showPrices, DEFAULT_LINE_ORDER_OPTION_SETTINGS.showPrices)
   };
 }
 
@@ -398,7 +408,7 @@ function normalizeGroupProductPayload(body = {}) {
 module.exports = {
   DEFAULT_LINE_ORDER_OPTION_SETTINGS,
   getLineOrderOptionConfig,
-  ensureOptionSettings,
+  upsertLineOrderOptionSettings,
   listOptionGroups,
   validateLineOrderOptionSelections,
   normalizeSettingsPayload,

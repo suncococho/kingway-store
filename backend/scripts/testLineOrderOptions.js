@@ -1,6 +1,8 @@
 const assert = require("assert");
 const {
+  DEFAULT_LINE_ORDER_OPTION_SETTINGS,
   getLineOrderOptionConfig,
+  upsertLineOrderOptionSettings,
   validateLineOrderOptionSelections
 } = require("../src/services/lineOrderOptionService");
 
@@ -42,9 +44,31 @@ function baseData(overrides = {}) {
 }
 
 function createConnection(data) {
+  data.queries = Array.isArray(data.queries) ? data.queries : [];
+  data.nextSettingsId = data.nextSettingsId || 1;
   return {
     async query(sql, params = []) {
       const normalized = String(sql).replace(/\s+/g, " ").trim();
+      data.queries.push(normalized);
+      if (normalized.startsWith("INSERT INTO line_order_option_settings")) {
+        const existing = data.settings && Number(data.settings.storeId) === Number(params[0]) ? data.settings : null;
+        const nextSettings = {
+          id: existing?.id || data.nextSettingsId++,
+          storeId: Number(params[0]),
+          isEnabled: params[1],
+          pageTitle: params[2],
+          pageDescription: params[3],
+          allowSkip: params[4],
+          showOutOfStock: params[5],
+          showPrices: params[6],
+          createdByStaffId: existing?.createdByStaffId ?? params[7],
+          updatedByStaffId: params[8],
+          createdAt: existing?.createdAt || null,
+          updatedAt: null
+        };
+        data.settings = nextSettings;
+        return [{ affectedRows: existing ? 2 : 1, insertId: nextSettings.id }];
+      }
       if (normalized.includes("FROM line_order_option_settings")) {
         const storeId = Number(params[0]);
         const settings = data.settings && Number(data.settings.storeId) === storeId ? data.settings : null;
@@ -119,7 +143,80 @@ async function assertRejectsMessage(fn, pattern, label) {
   });
 }
 
+function writeQueries(data) {
+  return (data.queries || []).filter((query) => /^(INSERT|UPDATE|DELETE)\b/i.test(query));
+}
+
+function optionSettingsRowCount(data, storeId = 1) {
+  return data.settings && Number(data.settings.storeId) === storeId ? 1 : 0;
+}
+
 async function run() {
+  {
+    const data = baseData({ settings: null, groups: [], mappings: [] });
+    const beforeCount = optionSettingsRowCount(data);
+    const config = await getLineOrderOptionConfig(createConnection(data), 1, { includeInactive: true });
+    assert.deepStrictEqual(config.settings, { id: null, ...DEFAULT_LINE_ORDER_OPTION_SETTINGS }, "admin GET without settings returns in-memory defaults");
+    assert.deepStrictEqual(config.groups, [], "admin GET without settings can return an empty group list");
+    assert.strictEqual(optionSettingsRowCount(data), beforeCount, "admin GET does not create settings row");
+    assert.deepStrictEqual(writeQueries(data), [], "admin GET does not issue INSERT/UPDATE/DELETE");
+  }
+
+  {
+    const data = baseData({ settings: null, groups: [], mappings: [] });
+    const beforeCount = optionSettingsRowCount(data);
+    const config = await getLineOrderOptionConfig(createConnection(data), 1, { customerMode: true });
+    assert.strictEqual(config.settings.isEnabled, false, "customer GET without settings is disabled");
+    assert.deepStrictEqual(config.groups, [], "customer GET without settings returns no groups");
+    assert.strictEqual(optionSettingsRowCount(data), beforeCount, "customer GET does not create settings row");
+    assert.deepStrictEqual(writeQueries(data), [], "customer GET does not issue INSERT/UPDATE/DELETE");
+  }
+
+  {
+    const data = baseData({ settings: null, groups: [], mappings: [] });
+    const beforeCount = optionSettingsRowCount(data);
+    await getLineOrderOptionConfig(createConnection(data), 1, { includeInactive: true });
+    assert.strictEqual(optionSettingsRowCount(data), beforeCount, "GET keeps option settings row count unchanged");
+  }
+
+  {
+    const data = baseData({ settings: null, groups: [], mappings: [] });
+    const connection = createConnection(data);
+    const first = await upsertLineOrderOptionSettings(connection, 1, {
+      isEnabled: true,
+      pageTitle: "選擇您需要的配件",
+      pageDescription: "可依照需求選擇配件，也可以略過此步驟",
+      allowSkip: true,
+      showOutOfStock: true,
+      showPrices: true
+    }, 7);
+    assert.strictEqual(optionSettingsRowCount(data), 1, "first PUT creates one settings row");
+    assert.strictEqual(first.isEnabled, true, "first PUT stores enabled setting");
+    assert.strictEqual(writeQueries(data).filter((query) => query.startsWith("INSERT INTO line_order_option_settings")).length, 1, "first PUT issues one settings upsert");
+
+    const existingId = data.settings.id;
+    const beforeSecondCount = optionSettingsRowCount(data);
+    const second = await upsertLineOrderOptionSettings(connection, 1, {
+      isEnabled: false,
+      pageTitle: "第二次設定",
+      pageDescription: "第二次描述",
+      allowSkip: false,
+      showOutOfStock: false,
+      showPrices: false
+    }, 8);
+    assert.strictEqual(optionSettingsRowCount(data), beforeSecondCount, "second PUT updates existing row count in place");
+    assert.strictEqual(data.settings.id, existingId, "second PUT keeps the existing settings row id");
+    assert.strictEqual(second.pageTitle, "第二次設定", "second PUT returns updated settings");
+    assert.strictEqual(second.showPrices, false, "second PUT can update boolean settings");
+    assert.strictEqual(writeQueries(data).filter((query) => query.startsWith("INSERT INTO line_order_option_settings")).length, 2, "each PUT performs the explicit settings upsert");
+  }
+
+  {
+    const routeSource = require("fs").readFileSync(require("path").join(__dirname, "../src/routes/lineOrderOptions.js"), "utf8");
+    assert.ok(routeSource.includes('authorize(["ADMIN", "MANAGER"])'), "admin option route allows ADMIN and MANAGER");
+    assert.ok(!routeSource.includes('authorize(["ADMIN", "MANAGER", "CASHIER"])'), "admin option route does not allow CASHIER");
+    assert.ok(!routeSource.includes("ensure" + ": true"), "admin GET route does not request settings creation");
+  }
   {
     const data = baseData({ settings: { ...baseData().settings, isEnabled: 0 } });
     const result = await validateLineOrderOptionSelections(createConnection(data), 1, [{ groupId: 10, productIds: [501] }]);

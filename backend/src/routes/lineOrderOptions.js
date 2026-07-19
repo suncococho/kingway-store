@@ -3,7 +3,7 @@ const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const {
   getLineOrderOptionConfig,
-  normalizeSettingsPayload,
+  upsertLineOrderOptionSettings,
   normalizeGroupPayload,
   normalizeGroupProductPayload
 } = require("../services/lineOrderOptionService");
@@ -81,11 +81,7 @@ async function assertGroupBelongsToStore(connection, storeId, groupId) {
 router.get("/", async (req, res, next) => {
   try {
     const storeId = getRequestStoreId(req);
-    const config = await getLineOrderOptionConfig(pool, storeId, {
-      ensure: true,
-      includeInactive: true,
-      staffId: getRequestStaffId(req)
-    });
+    const config = await getLineOrderOptionConfig(pool, storeId, { includeInactive: true });
     res.json(config);
   } catch (error) {
     next(error);
@@ -131,34 +127,7 @@ router.put("/settings", async (req, res, next) => {
   try {
     const storeId = getRequestStoreId(req);
     const staffId = getRequestStaffId(req);
-    const payload = normalizeSettingsPayload(req.body || {});
-
-    await pool.query(
-      `
-        INSERT INTO line_order_option_settings
-          (store_id, is_enabled, page_title, page_description, allow_skip, show_out_of_stock, show_prices, created_by_staff_id, updated_by_staff_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          is_enabled = VALUES(is_enabled),
-          page_title = VALUES(page_title),
-          page_description = VALUES(page_description),
-          allow_skip = VALUES(allow_skip),
-          show_out_of_stock = VALUES(show_out_of_stock),
-          show_prices = VALUES(show_prices),
-          updated_by_staff_id = VALUES(updated_by_staff_id)
-      `,
-      [
-        storeId,
-        payload.isEnabled ? 1 : 0,
-        payload.pageTitle,
-        payload.pageDescription,
-        payload.allowSkip ? 1 : 0,
-        payload.showOutOfStock ? 1 : 0,
-        payload.showPrices ? 1 : 0,
-        staffId,
-        staffId
-      ]
-    );
+    await upsertLineOrderOptionSettings(pool, storeId, req.body || {}, staffId);
 
     const config = await getLineOrderOptionConfig(pool, storeId, { includeInactive: true });
     res.json(config);
