@@ -7,6 +7,18 @@ const DEFAULT_LINE_ORDER_OPTION_SETTINGS = {
   showPrices: true
 };
 
+const CATEGORY_LABELS = {
+  EB: "電動自行車",
+  EBIKE: "電動自行車",
+  PT: "配件",
+  ACCESSORY: "配件",
+  RP: "維修",
+  REPAIR: "維修",
+  OTHER: "其他"
+};
+
+const EXCLUDED_OPTION_CATEGORIES = ["EB", "EBIKE"];
+
 function toBool(value, fallback = false) {
   if (value === undefined || value === null) return fallback;
   return Boolean(Number(value));
@@ -76,6 +88,22 @@ function mapProduct(row, settings = DEFAULT_LINE_ORDER_OPTION_SETTINGS) {
     sortOrder: Number(row.productSortOrder ?? row.sortOrder ?? 0),
     isActive: toBool(row.productIsActive ?? row.isActive, true),
     linkIsActive: toBool(row.linkIsActive ?? row.isActive, true),
+    isOutOfStock: Number(row.stock || 0) <= 0
+  };
+}
+
+function mapCandidateProduct(row) {
+  return {
+    id: row.id,
+    productId: row.id,
+    sku: row.sku || "",
+    name: row.name || "",
+    category: row.category || "OTHER",
+    categoryLabel: CATEGORY_LABELS[row.category] || row.category || "其他",
+    price: Number(row.price || 0),
+    stock: Number(row.stock || 0),
+    imageUrl: row.imageUrl || null,
+    isLinkedToGroup: toBool(row.isLinkedToGroup),
     isOutOfStock: Number(row.stock || 0) <= 0
   };
 }
@@ -247,6 +275,146 @@ async function getLineOrderOptionConfig(connection, storeId, options = {}) {
   return { settings, groups };
 }
 
+function categoryFilterValues(value) {
+  const text = normalizeText(value, 80);
+  if (!text) return [];
+  const normalized = text.toUpperCase();
+  const values = new Set([text, normalized]);
+  Object.entries(CATEGORY_LABELS).forEach(([code, label]) => {
+    if (label === text || code === normalized) {
+      values.add(code);
+    }
+  });
+  return Array.from(values).filter((item) => !EXCLUDED_OPTION_CATEGORIES.includes(String(item).toUpperCase()));
+}
+
+function searchCategoryValues(search) {
+  const text = normalizeText(search, 80).toLowerCase();
+  if (!text) return [];
+  return Object.entries(CATEGORY_LABELS)
+    .filter(([code, label]) => code.toLowerCase().includes(text) || label.toLowerCase().includes(text))
+    .map(([code]) => code)
+    .filter((code) => !EXCLUDED_OPTION_CATEGORIES.includes(code));
+}
+
+function normalizeProductSearchOptions(options = {}) {
+  const limit = Math.min(Math.max(toPositiveInt(options.limit, 30), 1), 100);
+  const page = toPositiveInt(options.page);
+  const offset = options.offset !== undefined && options.offset !== null
+    ? toNonNegativeInt(options.offset)
+    : page > 0 ? (page - 1) * limit : 0;
+  return {
+    q: normalizeText(options.q ?? options.search, 120),
+    categoryValues: categoryFilterValues(options.category),
+    inStock: options.inStock === true || options.inStock === "true" || options.inStock === "1" || options.inStock === 1,
+    excludeGroupId: toPositiveInt(options.excludeGroupId),
+    limit,
+    offset
+  };
+}
+
+async function listLineOrderOptionProductCandidates(connection, storeId, options = {}) {
+  const filters = normalizeProductSearchOptions(options);
+  const baseWhere = [
+    "p.store_id = ?",
+    "p.is_active = 1",
+    "p.deleted_at IS NULL",
+    "UPPER(COALESCE(p.category, '')) NOT IN (?, ?)"
+  ];
+  const baseParams = [storeId, ...EXCLUDED_OPTION_CATEGORIES];
+
+  if (filters.q) {
+    const searchCategories = searchCategoryValues(filters.q);
+    const searchWhere = ["LOWER(p.sku) LIKE LOWER(?)", "p.name LIKE ?", "p.category LIKE ?"];
+    const searchParams = [`%${filters.q}%`, `%${filters.q}%`, `%${filters.q}%`];
+    if (searchCategories.length) {
+      searchWhere.push(`p.category IN (${searchCategories.map(() => "?").join(", ")})`);
+      searchParams.push(...searchCategories);
+    }
+    baseWhere.push(`(${searchWhere.join(" OR ")})`);
+    baseParams.push(...searchParams);
+  }
+
+  if (filters.categoryValues.length) {
+    baseWhere.push(`p.category IN (${filters.categoryValues.map(() => "?").join(", ")})`);
+    baseParams.push(...filters.categoryValues);
+  }
+
+  if (filters.inStock) {
+    baseWhere.push("COALESCE(p.stock, 0) > 0");
+  }
+
+  if (filters.excludeGroupId) {
+    baseWhere.push(`
+      NOT EXISTS (
+        SELECT 1
+        FROM line_order_option_group_products gp
+        WHERE gp.store_id = p.store_id
+          AND gp.product_id = p.id
+          AND gp.option_group_id = ?
+      )
+    `);
+    baseParams.push(filters.excludeGroupId);
+  }
+
+  const whereSql = baseWhere.join(" AND ");
+  const [countRows] = await connection.query(
+    `
+      SELECT COUNT(*) AS total
+      FROM products p
+      WHERE ${whereSql}
+    `,
+    [...baseParams]
+  );
+
+  const [itemRows] = await connection.query(
+    `
+      SELECT
+        p.id,
+        p.sku,
+        p.name,
+        p.category,
+        p.price,
+        p.stock,
+        p.image_url AS imageUrl,
+        CASE WHEN gp_current.id IS NULL THEN 0 ELSE 1 END AS isLinkedToGroup
+      FROM products p
+      LEFT JOIN line_order_option_group_products gp_current
+        ON gp_current.store_id = p.store_id
+       AND gp_current.product_id = p.id
+       AND gp_current.option_group_id = ?
+      WHERE ${whereSql}
+      ORDER BY p.category ASC, p.name ASC, p.id DESC
+      LIMIT ? OFFSET ?
+    `,
+    [filters.excludeGroupId || 0, ...baseParams, filters.limit, filters.offset]
+  );
+
+  const [categoryRows] = await connection.query(
+    `
+      SELECT DISTINCT p.category
+      FROM products p
+      WHERE p.store_id = ?
+        AND p.is_active = 1
+        AND p.deleted_at IS NULL
+        AND UPPER(COALESCE(p.category, '')) NOT IN (?, ?)
+      ORDER BY p.category ASC
+    `,
+    [storeId, ...EXCLUDED_OPTION_CATEGORIES]
+  );
+
+  return {
+    items: itemRows.map(mapCandidateProduct),
+    total: Number(countRows[0]?.total || 0),
+    limit: filters.limit,
+    offset: filters.offset,
+    categories: categoryRows.map((row) => ({
+      value: row.category || "OTHER",
+      label: CATEGORY_LABELS[row.category] || row.category || "其他"
+    }))
+  };
+}
+
 function normalizeSelections(optionSelections) {
   if (!Array.isArray(optionSelections)) {
     return [];
@@ -407,9 +575,11 @@ function normalizeGroupProductPayload(body = {}) {
 
 module.exports = {
   DEFAULT_LINE_ORDER_OPTION_SETTINGS,
+  CATEGORY_LABELS,
   getLineOrderOptionConfig,
   upsertLineOrderOptionSettings,
   listOptionGroups,
+  listLineOrderOptionProductCandidates,
   validateLineOrderOptionSelections,
   normalizeSettingsPayload,
   normalizeGroupPayload,

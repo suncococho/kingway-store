@@ -4,6 +4,7 @@ const { authenticate, authorize, requireStoreScope } = require("../middleware/au
 const {
   getLineOrderOptionConfig,
   upsertLineOrderOptionSettings,
+  listLineOrderOptionProductCandidates,
   normalizeGroupPayload,
   normalizeGroupProductPayload
 } = require("../services/lineOrderOptionService");
@@ -91,33 +92,16 @@ router.get("/", async (req, res, next) => {
 router.get("/products", async (req, res, next) => {
   try {
     const storeId = getRequestStoreId(req);
-    const search = String(req.query.search || "").trim();
-    const params = [storeId];
-    const where = ["store_id = ?", "is_active = 1", "deleted_at IS NULL"];
-    if (search) {
-      where.push("(sku LIKE ? OR name LIKE ?)");
-      params.push(`%${search}%`, `%${search}%`);
-    }
-
-    const [rows] = await pool.query(
-      `
-        SELECT
-          id,
-          sku,
-          name,
-          category,
-          price,
-          stock,
-          image_url AS imageUrl
-        FROM products
-        WHERE ${where.join(" AND ")}
-        ORDER BY category ASC, name ASC, id DESC
-        LIMIT 200
-      `,
-      params
-    );
-
-    res.json(rows);
+    const result = await listLineOrderOptionProductCandidates(pool, storeId, {
+      q: req.query.q ?? req.query.search,
+      category: req.query.category,
+      inStock: req.query.inStock,
+      excludeGroupId: req.query.excludeGroupId,
+      limit: req.query.limit,
+      offset: req.query.offset,
+      page: req.query.page
+    });
+    res.json(result);
   } catch (error) {
     next(error);
   }

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "../components/PageHeader";
+import ProductImage from "../components/ProductImage";
 import StatusBadge from "../components/StatusBadge";
 import { apiRequest } from "../lib/api";
 
@@ -14,14 +15,6 @@ const EMPTY_GROUP_FORM = {
   isActive: true
 };
 
-const EMPTY_PRODUCT_FORM = {
-  productId: "",
-  sortOrder: 0,
-  customDisplayName: "",
-  customPrice: "",
-  isActive: true
-};
-
 const CATEGORY_LABELS = {
   EB: "電動自行車",
   EBIKE: "電動自行車",
@@ -32,6 +25,8 @@ const CATEGORY_LABELS = {
   OTHER: "其他"
 };
 
+const PRODUCT_SEARCH_LIMIT = 30;
+
 function money(value) {
   const amount = Number(value || 0);
   return `NT$ ${amount.toLocaleString()}`;
@@ -41,40 +36,263 @@ function toBooleanValue(event) {
   return event.target.type === "checkbox" ? event.target.checked : event.target.value;
 }
 
+function categoryLabel(category, fallback) {
+  return fallback || CATEGORY_LABELS[category] || category || "其他";
+}
+
+function nextSortOrder(products = []) {
+  const maxSort = products.reduce((max, product) => Math.max(max, Number(product.sortOrder || 0)), 0);
+  return maxSort + 10;
+}
+
+function buildProductSearchPath({ q, category, inStock, hideLinked, groupId, offset }) {
+  const params = new URLSearchParams();
+  const query = String(q || "").trim();
+  if (query) params.set("q", query);
+  if (category) params.set("category", category);
+  params.set("inStock", inStock ? "true" : "false");
+  if (hideLinked) params.set("excludeGroupId", String(groupId));
+  params.set("limit", String(PRODUCT_SEARCH_LIMIT));
+  params.set("offset", String(offset || 0));
+  return `/line-order-options/products?${params.toString()}`;
+}
+
+function OptionGroupEditor({ group, busy, onEdit, onDelete, onLinkProduct, onRemoveProduct }) {
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("");
+  const [inStock, setInStock] = useState(true);
+  const [hideLinked, setHideLinked] = useState(true);
+  const [offset, setOffset] = useState(0);
+  const [result, setResult] = useState({ items: [], total: 0, limit: PRODUCT_SEARCH_LIMIT, offset: 0, categories: [] });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const requestIdRef = useRef(0);
+
+  const linkedProducts = useMemo(
+    () => [...(group.products || [])].sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0) || Number(a.linkId || 0) - Number(b.linkId || 0)),
+    [group.products]
+  );
+  const linkedProductIds = useMemo(() => new Set(linkedProducts.map((product) => Number(product.productId))), [linkedProducts]);
+  const canLoadMore = Number(result.offset || 0) + Number(result.items?.length || 0) < Number(result.total || 0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    const timer = window.setTimeout(async () => {
+      try {
+        setLoading(true);
+        setError("");
+        const response = await apiRequest(buildProductSearchPath({ q: query, category, inStock, hideLinked, groupId: group.id, offset }), {
+          signal: controller.signal
+        });
+        if (requestIdRef.current !== requestId) return;
+        setResult((current) => {
+          const nextItems = Array.isArray(response.items) ? response.items : [];
+          const nextOffset = Number(response.offset || 0);
+          return {
+            items: nextOffset > 0 ? [...(current.items || []), ...nextItems] : nextItems,
+            total: Number(response.total || 0),
+            limit: Number(response.limit || PRODUCT_SEARCH_LIMIT),
+            offset: nextOffset,
+            categories: Array.isArray(response.categories) ? response.categories : []
+          };
+        });
+      } catch (err) {
+        if (err?.name === "AbortError" || requestIdRef.current !== requestId) return;
+        setError(err?.message || "商品搜尋失敗");
+      } finally {
+        if (requestIdRef.current === requestId) {
+          setLoading(false);
+        }
+      }
+    }, 320);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query, category, inStock, hideLinked, offset, group.id, refreshKey]);
+
+  function resetOffsetAnd(action) {
+    setOffset(0);
+    action();
+  }
+
+  async function linkProduct(product) {
+    await onLinkProduct(group, product);
+    setRefreshKey((current) => current + 1);
+  }
+
+  async function removeProduct(product) {
+    await onRemoveProduct(group.id, product.linkId);
+    setRefreshKey((current) => current + 1);
+  }
+
+  return (
+    <article className="option-admin-group">
+      <div className="option-admin-group-head">
+        <div>
+          <strong>{group.code} / {group.label}</strong>
+          <span>{group.isRequired ? "必填" : "選填"}，{group.minSelect} 到 {group.maxSelect || "不限"} 項</span>
+        </div>
+        <div className="compact-actions">
+          <StatusBadge tone={group.isActive ? "success" : "neutral"}>{group.isActive ? "啟用" : "停用"}</StatusBadge>
+          <button type="button" className="secondary-button" onClick={() => onEdit(group)}>編輯</button>
+          <button type="button" className="danger-button" onClick={() => onDelete(group)} disabled={busy === `group-delete-${group.id}`}>刪除</button>
+        </div>
+      </div>
+
+      <div className="option-product-search-panel">
+        <div className="option-product-search-head">
+          <div>
+            <h3>搜尋商品</h3>
+            <span>連結到：{group.label}</span>
+          </div>
+          <StatusBadge tone="neutral">最多顯示 {PRODUCT_SEARCH_LIMIT} 筆</StatusBadge>
+        </div>
+        <div className="option-product-search-controls">
+          <label className="form-field option-product-search-input">
+            <span>商品搜尋</span>
+            <div className="option-search-input-row">
+              <input
+                value={query}
+                onChange={(event) => resetOffsetAnd(() => setQuery(event.target.value))}
+                placeholder="搜尋商品名稱或 SKU"
+              />
+              {query ? <button type="button" className="secondary-button" onClick={() => resetOffsetAnd(() => setQuery(""))}>清除</button> : null}
+            </div>
+          </label>
+          <label className="form-field">
+            <span>分類</span>
+            <select value={category} onChange={(event) => resetOffsetAnd(() => setCategory(event.target.value))}>
+              <option value="">全部分類</option>
+              {result.categories.map((item) => (
+                <option key={item.value} value={item.value}>{categoryLabel(item.value, item.label)}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="option-product-filter-row">
+          <label className="checkbox-row">
+            <input type="checkbox" checked={inStock} onChange={(event) => resetOffsetAnd(() => setInStock(event.target.checked))} />
+            <span>只顯示有庫存</span>
+          </label>
+          <label className="checkbox-row">
+            <input type="checkbox" checked={hideLinked} onChange={(event) => resetOffsetAnd(() => setHideLinked(event.target.checked))} />
+            <span>隱藏已連結商品</span>
+          </label>
+        </div>
+        {error ? <div className="notice-card danger">{error}</div> : null}
+        {loading ? <div className="muted-text">商品搜尋中...</div> : null}
+        {!loading && !error && result.items.length === 0 ? <div className="empty-state">找不到符合條件的商品</div> : null}
+        <div className="option-product-result-list">
+          {result.items.map((product) => {
+            const isLinked = product.isLinkedToGroup || linkedProductIds.has(Number(product.productId || product.id));
+            const outOfStock = Number(product.stock || 0) <= 0;
+            return (
+              <div key={product.id} className="option-product-result-card">
+                <ProductImage src={product.imageUrl} alt={product.name} className="option-product-thumb" fallbackLabel="無圖" />
+                <div className="option-product-result-body">
+                  <div className="option-product-result-title">
+                    <strong>{product.name}</strong>
+                    <span>{product.sku || "無 SKU"}</span>
+                  </div>
+                  <div className="option-product-meta-row">
+                    <span>{categoryLabel(product.category, product.categoryLabel)}</span>
+                    <span>{money(product.price)}</span>
+                    <span>庫存 {Number(product.stock || 0)}</span>
+                    {outOfStock ? <StatusBadge tone="warning">缺貨</StatusBadge> : null}
+                  </div>
+                  <div className="muted-text">連結到：{group.label}</div>
+                </div>
+                {isLinked ? (
+                  <button type="button" className="secondary-button" disabled>已連結</button>
+                ) : (
+                  <button type="button" className="primary-button" onClick={() => linkProduct(product)} disabled={outOfStock || busy === `product-${group.id}-${product.id}`}>
+                    連結
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {canLoadMore ? (
+          <div className="form-actions">
+            <button type="button" className="secondary-button" onClick={() => setOffset(Number(result.offset || 0) + PRODUCT_SEARCH_LIMIT)} disabled={loading}>更多</button>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="option-linked-products-section">
+        <h3>已連結商品（{linkedProducts.length}）</h3>
+        <div className="option-linked-products">
+          {linkedProducts.map((product) => {
+            const hasCustomPrice = product.customPrice !== null && product.customPrice !== undefined;
+            return (
+              <div key={product.linkId} className="option-linked-product">
+                <div className="option-linked-product-main">
+                  <span className="option-linked-sort">{product.sortOrder}</span>
+                  <ProductImage src={product.imageUrl} alt={product.displayName} className="option-linked-thumb" fallbackLabel="無圖" />
+                  <div>
+                    <strong>{product.displayName}</strong>
+                    <span>{product.sku || "無 SKU"} / 庫存 {product.stock}</span>
+                    {product.customDisplayName ? <span>自訂名稱：{product.customDisplayName}</span> : null}
+                  </div>
+                </div>
+                <div className="option-linked-product-side">
+                  <div>
+                    <strong>{money(product.price ?? product.basePrice)}</strong>
+                    {hasCustomPrice ? <span>自訂價格，原價 {money(product.basePrice)}</span> : <span>使用商品售價</span>}
+                  </div>
+                  <StatusBadge tone={product.linkIsActive ? "success" : "neutral"}>{product.linkIsActive ? "啟用" : "停用"}</StatusBadge>
+                  <button type="button" className="danger-button" onClick={() => removeProduct(product)} disabled={busy === `product-delete-${product.linkId}`}>解除</button>
+                </div>
+              </div>
+            );
+          })}
+          {!linkedProducts.length ? <div className="muted-text">尚未連結商品</div> : null}
+        </div>
+      </div>
+    </article>
+  );
+}
+
 function LineOrderOptionsPage() {
   const [settings, setSettings] = useState(null);
   const [groups, setGroups] = useState([]);
-  const [products, setProducts] = useState([]);
   const [groupForm, setGroupForm] = useState(EMPTY_GROUP_FORM);
-  const [productForms, setProductForms] = useState({});
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
-  const productOptions = useMemo(() => products, [products]);
-
-  async function load() {
-    try {
-      setLoading(true);
-      setError("");
-      const [config, productRows] = await Promise.all([
-        apiRequest("/line-order-options"),
-        apiRequest("/line-order-options/products")
-      ]);
-      setSettings(config.settings || null);
-      setGroups(config.groups || []);
-      setProducts(Array.isArray(productRows) ? productRows : []);
-    } catch (err) {
-      setError(err?.message || "LINE 訂單選配設定載入失敗");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   useEffect(() => {
-    load();
+    let active = true;
+    async function loadInitial() {
+      try {
+        setLoading(true);
+        setError("");
+        const config = await apiRequest("/line-order-options");
+        if (!active) return;
+        setSettings(config.settings || null);
+        setGroups(config.groups || []);
+      } catch (err) {
+        if (active) setError(err?.message || "LINE 訂單選配設定載入失敗");
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+    loadInitial();
+    return () => { active = false; };
   }, []);
+
+  function applyConfig(config) {
+    setSettings(config.settings || null);
+    setGroups(config.groups || []);
+  }
 
   function updateSettings(key, value) {
     setSettings((current) => ({ ...(current || {}), [key]: value }));
@@ -103,17 +321,6 @@ function LineOrderOptionsPage() {
     setGroupForm(EMPTY_GROUP_FORM);
   }
 
-  function updateProductForm(groupId, key, value) {
-    setProductForms((current) => ({
-      ...current,
-      [groupId]: {
-        ...EMPTY_PRODUCT_FORM,
-        ...(current[groupId] || {}),
-        [key]: value
-      }
-    }));
-  }
-
   async function saveSettings(event) {
     event.preventDefault();
     try {
@@ -122,8 +329,7 @@ function LineOrderOptionsPage() {
         method: "PUT",
         body: JSON.stringify(settings)
       });
-      setSettings(config.settings || null);
-      setGroups(config.groups || []);
+      applyConfig(config);
       window.alert("整體設定已儲存");
     } catch (err) {
       window.alert(err?.message || "整體設定儲存失敗");
@@ -141,8 +347,7 @@ function LineOrderOptionsPage() {
         method: editingGroupId ? "PUT" : "POST",
         body: JSON.stringify(groupForm)
       });
-      setSettings(config.settings || null);
-      setGroups(config.groups || []);
+      applyConfig(config);
       resetGroupForm();
     } catch (err) {
       window.alert(err?.message || "選配群組儲存失敗");
@@ -156,8 +361,7 @@ function LineOrderOptionsPage() {
     try {
       setBusy(`group-delete-${group.id}`);
       const config = await apiRequest(`/line-order-options/groups/${group.id}`, { method: "DELETE" });
-      setSettings(config.settings || null);
-      setGroups(config.groups || []);
+      applyConfig(config);
       if (editingGroupId === group.id) resetGroupForm();
     } catch (err) {
       window.alert(err?.message || "刪除選配群組失敗");
@@ -166,23 +370,24 @@ function LineOrderOptionsPage() {
     }
   }
 
-  async function saveGroupProduct(groupId) {
-    const form = productForms[groupId] || EMPTY_PRODUCT_FORM;
-    if (!form.productId) {
-      window.alert("請選擇商品");
-      return;
-    }
+  async function linkGroupProduct(group, product) {
     try {
-      setBusy(`product-${groupId}`);
-      const config = await apiRequest(`/line-order-options/groups/${groupId}/products`, {
+      setBusy(`product-${group.id}-${product.id}`);
+      const config = await apiRequest(`/line-order-options/groups/${group.id}/products`, {
         method: "POST",
-        body: JSON.stringify(form)
+        body: JSON.stringify({
+          productId: product.productId || product.id,
+          sortOrder: nextSortOrder(group.products),
+          customDisplayName: null,
+          customPrice: null,
+          isActive: true
+        })
       });
-      setSettings(config.settings || null);
-      setGroups(config.groups || []);
-      setProductForms((current) => ({ ...current, [groupId]: EMPTY_PRODUCT_FORM }));
+      applyConfig(config);
+      window.alert("商品已連結");
     } catch (err) {
       window.alert(err?.message || "連結商品失敗");
+      throw err;
     } finally {
       setBusy("");
     }
@@ -192,10 +397,10 @@ function LineOrderOptionsPage() {
     try {
       setBusy(`product-delete-${linkId}`);
       const config = await apiRequest(`/line-order-options/groups/${groupId}/products/${linkId}`, { method: "DELETE" });
-      setSettings(config.settings || null);
-      setGroups(config.groups || []);
+      applyConfig(config);
     } catch (err) {
       window.alert(err?.message || "解除商品失敗");
+      throw err;
     } finally {
       setBusy("");
     }
@@ -262,7 +467,7 @@ function LineOrderOptionsPage() {
           <label className="form-field"><span>排序</span><input type="number" value={groupForm.sortOrder} onChange={(event) => updateGroupForm("sortOrder", Number(event.target.value))} /></label>
           <label className="form-field"><span>最少選擇</span><input type="number" min="0" value={groupForm.minSelect} onChange={(event) => updateGroupForm("minSelect", Number(event.target.value))} /></label>
           <label className="form-field"><span>最多選擇</span><input type="number" min="0" value={groupForm.maxSelect} onChange={(event) => updateGroupForm("maxSelect", Number(event.target.value))} /></label>
-          <label className="form-field form-field-wide"><span>說明</span><input value={groupForm.description} onChange={(event) => updateGroupForm("description", event.target.value)} /></label>
+          <label className="form-field form-field-wide"><span>說明</span><input value={groupForm.description || ""} onChange={(event) => updateGroupForm("description", event.target.value)} /></label>
         </div>
         <div className="checkbox-grid">
           <label className="checkbox-row"><input type="checkbox" checked={groupForm.isRequired} onChange={(event) => updateGroupForm("isRequired", toBooleanValue(event))} /><span>必填群組</span></label>
@@ -282,53 +487,17 @@ function LineOrderOptionsPage() {
         </div>
         {groups.length === 0 ? <div className="empty-state">尚未建立選配群組</div> : null}
         <div className="option-admin-group-list">
-          {groups.map((group) => {
-            const form = productForms[group.id] || EMPTY_PRODUCT_FORM;
-            return (
-              <article key={group.id} className="option-admin-group">
-                <div className="option-admin-group-head">
-                  <div>
-                    <strong>{group.code} / {group.label}</strong>
-                    <span>{group.isRequired ? "必填" : "選填"}，{group.minSelect} 到 {group.maxSelect || "不限"} 項</span>
-                  </div>
-                  <div className="compact-actions">
-                    <StatusBadge tone={group.isActive ? "success" : "neutral"}>{group.isActive ? "啟用" : "停用"}</StatusBadge>
-                    <button type="button" className="secondary-button" onClick={() => startEditGroup(group)}>編輯</button>
-                    <button type="button" className="danger-button" onClick={() => deleteGroup(group)} disabled={busy === `group-delete-${group.id}`}>刪除</button>
-                  </div>
-                </div>
-                <div className="form-grid option-product-form">
-                  <label className="form-field">
-                    <span>連結商品</span>
-                    <select value={form.productId} onChange={(event) => updateProductForm(group.id, "productId", event.target.value)}>
-                      <option value="">請選擇商品</option>
-                      {productOptions.map((product) => (
-                        <option key={product.id} value={product.id}>
-                          {product.sku} / {product.name} / {CATEGORY_LABELS[product.category] || product.category} / {money(product.price)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="form-field"><span>顯示排序</span><input type="number" value={form.sortOrder} onChange={(event) => updateProductForm(group.id, "sortOrder", Number(event.target.value))} /></label>
-                  <label className="form-field"><span>自訂名稱</span><input value={form.customDisplayName} onChange={(event) => updateProductForm(group.id, "customDisplayName", event.target.value)} /></label>
-                  <label className="form-field"><span>自訂價格</span><input type="number" min="0" value={form.customPrice} onChange={(event) => updateProductForm(group.id, "customPrice", event.target.value)} placeholder="空白使用商品售價" /></label>
-                  <label className="checkbox-row option-active-row"><input type="checkbox" checked={form.isActive} onChange={(event) => updateProductForm(group.id, "isActive", event.target.checked)} /><span>連結啟用</span></label>
-                </div>
-                <button type="button" className="secondary-button" onClick={() => saveGroupProduct(group.id)} disabled={busy === `product-${group.id}`}>連結商品</button>
-                <div className="option-linked-products">
-                  {(group.products || []).map((product) => (
-                    <div key={product.linkId} className="option-linked-product">
-                      <span>{product.sortOrder}. {product.displayName}</span>
-                      <span>{money(product.price ?? product.basePrice)} / 庫存 {product.stock}</span>
-                      <StatusBadge tone={product.linkIsActive ? "success" : "neutral"}>{product.linkIsActive ? "啟用" : "停用"}</StatusBadge>
-                      <button type="button" className="danger-button" onClick={() => removeGroupProduct(group.id, product.linkId)} disabled={busy === `product-delete-${product.linkId}`}>解除</button>
-                    </div>
-                  ))}
-                  {!(group.products || []).length ? <div className="muted-text">尚未連結商品</div> : null}
-                </div>
-              </article>
-            );
-          })}
+          {groups.map((group) => (
+            <OptionGroupEditor
+              key={group.id}
+              group={group}
+              busy={busy}
+              onEdit={startEditGroup}
+              onDelete={deleteGroup}
+              onLinkProduct={linkGroupProduct}
+              onRemoveProduct={removeGroupProduct}
+            />
+          ))}
         </div>
       </section>
     </div>

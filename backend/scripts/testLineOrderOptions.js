@@ -3,6 +3,7 @@ const {
   DEFAULT_LINE_ORDER_OPTION_SETTINGS,
   getLineOrderOptionConfig,
   upsertLineOrderOptionSettings,
+  listLineOrderOptionProductCandidates,
   validateLineOrderOptionSelections
 } = require("../src/services/lineOrderOptionService");
 
@@ -37,7 +38,9 @@ function baseData(overrides = {}) {
       { id: 505, storeId: 1, sku: "OLD-1", name: "已刪除商品", category: "ACCESSORY", price: 300, stock: 1, imageUrl: null, isActive: 1, deletedAt: new Date() },
       { id: 506, storeId: 1, sku: "OFF-1", name: "停用商品", category: "ACCESSORY", price: 300, stock: 1, imageUrl: null, isActive: 0, deletedAt: null },
       { id: 507, storeId: 2, sku: "OTHER-STORE", name: "其他門市商品", category: "ACCESSORY", price: 300, stock: 1, imageUrl: null, isActive: 1, deletedAt: null },
-      { id: 508, storeId: 1, sku: "OOS-1", name: "缺貨配件", category: "ACCESSORY", price: 900, stock: 0, imageUrl: null, isActive: 1, deletedAt: null }
+      { id: 508, storeId: 1, sku: "OOS-1", name: "缺貨配件", category: "ACCESSORY", price: 900, stock: 0, imageUrl: null, isActive: 1, deletedAt: null },
+      { id: 509, storeId: 1, sku: "EB-1", name: "電動自行車本體", category: "EB", price: 39900, stock: 3, imageUrl: null, isActive: 1, deletedAt: null },
+      { id: 510, storeId: 1, sku: "KIT-1", name: "改裝套件 A", category: "改裝套件", price: 2200, stock: 4, imageUrl: null, isActive: 1, deletedAt: null }
     ],
     ...overrides
   };
@@ -94,7 +97,7 @@ function createConnection(data) {
             isActive: group.isActive
           }))];
       }
-      if (normalized.includes("FROM line_order_option_group_products")) {
+      if (normalized.startsWith("SELECT gp.id AS linkId")) {
         const storeId = Number(params[0]);
         const groupIds = new Set((Array.isArray(params[1]) ? params[1] : [params[1]]).map(Number));
         const requireActiveMapping = normalized.includes("gp.is_active = 1");
@@ -130,6 +133,27 @@ function createConnection(data) {
         rows.sort((a, b) => a.optionGroupId - b.optionGroupId || a.productSortOrder - b.productSortOrder || a.linkId - b.linkId);
         return [rows];
       }
+
+      if (normalized.startsWith("SELECT COUNT(*) AS total FROM products p")) {
+        return [[{ total: filterCandidateProducts(data, normalized, params, false).length }]];
+      }
+      if (normalized.startsWith("SELECT p.id, p.sku, p.name, p.category")) {
+        const limit = Number(params[params.length - 2]);
+        const offset = Number(params[params.length - 1]);
+        return [filterCandidateProducts(data, normalized, params, true).slice(offset, offset + limit)];
+      }
+      if (normalized.startsWith("SELECT DISTINCT p.category FROM products p")) {
+        const storeId = Number(params[0]);
+        const categories = Array.from(new Set(data.products
+          .filter((product) => Number(product.storeId) === storeId)
+          .filter((product) => Number(product.isActive) === 1)
+          .filter((product) => !product.deletedAt)
+          .filter((product) => !["EB", "EBIKE"].includes(String(product.category || "").toUpperCase()))
+          .map((product) => product.category || "OTHER")))
+          .sort()
+          .map((category) => ({ category }));
+        return [categories];
+      }
       throw new Error("Unexpected query: " + normalized);
     }
   };
@@ -141,6 +165,70 @@ async function assertRejectsMessage(fn, pattern, label) {
     assert.strictEqual(error.statusCode, 400, label + " status");
     return true;
   });
+}
+
+function stripLike(value) {
+  return String(value || "").replace(/^%|%$/g, "");
+}
+
+function filterCandidateProducts(data, normalized, params, itemQuery) {
+  const baseParams = itemQuery ? params.slice(1, -2) : params;
+  const storeId = Number(baseParams[0]);
+  let cursor = 3;
+  let products = data.products
+    .filter((product) => Number(product.storeId) === storeId)
+    .filter((product) => Number(product.isActive) === 1)
+    .filter((product) => !product.deletedAt)
+    .filter((product) => !["EB", "EBIKE"].includes(String(product.category || "").toUpperCase()));
+
+  if (normalized.includes("LOWER(p.sku) LIKE LOWER(?)")) {
+    const skuSearch = stripLike(baseParams[cursor]).toLowerCase();
+    const nameSearch = stripLike(baseParams[cursor + 1]);
+    const categorySearch = stripLike(baseParams[cursor + 2]);
+    cursor += 3;
+    const hasSearchCategoryClause = normalized.includes("OR p.category IN");
+    const excludeGroupCount = normalized.includes("NOT EXISTS") ? 1 : 0;
+    const categoryFilterClauseCount = (normalized.match(/p.category IN/g) || []).length - (hasSearchCategoryClause ? 1 : 0);
+    const searchCategoryCount = Math.max(0, baseParams.length - cursor - excludeGroupCount - categoryFilterClauseCount);
+    const searchCategories = new Set(baseParams.slice(cursor, cursor + searchCategoryCount));
+    cursor += searchCategoryCount;
+    products = products.filter((product) => String(product.sku || "").toLowerCase().includes(skuSearch) || String(product.name || "").includes(nameSearch) || String(product.category || "").includes(categorySearch) || searchCategories.has(product.category));
+  }
+
+  if (normalized.includes("COALESCE(p.stock, 0) > 0")) {
+    products = products.filter((product) => Number(product.stock || 0) > 0);
+  }
+
+  if (normalized.includes("p.category IN")) {
+    const excludeGroupCount = normalized.includes("NOT EXISTS") ? 1 : 0;
+    const categoryValues = baseParams.slice(cursor, baseParams.length - excludeGroupCount);
+    if (categoryValues.length) {
+      const categories = new Set(categoryValues);
+      products = products.filter((product) => categories.has(product.category));
+    }
+  }
+
+  if (normalized.includes("NOT EXISTS")) {
+    const excludeGroupId = Number(baseParams[baseParams.length - 1]);
+    const excludedProductIds = new Set(data.mappings
+      .filter((mapping) => Number(mapping.storeId) === storeId)
+      .filter((mapping) => Number(mapping.optionGroupId) === excludeGroupId)
+      .map((mapping) => Number(mapping.productId)));
+    products = products.filter((product) => !excludedProductIds.has(Number(product.id)));
+  }
+
+  return products
+    .sort((a, b) => String(a.category || "").localeCompare(String(b.category || ""), "zh-Hant") || String(a.name || "").localeCompare(String(b.name || ""), "zh-Hant") || Number(b.id) - Number(a.id))
+    .map((product) => ({
+      id: product.id,
+      sku: product.sku,
+      name: product.name,
+      category: product.category,
+      price: product.price,
+      stock: product.stock,
+      imageUrl: product.imageUrl,
+      isLinkedToGroup: 0
+    }));
 }
 
 function writeQueries(data) {
@@ -216,6 +304,54 @@ async function run() {
     assert.ok(routeSource.includes('authorize(["ADMIN", "MANAGER"])'), "admin option route allows ADMIN and MANAGER");
     assert.ok(!routeSource.includes('authorize(["ADMIN", "MANAGER", "CASHIER"])'), "admin option route does not allow CASHIER");
     assert.ok(!routeSource.includes("ensure" + ": true"), "admin GET route does not request settings creation");
+  }
+
+  {
+    const data = baseData();
+    const result = await listLineOrderOptionProductCandidates(createConnection(data), 1, { q: "車籃", inStock: true, limit: 30 });
+    assert.deepStrictEqual(result.items.map((item) => item.productId), [502], "product name search works with Chinese text");
+  }
+
+  {
+    const data = baseData();
+    const result = await listLineOrderOptionProductCandidates(createConnection(data), 1, { q: "basket-1", inStock: true, limit: 30 });
+    assert.deepStrictEqual(result.items.map((item) => item.sku), ["BASKET-1"], "SKU search is case insensitive");
+  }
+
+  {
+    const data = baseData();
+    const result = await listLineOrderOptionProductCandidates(createConnection(data), 1, { category: "改裝套件", inStock: true, limit: 30 });
+    assert.deepStrictEqual(result.items.map((item) => item.sku), ["KIT-1"], "category label filter supports actual product category labels");
+  }
+
+  {
+    const data = baseData();
+    const result = await listLineOrderOptionProductCandidates(createConnection(data), 1, { q: "改裝", inStock: true, limit: 30 });
+    assert.deepStrictEqual(result.items.map((item) => item.sku), ["KIT-1"], "search can match actual category labels");
+  }
+
+  {
+    const data = baseData();
+    const result = await listLineOrderOptionProductCandidates(createConnection(data), 1, { inStock: true, limit: 30 });
+    assert.ok(!result.items.some((item) => item.sku === "OOS-1"), "in-stock filter excludes stock zero");
+    assert.ok(!result.items.some((item) => item.sku === "EB-1"), "EB products are excluded from option candidates");
+    assert.ok(!result.items.some((item) => item.sku === "OFF-1"), "inactive products are excluded");
+    assert.ok(!result.items.some((item) => item.sku === "OLD-1"), "deleted products are excluded");
+    assert.ok(!result.items.some((item) => item.sku === "OTHER-STORE"), "other store products are excluded");
+  }
+
+  {
+    const data = baseData();
+    const result = await listLineOrderOptionProductCandidates(createConnection(data), 1, { excludeGroupId: 11, inStock: false, limit: 30 });
+    assert.ok(!result.items.some((item) => item.productId === 502), "excludeGroupId excludes products already linked to the current group");
+    assert.ok(result.items.some((item) => item.productId === 501), "products linked to other groups can still be shown");
+  }
+
+  {
+    const data = baseData();
+    const result = await listLineOrderOptionProductCandidates(createConnection(data), 1, { q: "%'; DROP TABLE products; --", limit: 500 });
+    assert.strictEqual(result.limit, 100, "limit is capped at 100");
+    assert.ok(data.queries.every((query) => !query.includes("DROP TABLE")), "search text is not interpolated into SQL");
   }
   {
     const data = baseData({ settings: { ...baseData().settings, isEnabled: 0 } });
