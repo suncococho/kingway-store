@@ -4,7 +4,8 @@ const {
   getLineOrderOptionConfig,
   upsertLineOrderOptionSettings,
   listLineOrderOptionProductCandidates,
-  validateLineOrderOptionSelections
+  validateLineOrderOptionSelections,
+  normalizeGroupProductPayload
 } = require("../src/services/lineOrderOptionService");
 
 function baseData(overrides = {}) {
@@ -425,6 +426,46 @@ async function run() {
     assert.strictEqual(result.items[0].unitPrice, 888, "server custom price overrides request payload");
     assert.strictEqual(result.items[1].unitPrice, 600, "server DB price is used");
     assert.strictEqual(result.items.reduce((sum, item) => sum + item.unitPrice, 0), 1488, "server recalculates option total");
+    assert.strictEqual(
+      normalizeGroupProductPayload({ productId: 501, customPrice: "" }).customPrice,
+      null,
+      "blank customPrice clears LINE order price"
+    );
+    assert.strictEqual(
+      normalizeGroupProductPayload({ productId: 501, customPrice: "0" }).customPrice,
+      0,
+      "customPrice 0 is accepted by API payload normalization"
+    );
+    assert.strictEqual(
+      normalizeGroupProductPayload({ productId: 501, customPrice: "1200" }).customPrice,
+      1200,
+      "customPrice integer amount is accepted"
+    );
+    assert.strictEqual(
+      normalizeGroupProductPayload({ productId: 501, customPrice: "1200.25" }).customPrice,
+      1200.25,
+      "customPrice decimal amount with two places is accepted"
+    );
+    assert.throws(
+      () => normalizeGroupProductPayload({ productId: 501, customPrice: "1.234" }),
+      /最多 2 位小數/,
+      "customPrice rejects more than two decimal places"
+    );
+    assert.throws(
+      () => normalizeGroupProductPayload({ productId: 501, customPrice: "abc" }),
+      /0 以上數字/,
+      "customPrice rejects non-numeric values"
+    );
+    assert.throws(
+      () => normalizeGroupProductPayload({ productId: 501, customPrice: "-1" }),
+      /0 以上數字/,
+      "customPrice rejects negative values"
+    );
+    assert.throws(
+      () => normalizeGroupProductPayload({ productId: 501, customPrice: "10000000000" }),
+      /超出可儲存範圍/,
+      "customPrice rejects values beyond decimal(12,2)"
+    );
     assert.deepStrictEqual(
       result.items.map((item) => ({ line_option_group_id: item.groupId, line_option_group_code: item.groupCode, line_option_group_label: item.groupLabel })),
       [
@@ -448,6 +489,18 @@ async function run() {
   }
 
   {
+    const data = baseData({
+      mappings: baseData().mappings.map((mapping) => mapping.id === 102 ? { ...mapping, isActive: 1 } : mapping)
+    });
+    const result = await validateLineOrderOptionSelections(createConnection(data), 1, [
+      { groupId: 10, productIds: [501] },
+      { groupId: 11, productIds: [503] }
+    ]);
+    const freeItem = result.items.find((item) => item.productId === 503);
+    assert.strictEqual(freeItem.unitPrice, 0, "customPrice 0 is stored as zero instead of falling back to products.price");
+  }
+
+  {
     const result = await validateLineOrderOptionSelections(createConnection(baseData()), 1, [{ groupId: 10, productIds: [501] }]);
     assert.strictEqual(result.items.length, 1, "existing no-option optional groups do not require extra selection");
   }
@@ -457,11 +510,22 @@ async function run() {
     assert.strictEqual(guestResult.items[0].productId, 501, "WEB-GUEST path uses the same store-scoped option validation contract");
   }
 
-  assert.strictEqual(
-    require("fs").readFileSync(require("path").join(__dirname, "../src/routes/lineOrder.js"), "utf8").includes("inventory_movements"),
-    false,
-    "LINE reservation order path does not create inventory movements; options reuse that policy"
-  );
+  {
+    const lineOrderRouteSource = require("fs").readFileSync(require("path").join(__dirname, "../src/routes/lineOrder.js"), "utf8");
+    assert.strictEqual(
+      lineOrderRouteSource.includes("inventory_movements"),
+      false,
+      "LINE reservation order path does not create inventory movements; options reuse that policy"
+    );
+    assert.ok(
+      lineOrderRouteSource.includes("const { lineUserId, productId, name, phone, displayName, optionSelections } = req.body"),
+      "LINE order create does not accept client-submitted option prices"
+    );
+    assert.ok(
+      lineOrderRouteSource.includes("optionItem.unitPrice"),
+      "LINE order option order_items use server-validated unitPrice"
+    );
+  }
 
   console.log("line order option tests passed");
 }

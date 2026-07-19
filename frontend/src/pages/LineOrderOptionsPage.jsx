@@ -45,6 +45,32 @@ function nextSortOrder(products = []) {
   return maxSort + 10;
 }
 
+function hasCustomPrice(product) {
+  return product.customPrice !== null && product.customPrice !== undefined;
+}
+
+function effectiveProductPrice(product) {
+  return hasCustomPrice(product) ? Number(product.customPrice || 0) : Number(product.basePrice ?? product.price ?? 0);
+}
+
+function formatPriceInput(value) {
+  if (value === null || value === undefined || String(value).trim() === "") return "";
+  return String(value);
+}
+
+function parseLineOrderPrice(value) {
+  const text = String(value || "").trim();
+  if (!text) return { ok: true, customPrice: null };
+  if (!/^\d+(\.\d{1,2})?$/.test(text)) {
+    return { ok: false, message: "LINE訂購價只能輸入 0 以上數字，且最多 2 位小數" };
+  }
+  const amount = Number(text);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 9999999999.99) {
+    return { ok: false, message: "LINE訂購價超出可儲存範圍" };
+  }
+  return { ok: true, customPrice: amount };
+}
+
 function buildProductSearchPath({ q, category, inStock, hideLinked, groupId, offset }) {
   const params = new URLSearchParams();
   const query = String(q || "").trim();
@@ -57,7 +83,7 @@ function buildProductSearchPath({ q, category, inStock, hideLinked, groupId, off
   return `/line-order-options/products?${params.toString()}`;
 }
 
-function OptionGroupEditor({ group, busy, onEdit, onDelete, onLinkProduct, onRemoveProduct }) {
+function OptionGroupEditor({ group, busy, onEdit, onDelete, onLinkProduct, onUpdateProduct, onRemoveProduct }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
   const [inStock, setInStock] = useState(true);
@@ -67,6 +93,8 @@ function OptionGroupEditor({ group, busy, onEdit, onDelete, onLinkProduct, onRem
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [priceInputs, setPriceInputs] = useState({});
+  const [priceMessages, setPriceMessages] = useState({});
   const requestIdRef = useRef(0);
 
   const linkedProducts = useMemo(
@@ -75,6 +103,19 @@ function OptionGroupEditor({ group, busy, onEdit, onDelete, onLinkProduct, onRem
   );
   const linkedProductIds = useMemo(() => new Set(linkedProducts.map((product) => Number(product.productId))), [linkedProducts]);
   const canLoadMore = Number(result.offset || 0) + Number(result.items?.length || 0) < Number(result.total || 0);
+
+  useEffect(() => {
+    setPriceInputs((current) => {
+      const next = {};
+      linkedProducts.forEach((product) => {
+        const key = String(product.linkId);
+        next[key] = Object.prototype.hasOwnProperty.call(current, key)
+          ? current[key]
+          : formatPriceInput(product.customPrice);
+      });
+      return next;
+    });
+  }, [linkedProducts]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -128,6 +169,42 @@ function OptionGroupEditor({ group, busy, onEdit, onDelete, onLinkProduct, onRem
   async function removeProduct(product) {
     await onRemoveProduct(group.id, product.linkId);
     setRefreshKey((current) => current + 1);
+  }
+
+  function getPriceInput(product) {
+    const key = String(product.linkId);
+    return Object.prototype.hasOwnProperty.call(priceInputs, key) ? priceInputs[key] : formatPriceInput(product.customPrice);
+  }
+
+  function updatePriceInput(product, value) {
+    const key = String(product.linkId);
+    setPriceInputs((current) => ({ ...current, [key]: value }));
+    setPriceMessages((current) => ({ ...current, [key]: "" }));
+  }
+
+  async function saveProductPrice(product, customPrice, successMessage) {
+    const key = String(product.linkId);
+    try {
+      setPriceMessages((current) => ({ ...current, [key]: "" }));
+      await onUpdateProduct(group.id, product, customPrice);
+      setPriceInputs((current) => ({ ...current, [key]: formatPriceInput(customPrice) }));
+      setPriceMessages((current) => ({ ...current, [key]: successMessage }));
+    } catch (err) {
+      setPriceMessages((current) => ({ ...current, [key]: err?.message || "LINE訂購價儲存失敗" }));
+    }
+  }
+
+  async function savePriceFromInput(product) {
+    const parsed = parseLineOrderPrice(getPriceInput(product));
+    if (!parsed.ok) {
+      setPriceMessages((current) => ({ ...current, [String(product.linkId)]: parsed.message }));
+      return;
+    }
+    await saveProductPrice(product, parsed.customPrice, "LINE訂購價已更新");
+  }
+
+  async function resetProductPrice(product) {
+    await saveProductPrice(product, null, "已恢復使用商品售價");
   }
 
   return (
@@ -229,7 +306,13 @@ function OptionGroupEditor({ group, busy, onEdit, onDelete, onLinkProduct, onRem
         <h3>已連結商品（{linkedProducts.length}）</h3>
         <div className="option-linked-products">
           {linkedProducts.map((product) => {
-            const hasCustomPrice = product.customPrice !== null && product.customPrice !== undefined;
+            const customPriceSet = hasCustomPrice(product);
+            const parsedPreview = parseLineOrderPrice(getPriceInput(product));
+            const effectivePrice = parsedPreview.ok
+              ? parsedPreview.customPrice !== null ? parsedPreview.customPrice : Number(product.basePrice ?? product.price ?? 0)
+              : effectiveProductPrice(product);
+            const priceBusy = busy === `product-price-${product.linkId}`;
+            const message = priceMessages[String(product.linkId)] || "";
             return (
               <div key={product.linkId} className="option-linked-product">
                 <div className="option-linked-product-main">
@@ -238,16 +321,40 @@ function OptionGroupEditor({ group, busy, onEdit, onDelete, onLinkProduct, onRem
                   <div>
                     <strong>{product.displayName}</strong>
                     <span>{product.sku || "無 SKU"} / 庫存 {product.stock}</span>
-                    {product.customDisplayName ? <span>自訂名稱：{product.customDisplayName}</span> : null}
+                    {product.customDisplayName ? <span>自訂名稱：{product.customDisplayName}</span> : <span>自訂名稱：使用商品名稱</span>}
                   </div>
                 </div>
-                <div className="option-linked-product-side">
-                  <div>
-                    <strong>{money(product.price ?? product.basePrice)}</strong>
-                    {hasCustomPrice ? <span>自訂價格，原價 {money(product.basePrice)}</span> : <span>使用商品售價</span>}
+                <div className="option-linked-product-price-panel">
+                  <div className="option-price-summary">
+                    <span>商品售價：<strong>{money(product.basePrice)}</strong></span>
+                    <span>LINE訂購價：<strong>{customPriceSet ? money(product.customPrice) : "使用商品售價"}</strong></span>
+                    <span>實際顯示價格：<strong>{money(effectivePrice)}</strong></span>
                   </div>
-                  <StatusBadge tone={product.linkIsActive ? "success" : "neutral"}>{product.linkIsActive ? "啟用" : "停用"}</StatusBadge>
-                  <button type="button" className="danger-button" onClick={() => removeProduct(product)} disabled={busy === `product-delete-${product.linkId}`}>解除</button>
+                  <label className="form-field option-price-input">
+                    <span>LINE訂購價</span>
+                    <input
+                      value={getPriceInput(product)}
+                      onChange={(event) => updatePriceInput(product, event.target.value)}
+                      placeholder="空白表示使用商品售價"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      disabled={priceBusy}
+                    />
+                  </label>
+                  <div className="muted-text">此價格只套用於 LINE 訂單，不會修改商品管理中的售價。</div>
+                  {message ? <div className={message.includes("已") ? "option-price-message success" : "option-price-message danger"}>{message}</div> : null}
+                  <div className="option-linked-product-actions">
+                    <StatusBadge tone={product.linkIsActive ? "success" : "neutral"}>{product.linkIsActive ? "啟用" : "停用"}</StatusBadge>
+                    <button type="button" className="primary-button" onClick={() => savePriceFromInput(product)} disabled={priceBusy}>
+                      {priceBusy ? "儲存中..." : "儲存價格"}
+                    </button>
+                    {customPriceSet ? (
+                      <button type="button" className="secondary-button" onClick={() => resetProductPrice(product)} disabled={priceBusy}>恢復商品售價</button>
+                    ) : null}
+                    <button type="button" className="danger-button" onClick={() => removeProduct(product)} disabled={busy === `product-delete-${product.linkId}`}>解除</button>
+                  </div>
                 </div>
               </div>
             );
@@ -393,6 +500,27 @@ function LineOrderOptionsPage() {
     }
   }
 
+  async function updateGroupProductPrice(groupId, product, customPrice) {
+    try {
+      setBusy(`product-price-${product.linkId}`);
+      const config = await apiRequest(`/line-order-options/groups/${groupId}/products/${product.linkId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          productId: product.productId,
+          sortOrder: product.sortOrder,
+          customDisplayName: product.customDisplayName || null,
+          customPrice,
+          isActive: Boolean(product.linkIsActive)
+        })
+      });
+      applyConfig(config);
+    } catch (err) {
+      throw err;
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function removeGroupProduct(groupId, linkId) {
     try {
       setBusy(`product-delete-${linkId}`);
@@ -495,6 +623,7 @@ function LineOrderOptionsPage() {
               onEdit={startEditGroup}
               onDelete={deleteGroup}
               onLinkProduct={linkGroupProduct}
+              onUpdateProduct={updateGroupProductPrice}
               onRemoveProduct={removeGroupProduct}
             />
           ))}

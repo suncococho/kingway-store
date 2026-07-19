@@ -6323,6 +6323,20 @@ button:hover {
   cursor: not-allowed;
 }
 
+.line-option-price-stack {
+  display: grid;
+  gap: 2px;
+  margin-top: 6px;
+  color: #166534;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.line-option-original-price {
+  color: #64748b;
+  text-decoration: line-through;
+}
+
 .line-order-actions-row {
   display: flex;
   flex-direction: column;
@@ -6360,6 +6374,18 @@ button:hover {
 .line-confirm-row.total {
   border-bottom: 0;
   font-size: 18px;
+}
+
+.line-confirm-option-row strong {
+  display: grid;
+  gap: 3px;
+}
+
+.line-confirm-option-row small {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
 }
 
 .option-product-search-panel,
@@ -6501,6 +6527,59 @@ button:hover {
   text-align: right;
 }
 
+.option-linked-product-price-panel {
+  display: grid;
+  gap: 10px;
+  min-width: min(100%, 360px);
+  flex: 0 1 420px;
+}
+
+.option-price-summary {
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.option-price-summary span,
+.option-price-summary strong {
+  display: block;
+}
+
+.option-price-summary strong {
+  color: var(--text-strong);
+}
+
+.option-price-input input {
+  max-width: 240px;
+}
+
+.option-price-message {
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.option-price-message.success {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.option-price-message.danger {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.option-linked-product-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .option-linked-sort {
   width: 34px;
   height: 34px;
@@ -6537,7 +6616,18 @@ button:hover {
     height: 72px;
   }
 
-  .option-linked-product-side {
+  .option-linked-product-side,
+  .option-linked-product-actions {
     text-align: left;
+    justify-content: flex-start;
+  }
+
+  .option-linked-product-price-panel,
+  .option-price-input input,
+  .option-linked-product-actions .primary-button,
+  .option-linked-product-actions .secondary-button,
+  .option-linked-product-actions .danger-button {
+    width: 100%;
+    max-width: none;
   }
 }

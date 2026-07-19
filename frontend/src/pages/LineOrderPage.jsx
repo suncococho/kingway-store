@@ -15,6 +15,23 @@ const LEGACY_STORE_CONTEXT = {
   isExplicitStore: false
 };
 
+function money(value) {
+  return "NT$ " + Number(value || 0).toLocaleString();
+}
+
+function hasLineOrderPrice(product) {
+  return product?.customPrice !== null && product?.customPrice !== undefined;
+}
+
+function optionUnitPrice(product) {
+  return hasLineOrderPrice(product) ? Number(product.customPrice || 0) : Number(product?.basePrice ?? product?.price ?? 0);
+}
+
+function shouldShowLinePrice(product) {
+  if (!hasLineOrderPrice(product)) return false;
+  return Number(product.customPrice || 0) !== Number(product?.basePrice ?? 0);
+}
+
 function buildCustomerOaName(response, fallbackStoreName) {
   const configured = String(response?.lineSettings?.customerOaName || "").trim();
   if (configured) {
@@ -227,7 +244,7 @@ function LineOrderPage() {
       return product ? { ...product, groupId: group.id, groupCode: group.code, groupLabel: group.label } : null;
     }).filter(Boolean);
   });
-  const selectedOptionTotal = selectedOptionItems.reduce((sum, item) => sum + Number(item.price ?? item.basePrice ?? 0), 0);
+  const selectedOptionTotal = selectedOptionItems.reduce((sum, item) => sum + optionUnitPrice(item), 0);
   const selectedBikePrice = Number(selectedProduct?.price || 0);
   const orderTotal = selectedBikePrice + selectedOptionTotal;
 
@@ -494,8 +511,14 @@ function LineOrderPage() {
                               {product.displayName}
                               <div className="line-product-sub">
                                 {outOfStock ? "缺貨" : "庫存 " + product.stock}
-                                {optionSettings.showPrices !== false ? " / NT$ " + Number(product.price ?? product.basePrice ?? 0).toLocaleString() : ""}
+                                {optionSettings.showPrices !== false && !shouldShowLinePrice(product) ? " / " + money(optionUnitPrice(product)) : ""}
                               </div>
+                              {optionSettings.showPrices !== false && shouldShowLinePrice(product) ? (
+                                <div className="line-option-price-stack">
+                                  <span className="line-option-original-price">原價 {money(product.basePrice)}</span>
+                                  <strong>LINE價 {money(optionUnitPrice(product))}</strong>
+                                </div>
+                              ) : null}
                             </div>
                             <div className="line-product-check">{active ? "✓" : outOfStock ? "缺" : "＋"}</div>
                           </button>
@@ -519,10 +542,21 @@ function LineOrderPage() {
                 <div className="line-step-indicator">最後確認</div>
                 <h2 style={{ marginTop: 0 }}>確認訂單內容</h2>
                 <div className="line-confirm-row"><span>車款</span><strong>{selectedProduct?.name || "-"}</strong></div>
-                {selectedOptionItems.length ? selectedOptionItems.map((item) => (
-                  <div className="line-confirm-row" key={item.groupId + "-" + item.productId}><span>{item.groupLabel}</span><strong>{item.displayName}</strong></div>
-                )) : <div className="line-confirm-row"><span>選配</span><strong>未選擇</strong></div>}
-                {optionSettings.showPrices !== false ? <div className="line-confirm-row total"><span>預估金額</span><strong>NT$ {orderTotal.toLocaleString()}</strong></div> : null}
+                {selectedOptionItems.length ? selectedOptionItems.map((item) => {
+                  const unitPrice = optionUnitPrice(item);
+                  return (
+                    <div className="line-confirm-row line-confirm-option-row" key={item.groupId + "-" + item.productId}>
+                      <span>{item.groupLabel}</span>
+                      <strong>
+                        {item.displayName}
+                        {optionSettings.showPrices !== false ? <small>單價 {money(unitPrice)} × 1，小計 {money(unitPrice)}</small> : null}
+                      </strong>
+                    </div>
+                  );
+                }) : <div className="line-confirm-row"><span>選配</span><strong>未選擇</strong></div>}
+                {optionSettings.showPrices !== false ? <div className="line-confirm-row"><span>車款小計</span><strong>{money(selectedBikePrice)}</strong></div> : null}
+                {optionSettings.showPrices !== false && selectedOptionItems.length ? <div className="line-confirm-row"><span>選配小計</span><strong>{money(selectedOptionTotal)}</strong></div> : null}
+                {optionSettings.showPrices !== false ? <div className="line-confirm-row total"><span>預估金額</span><strong>{money(orderTotal)}</strong></div> : null}
                 <div className="line-order-actions-row">
                   <button type="button" className="line-order-secondary" onClick={() => setOrderStep(optionsEnabled ? "options" : "bike")}>返回修改</button>
                   <button type="button" onClick={submitOrder} className="line-order-submit" disabled={submitting || Boolean(result)}>

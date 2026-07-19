@@ -558,9 +558,13 @@ function normalizeGroupProductPayload(body = {}) {
 
   let customPrice = null;
   if (body.customPrice !== undefined && body.customPrice !== null && String(body.customPrice).trim() !== "") {
-    customPrice = Number(body.customPrice);
-    if (!Number.isFinite(customPrice) || customPrice < 0) {
-      throw Object.assign(new Error("自訂價格不可小於 0"), { statusCode: 400 });
+    const customPriceText = String(body.customPrice).trim();
+    if (!/^\d+(\.\d{1,2})?$/.test(customPriceText)) {
+      throw Object.assign(new Error("LINE訂購價只能輸入 0 以上數字，且最多 2 位小數"), { statusCode: 400 });
+    }
+    customPrice = Number(customPriceText);
+    if (!Number.isFinite(customPrice) || customPrice < 0 || customPrice > 9999999999.99) {
+      throw Object.assign(new Error("LINE訂購價超出可儲存範圍"), { statusCode: 400 });
     }
   }
 
