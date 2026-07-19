@@ -8,6 +8,10 @@ const config = require("../config");
 const { notifyOrderReservationCreated, buildOrderDetailLink } = require("../services/staffLineNotify");
 const { notifyLineOrderCreated } = require("../services/notificationEventService");
 const {
+  getLineOrderOptionConfig,
+  validateLineOrderOptionSelections
+} = require("../services/lineOrderOptionService");
+const {
   SOURCE,
   createPublicStoreContextMiddleware,
   getStoreCodeFromRequest
@@ -202,7 +206,7 @@ async function withMysqlRequestLock(lockName, handler) {
   }
 }
 
-async function findRecentDuplicateLineOrder(tx, { storeId, customerId, lineUserId, phone, productId }) {
+async function findRecentDuplicateLineOrder(tx, { storeId, customerId, lineUserId, phone, productId, optionProductIds = [] }) {
   const identityConditions = [];
   const identityParams = [];
   const normalizedLineUserId = normalizeText(lineUserId);
@@ -227,6 +231,10 @@ async function findRecentDuplicateLineOrder(tx, { storeId, customerId, lineUserI
     return null;
   }
 
+  const normalizedOptionProductIds = Array.isArray(optionProductIds)
+    ? optionProductIds.map((id) => Number(id)).filter((id) => Number.isSafeInteger(id) && id > 0).sort((a, b) => a - b)
+    : [];
+
   const [rows] = await tx.query(
     `
       SELECT
@@ -248,7 +256,7 @@ async function findRecentDuplicateLineOrder(tx, { storeId, customerId, lineUserI
         AND oi.product_id = ?
         AND (${identityConditions.join(" OR ")})
       ORDER BY o.id DESC
-      LIMIT 1
+      LIMIT 5
     `,
     [
       storeId,
@@ -258,7 +266,29 @@ async function findRecentDuplicateLineOrder(tx, { storeId, customerId, lineUserI
     ]
   );
 
-  return rows[0] || null;
+  if (!normalizedOptionProductIds.length) {
+    return rows[0] || null;
+  }
+
+  for (const row of rows) {
+    const [optionRows] = await tx.query(
+      `
+        SELECT product_id AS productId
+        FROM order_items
+        WHERE store_id = ?
+          AND order_id = ?
+          AND line_option_group_id IS NOT NULL
+        ORDER BY product_id ASC
+      `,
+      [storeId, row.orderId]
+    );
+    const existingOptionProductIds = optionRows.map((item) => Number(item.productId)).sort((a, b) => a - b);
+    if (JSON.stringify(existingOptionProductIds) === JSON.stringify(normalizedOptionProductIds)) {
+      return row;
+    }
+  }
+
+  return null;
 }
 
 router.use(resolvePublicStoreContext);
@@ -517,6 +547,20 @@ router.get("/ebikes", async (req, res, next) => {
   }
 });
 
+router.get("/options", async (req, res, next) => {
+  try {
+    const storeContext = resolveLineOrderStoreContext(req);
+    if (!storeContext.ok) {
+      return res.status(storeContext.status).json({ message: storeContext.message });
+    }
+
+    const config = await getLineOrderOptionConfig(pool, storeContext.storeId, { customerMode: true });
+    return res.json(config);
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.post("/create", async (req, res, next) => {
   try {
     const storeContext = resolveLineOrderStoreContext(req);
@@ -525,7 +569,7 @@ router.post("/create", async (req, res, next) => {
     }
 
     const storeId = storeContext.storeId;
-    const { lineUserId, productId, name, phone, displayName } = req.body;
+    const { lineUserId, productId, name, phone, displayName, optionSelections } = req.body;
 
     if (!productId) {
       return res.status(400).json({ message: "請選擇商品" });
@@ -609,12 +653,17 @@ router.post("/create", async (req, res, next) => {
         return { error: true, message: "找不到可購買的電動自行車商品" };
       }
 
+      const optionValidation = await validateLineOrderOptionSelections(tx, storeId, optionSelections);
+      const optionItems = optionValidation.items || [];
+      const optionTotalAmount = optionItems.reduce((sum, item) => sum + Number(item.unitPrice || 0), 0);
+
       const duplicateOrder = await findRecentDuplicateLineOrder(tx, {
         storeId,
         customerId: customer.id,
         lineUserId: customer.lineUserId || effectiveLineUserId,
         phone: customer.phone || phone,
-        productId: product.id
+        productId: product.id,
+        optionProductIds: optionItems.map((item) => item.productId)
       });
 
       if (duplicateOrder) {
@@ -639,7 +688,7 @@ router.post("/create", async (req, res, next) => {
       const unitPrice = Number(product.price || 0);
       const coupon = null;
       const discount = 0;
-      const totalAmount = Math.max(unitPrice - discount, 0);
+      const totalAmount = Math.max(unitPrice + optionTotalAmount - discount, 0);
       const orderNo = `LINE-${dayjs().format("YYYYMMDD-HHmmss-SSS")}`;
 
       const [staffRows] = await tx.query(
@@ -671,7 +720,7 @@ router.post("/create", async (req, res, next) => {
           customer.phone || phone,
           totalAmount,
           totalAmount,
-          `LINE 自助訂車｜商品：${product.name}`,
+          [`LINE 自助訂車｜商品：${product.name}`, optionValidation.summary ? `選配：${optionValidation.summary}` : null].filter(Boolean).join("｜"),
           staffId
         ]
       );
@@ -693,12 +742,36 @@ router.post("/create", async (req, res, next) => {
         ]
       );
 
+      for (const optionItem of optionItems) {
+        await tx.query(
+          `INSERT INTO order_items
+           (store_id, order_id, product_id, sku_snapshot, product_name_snapshot,
+            product_category_snapshot, quantity, unit_price, line_total,
+            line_option_group_id, line_option_group_code, line_option_group_label)
+           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+          [
+            storeId,
+            orderResult.insertId,
+            optionItem.productId,
+            optionItem.sku,
+            optionItem.name,
+            optionItem.category,
+            optionItem.unitPrice,
+            optionItem.unitPrice,
+            optionItem.groupId,
+            optionItem.groupCode,
+            optionItem.groupLabel
+          ]
+        );
+      }
+
       return {
         ok: true,
         orderId: orderResult.insertId,
         orderNo,
         customer,
         product,
+        options: optionItems,
         coupon,
         discount,
         totalAmount
@@ -719,12 +792,13 @@ router.post("/create", async (req, res, next) => {
               `客戶：${responsePayload.customer?.name || "-"}`,
               `電話：${responsePayload.customer?.phone || "-"}`,
               `商品：${responsePayload.product?.name || "-"}`,
+              responsePayload.options?.length ? `選配：${responsePayload.options.map((item) => `${item.groupLabel} ${item.name}`).join("、")}` : null,
               `庫存：${Number(responsePayload.product?.stock || 0) > 0 ? "現貨 " + responsePayload.product.stock + " 台" : "缺貨可預約"}`,
               `金額：NT$ ${responsePayload.totalAmount || 0}`,
               "狀態：LINE 預約單 / 待門市確認 / 待付款",
               "",
               `查看 / 編輯訂單：${process.env.FRONTEND_BASE_URL || "https://pos.kingway.tw"}/orders/${responsePayload.orderId}/edit`
-            ].join("\n"),
+            ].filter(Boolean).join("\n"),
             [
               { type: "postback", label: "✅ 確認訂單", data: `line_order:confirm:${responsePayload.orderId}` },
               { type: "postback", label: "❌ 拒絕", data: `line_order:reject:${responsePayload.orderId}` }
@@ -743,7 +817,9 @@ router.post("/create", async (req, res, next) => {
           orderNo: responsePayload.orderNo,
           storeId,
           customerName: responsePayload.customer?.name || "LINE 客戶",
-          productName: responsePayload.product?.name || null,
+          productName: responsePayload.options?.length
+            ? `${responsePayload.product?.name || "-"} + ${responsePayload.options.length} 項選配`
+            : responsePayload.product?.name || null,
           totalAmount: responsePayload.totalAmount || 0
         });
 
@@ -753,7 +829,9 @@ router.post("/create", async (req, res, next) => {
             phone: responsePayload.customer?.phone || "-",
             orderNo: responsePayload.orderNo || null,
             orderId: responsePayload.orderId || null,
-            productName: responsePayload.product?.name || "LINE訂單車款",
+            productName: responsePayload.options?.length
+              ? `${responsePayload.product?.name || "LINE訂單車款"} + ${responsePayload.options.length} 項選配`
+              : responsePayload.product?.name || "LINE訂單車款",
             storeId
           }, {
             registrationTypes: ["staff", "admin"]
