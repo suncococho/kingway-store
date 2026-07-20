@@ -52,9 +52,89 @@ const {
   syncReplacementConfirmationsFromQuote,
   updateReplacementConfirmation
 } = require("../services/repairReplacementConfirmationService");
+const { resolveStaffAssignment } = require("../services/staffAssignmentService");
 
 const router = express.Router();
 const REPAIR_ALLOWED_ROLES = ["ADMIN", "MANAGER", "STAFF", "CASHIER", "REPAIR", "USER", "EMPLOYEE"];
+
+function getRepairAssignmentActorName(req) {
+  return String(
+    req.user?.displayName ||
+    req.user?.display_name ||
+    req.user?.name ||
+    req.user?.username ||
+    `staff#${req.user?.id || "-"}`
+  ).trim();
+}
+
+function assertRepairStaffColumns(repairColumns) {
+  if (
+    !hasColumn(repairColumns, "repair_staff_id") ||
+    !hasColumn(repairColumns, "repair_staff_name")
+  ) {
+    throw createError(
+      "維修人員欄位尚未建立，請先執行 staging migration。",
+      503
+    );
+  }
+}
+
+async function resolveRepairStaffAssignment(
+  connection,
+  storeId,
+  rawStaffId,
+  repairColumns
+) {
+  const assignment = await resolveStaffAssignment(
+    connection,
+    storeId,
+    rawStaffId,
+    "維修人員"
+  );
+
+  if (assignment === undefined) {
+    return undefined;
+  }
+
+  assertRepairStaffColumns(repairColumns);
+  return assignment;
+}
+
+function buildRepairStaffSelects(repairColumns) {
+  if (!hasColumn(repairColumns, "repair_staff_id")) {
+    return [
+      "NULL AS repairStaffId",
+      "NULL AS repairStaffName"
+    ].join(",\n          ");
+  }
+
+  const snapshotSql = hasColumn(
+    repairColumns,
+    "repair_staff_name"
+  )
+    ? "NULLIF(TRIM(ro.repair_staff_name), '')"
+    : "NULL";
+
+  return [
+    "ro.repair_staff_id AS repairStaffId",
+    `COALESCE(
+      ${snapshotSql},
+      repair_staff.display_name,
+      repair_staff.username
+    ) AS repairStaffName`
+  ].join(",\n          ");
+}
+
+function buildRepairStaffJoin(repairColumns) {
+  if (!hasColumn(repairColumns, "repair_staff_id")) {
+    return "";
+  }
+
+  return [
+    "LEFT JOIN staff_users repair_staff",
+    "ON repair_staff.id = ro.repair_staff_id"
+  ].join(" ");
+}
 
 router.use(authenticate);
 router.use(requireStoreScope());
@@ -224,6 +304,7 @@ router.get("/",  async (req, res, next) => {
           ${selectColumn(repairColumns, "ro", "group_confirmed", "groupConfirmed", "0")},
           ${selectColumn(repairColumns, "ro", "group_confirmed_at", "groupConfirmedAt")},
           ${selectColumn(repairColumns, "ro", "group_confirmed_by", "groupConfirmedBy")},
+          ${buildRepairStaffSelects(repairColumns)},
           ${selectColumn(repairColumns, "ro", "customer_estimate_response", "customerEstimateResponse", "'pending'")},
           ${selectColumn(repairColumns, "ro", "customer_estimate_responded_at", "customerEstimateRespondedAt")},
           ${selectColumn(repairColumns, "ro", "survey_id", "surveyId")},
@@ -264,6 +345,7 @@ router.get("/",  async (req, res, next) => {
           WHERE action = 'quote_confirmation_send_failed'
           GROUP BY repair_order_id
         ) qcf ON qcf.repair_order_id = ro.id
+        ${buildRepairStaffJoin(repairColumns)}
         LEFT JOIN (
           SELECT store_id, repair_order_id, COUNT(*) AS attachment_count
           FROM repair_order_attachments
@@ -300,6 +382,8 @@ router.get("/",  async (req, res, next) => {
             1 AS groupConfirmed,
             NULL AS groupConfirmedAt,
             NULL AS groupConfirmedBy,
+            NULL AS repairStaffId,
+            NULL AS repairStaffName,
             NULL AS customerEstimateResponse,
             NULL AS customerEstimateRespondedAt,
             NULL AS surveyId,
@@ -537,6 +621,139 @@ router.patch("/:id/mileage", async (req, res, next) => {
 });
 
 
+router.patch("/:id/repair-staff", async (req, res, next) => {
+  try {
+    const storeId = req.storeId;
+    const repairId = Number(req.params.id);
+
+    if (!Number.isSafeInteger(repairId) || repairId <= 0) {
+      throw createError("找不到維修工單", 404);
+    }
+
+    const body = req.body || {};
+    const rawStaffId = Object.prototype.hasOwnProperty.call(
+      body,
+      "staffId"
+    )
+      ? body.staffId
+      : body.repairStaffId;
+
+    const repairColumns = await getTableColumns(
+      pool,
+      "repair_orders"
+    );
+
+    const assignment = await resolveRepairStaffAssignment(
+      pool,
+      storeId,
+      rawStaffId,
+      repairColumns
+    );
+
+    if (assignment === undefined) {
+      throw createError("請選擇維修人員", 400);
+    }
+
+    await assertRepairBelongsToStore(repairId, storeId);
+
+    const [currentRows] = await pool.query(
+      `
+        SELECT
+          id,
+          repair_staff_id AS repairStaffId,
+          repair_staff_name AS repairStaffName
+        FROM repair_orders
+        WHERE id = ?
+          AND store_id = ?
+          AND deleted_at IS NULL
+        LIMIT 1
+      `,
+      [repairId, storeId]
+    );
+
+    if (!currentRows[0]) {
+      throw createError("找不到維修工單", 404);
+    }
+
+    const previousAssignment = {
+      id: currentRows[0].repairStaffId
+        ? Number(currentRows[0].repairStaffId)
+        : null,
+      name: currentRows[0].repairStaffName || null
+    };
+
+    const [result] = await pool.query(
+      `
+        UPDATE repair_orders
+        SET repair_staff_id = ?,
+            repair_staff_name = ?,
+            updated_at = NOW()
+        WHERE id = ?
+          AND store_id = ?
+          AND deleted_at IS NULL
+      `,
+      [
+        assignment.id,
+        assignment.name,
+        repairId,
+        storeId
+      ]
+    );
+
+    if (!result.affectedRows) {
+      throw createError("找不到維修工單", 404);
+    }
+
+    await pool.query(
+      `
+        INSERT INTO repair_logs (
+          repair_order_id,
+          action,
+          note
+        )
+        VALUES (?, 'repair_staff_assigned', ?)
+      `,
+      [
+        repairId,
+        [
+          `維修人員：${previousAssignment.name || "尚未指定"}`,
+          `→ ${assignment.name || "尚未指定"}`,
+          `；操作人員：${getRepairAssignmentActorName(req)}`
+        ].join(" ")
+      ]
+    );
+
+    await logWorkflowEvent(
+      "repair_staff_changed",
+      "REPAIR_ORDER",
+      repairId,
+      {
+        repairId,
+        previousRepairStaff: previousAssignment,
+        newRepairStaff: {
+          id: assignment.id,
+          name: assignment.name || null
+        },
+        changedBy: {
+          id: req.user?.id || null,
+          name: getRepairAssignmentActorName(req)
+        },
+        changedAt: new Date().toISOString()
+      },
+      req.user?.id || null
+    );
+
+    return res.json({
+      ok: true,
+      repairStaffId: assignment.id,
+      repairStaffName: assignment.name || "尚未指定"
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+
 router.delete("/:id", async (req, res, next) => {
   try {
     const storeId = req.storeId;
@@ -606,6 +823,7 @@ router.get("/:id",  async (req, res, next) => {
           ro.*,
           ro.inspection_notes AS inspectionNotes,
           ${selectColumn(repairColumns, "ro", "mileage_km", "mileageKm", "NULL")},
+          ${buildRepairStaffSelects(repairColumns)},
           c.name AS customerName,
           c.phone AS customerPhone,
           c.line_user_id AS lineUserId,
@@ -613,6 +831,7 @@ router.get("/:id",  async (req, res, next) => {
         FROM repair_orders ro
         INNER JOIN customers c ON c.id = ro.customer_id AND c.store_id = ?
         LEFT JOIN orders linked_o ON linked_o.id = ro.order_id AND linked_o.store_id = ro.store_id
+        ${buildRepairStaffJoin(repairColumns)}
         WHERE ro.id = ?
           AND ro.deleted_at IS NULL
           AND (ro.order_id IS NULL OR (linked_o.id IS NOT NULL AND linked_o.deleted_at IS NULL))
@@ -692,7 +911,16 @@ router.get("/:id",  async (req, res, next) => {
 router.post("/",  async (req, res, next) => {
   try {
     const storeId = req.storeId;
-    const { customerId, bikeModel, issueDescription, reservationDate, reservationTime, fromLine, customerType } = req.body;
+    const {
+      customerId,
+      bikeModel,
+      issueDescription,
+      reservationDate,
+      reservationTime,
+      fromLine,
+      customerType,
+      repairStaffId
+    } = req.body;
     if (!customerId || !bikeModel || !issueDescription || !reservationDate) {
       throw createError("customerId、bikeModel、issueDescription 與 reservationDate 為必填欄位", 400);
     }
@@ -713,27 +941,68 @@ router.post("/",  async (req, res, next) => {
     );
     const reservationAvailability = await assertRepairReservationDateAvailable(storeId, reservationDate);
     const reservationDay = reservationAvailability.weekdayName;
+    const repairColumns = await getTableColumns(
+      pool,
+      "repair_orders"
+    );
+    const repairStaffAssignment = await resolveRepairStaffAssignment(
+      pool,
+      storeId,
+      repairStaffId,
+      repairColumns
+    );
+
+    const insertColumns = [
+      "store_id",
+      "customer_id",
+      "customer_type",
+      "source",
+      "bike_model",
+      "issue_description",
+      "reservation_date",
+      "reservation_day",
+      "reservation_time",
+      "base_fee",
+      "reservation_status",
+      "status"
+    ];
+
+    const insertValues = [
+      storeId,
+      customerId,
+      normalizedCustomerType,
+      fromLine ? "LINE" : "WEB",
+      bikeModel,
+      issueDescription,
+      reservationDate,
+      reservationDay,
+      reservationTime || null,
+      BASE_FEE,
+      fromLine ? "pending_approval" : "approved",
+      fromLine ? "checking" : "reserved"
+    ];
+
+    if (repairStaffAssignment !== undefined) {
+      insertColumns.push(
+        "repair_staff_id",
+        "repair_staff_name"
+      );
+      insertValues.push(
+        repairStaffAssignment.id,
+        repairStaffAssignment.name
+      );
+    }
+
     const [result] = await pool.query(
       `
         INSERT INTO repair_orders (
-          store_id, customer_id, customer_type, source, bike_model, issue_description, reservation_date, reservation_day, reservation_time, base_fee, reservation_status, status
+          ${insertColumns.join(", ")}
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (
+          ${insertColumns.map(() => "?").join(", ")}
+        )
       `,
-      [
-        storeId,
-        customerId,
-        normalizedCustomerType,
-        fromLine ? "LINE" : "WEB",
-        bikeModel,
-        issueDescription,
-        reservationDate,
-        reservationDay,
-        reservationTime || null,
-        BASE_FEE,
-        fromLine ? "pending_approval" : "approved",
-        fromLine ? "checking" : "reserved"
-      ]
+      insertValues
     );
 
     await pool.query(
