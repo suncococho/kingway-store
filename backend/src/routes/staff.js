@@ -13,12 +13,13 @@ const {
   loadRolePermissionsForManagement,
   loadUserOverridesForManagement
 } = require("../services/menuPermissionService");
+const { listStaffSelectOptions } = require("../services/staffAssignmentService");
 
 const router = express.Router();
 const STAFF_ROLE_SET = new Set(["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"]);
 const MANAGED_STORE_ROLES = new Set(["admin", "staff"]);
 
-router.use(authenticate, requireStoreScope(), requireStoreFeature("staff_management_enabled"));
+router.use(authenticate, requireStoreScope());
 
 const requireStaffManagementStoreRole = requireStoreRole(["owner", "admin"]);
 
@@ -29,6 +30,21 @@ function getRequestStoreId(req) {
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : value === undefined || value === null ? "" : String(value).trim();
+}
+
+function normalizeDisplayName(value, { required = false } = {}) {
+  const displayName = normalizeText(value);
+  if (required && !displayName) {
+    const error = new Error("員工顯示名稱為必填");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (displayName.length > 50) {
+    const error = new Error("員工顯示名稱最多 50 字");
+    error.statusCode = 400;
+    throw error;
+  }
+  return displayName;
 }
 
 function normalizeStaffRole(value) {
@@ -64,7 +80,7 @@ function mapStaffRow(row) {
   return {
     id: Number(row.id),
     username: row.username,
-    displayName: row.displayName,
+    displayName: row.displayName || row.username,
     lineUserId: row.lineUserId || null,
     role: row.role,
     storeRole: row.storeRole || null,
@@ -74,6 +90,17 @@ function mapStaffRow(row) {
     createdAt: row.createdAt
   };
 }
+
+router.get("/select-options", async (req, res, next) => {
+  try {
+    const storeId = getRequestStoreId(req);
+    return res.json(await listStaffSelectOptions(pool, storeId));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.use(requireStoreFeature("staff_management_enabled"));
 
 async function findStoreStaff(connection, storeId, staffUserId, lock = false) {
   const [rows] = await connection.query(
@@ -280,12 +307,12 @@ router.post("/", requireStaffManagementStoreRole, async (req, res, next) => {
     const storeId = getRequestStoreId(req);
     const { username, password, displayName, role, storeRole, lineUserId } = req.body;
     const normalizedUsername = normalizeText(username);
-    const normalizedDisplayName = normalizeText(displayName);
+    const normalizedDisplayName = normalizeDisplayName(displayName, { required: true });
     const normalizedStaffRole = normalizeStaffRole(role);
     const normalizedStoreRole = normalizeManagedStoreRole(storeRole);
 
     if (!normalizedUsername || !password || !normalizedDisplayName) {
-      return res.status(400).json({ message: "帳號、密碼、姓名與角色為必填" });
+      return res.status(400).json({ message: "帳號、密碼、員工顯示名稱與角色為必填" });
     }
 
     const passwordHash = await hashPassword(password);
@@ -374,7 +401,7 @@ router.patch("/:id", requireStaffManagementStoreRole, async (req, res, next) => 
 
     if (displayName !== undefined) {
       updates.push("display_name = ?");
-      values.push(normalizeText(displayName));
+      values.push(normalizeDisplayName(displayName));
     }
 
     if (role !== undefined) {

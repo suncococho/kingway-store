@@ -49,6 +49,7 @@ const {
   listOrderAccessoryInstallConfirmations,
   updateOrderAccessoryInstallConfirmation
 } = require("../services/orderAccessoryInstallConfirmationService");
+const { resolveStaffAssignment } = require("../services/staffAssignmentService");
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -211,6 +212,38 @@ function hasWarrantyPayload(body = {}) {
 
 function hasOrderWarrantyColumns(orderColumns) {
   return WARRANTY_COLUMNS.every((column) => hasColumn(orderColumns, column));
+}
+
+function assertOrderSalesStaffColumns(orderColumns) {
+  if (!hasColumn(orderColumns, "sales_staff_id") || !hasColumn(orderColumns, "sales_staff_name")) {
+    throw createError("銷售人員欄位尚未建立，請先執行 staging migration。", 503);
+  }
+}
+
+async function resolveOrderSalesStaffAssignment(connection, storeId, rawStaffId, orderColumns) {
+  const assignment = await resolveStaffAssignment(connection, storeId, rawStaffId, "銷售人員");
+  if (assignment === undefined) return undefined;
+  assertOrderSalesStaffColumns(orderColumns);
+  return assignment;
+}
+
+function getRequestStaffName(req) {
+  return String(req.user?.displayName || req.user?.display_name || req.user?.name || req.user?.username || `staff#${req.user?.id || "-"}`).trim();
+}
+
+function buildSalesStaffSelects(orderColumns) {
+  if (!hasColumn(orderColumns, "sales_staff_id")) {
+    return "NULL AS salesStaffId,\n          NULL AS salesStaffName";
+  }
+  const snapshotSql = hasColumn(orderColumns, "sales_staff_name") ? "NULLIF(TRIM(o.sales_staff_name), '')" : "NULL";
+  return [
+    "o.sales_staff_id AS salesStaffId",
+    `COALESCE(${snapshotSql}, sales_staff.display_name, sales_staff.username) AS salesStaffName`
+  ].join(",\n          ");
+}
+
+function buildSalesStaffJoin(orderColumns) {
+  return hasColumn(orderColumns, "sales_staff_id") ? "LEFT JOIN staff_users sales_staff ON sales_staff.id = o.sales_staff_id" : "";
 }
 
 function buildWarrantySelects(orderColumns) {
@@ -603,6 +636,7 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
           COALESCE(o.customer_phone, ${hasColumn(customerColumns, "phone") ? "c.phone" : "NULL"}) AS customerPhone,
           ${selectColumn(staffColumns, "s", "id", "staffId")},
           ${selectColumn(staffColumns, "s", "display_name", "staffName")},
+          ${buildSalesStaffSelects(orderColumns)},
           EXISTS (
             SELECT 1
             FROM order_items oi_eb
@@ -628,6 +662,7 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN staff_users s ON s.id = o.created_by
         LEFT JOIN staff_users paid_staff ON paid_staff.id = o.final_payment_completed_by_staff_user_id
+        ${buildSalesStaffJoin(orderColumns)}
         WHERE o.store_id = ?
           AND o.deleted_at IS NULL
         ORDER BY o.id DESC
@@ -990,11 +1025,13 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
           COALESCE(o.customer_name, c.name) AS customerName,
           COALESCE(o.customer_phone, c.phone) AS customerPhone,
           c.line_user_id AS lineUserId,
-          s.display_name AS staffName
+          s.display_name AS staffName,
+          ${buildSalesStaffSelects(orderColumns)}
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN staff_users s ON s.id = o.created_by
         LEFT JOIN staff_users paid_staff ON paid_staff.id = o.final_payment_completed_by_staff_user_id
+        ${buildSalesStaffJoin(orderColumns)}
         WHERE o.id = ?
           AND o.store_id = ?
           AND o.deleted_at IS NULL
@@ -1040,6 +1077,74 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
       finalPaymentMethodLabel: mapPaymentMethodLabel(rows[0].finalPaymentMethod || rows[0].paymentMethod),
       paymentRecords,
       items
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.patch("/:id/sales-staff", requireOrderManagementFeature, async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    const storeId = req.storeId;
+    if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+      throw createError("找不到訂單", 404);
+    }
+    const orderColumns = await getTableColumns(pool, "orders");
+    const assignment = await resolveOrderSalesStaffAssignment(pool, storeId, req.body?.staffId ?? req.body?.salesStaffId, orderColumns);
+    if (assignment === undefined) {
+      throw createError("請選擇銷售人員", 400);
+    }
+    const [currentRows] = await pool.query(
+      `
+        SELECT
+          id,
+          sales_staff_id AS salesStaffId,
+          sales_staff_name AS salesStaffName
+        FROM orders
+        WHERE id = ?
+          AND store_id = ?
+          AND deleted_at IS NULL
+        LIMIT 1
+      `,
+      [orderId, storeId]
+    );
+    if (!currentRows[0]) {
+      throw createError("找不到訂單", 404);
+    }
+    const previousAssignment = {
+      id: currentRows[0].salesStaffId ? Number(currentRows[0].salesStaffId) : null,
+      name: currentRows[0].salesStaffName || null
+    };
+    const [result] = await pool.query(
+      `
+        UPDATE orders
+        SET sales_staff_id = ?,
+            sales_staff_name = ?,
+            updated_at = NOW()
+        WHERE id = ?
+          AND store_id = ?
+          AND deleted_at IS NULL
+      `,
+      [assignment.id, assignment.name, orderId, storeId]
+    );
+    if (!result.affectedRows) {
+      throw createError("找不到訂單", 404);
+    }
+    await logWorkflowEvent("order_sales_staff_changed", "ORDER", orderId, {
+      orderId,
+      previousSalesStaff: previousAssignment,
+      newSalesStaff: { id: assignment.id, name: assignment.name || null },
+      changedBy: {
+        id: req.user?.id || null,
+        name: getRequestStaffName(req)
+      },
+      changedAt: new Date().toISOString()
+    }, req.user?.id || null);
+    return res.json({
+      ok: true,
+      salesStaffId: assignment.id,
+      salesStaffName: assignment.name || "尚未指定"
     });
   } catch (error) {
     return next(error);
@@ -1188,6 +1293,7 @@ router.post("/", requirePosFeature, async (req, res, next) => {
       couponCode,
       couponAmount,
       notes,
+      salesStaffId,
       items
     } = req.body;
 
@@ -1356,48 +1462,30 @@ router.post("/", requirePosFeature, async (req, res, next) => {
 
       const businessDate = dayjs().tz(TAIPEI_TZ).format("YYYY-MM-DD");
       const orderNo = `POS-${dayjs().tz(TAIPEI_TZ).format("YYYYMMDD-HHmmss-SSS")}`;
+      const orderColumns = await getTableColumns(connection, "orders");
+      const salesStaffAssignment = await resolveOrderSalesStaffAssignment(connection, storeId, salesStaffId, orderColumns);
+      const orderInsertColumns = [
+        "store_id", "order_no", "customer_id", "customer_name", "customer_phone", "customer_type",
+        "order_type", "total_amount", "payment_method", "status", "is_reservation_order", "deposit_amount",
+        "unpaid_balance", "final_payment_status", "final_paid_at", "notes", "created_by", "business_date"
+      ];
+      const orderInsertValues = [
+        storeId, orderNo, resolvedCustomerId || null, resolvedCustomerName,
+        resolvedCustomerType === "OFFLINE_NO_PHONE" ? null : resolvedCustomerPhone, resolvedCustomerType,
+        "GENERAL", totalAmount, paymentMethod || "CASH", "COMPLETED", normalizedIsReservation ? 1 : 0,
+        normalizedDeposit, requestedUnpaidBalance, normalizedFinalPaymentStatus,
+        normalizedFinalPaymentStatus === "PAID" ? new Date() : null, notes || null, req.user.id, businessDate
+      ];
+      if (salesStaffAssignment !== undefined) {
+        orderInsertColumns.push("sales_staff_id", "sales_staff_name");
+        orderInsertValues.push(salesStaffAssignment.id, salesStaffAssignment.name);
+      }
       const [orderResult] = await connection.query(
         `
-          INSERT INTO orders (
-            store_id,
-            order_no,
-            customer_id,
-            customer_name,
-            customer_phone,
-            customer_type,
-            order_type,
-            total_amount,
-            payment_method,
-            status,
-            is_reservation_order,
-            deposit_amount,
-            unpaid_balance,
-            final_payment_status,
-            final_paid_at,
-            notes,
-            created_by,
-            business_date
-          )
-          VALUES (?, ?, ?, ?, ?, ?, 'GENERAL', ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO orders (${orderInsertColumns.join(", ")})
+          VALUES (${orderInsertColumns.map(() => "?").join(", ")})
         `,
-        [
-          storeId,
-          orderNo,
-          resolvedCustomerId || null,
-          resolvedCustomerName,
-          resolvedCustomerType === "OFFLINE_NO_PHONE" ? null : resolvedCustomerPhone,
-          resolvedCustomerType,
-          totalAmount,
-          paymentMethod || "CASH",
-          normalizedIsReservation ? 1 : 0,
-          normalizedDeposit,
-          requestedUnpaidBalance,
-          normalizedFinalPaymentStatus,
-          normalizedFinalPaymentStatus === "PAID" ? new Date() : null,
-          notes || null,
-          req.user.id,
-          businessDate
-        ]
+        orderInsertValues
       );
 
       const couponCodes = String(couponCode || "")
@@ -1484,6 +1572,8 @@ router.post("/", requirePosFeature, async (req, res, next) => {
         depositAmount: normalizedDeposit,
         unpaidBalance: requestedUnpaidBalance,
         finalPaymentStatus: normalizedFinalPaymentStatus,
+        salesStaffId: salesStaffAssignment?.id || null,
+        salesStaffName: salesStaffAssignment?.name || null,
         items: normalizedItems
       };
     });
@@ -1534,10 +1624,12 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
       unpaidBalance,
       otherDiscount,
       finalPaymentStatus,
-      notes
+      notes,
+      salesStaffId
     } = req.body;
     const orderColumns = await getTableColumns(pool, "orders");
     const warrantyPayload = normalizeWarrantyPayload(req.body || {});
+    const salesStaffAssignment = await resolveOrderSalesStaffAssignment(pool, storeId, salesStaffId, orderColumns);
     const shouldUpdateWarranty = hasWarrantyPayload(req.body || {}) && hasOrderWarrantyColumns(orderColumns);
     if (hasWarrantyPayload(req.body || {}) && !shouldUpdateWarranty) {
       const hasNonEmptyWarrantyValue = Object.values(warrantyPayload).some((value) => value !== null && value !== undefined && value !== DEFAULT_WARRANTY_TERMS_VERSION);
@@ -1613,6 +1705,9 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
             ELSE NULL
           END,
           notes = COALESCE(?, notes)
+          ${salesStaffAssignment !== undefined ? `,
+          sales_staff_id = ?,
+          sales_staff_name = ?` : ""}
           ${shouldUpdateWarranty ? `,
           warranty_start_date = ?,
           warranty_months = ?,
@@ -1634,6 +1729,7 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
         nextFinalPaymentStatus,
         nextFinalPaymentStatus,
         notes === undefined ? null : notes,
+        ...(salesStaffAssignment !== undefined ? [salesStaffAssignment.id, salesStaffAssignment.name] : []),
         ...(shouldUpdateWarranty ? [
           warrantyPayload.warranty_start_date,
           warrantyPayload.warranty_months,
@@ -1721,11 +1817,13 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
           COALESCE(o.customer_name, c.name) AS customerName,
           COALESCE(o.customer_phone, c.phone) AS customerPhone,
           c.line_user_id AS lineUserId,
-          s.display_name AS staffName
+          s.display_name AS staffName,
+          ${buildSalesStaffSelects(orderColumns)}
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
         LEFT JOIN staff_users s ON s.id = o.created_by
         LEFT JOIN staff_users paid_staff ON paid_staff.id = o.final_payment_completed_by_staff_user_id
+        ${buildSalesStaffJoin(orderColumns)}
         WHERE o.id = ?
           AND o.store_id = ?
         LIMIT 1
