@@ -31,7 +31,12 @@ function getStockLabel(stock, reorderLevel) {
 }
 
 function formatCurrency(value) {
-  return `NT$${Number(value || 0).toFixed(0)}`;
+  return `NT${Number(value || 0).toFixed(0)}`;
+}
+
+function getStaffRoleLabel(role) {
+  const map = { ADMIN: "管理員", MANAGER: "店長", CASHIER: "門市人員", REPAIR: "維修", INVENTORY: "庫存" };
+  return map[role] || role || "-";
 }
 
 function formatMileageKm(value) {
@@ -232,6 +237,9 @@ function RepairDetailPage() {
   const [inspectionFee, setInspectionFee] = useState("");
   const [mileageKm, setMileageKm] = useState("");
   const [mileageSaving, setMileageSaving] = useState(false);
+  const [staffOptions, setStaffOptions] = useState([]);
+  const [repairStaffId, setRepairStaffId] = useState("");
+  const [repairStaffSaving, setRepairStaffSaving] = useState(false);
 
   const [laborFee, setLaborFee] = useState("");
   const [inspectionNotes, setInspectionNotes] = useState("");
@@ -303,6 +311,12 @@ function RepairDetailPage() {
   }, [id]);
 
   useEffect(() => {
+    apiRequest("/staff/select-options")
+      .then((rows) => setStaffOptions(Array.isArray(rows) ? rows : []))
+      .catch(() => setStaffOptions([]));
+  }, []);
+
+  useEffect(() => {
     async function loadProducts() {
       setProductsLoading(true);
       try {
@@ -325,6 +339,7 @@ function RepairDetailPage() {
     }
     setInspectionFee(detail.inspection_fee !== undefined && detail.inspection_fee !== null ? String(Number(detail.inspection_fee || 0)) : "");
     setMileageKm(detail.mileageKm !== undefined && detail.mileageKm !== null ? String(Number(detail.mileageKm || 0)) : "");
+    setRepairStaffId(detail.repairStaffId ? String(detail.repairStaffId) : "");
     setInspectionNotes(detail.inspectionNotes || "");
 
     setLaborFee(detail.labor_fee !== undefined && detail.labor_fee !== null ? String(Number(detail.labor_fee || 0)) : "");
@@ -529,6 +544,23 @@ function RepairDetailPage() {
       window.alert("檢查內容已儲存，可以進入下一步填寫報價");
     } catch (error) {
       window.alert(error.message || "檢查內容儲存失敗");
+    }
+  }
+
+  async function saveRepairStaff() {
+    setRepairStaffSaving(true);
+    try {
+      const response = await apiRequest(`/repairs/${id}/repair-staff`, {
+        method: "PATCH",
+        body: JSON.stringify({ staffId: repairStaffId === "" ? null : Number(repairStaffId) })
+      });
+      setDetail((current) => current ? { ...current, repairStaffId: response.repairStaffId || null, repairStaffName: response.repairStaffName || "尚未指定" } : current);
+      await loadDetail();
+      window.alert("維修人員已更新");
+    } catch (error) {
+      window.alert(error.message || "維修人員儲存失敗");
+    } finally {
+      setRepairStaffSaving(false);
     }
   }
 
@@ -1366,12 +1398,31 @@ function RepairDetailPage() {
                   <div className="field-value">{formatMileageKm(detail.mileageKm ?? detail.mileage_km)}</div>
                 </div>
                 <div className="field-item">
+                  <div className="field-label">維修人員</div>
+                  <div className="field-value">{detail.repairStaffName || "尚未指定"}</div>
+                </div>
+                <div className="field-item">
                   <div className="field-label">報價狀態</div>
                   <div className="field-value"><StatusBadge tone={getEstimateTone(detail)}>{getEstimateLabel(detail)}</StatusBadge></div>
                 </div>
                 <div className="field-item">
                   <div className="field-label">維修訂單</div>
                   <div className="field-value">{detail.order_id ? `#${detail.order_id}` : "尚未建立"}</div>
+                </div>
+                <label className="form-field">
+                  <span>維修人員</span>
+                  <select value={repairStaffId} onChange={(event) => setRepairStaffId(event.target.value)}>
+                    <option value="">請選擇維修人員</option>
+                    {staffOptions.map((staff) => (
+                      <option key={staff.id} value={staff.id}>{staff.displayName}（{getStaffRoleLabel(staff.role)}）</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="form-field">
+                  <span>人員狀態</span>
+                  <button type="button" className="secondary-button" onClick={saveRepairStaff} disabled={repairStaffSaving}>
+                    {repairStaffSaving ? "儲存中" : "儲存維修人員"}
+                  </button>
                 </div>
               </div>
 

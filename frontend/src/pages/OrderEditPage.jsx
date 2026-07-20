@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { apiRequest } from "../lib/api";
 
 const money = (v) => `NT$ ${Number(v || 0).toLocaleString()}`;
+const getStaffRoleLabel = (role) => ({ ADMIN: "管理員", MANAGER: "店長", CASHIER: "門市人員", REPAIR: "維修", INVENTORY: "庫存" }[role] || role || "-");
 const categoryLabel = (value) => {
   const normalized = String(value || "").trim().toUpperCase();
   if (normalized === "EB" || normalized === "EBIKE") return "電動自行車";
@@ -64,6 +65,7 @@ function OrderEditPage() {
   const navigate = useNavigate();
   const [form, setForm] = useState(null);
   const [products, setProducts] = useState([]);
+  const [staffOptions, setStaffOptions] = useState([]);
   const [addProductSearch, setAddProductSearch] = useState("");
   const [selectedProductForAdd, setSelectedProductForAdd] = useState(null);
   const [items, setItems] = useState([]);
@@ -83,6 +85,7 @@ function OrderEditPage() {
           otherDiscount: Number(o.otherDiscount || 0),
           unpaidBalance: Number(o.unpaidBalance || 0),
           finalPaymentStatus: o.finalPaymentStatus || "UNPAID",
+          salesStaffId: o.salesStaffId ? String(o.salesStaffId) : "",
           orderType: o.orderType || o.order_type || "",
           source: o.source || "",
           notes: o.notes || "",
@@ -102,6 +105,10 @@ function OrderEditPage() {
     apiRequest("/products")
       .then((rows) => setProducts(Array.isArray(rows) ? rows : []))
       .catch(() => setProducts([]));
+
+    apiRequest("/staff/select-options")
+      .then((rows) => setStaffOptions(Array.isArray(rows) ? rows : []))
+      .catch(() => setStaffOptions([]));
   }, [id]);
 
   function update(k, v) {
@@ -187,7 +194,8 @@ async function requestGoogleReviewCoupon() {
         unpaidBalance,
         otherDiscount,
         depositAmount,
-        finalPaymentStatus: unpaidBalance <= 0 ? "PAID" : depositAmount > 0 ? "PARTIAL" : form.finalPaymentStatus
+        finalPaymentStatus: unpaidBalance <= 0 ? "PAID" : depositAmount > 0 ? "PARTIAL" : form.finalPaymentStatus,
+        salesStaffId: form.salesStaffId === "" ? null : Number(form.salesStaffId)
       };
       if (form.warrantySchemaReady) {
         Object.assign(payload, {
@@ -637,6 +645,16 @@ async function requestGoogleReviewCoupon() {
                 <option value="UNPAID">未付款</option>
                 <option value="PARTIAL">部分付款</option>
                 <option value="PAID">已付清</option>
+              </select>
+            </div>
+
+            <div className="kw-field">
+              <label>銷售人員</label>
+              <select value={form.salesStaffId} onChange={(e) => update("salesStaffId", e.target.value)}>
+                <option value="">請選擇銷售人員</option>
+                {staffOptions.map((staff) => (
+                  <option key={staff.id} value={staff.id}>{staff.displayName}（{getStaffRoleLabel(staff.role)}）</option>
+                ))}
               </select>
             </div>
           </section>

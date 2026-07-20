@@ -433,7 +433,7 @@ function StaffPage() {
           <DataTable
             columns={[
               { key: "username", label: "帳號" },
-              { key: "displayName", label: "姓名" },
+              { key: "displayName", label: "員工顯示名稱" },
               { key: "role", label: "工作角色", render: (row) => getRoleLabel(row.role) },
               { key: "storeRole", label: "管理權限", render: (row) => getStoreRoleLabel(row.storeRole) },
               { key: "lineUserId", label: "LINE userId", mobileHidden: true },
@@ -455,7 +455,7 @@ function StaffPage() {
             ]}
             rows={rows}
             emptyText="目前沒有員工資料。"
-            cardTitle={(row) => row.displayName}
+            cardTitle={(row) => row.displayName || row.username}
             cardDescription={(row) => `${row.username} / ${getRoleLabel(row.role)} / ${getStoreRoleLabel(row.storeRole)}`}
             cardBadges={(row) => (
               <>
@@ -510,8 +510,8 @@ function StaffPage() {
               <input name="password" type="password" value={staffForm.password} onChange={handleStaffChange} placeholder={selectedStaffId ? "留空不變更；輸入新密碼即重設" : "必填"} />
             </label>
             <label className="form-field">
-              <span>姓名</span>
-              <input name="displayName" value={staffForm.displayName} onChange={handleStaffChange} required />
+              <span>員工顯示名稱</span>
+              <input name="displayName" value={staffForm.displayName} onChange={handleStaffChange} placeholder="例如：Jeff、王店長、維修小陳" maxLength={50} required />
             </label>
             <label className="form-field">
               <span>工作角色</span>
@@ -578,7 +578,7 @@ function StaffPage() {
               <option value="">請選擇員工</option>
               {rows.map((row) => (
                 <option key={row.id} value={row.id}>
-                  {row.displayName} ({getRoleLabel(row.role)})
+                  {row.displayName || row.username} ({getRoleLabel(row.role)})
                 </option>
               ))}
             </select>

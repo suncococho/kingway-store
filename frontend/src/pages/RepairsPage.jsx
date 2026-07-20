@@ -413,7 +413,8 @@ function RepairsPage() {
         detailPath: item.repairSource === "REPAIR_ORDER" ? `/repairs/${item.id}` : null,
         statusTone: getRepairStatusTone(item.status),
         reservationDateLabel: formatTaipeiDate(item.reservationDate),
-        mileageLabel: `目前行駛里程：${formatMileageKm(item.mileageKm)}`
+        mileageLabel: `目前行駛里程：${formatMileageKm(item.mileageKm)}`,
+        repairStaffNameDisplay: item.repairStaffName || "尚未指定"
       })),
     [repairs.items]
   );
@@ -644,6 +645,7 @@ function RepairsPage() {
     { key: "reservationDate", label: "預約日期", render: (row) => row.reservationDateLabel, mobileHidden: true },
     { key: "reservationTime", label: "預約時間", render: (row) => row.reservationTime || "-", mobileHidden: true },
     { key: "bikeModel", label: "車款", mobileHidden: true },
+    { key: "repairStaffNameDisplay", label: "維修人員", render: (row) => `維修人員：${row.repairStaffNameDisplay || "尚未指定"}`, mobileHidden: true },
     {
       key: "mileageKm",
       label: "目前行駛里程",
@@ -967,6 +969,7 @@ function RepairsPage() {
                   <strong>{row.bikeModel || "未填車款"}</strong>
                   <span>{formatReservationDateTime(row)}</span>
                   <span>{row.mileageLabel}</span>
+                  <span>維修人員：{row.repairStaffNameDisplay || "尚未指定"}</span>
                   {hasMileageKm(row.mileageKm) ? (
                     <span>維修保固參考：本次維修後 500 km 內</span>
                   ) : null}
