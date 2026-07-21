@@ -6,6 +6,7 @@ const {
   allocateOrderActualSaleAmounts,
   isPurchaseConfirmationComplete,
   buildOrderSaleIncentiveCandidates,
+  loadOrderSaleIncentiveSnapshot,
   reconcileOrderSaleIncentives
 } = require("../src/services/staffIncentiveEarningService");
 
@@ -509,6 +510,169 @@ function testSharedBikeHandoverSplitsSeventyThirty() {
   );
 }
 
+function testBikeFollowupEarns60() {
+  const evaluation =
+    buildOrderSaleIncentiveCandidates({
+      snapshot: {
+        order: createPaidOrder({
+          handoverConfirmedAt:
+            "2026-07-21T10:00:00.000Z"
+        }),
+        purchaseConfirmation:
+          createCompletedConfirmation(),
+        orderSalesFollowup: {
+          id: 71,
+          status: "COMPLETED",
+          contactMethod: "LINE",
+          customerResult: "NO_ISSUE",
+          employeeCausedIssue: 0,
+          unresolvedEmployeeIssue: 0,
+          completedByStaffId: 8,
+          completedAt:
+            "2026-07-22T10:00:00.000Z"
+        },
+        items: [createVehicleItem()]
+      },
+      plan,
+      triggerSource: "FOLLOWUP_TEST"
+    });
+
+  const bikeEvents =
+    evaluation.candidates.filter(
+      (event) => event.incentiveType === "BIKE"
+    );
+
+  assert.strictEqual(bikeEvents.length, 3);
+
+  const followup = bikeEvents.find(
+    (event) => event.earningStage === "FOLLOWUP"
+  );
+
+  assert(followup);
+  assert.strictEqual(followup.calculatedAmount, 60);
+  assert.strictEqual(followup.finalAmount, 60);
+  assert.strictEqual(followup.assignedRatio, 1);
+}
+
+function testSharedBikeFollowupSplitsSeventyThirty() {
+  const evaluation =
+    buildOrderSaleIncentiveCandidates({
+      snapshot: {
+        order: createPaidOrder({
+          salesSupportStaffId: 9,
+          salesSupportStaffName: "李協助",
+          handoverConfirmedAt:
+            "2026-07-21T10:00:00.000Z"
+        }),
+        purchaseConfirmation:
+          createCompletedConfirmation(),
+        orderSalesFollowup: {
+          id: 72,
+          status: "COMPLETED",
+          contactMethod: "PHONE",
+          customerResult: "ISSUE_RESOLVED",
+          unresolvedEmployeeIssue: 0,
+          completedByStaffId: 8,
+          completedAt:
+            "2026-07-22T10:00:00.000Z"
+        },
+        items: [createVehicleItem()]
+      },
+      plan,
+      triggerSource:
+        "SHARED_FOLLOWUP_TEST"
+    });
+
+  const events = evaluation.candidates.filter(
+    (event) => event.earningStage === "FOLLOWUP"
+  );
+
+  assert.strictEqual(events.length, 2);
+
+  const primary = events.find(
+    (event) => event.staffUserId === 8
+  );
+
+  const support = events.find(
+    (event) => event.staffUserId === 9
+  );
+
+  assert(primary);
+  assert(support);
+
+  assert.strictEqual(primary.assignedRatio, 0.7);
+  assert.strictEqual(primary.finalAmount, 42);
+
+  assert.strictEqual(support.assignedRatio, 0.3);
+  assert.strictEqual(support.finalAmount, 18);
+
+  assert.strictEqual(
+    primary.finalAmount + support.finalAmount,
+    60
+  );
+}
+
+function testIneligibleBikeFollowupsEarnNothing() {
+  const cases = [
+    {
+      customerResult: "NO_RESPONSE",
+      unresolvedEmployeeIssue: 0
+    },
+    {
+      customerResult: "ISSUE_UNRESOLVED",
+      unresolvedEmployeeIssue: 0
+    },
+    {
+      customerResult: "ISSUE_RESOLVED",
+      employeeCausedIssue: 1,
+      unresolvedEmployeeIssue: 1
+    },
+    {
+      customerResult: "OTHER",
+      unresolvedEmployeeIssue: 0
+    }
+  ];
+
+  for (const followupCase of cases) {
+    const evaluation =
+      buildOrderSaleIncentiveCandidates({
+        snapshot: {
+          order: createPaidOrder({
+            handoverConfirmedAt:
+              "2026-07-21T10:00:00.000Z"
+          }),
+          purchaseConfirmation:
+            createCompletedConfirmation(),
+          orderSalesFollowup: {
+            id: 80,
+            status: "COMPLETED",
+            contactMethod: "LINE",
+            completedByStaffId: 8,
+            completedAt:
+              "2026-07-22T10:00:00.000Z",
+            ...followupCase
+          },
+          items: [createVehicleItem()]
+        },
+        plan,
+        triggerSource:
+          "INELIGIBLE_FOLLOWUP_TEST"
+      });
+
+    const followupEvents =
+      evaluation.candidates.filter(
+        (event) =>
+          event.earningStage === "FOLLOWUP"
+      );
+
+    assert.strictEqual(
+      followupEvents.length,
+      0,
+      JSON.stringify(followupCase)
+    );
+  }
+}
+
 function testUnpaidOrderEarnsNothing() {
   const evaluation = buildOrderSaleIncentiveCandidates({
     snapshot: {
@@ -566,6 +730,157 @@ function testOrdinaryPartsExcluded() {
 
   assert.strictEqual(evaluation.eligible, false);
   assert.strictEqual(evaluation.candidates.length, 0);
+}
+
+function createSnapshotMockConnection({
+  followupTableExists,
+  followupRow = null
+}) {
+  const queries = [];
+
+  return {
+    queries,
+
+    async query(sql, params = []) {
+      const normalizedSql = String(sql)
+        .replace(/\s+/g, " ")
+        .trim();
+
+      queries.push({
+        sql: normalizedSql,
+        params
+      });
+
+      if (
+        normalizedSql.includes(
+          "FROM INFORMATION_SCHEMA.TABLES"
+        )
+      ) {
+        return [
+          followupTableExists
+            ? [{ existsFlag: 1 }]
+            : []
+        ];
+      }
+
+      if (
+        normalizedSql.includes(
+          "FROM order_sales_followups"
+        )
+      ) {
+        return [[followupRow].filter(Boolean)];
+      }
+
+      if (
+        normalizedSql.includes("FROM orders")
+      ) {
+        return [[
+          createPaidOrder({
+            handoverConfirmedAt:
+              "2026-07-21T10:00:00.000Z"
+          })
+        ]];
+      }
+
+      if (
+        normalizedSql.includes(
+          "FROM purchase_confirmations"
+        )
+      ) {
+        return [[createCompletedConfirmation()]];
+      }
+
+      if (
+        normalizedSql.includes(
+          "FROM order_items oi"
+        )
+      ) {
+        return [[createVehicleItem()]];
+      }
+
+      throw new Error(
+        `Unexpected snapshot query: ${normalizedSql}`
+      );
+    }
+  };
+}
+
+async function testSnapshotSkipsMissingFollowupTable() {
+  const connection =
+    createSnapshotMockConnection({
+      followupTableExists: false
+    });
+
+  const snapshot =
+    await loadOrderSaleIncentiveSnapshot(
+      connection,
+      1,
+      100
+    );
+
+  assert(snapshot.order);
+  assert.strictEqual(
+    snapshot.orderSalesFollowup,
+    null
+  );
+
+  assert.strictEqual(
+    connection.queries.some(
+      (entry) =>
+        entry.sql.includes(
+          "FROM order_sales_followups"
+        )
+    ),
+    false
+  );
+}
+
+async function testSnapshotLoadsFollowupWhenTableExists() {
+  const connection =
+    createSnapshotMockConnection({
+      followupTableExists: true,
+      followupRow: {
+        id: 91,
+        status: "COMPLETED",
+        contactMethod: "LINE",
+        customerResult: "NO_ISSUE",
+        employeeCausedIssue: 0,
+        unresolvedEmployeeIssue: 0,
+        completedByStaffId: 8,
+        completedByStaffName: "王小明",
+        completedAt:
+          "2026-07-22T10:00:00.000Z"
+      }
+    });
+
+  const snapshot =
+    await loadOrderSaleIncentiveSnapshot(
+      connection,
+      1,
+      100
+    );
+
+  assert(snapshot.orderSalesFollowup);
+
+  assert.strictEqual(
+    snapshot.orderSalesFollowup.id,
+    91
+  );
+
+  assert.strictEqual(
+    snapshot.orderSalesFollowup.customerResult,
+    "NO_ISSUE"
+  );
+
+  assert.strictEqual(
+    connection.queries.some(
+      (entry) =>
+        entry.sql.includes(
+          "FROM order_sales_followups"
+        )
+    ),
+    true
+  );
 }
 
 async function testReconciliationUsesIdempotentKeys() {
@@ -630,9 +945,14 @@ async function run() {
   testSharedAccessorySplitsSeventyThirty();
   testBikeHandoverEarns120();
   testSharedBikeHandoverSplitsSeventyThirty();
+  testBikeFollowupEarns60();
+  testSharedBikeFollowupSplitsSeventyThirty();
+  testIneligibleBikeFollowupsEarnNothing();
   testUnpaidOrderEarnsNothing();
   testRepairOrderAccessoriesExcluded();
   testOrdinaryPartsExcluded();
+  await testSnapshotSkipsMissingFollowupTable();
+  await testSnapshotLoadsFollowupWhenTableExists();
   await testReconciliationUsesIdempotentKeys();
   await testSharedReconciliationCreatesSeparateEvents();
 
