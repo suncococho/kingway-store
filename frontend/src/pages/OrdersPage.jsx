@@ -294,6 +294,7 @@ function OrdersPage() {
     unpaidBalance: "",
     finalPaymentStatus: "PAID",
     salesStaffId: "",
+    salesSupportStaffId: "",
     notes: "",
     warrantyStartDate: "",
     warrantyMonths: "",
@@ -353,7 +354,10 @@ function OrdersPage() {
         depositLabel: Number(item.unpaidBalance || 0) > 0 ? "訂金未清" : "已結清",
         businessDateLabel: formatTaipeiDate(item.businessDate),
         createdAtLabel: formatTaipeiDateTime(item.createdAt),
-        salesStaffNameDisplay: item.salesStaffName || "尚未指定"
+        salesStaffNameDisplay:
+          item.salesStaffName || "尚未指定",
+        salesSupportStaffNameDisplay:
+          item.salesSupportStaffName || ""
       })),
     [items]
   );
@@ -667,6 +671,27 @@ function OrdersPage() {
       return;
     }
 
+    const primaryStaffId = String(
+      detailForm.salesStaffId || ""
+    );
+
+    const supportStaffId = String(
+      detailForm.salesSupportStaffId || ""
+    );
+
+    if (supportStaffId && !primaryStaffId) {
+      alert("請先選擇主要銷售人員，再指定支援銷售人員。");
+      return;
+    }
+
+    if (
+      supportStaffId &&
+      supportStaffId === primaryStaffId
+    ) {
+      alert("主要銷售人員與支援銷售人員不可為同一人。");
+      return;
+    }
+
     await runWithProcessing(async () => {
       const payload = {
         customerName: detailForm.customerName,
@@ -676,7 +701,14 @@ function OrdersPage() {
         depositAmount: detailForm.depositAmount === "" ? null : Number(detailForm.depositAmount),
         unpaidBalance: detailForm.unpaidBalance === "" ? null : Number(detailForm.unpaidBalance),
         finalPaymentStatus: detailForm.finalPaymentStatus,
-        salesStaffId: detailForm.salesStaffId === "" ? null : Number(detailForm.salesStaffId),
+        salesStaffId:
+          detailForm.salesStaffId === ""
+            ? null
+            : Number(detailForm.salesStaffId),
+        salesSupportStaffId:
+          detailForm.salesSupportStaffId === ""
+            ? null
+            : Number(detailForm.salesSupportStaffId),
         notes: detailForm.notes
       };
       if (detailForm.warrantySchemaReady) {
@@ -693,7 +725,36 @@ function OrdersPage() {
         body: JSON.stringify(payload)
       });
       refetch();
-      setDetail((current) => (current ? { ...current, ...detailForm, salesStaffId: detailForm.salesStaffId || null, salesStaffName: staffOptions.items.find((item) => String(item.id) === String(detailForm.salesStaffId))?.displayName || current.salesStaffName } : current));
+      setDetail((current) => {
+        if (!current) return current;
+
+        const primaryStaff =
+          staffOptions.items.find(
+            (item) =>
+              String(item.id) ===
+              String(detailForm.salesStaffId)
+          );
+
+        const supportStaff =
+          staffOptions.items.find(
+            (item) =>
+              String(item.id) ===
+              String(detailForm.salesSupportStaffId)
+          );
+
+        return {
+          ...current,
+          ...detailForm,
+          salesStaffId:
+            detailForm.salesStaffId || null,
+          salesStaffName:
+            primaryStaff?.displayName || null,
+          salesSupportStaffId:
+            detailForm.salesSupportStaffId || null,
+          salesSupportStaffName:
+            supportStaff?.displayName || null
+        };
+      });
       alert("訂單已更新");
     }, { id: `order-save-${detail.id}`, label: "訂單更新中..." }).catch((error) => {
       alert(error.message);
@@ -790,7 +851,14 @@ function OrdersPage() {
       depositAmount: String(row.depositAmount ?? ""),
       unpaidBalance: String(row.unpaidBalance ?? ""),
       finalPaymentStatus: row.finalPaymentStatus || "PAID",
-      salesStaffId: row.salesStaffId ? String(row.salesStaffId) : "",
+      salesStaffId:
+        row.salesStaffId
+          ? String(row.salesStaffId)
+          : "",
+      salesSupportStaffId:
+        row.salesSupportStaffId
+          ? String(row.salesSupportStaffId)
+          : "",
       notes: row.notes || "",
       ...buildWarrantyFormValues(row)
     });
@@ -814,7 +882,14 @@ function OrdersPage() {
         depositAmount: String(nextDetail.depositAmount ?? ""),
         unpaidBalance: String(nextDetail.unpaidBalance ?? ""),
         finalPaymentStatus: nextDetail.finalPaymentStatus || "PAID",
-        salesStaffId: nextDetail.salesStaffId ? String(nextDetail.salesStaffId) : "",
+        salesStaffId:
+          nextDetail.salesStaffId
+            ? String(nextDetail.salesStaffId)
+            : "",
+        salesSupportStaffId:
+          nextDetail.salesSupportStaffId
+            ? String(nextDetail.salesSupportStaffId)
+            : "",
         notes: nextDetail.notes || "",
         ...buildWarrantyFormValues(nextDetail)
       });
@@ -1234,7 +1309,23 @@ if (!window.confirm(
       mobileHidden: true
     },
     { key: "businessDateLabel", label: "日期", mobileHidden: true },
-    { key: "salesStaffNameDisplay", label: "銷售人員", render: (row) => `銷售：${row.salesStaffNameDisplay || "尚未指定"}`, mobileHidden: true },
+    {
+      key: "salesStaffNameDisplay",
+      label: "銷售人員",
+      render: (row) => (
+        <div>
+          <div>
+            主要：{row.salesStaffNameDisplay || "尚未指定"}
+          </div>
+          {row.salesSupportStaffNameDisplay ? (
+            <div>
+              支援：{row.salesSupportStaffNameDisplay}
+            </div>
+          ) : null}
+        </div>
+      ),
+      mobileHidden: true
+    },
     { key: "finalAmount", label: "最終金額", render: (row) => formatOrderFinalAmount(row), mobileHidden: true },
     {
       key: "statusLabel",
@@ -1536,7 +1627,8 @@ if (!window.confirm(
                 <div className="field-item"><div className="field-label">訂單類型</div><div className="field-value">{detail.orderKindLabel}</div></div>
                 <div className="field-item"><div className="field-label">維修狀態</div><div className="field-value">{detail.repairStatusLabel || detail.repairStatus || "-"}</div></div>
                 <div className="field-item"><div className="field-label">最終金額</div><div className="field-value">{formatOrderFinalAmount(detail)}</div></div>
-                <div className="field-item"><div className="field-label">銷售人員</div><div className="field-value">{detail.salesStaffName || "尚未指定"}</div></div>
+                <div className="field-item"><div className="field-label">主要銷售人員</div><div className="field-value">{detail.salesStaffName || "尚未指定"}</div></div>
+                <div className="field-item"><div className="field-label">支援銷售人員</div><div className="field-value">{detail.salesSupportStaffName || "未指定"}</div></div>
               </div>
             </section>
             <section className="stack-card">
@@ -1779,7 +1871,72 @@ if (!window.confirm(
                   <label className="form-field"><span>訂金</span><input type="number" min="0" value={detailForm.depositAmount} onChange={(event) => setDetailForm((current) => ({ ...current, depositAmount: event.target.value }))} /></label>
                   <label className="form-field"><span>未付款金額</span><input type="number" min="0" value={detailForm.unpaidBalance} onChange={(event) => setDetailForm((current) => ({ ...current, unpaidBalance: event.target.value }))} /></label>
                   <label className="form-field"><span>完款狀態</span><select value={detailForm.finalPaymentStatus} onChange={(event) => setDetailForm((current) => ({ ...current, finalPaymentStatus: event.target.value }))}><option value="UNPAID">未付款</option><option value="PARTIAL">部分付款</option><option value="PAID">已完款</option></select></label>
-                  <label className="form-field"><span>銷售人員</span><select value={detailForm.salesStaffId} onChange={(event) => setDetailForm((current) => ({ ...current, salesStaffId: event.target.value }))}><option value="">請選擇銷售人員</option>{staffOptions.items.map((staff) => (<option key={staff.id} value={staff.id}>{staff.displayName}（{getStaffRoleLabel(staff.role)}）</option>))}</select></label>
+                  <label className="form-field">
+                    <span>主要銷售人員</span>
+                    <select
+                      value={detailForm.salesStaffId}
+                      onChange={(event) => {
+                        const nextPrimaryId =
+                          event.target.value;
+
+                        setDetailForm((current) => ({
+                          ...current,
+                          salesStaffId: nextPrimaryId,
+                          salesSupportStaffId:
+                            !nextPrimaryId ||
+                            String(
+                              current.salesSupportStaffId ||
+                                ""
+                            ) ===
+                              String(nextPrimaryId)
+                              ? ""
+                              : current.salesSupportStaffId
+                        }));
+                      }}
+                    >
+                      <option value="">請選擇主要銷售人員</option>
+                      {staffOptions.items.map((staff) => (
+                        <option key={staff.id} value={staff.id}>
+                          {staff.displayName}（{getStaffRoleLabel(staff.role)}）
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="form-field">
+                    <span>支援銷售人員（選填）</span>
+                    <select
+                      value={
+                        detailForm.salesSupportStaffId ||
+                        ""
+                      }
+                      disabled={!detailForm.salesStaffId}
+                      onChange={(event) =>
+                        setDetailForm((current) => ({
+                          ...current,
+                          salesSupportStaffId:
+                            event.target.value
+                        }))
+                      }
+                    >
+                      <option value="">不指定支援銷售人員</option>
+                      {staffOptions.items
+                        .filter(
+                          (staff) =>
+                            String(staff.id) !==
+                            String(
+                              detailForm.salesStaffId
+                            )
+                        )
+                        .map((staff) => (
+                          <option
+                            key={staff.id}
+                            value={staff.id}
+                          >
+                            {staff.displayName}（{getStaffRoleLabel(staff.role)}）
+                          </option>
+                        ))}
+                    </select>
+                  </label>
                   <label className="form-field form-field-wide"><span>備註</span><input value={detailForm.notes} onChange={(event) => setDetailForm((current) => ({ ...current, notes: event.target.value }))} /></label>
                   <div className="form-field form-field-wide"><span>保固資訊</span><div className="muted-text">依目前訂單金額自動建議，可手動調整。{detailForm.warrantySchemaReady ? "" : "保固欄位 migration 尚未套用，暫不可儲存。"}{formatWarrantyDisplay({ warrantyStartDate: detailForm.warrantyStartDate, warrantyMonths: detailForm.warrantyMonths, warrantyMileageLimitKm: detailForm.warrantyMileageLimitKm })}</div></div>
                   <label className="form-field"><span>保固起算日</span><input type="date" disabled={!detailForm.warrantySchemaReady} value={detailForm.warrantyStartDate} onChange={(event) => setDetailForm((current) => ({ ...current, warrantyStartDate: event.target.value }))} /></label>

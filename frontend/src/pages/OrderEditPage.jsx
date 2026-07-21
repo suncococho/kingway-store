@@ -86,6 +86,9 @@ function OrderEditPage() {
           unpaidBalance: Number(o.unpaidBalance || 0),
           finalPaymentStatus: o.finalPaymentStatus || "UNPAID",
           salesStaffId: o.salesStaffId ? String(o.salesStaffId) : "",
+          salesSupportStaffId: o.salesSupportStaffId
+            ? String(o.salesSupportStaffId)
+            : "",
           orderType: o.orderType || o.order_type || "",
           source: o.source || "",
           notes: o.notes || "",
@@ -183,6 +186,27 @@ async function requestGoogleReviewCoupon() {
     e.preventDefault();
     setError("");
 
+    const primaryStaffId = String(
+      form.salesStaffId || ""
+    );
+
+    const supportStaffId = String(
+      form.salesSupportStaffId || ""
+    );
+
+    if (supportStaffId && !primaryStaffId) {
+      setError("請先選擇主要銷售人員，再指定支援銷售人員。");
+      return;
+    }
+
+    if (
+      supportStaffId &&
+      supportStaffId === primaryStaffId
+    ) {
+      setError("主要銷售人員與支援銷售人員不可為同一人。");
+      return;
+    }
+
     try {
       await apiRequest(`/orders/${id}/items`, {
         method: "PUT",
@@ -195,7 +219,14 @@ async function requestGoogleReviewCoupon() {
         otherDiscount,
         depositAmount,
         finalPaymentStatus: unpaidBalance <= 0 ? "PAID" : depositAmount > 0 ? "PARTIAL" : form.finalPaymentStatus,
-        salesStaffId: form.salesStaffId === "" ? null : Number(form.salesStaffId)
+        salesStaffId:
+          form.salesStaffId === ""
+            ? null
+            : Number(form.salesStaffId),
+        salesSupportStaffId:
+          form.salesSupportStaffId === ""
+            ? null
+            : Number(form.salesSupportStaffId)
       };
       if (form.warrantySchemaReady) {
         Object.assign(payload, {
@@ -649,12 +680,56 @@ async function requestGoogleReviewCoupon() {
             </div>
 
             <div className="kw-field">
-              <label>銷售人員</label>
-              <select value={form.salesStaffId} onChange={(e) => update("salesStaffId", e.target.value)}>
-                <option value="">請選擇銷售人員</option>
+              <label>主要銷售人員</label>
+              <select
+                value={form.salesStaffId}
+                onChange={(e) => {
+                  const nextPrimaryId = e.target.value;
+                  setForm((current) => ({
+                    ...current,
+                    salesStaffId: nextPrimaryId,
+                    salesSupportStaffId:
+                      !nextPrimaryId ||
+                      String(current.salesSupportStaffId || "") ===
+                        String(nextPrimaryId)
+                        ? ""
+                        : current.salesSupportStaffId
+                  }));
+                }}
+              >
+                <option value="">請選擇主要銷售人員</option>
                 {staffOptions.map((staff) => (
-                  <option key={staff.id} value={staff.id}>{staff.displayName}（{getStaffRoleLabel(staff.role)}）</option>
+                  <option key={staff.id} value={staff.id}>
+                    {staff.displayName}（{getStaffRoleLabel(staff.role)}）
+                  </option>
                 ))}
+              </select>
+            </div>
+
+            <div className="kw-field">
+              <label>支援銷售人員（選填）</label>
+              <select
+                value={form.salesSupportStaffId || ""}
+                disabled={!form.salesStaffId}
+                onChange={(e) =>
+                  update(
+                    "salesSupportStaffId",
+                    e.target.value
+                  )
+                }
+              >
+                <option value="">不指定支援銷售人員</option>
+                {staffOptions
+                  .filter(
+                    (staff) =>
+                      String(staff.id) !==
+                      String(form.salesStaffId)
+                  )
+                  .map((staff) => (
+                    <option key={staff.id} value={staff.id}>
+                      {staff.displayName}（{getStaffRoleLabel(staff.role)}）
+                    </option>
+                  ))}
               </select>
             </div>
           </section>
