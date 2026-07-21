@@ -108,6 +108,29 @@ function formatOrderFinalAmount(order) {
   return formatAmount(getDisplayFinalAmount(order));
 }
 
+function buildEmptySalesFollowupState() {
+  return {
+    loading: false,
+    error: "",
+    followup: null
+  };
+}
+
+function buildSalesFollowupForm(followup = null) {
+  return {
+    status: followup?.status || "PENDING",
+    contactMethod:
+      followup?.contactMethod || "LINE",
+    customerResult:
+      followup?.customerResult || "NO_ISSUE",
+    employeeCausedIssue:
+      Boolean(followup?.employeeCausedIssue),
+    unresolvedEmployeeIssue:
+      Boolean(followup?.unresolvedEmployeeIssue),
+    note: followup?.note || ""
+  };
+}
+
 const DEFAULT_WARRANTY_TERMS_VERSION = "KINGWAY_WARRANTY_REPAIR_TERMS_2026_07";
 
 function getWarrantySuggestion(amount) {
@@ -303,6 +326,12 @@ function OrdersPage() {
     warrantyTermsVersion: DEFAULT_WARRANTY_TERMS_VERSION
   });
   const [accessoryChecklist, setAccessoryChecklist] = useState(buildEmptyAccessoryChecklistState());
+  const [salesFollowup, setSalesFollowup] = useState(
+    buildEmptySalesFollowupState()
+  );
+  const [salesFollowupForm, setSalesFollowupForm] = useState(
+    buildSalesFollowupForm()
+  );
   const [searchMode, setSearchMode] = useState(false);
   const [searchScope, setSearchScope] = useState("ALL");
   const [systemInfoOpen, setSystemInfoOpen] = useState(false);
@@ -843,6 +872,8 @@ function OrdersPage() {
     setDetail(row);
     setSystemInfoOpen(false);
     setAccessoryChecklist(buildEmptyAccessoryChecklistState());
+    setSalesFollowup(buildEmptySalesFollowupState());
+    setSalesFollowupForm(buildSalesFollowupForm());
     setDetailForm({
       customerName: row.customerName || row.customerNameSnapshot || "",
       customerPhone: row.customerPhone || row.customerPhoneSnapshot || "",
@@ -911,9 +942,170 @@ function OrdersPage() {
           });
         }
       }
+
+      if (nextDetail.handoverConfirmedAt) {
+        await loadSalesFollowup(nextDetail.id);
+      }
     } catch (loadError) {
       setToastMessage(loadError.message || "訂單明細載入失敗");
     }
+  }
+
+  async function loadSalesFollowup(orderId) {
+    setSalesFollowup((current) => ({
+      ...current,
+      loading: true,
+      error: ""
+    }));
+
+    try {
+      const response = await apiRequest(
+        "/orders/" + orderId + "/sales-followup"
+      );
+      const followup = response?.followup || null;
+
+      setSalesFollowup({
+        loading: false,
+        error: "",
+        followup
+      });
+      setSalesFollowupForm(
+        buildSalesFollowupForm(followup)
+      );
+
+      return followup;
+    } catch (error) {
+      setSalesFollowup({
+        loading: false,
+        error:
+          error.message || "售後追蹤讀取失敗",
+        followup: null
+      });
+      setSalesFollowupForm(
+        buildSalesFollowupForm()
+      );
+
+      return null;
+    }
+  }
+
+  function updateSalesFollowupCustomerResult(
+    customerResult
+  ) {
+    setSalesFollowupForm((current) => {
+      if (customerResult === "NO_ISSUE") {
+        return {
+          ...current,
+          customerResult,
+          employeeCausedIssue: false,
+          unresolvedEmployeeIssue: false
+        };
+      }
+
+      if (customerResult === "ISSUE_RESOLVED") {
+        return {
+          ...current,
+          customerResult,
+          unresolvedEmployeeIssue: false
+        };
+      }
+
+      return {
+        ...current,
+        customerResult
+      };
+    });
+  }
+
+  async function saveSalesFollowup(event) {
+    event?.preventDefault();
+
+    if (!detail?.id) {
+      return;
+    }
+
+    if (
+      salesFollowupForm.status === "COMPLETED" &&
+      !detail.handoverConfirmedAt
+    ) {
+      setWarningModal({
+        title: "請先完成交車",
+        message:
+          "售後追蹤完成前，必須先確認訂單已完成交車。"
+      });
+      return;
+    }
+
+    if (
+      salesFollowupForm.status === "COMPLETED" &&
+      !salesFollowupForm.contactMethod
+    ) {
+      setWarningModal({
+        title: "資料未完成",
+        message: "請選擇聯絡方式。"
+      });
+      return;
+    }
+
+    if (
+      salesFollowupForm.status === "COMPLETED" &&
+      !salesFollowupForm.customerResult
+    ) {
+      setWarningModal({
+        title: "資料未完成",
+        message: "請選擇客戶結果。"
+      });
+      return;
+    }
+
+    await runWithProcessing(
+      async () => {
+        const response = await apiRequest(
+          "/orders/" + detail.id + "/sales-followup",
+          {
+            method: "PUT",
+            body: {
+              status: salesFollowupForm.status,
+              contactMethod:
+                salesFollowupForm.contactMethod,
+              customerResult:
+                salesFollowupForm.customerResult,
+              employeeCausedIssue:
+                salesFollowupForm.employeeCausedIssue,
+              unresolvedEmployeeIssue:
+                salesFollowupForm.unresolvedEmployeeIssue,
+              note: salesFollowupForm.note
+            }
+          }
+        );
+
+        const followup = response?.followup || null;
+
+        setSalesFollowup({
+          loading: false,
+          error: "",
+          followup
+        });
+
+        setSalesFollowupForm(
+          buildSalesFollowupForm(followup)
+        );
+
+        setToastMessage(
+          response?.message || "售後追蹤已儲存"
+        );
+      },
+      {
+        id: `order-sales-followup-${detail.id}`,
+        label: "售後追蹤儲存中..."
+      }
+    ).catch((error) => {
+      setSalesFollowup((current) => ({
+        ...current,
+        error:
+          error.message || "售後追蹤儲存失敗"
+      }));
+    });
   }
 
   async function reloadAccessoryChecklist(orderId) {
@@ -1745,6 +1937,239 @@ if (!window.confirm(
                 </div>
               </section>
             ) : null}
+            {detail.handoverConfirmedAt ? (
+              <section className="stack-card">
+                <div className="section-title">
+                  售後追蹤
+                </div>
+                <p className="muted-text">
+                  完成交車後聯絡客戶確認使用狀況。符合條件的完成紀錄會自動計入銷售服務績效。
+                </p>
+
+                {salesFollowup.loading ? (
+                  <div className="empty-state">
+                    售後追蹤讀取中...
+                  </div>
+                ) : null}
+
+                {salesFollowup.error ? (
+                  <div className="error-banner">
+                    {salesFollowup.error}
+                  </div>
+                ) : null}
+
+                {!salesFollowup.loading ? (
+                  <form
+                    className="grid-form compact-grid"
+                    onSubmit={saveSalesFollowup}
+                  >
+                    <label className="form-field">
+                      <span>追蹤狀態</span>
+                      <select
+                        value={salesFollowupForm.status}
+                        onChange={(event) =>
+                          setSalesFollowupForm(
+                            (current) => ({
+                              ...current,
+                              status: event.target.value
+                            })
+                          )
+                        }
+                      >
+                        <option value="PENDING">
+                          待追蹤
+                        </option>
+                        <option value="COMPLETED">
+                          已完成
+                        </option>
+                        <option value="CANCELED">
+                          已取消
+                        </option>
+                      </select>
+                    </label>
+
+                    <label className="form-field">
+                      <span>聯絡方式</span>
+                      <select
+                        value={
+                          salesFollowupForm.contactMethod
+                        }
+                        onChange={(event) =>
+                          setSalesFollowupForm(
+                            (current) => ({
+                              ...current,
+                              contactMethod:
+                                event.target.value
+                            })
+                          )
+                        }
+                      >
+                        <option value="LINE">LINE</option>
+                        <option value="PHONE">電話</option>
+                        <option value="IN_PERSON">
+                          現場
+                        </option>
+                        <option value="OTHER">其他</option>
+                      </select>
+                    </label>
+
+                    <label className="form-field">
+                      <span>客戶結果</span>
+                      <select
+                        value={
+                          salesFollowupForm.customerResult
+                        }
+                        onChange={(event) =>
+                          updateSalesFollowupCustomerResult(
+                            event.target.value
+                          )
+                        }
+                      >
+                        <option value="NO_ISSUE">
+                          使用正常／無問題
+                        </option>
+                        <option value="ISSUE_RESOLVED">
+                          問題已解決
+                        </option>
+                        <option value="ISSUE_UNRESOLVED">
+                          問題尚未解決
+                        </option>
+                        <option value="NO_RESPONSE">
+                          無法聯絡
+                        </option>
+                        <option value="OTHER">
+                          其他
+                        </option>
+                      </select>
+                    </label>
+
+                    <label className="form-field">
+                      <span>員工責任</span>
+                      <select
+                        value={
+                          salesFollowupForm
+                            .employeeCausedIssue
+                            ? "1"
+                            : "0"
+                        }
+                        onChange={(event) => {
+                          const nextValue =
+                            event.target.value === "1";
+
+                          setSalesFollowupForm(
+                            (current) => ({
+                              ...current,
+                              employeeCausedIssue:
+                                nextValue,
+                              unresolvedEmployeeIssue:
+                                nextValue
+                                  ? current
+                                      .unresolvedEmployeeIssue
+                                  : false
+                            })
+                          );
+                        }}
+                        disabled={
+                          salesFollowupForm.customerResult ===
+                          "NO_ISSUE"
+                        }
+                      >
+                        <option value="0">
+                          非員工造成
+                        </option>
+                        <option value="1">
+                          員工造成
+                        </option>
+                      </select>
+                    </label>
+
+                    <label className="form-field">
+                      <span>員工造成問題是否未解決</span>
+                      <select
+                        value={
+                          salesFollowupForm
+                            .unresolvedEmployeeIssue
+                            ? "1"
+                            : "0"
+                        }
+                        onChange={(event) =>
+                          setSalesFollowupForm(
+                            (current) => ({
+                              ...current,
+                              unresolvedEmployeeIssue:
+                                event.target.value === "1"
+                            })
+                          )
+                        }
+                        disabled={
+                          !salesFollowupForm
+                            .employeeCausedIssue ||
+                          salesFollowupForm.customerResult ===
+                            "NO_ISSUE" ||
+                          salesFollowupForm.customerResult ===
+                            "ISSUE_RESOLVED"
+                        }
+                      >
+                        <option value="0">已解決</option>
+                        <option value="1">尚未解決</option>
+                      </select>
+                    </label>
+
+                    <label className="form-field field-item-wide">
+                      <span>追蹤備註</span>
+                      <textarea
+                        rows="3"
+                        value={salesFollowupForm.note}
+                        onChange={(event) =>
+                          setSalesFollowupForm(
+                            (current) => ({
+                              ...current,
+                              note: event.target.value
+                            })
+                          )
+                        }
+                        placeholder="記錄客戶回覆、問題與處理結果"
+                      />
+                    </label>
+
+                    {salesFollowup.followup?.completedAt ? (
+                      <div className="field-item field-item-wide">
+                        <div className="field-label">
+                          完成紀錄
+                        </div>
+                        <div className="field-value">
+                          {salesFollowup.followup
+                            .completedByStaffName ||
+                            "未記錄員工"}
+                          {" / "}
+                          {formatTaipeiDateTime(
+                            salesFollowup.followup
+                              .completedAt
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="action-row field-item-wide">
+                      <button
+                        type="submit"
+                        className="primary-button inline-submit"
+                        disabled={isProcessing}
+                      >
+                        {pendingAction?.id ===
+                        `order-sales-followup-${detail.id}`
+                          ? "儲存中..."
+                          : salesFollowupForm.status ===
+                              "COMPLETED"
+                            ? "完成售後追蹤"
+                            : "儲存售後追蹤"}
+                      </button>
+                    </div>
+                  </form>
+                ) : null}
+              </section>
+            ) : null}
+
             <section className="stack-card">
               <div className="section-title">付款狀態</div>
               <div className="field-grid">
