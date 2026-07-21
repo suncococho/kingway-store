@@ -32,6 +32,9 @@ const {
   sendToGroups
 } = require("../services/lineWorkflowService");
 const { notifyPurchaseConfirmationSubmitted } = require("../services/notificationEventService");
+const {
+  reconcileOrderSaleIncentivesSafely
+} = require("../services/staffIncentiveEarningService");
 
 const router = express.Router();
 const resolvePublicStoreContext = createPublicStoreContextMiddleware({
@@ -950,6 +953,13 @@ router.post("/public/:token", async (req, res, next) => {
       [pdf.publicPath, confirmation.id, tokenRow.storeId]
     );
 
+    await reconcileOrderSaleIncentivesSafely({
+      connection: pool,
+      storeId: tokenRow.storeId,
+      orderId: confirmation.orderId,
+      triggerSource: "PURCHASE_CONFIRMATION_COMPLETED"
+    });
+
     await logKpi(null, "PURCHASE_CONFIRMATION_COMPLETED", "PURCHASE_CONFIRMATION", confirmation.id, 5);
     await sendToGroups(["admin", "staff"], [
       createConfirmTemplate(
@@ -1227,6 +1237,15 @@ router.post("/manual", optionalStaffStoreContext, resolvePublicStoreContext, asy
       `,
       [pdf.publicPath, insertResult.insertId, storeId]
     );
+
+    if (matchedOrder?.orderId) {
+      await reconcileOrderSaleIncentivesSafely({
+        connection: pool,
+        storeId,
+        orderId: matchedOrder.orderId,
+        triggerSource: "MANUAL_PURCHASE_CONFIRMATION_COMPLETED"
+      });
+    }
 
     await logWorkflowEvent("manual_purchase_confirmation_completed", "PURCHASE_CONFIRMATION", insertResult.insertId, {
       source: "manual_public_page",

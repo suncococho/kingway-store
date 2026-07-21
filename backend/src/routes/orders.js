@@ -53,6 +53,9 @@ const {
   resolveStaffAssignment,
   resolveSharedSalesAssignments
 } = require("../services/staffAssignmentService");
+const {
+  reconcileOrderSaleIncentivesSafely
+} = require("../services/staffIncentiveEarningService");
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -1876,6 +1879,19 @@ router.post("/", requirePosFeature, async (req, res, next) => {
     });
     completeOrderCreateGuard(orderCreateGuard, order);
 
+    if (
+      String(order.finalPaymentStatus || "")
+        .trim()
+        .toUpperCase() === "PAID"
+    ) {
+      await reconcileOrderSaleIncentivesSafely({
+        connection: pool,
+        storeId,
+        orderId: order.id,
+        triggerSource: "ORDER_CREATED_PAID"
+      });
+    }
+
     await logKpi(req.user.id, "ORDER_CREATED", "ORDER", order.id, 2);
     await logWorkflowEvent("order_created", "ORDER", order.id, {
       orderNo: order.orderNo,
@@ -2126,6 +2142,13 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
         const confirmation = await createPurchaseConfirmationForOrder(orderId, pool, { storeId });
         await pushPurchaseConfirmationLineMessage(confirmation, { storeId });
       }
+
+      await reconcileOrderSaleIncentivesSafely({
+        connection: pool,
+        storeId,
+        orderId,
+        triggerSource: "ORDER_PAYMENT_COMPLETED"
+      });
     }
 
     const [updated] = await pool.query(
@@ -2316,8 +2339,26 @@ router.put("/:id/items", requireOrderManagementFeature, async (req, res, next) =
         [payableAmount, unpaidBalance, finalPaymentStatus, finalPaymentStatus, orderId, storeId]
       );
 
-      return { orderId, totalAmount: payableAmount, unpaidBalance, finalPaymentStatus, items: normalized };
+      return {
+        orderId,
+        totalAmount: payableAmount,
+        unpaidBalance,
+        finalPaymentStatus,
+        items: normalized,
+        becamePaid:
+          currentFinalPaymentStatus !== "PAID" &&
+          finalPaymentStatus === "PAID"
+      };
     });
+
+    if (result.becamePaid) {
+      await reconcileOrderSaleIncentivesSafely({
+        connection: pool,
+        storeId,
+        orderId,
+        triggerSource: "ORDER_ITEMS_RECALCULATED_PAID"
+      });
+    }
 
     return res.json(result);
   } catch (error) {
@@ -2694,6 +2735,13 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
           Number(order.unpaidBalance || 0) > 0 &&
           Boolean(orderType.isRepairOrder)
       };
+    });
+
+    await reconcileOrderSaleIncentivesSafely({
+      connection: pool,
+      storeId,
+      orderId,
+      triggerSource: "ORDER_BALANCE_COLLECTED"
     });
 
     if (result.becamePaid) {
