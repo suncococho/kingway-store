@@ -2,6 +2,7 @@ const assert = require("assert");
 const {
   STAFF_ASSIGNMENT_ROLES,
   resolveStaffAssignment,
+  resolveSharedSalesAssignments,
   listStaffSelectOptions
 } = require("../src/services/staffAssignmentService");
 
@@ -64,6 +65,76 @@ async function assertRejectsMessage(promise, message) {
 
   assert.deepStrictEqual(await resolveStaffAssignment(connection, 10, null, "銷售人員"), { id: null, name: null, role: null });
   assert.strictEqual(await resolveStaffAssignment(connection, 10, undefined, "銷售人員"), undefined);
+
+  const primaryOnly = await resolveSharedSalesAssignments(
+    connection,
+    10,
+    1,
+    null
+  );
+
+  assert.deepStrictEqual(primaryOnly, {
+    primary: {
+      id: 1,
+      name: "王店長",
+      role: "ADMIN"
+    },
+    support: {
+      id: null,
+      name: null,
+      role: null
+    }
+  });
+
+  const sharedSale = await resolveSharedSalesAssignments(
+    connection,
+    10,
+    1,
+    3
+  );
+
+  assert.deepStrictEqual(sharedSale, {
+    primary: {
+      id: 1,
+      name: "王店長",
+      role: "ADMIN"
+    },
+    support: {
+      id: 3,
+      name: "陳維修",
+      role: "REPAIR"
+    }
+  });
+
+  await assertRejectsMessage(
+    resolveSharedSalesAssignments(
+      connection,
+      10,
+      null,
+      3
+    ),
+    "設定支援銷售人員前，請先選擇主要銷售人員"
+  );
+
+  await assertRejectsMessage(
+    resolveSharedSalesAssignments(
+      connection,
+      10,
+      3,
+      3
+    ),
+    "主要銷售人員與支援銷售人員不可為同一人"
+  );
+
+  await assertRejectsMessage(
+    resolveSharedSalesAssignments(
+      connection,
+      10,
+      1,
+      4
+    ),
+    "只能選擇同門市啟用中的員工"
+  );
 
   const snapshot = await resolveStaffAssignment(connection, 10, 2, "銷售人員");
   connection.updateDisplayName(2, "林新名");

@@ -50,6 +50,68 @@ async function resolveStaffAssignment(connection, storeId, rawStaffId, label) {
   return getAssignableStaffSnapshot(connection, storeId, staffId);
 }
 
+function assertSharedSalesAssignments(
+  primaryAssignment,
+  supportAssignment
+) {
+  const primaryId = Number(
+    primaryAssignment?.id || 0
+  );
+
+  const supportId = Number(
+    supportAssignment?.id || 0
+  );
+
+  if (supportId > 0 && primaryId <= 0) {
+    throw createError(
+      "設定支援銷售人員前，請先選擇主要銷售人員",
+      400
+    );
+  }
+
+  if (
+    primaryId > 0 &&
+    supportId > 0 &&
+    primaryId === supportId
+  ) {
+    throw createError(
+      "主要銷售人員與支援銷售人員不可為同一人",
+      400
+    );
+  }
+
+  return {
+    primary: primaryAssignment,
+    support: supportAssignment
+  };
+}
+
+async function resolveSharedSalesAssignments(
+  connection,
+  storeId,
+  rawPrimaryStaffId,
+  rawSupportStaffId
+) {
+  const primary = await resolveStaffAssignment(
+    connection,
+    storeId,
+    rawPrimaryStaffId,
+    "主要銷售人員"
+  );
+
+  const support = await resolveStaffAssignment(
+    connection,
+    storeId,
+    rawSupportStaffId,
+    "支援銷售人員"
+  );
+
+  return assertSharedSalesAssignments(
+    primary,
+    support
+  );
+}
+
 async function listStaffSelectOptions(connection, storeId) {
   const [rows] = await connection.query(
     `
@@ -81,5 +143,7 @@ module.exports = {
   normalizeOptionalStaffId,
   getAssignableStaffSnapshot,
   resolveStaffAssignment,
+  assertSharedSalesAssignments,
+  resolveSharedSalesAssignments,
   listStaffSelectOptions
 };
