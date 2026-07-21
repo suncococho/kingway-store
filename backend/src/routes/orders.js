@@ -56,6 +56,10 @@ const {
 const {
   reconcileOrderSaleIncentivesSafely
 } = require("../services/staffIncentiveEarningService");
+const {
+  getOrderSalesFollowup,
+  saveOrderSalesFollowup
+} = require("../services/orderSalesFollowupService");
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -1082,6 +1086,104 @@ router.get("/:id/install-check", requireOrderManagementFeature, async (req, res,
     return next(error);
   }
 });
+
+router.get(
+  "/:id/sales-followup",
+  requireOrderManagementFeature,
+  async (req, res, next) => {
+    try {
+      const orderId = Number(req.params.id);
+      const storeId = req.storeId;
+
+      if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+        throw createError("找不到訂單", 404);
+      }
+
+      const followup = await getOrderSalesFollowup(
+        orderId,
+        storeId,
+        pool
+      );
+
+      return res.json({
+        followup
+      });
+    } catch (error) {
+      return next(error);
+    }
+  }
+);
+
+router.put(
+  "/:id/sales-followup",
+  requireOrderManagementFeature,
+  async (req, res, next) => {
+    try {
+      const orderId = Number(req.params.id);
+      const storeId = req.storeId;
+      const staffUserId = Number(req.user?.id || 0);
+      const staffUserName = getRequestStaffName(req);
+
+      if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+        throw createError("找不到訂單", 404);
+      }
+
+      if (!Number.isSafeInteger(staffUserId) || staffUserId <= 0) {
+        throw createError("無法確認操作員工", 400);
+      }
+
+      const followup = await withTransaction(
+        async (connection) =>
+          saveOrderSalesFollowup(
+            orderId,
+            storeId,
+            req.body || {},
+            staffUserId,
+            staffUserName,
+            connection
+          )
+      );
+
+      if (followup.status === "COMPLETED") {
+        await reconcileOrderSaleIncentivesSafely({
+          connection: pool,
+          storeId,
+          orderId,
+          triggerSource:
+            "ORDER_SALES_FOLLOWUP_COMPLETED"
+        });
+      }
+
+      await logWorkflowEvent(
+        "order_sales_followup_updated",
+        "ORDER",
+        orderId,
+        {
+          status: followup.status,
+          contactMethod: followup.contactMethod,
+          customerResult: followup.customerResult,
+          employeeCausedIssue:
+            followup.employeeCausedIssue,
+          unresolvedEmployeeIssue:
+            followup.unresolvedEmployeeIssue
+        },
+        staffUserId
+      );
+
+      return res.json({
+        message:
+          followup.status === "COMPLETED"
+            ? "售後追蹤已完成"
+            : followup.status === "CANCELED"
+              ? "售後追蹤已取消"
+              : "售後追蹤已儲存",
+        followup
+      });
+    } catch (error) {
+      return next(error);
+    }
+  }
+);
 
 router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
   try {
