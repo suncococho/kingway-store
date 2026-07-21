@@ -35,6 +35,9 @@ const {
 } = require("./staffLineNotificationService");
 const { assertOrderAccessoryInstallConfirmationsComplete } = require("./orderAccessoryInstallConfirmationService");
 const { notifyRepairQuoteAcceptedWorkOrder } = require("./notificationEventService");
+const {
+  reconcileOrderSaleIncentivesSafely
+} = require("./staffIncentiveEarningService");
 
 const lineAccessTokenOptionsStorage = new AsyncLocalStorage();
 
@@ -5758,6 +5761,15 @@ async function handleLinePostback(event) {
       );
 
       await logWorkflowEvent("order_handover_confirmed", "ORDER", id, { source: "line_postback", storeId: handoverStoreId }, staffAuth.staffId, connection);
+
+      await reconcileOrderSaleIncentivesSafely({
+        connection,
+        storeId: handoverStoreId,
+        orderId: Number(id),
+        triggerSource:
+          "LINE_ORDER_HANDOVER_CONFIRMED"
+      });
+
       return { updated: true };
     });
 

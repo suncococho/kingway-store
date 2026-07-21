@@ -6,6 +6,9 @@ const { logKpi } = require("./kpiService");
 const { sendLineMessage } = require("../utils/line");
 const { getTableColumns, hasColumn } = require("../utils/schema");
 const { applyRepairReservationDecision, notifyRepairCustomerSafely } = require("./repairReservationService");
+const {
+  reconcileOrderSaleIncentivesSafely
+} = require("./staffIncentiveEarningService");
 
 const BOT_NOTIFY = "notify";
 const BOT_STOCK = "stock";
@@ -1844,6 +1847,17 @@ async function updateTelegramCrmOrderStatus(orderId, status, telegramUser, optio
       handover: options.handover === true,
       telegramUser
     }, staffId, connection);
+
+    if (options.handover === true) {
+      await reconcileOrderSaleIncentivesSafely({
+        connection,
+        storeId: staffStoreId,
+        orderId: order.id,
+        triggerSource:
+          "TELEGRAM_ORDER_HANDOVER_CONFIRMED"
+      });
+    }
+
     if (order.customerId) {
       await connection.query(
         `

@@ -420,6 +420,95 @@ async function testSharedReconciliationCreatesSeparateEvents() {
   );
 }
 
+function testBikeHandoverEarns120() {
+  const evaluation =
+    buildOrderSaleIncentiveCandidates({
+      snapshot: {
+        order: createPaidOrder({
+          handoverConfirmedAt:
+            "2026-07-21T10:00:00.000Z"
+        }),
+        purchaseConfirmation:
+          createCompletedConfirmation(),
+        items: [createVehicleItem()]
+      },
+      plan,
+      triggerSource: "HANDOVER_TEST"
+    });
+
+  assert.strictEqual(evaluation.eligible, true);
+
+  const events = evaluation.candidates.filter(
+    (event) => event.incentiveType === "BIKE"
+  );
+
+  assert.strictEqual(events.length, 2);
+
+  const sale = events.find(
+    (event) => event.earningStage === "SALE"
+  );
+
+  const handover = events.find(
+    (event) => event.earningStage === "HANDOVER"
+  );
+
+  assert(sale);
+  assert(handover);
+  assert.strictEqual(sale.finalAmount, 420);
+  assert.strictEqual(handover.calculatedAmount, 120);
+  assert.strictEqual(handover.finalAmount, 120);
+  assert.strictEqual(handover.assignedRatio, 1);
+}
+
+function testSharedBikeHandoverSplitsSeventyThirty() {
+  const evaluation =
+    buildOrderSaleIncentiveCandidates({
+      snapshot: {
+        order: createPaidOrder({
+          salesSupportStaffId: 9,
+          salesSupportStaffName: "李協助",
+          handoverConfirmedAt:
+            "2026-07-21T10:00:00.000Z"
+        }),
+        purchaseConfirmation:
+          createCompletedConfirmation(),
+        items: [createVehicleItem()]
+      },
+      plan,
+      triggerSource: "SHARED_HANDOVER_TEST"
+    });
+
+  assert.strictEqual(evaluation.eligible, true);
+
+  const events = evaluation.candidates.filter(
+    (event) => event.earningStage === "HANDOVER"
+  );
+
+  assert.strictEqual(events.length, 2);
+
+  const primary = events.find(
+    (event) => event.staffUserId === 8
+  );
+
+  const support = events.find(
+    (event) => event.staffUserId === 9
+  );
+
+  assert(primary);
+  assert(support);
+
+  assert.strictEqual(primary.assignedRatio, 0.7);
+  assert.strictEqual(primary.finalAmount, 84);
+
+  assert.strictEqual(support.assignedRatio, 0.3);
+  assert.strictEqual(support.finalAmount, 36);
+
+  assert.strictEqual(
+    primary.finalAmount + support.finalAmount,
+    120
+  );
+}
+
 function testUnpaidOrderEarnsNothing() {
   const evaluation = buildOrderSaleIncentiveCandidates({
     snapshot: {
@@ -539,6 +628,8 @@ async function run() {
   testAccessoryUsesDiscountedAmount();
   testSharedBikeSaleSplitsSeventyThirty();
   testSharedAccessorySplitsSeventyThirty();
+  testBikeHandoverEarns120();
+  testSharedBikeHandoverSplitsSeventyThirty();
   testUnpaidOrderEarnsNothing();
   testRepairOrderAccessoriesExcluded();
   testOrdinaryPartsExcluded();

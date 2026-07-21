@@ -288,6 +288,13 @@ function isExcludedOrder(order = {}) {
   );
 }
 
+function isOrderHandoverComplete(order = {}) {
+  return Boolean(
+    order.handoverConfirmedAt ??
+    order.handover_confirmed_at
+  );
+}
+
 function isRepairLinkedOrder(snapshot = {}) {
   const order = snapshot.order || {};
   const items = Array.isArray(snapshot.items) ? snapshot.items : [];
@@ -345,6 +352,68 @@ function buildBikeSaleCandidate({
         item.productCategorySnapshot || item.category || null,
       vehicleMasterCategory: item.masterCategory || null,
       vehicleSku: item.skuSnapshot || item.sku || null
+    }
+  };
+}
+
+function buildBikeHandoverCandidate({
+  order,
+  item,
+  plan,
+  triggerSource,
+  confirmation
+}) {
+  const quantity = normalizeQuantity(item.quantity);
+
+  const calculation =
+    calculateBikeStageIncentive({
+      stage: "HANDOVER",
+      assignedRatio: 1,
+      plan
+    });
+
+  const calculatedAmount = normalizeMoney(
+    calculation.baseAmount * quantity
+  );
+
+  const finalAmount = normalizeMoney(
+    calculation.finalAmount * quantity
+  );
+
+  return {
+    storeId: normalizePositiveId(order.storeId),
+    staffUserId:
+      normalizePositiveId(order.salesStaffId),
+    planVersionId: normalizePositiveId(plan.id),
+    incentiveType: "BIKE",
+    earningStage: "HANDOVER",
+    sourceType: "ORDER_ITEM",
+    sourceId: normalizePositiveId(order.id),
+    sourceLineId: normalizePositiveId(item.id),
+    productId: normalizePositiveId(item.productId),
+    productNameSnapshot:
+      item.productNameSnapshot ||
+      item.name ||
+      null,
+    quantity,
+    actualSaleAmount:
+      normalizeMoney(item.lineTotal),
+    rate: 0,
+    calculatedAmount,
+    assignedRatio: 1,
+    finalAmount,
+    status: "EARNED",
+    metadata: {
+      triggerSource,
+      orderId: Number(order.id),
+      orderItemId: Number(item.id),
+      purchaseConfirmationId:
+        normalizePositiveId(confirmation?.id),
+      purchaseConfirmationCompleted: true,
+      handoverConfirmedAt:
+        order.handoverConfirmedAt ??
+        order.handover_confirmed_at ??
+        null
     }
   };
 }
@@ -489,6 +558,24 @@ function buildOrderSaleIncentiveCandidates({
           order
         )
       );
+
+      if (isOrderHandoverComplete(order)) {
+        const handoverCandidate =
+          buildBikeHandoverCandidate({
+            order,
+            item,
+            plan,
+            triggerSource,
+            confirmation
+          });
+
+        candidates.push(
+          ...splitCandidateBySalesAssignments(
+            handoverCandidate,
+            order
+          )
+        );
+      }
     }
   }
 
@@ -672,8 +759,10 @@ module.exports = {
   isRepairItem,
   isOrderPaid,
   isPurchaseConfirmationComplete,
+  isOrderHandoverComplete,
   isExcludedOrder,
   isRepairLinkedOrder,
+  buildBikeHandoverCandidate,
   buildOrderSaleIncentiveCandidates,
   loadOrderSaleIncentiveSnapshot,
   reconcileOrderSaleIncentives,

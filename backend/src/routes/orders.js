@@ -3121,6 +3121,13 @@ router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), requireOrd
       }
     }
 
+    await reconcileOrderSaleIncentivesSafely({
+      connection: pool,
+      storeId,
+      orderId: Number(req.params.id),
+      triggerSource: "ORDER_HANDOVER_CONFIRMED"
+    });
+
     await logWorkflowEvent("order_handover_confirmed", "ORDER", req.params.id, { autoKingwayPurchaseOrderId: autoPoId }, req.user.id);
     await logKpi(req.user.id, "ORDER_HANDOVER_CONFIRMED", "ORDER", req.params.id, 3);
     return res.json({ message: autoPoId ? "已確認交車，並已建立 KINGWAY 自動發注" : "已確認交車" });
