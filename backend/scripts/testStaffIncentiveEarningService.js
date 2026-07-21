@@ -3,6 +3,7 @@ const assert = require("assert");
 const {
   isVehicleItem,
   isAccessoryItem,
+  allocateOrderActualSaleAmounts,
   isPurchaseConfirmationComplete,
   buildOrderSaleIncentiveCandidates,
   reconcileOrderSaleIncentives
@@ -178,6 +179,68 @@ function testBikeEarns420PerVehicle() {
   assert.strictEqual(event.finalAmount, 840);
 }
 
+function testDiscountAllocation() {
+  const vehicle = createVehicleItem();
+  const accessory = createAccessoryItem();
+
+  const allocations =
+    allocateOrderActualSaleAmounts(
+      [vehicle, accessory],
+      45900
+    );
+
+  assert.strictEqual(
+    allocations.get(vehicle),
+    45000
+  );
+
+  assert.strictEqual(
+    allocations.get(accessory),
+    900
+  );
+}
+
+function testAccessoryUsesDiscountedAmount() {
+  const evaluation =
+    buildOrderSaleIncentiveCandidates({
+      snapshot: {
+        order: createPaidOrder({
+          totalAmount: 45900
+        }),
+        purchaseConfirmation: null,
+        items: [
+          createVehicleItem(),
+          createAccessoryItem()
+        ]
+      },
+      plan,
+      triggerSource: "PAYMENT_COMPLETED"
+    });
+
+  assert.strictEqual(evaluation.eligible, true);
+  assert.strictEqual(
+    evaluation.candidates.length,
+    1
+  );
+
+  const event = evaluation.candidates[0];
+
+  assert.strictEqual(
+    event.incentiveType,
+    "ACCESSORY"
+  );
+
+  assert.strictEqual(
+    event.actualSaleAmount,
+    900
+  );
+
+  assert.strictEqual(
+    event.finalAmount,
+    90
+  );
+}
+
 function testUnpaidOrderEarnsNothing() {
   const evaluation = buildOrderSaleIncentiveCandidates({
     snapshot: {
@@ -293,6 +356,8 @@ async function run() {
   testAccessoryEarnsAfterPaymentWithoutConfirmation();
   testBikeWaitsForPurchaseConfirmation();
   testBikeEarns420PerVehicle();
+  testDiscountAllocation();
+  testAccessoryUsesDiscountedAmount();
   testUnpaidOrderEarnsNothing();
   testRepairOrderAccessoriesExcluded();
   testOrdinaryPartsExcluded();

@@ -1,4 +1,6 @@
 const {
+  moneyToCents,
+  centsToMoney,
   calculateBikeStageIncentive,
   calculateAccessoryIncentive
 } = require("./staffIncentiveCalculator");
@@ -23,6 +25,58 @@ function normalizeMoney(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return 0;
   return Number(amount.toFixed(2));
+}
+
+function allocateOrderActualSaleAmounts(
+  items = [],
+  orderTotalAmount
+) {
+  const rows = (Array.isArray(items) ? items : [])
+    .map((item) => ({
+      item,
+      lineCents: Math.max(
+        0,
+        moneyToCents(item?.lineTotal || 0)
+      )
+    }))
+    .filter((row) => row.lineCents > 0);
+
+  const itemTotalCents = rows.reduce(
+    (sum, row) => sum + row.lineCents,
+    0
+  );
+
+  const result = new Map();
+
+  if (itemTotalCents <= 0) {
+    return result;
+  }
+
+  const requestedTotalCents =
+    orderTotalAmount === undefined ||
+    orderTotalAmount === null
+      ? itemTotalCents
+      : Math.max(0, moneyToCents(orderTotalAmount));
+
+  const targetCents = Math.min(
+    itemTotalCents,
+    requestedTotalCents
+  );
+
+  let allocatedCents = 0;
+
+  rows.forEach((row, index) => {
+    const cents = index === rows.length - 1
+      ? targetCents - allocatedCents
+      : Math.floor(
+          row.lineCents * targetCents / itemTotalCents
+        );
+
+    allocatedCents += cents;
+    result.set(row.item, centsToMoney(cents));
+  });
+
+  return result;
 }
 
 function normalizeCategory(value) {
@@ -180,15 +234,21 @@ function buildBikeSaleCandidate({
   };
 }
 
-function buildAccessoryCandidate({ order, item, plan, triggerSource }) {
+function buildAccessoryCandidate({
+  order,
+  item,
+  plan,
+  triggerSource,
+  actualSaleAmount
+}) {
   const calculation = calculateAccessoryIncentive({
     category: "ACCESSORY",
     quantity: normalizeQuantity(item.quantity),
     unitPrice: normalizeMoney(item.unitPrice),
-    lineTotal: normalizeMoney(item.lineTotal),
+    lineTotal: normalizeMoney(actualSaleAmount),
     isCanceled: false,
     isRefunded: false,
-    isFree: normalizeMoney(item.lineTotal) <= 0,
+    isFree: normalizeMoney(actualSaleAmount) <= 0,
     isInternal: false,
     isTest: false,
     isPaid: true,
@@ -269,13 +329,23 @@ function buildOrderSaleIncentiveCandidates({
   const candidates = [];
   const repairLinked = isRepairLinkedOrder(snapshot);
 
+  const actualSaleAmounts =
+    allocateOrderActualSaleAmounts(
+      items,
+      order.totalAmount ??
+      order.total_amount
+    );
+
   if (!repairLinked) {
     for (const item of items.filter(isAccessoryItem)) {
       const candidate = buildAccessoryCandidate({
         order,
         item,
         plan,
-        triggerSource
+        triggerSource,
+        actualSaleAmount:
+          actualSaleAmounts.get(item) ??
+          normalizeMoney(item.lineTotal)
       });
       if (candidate) candidates.push(candidate);
     }
@@ -324,6 +394,7 @@ async function loadOrderSaleIncentiveSnapshot(connection, storeId, orderId) {
         sales_staff_name AS salesStaffName,
         status,
         order_type AS orderType,
+        total_amount AS totalAmount,
         source,
         repair_order_id AS repairOrderId,
         final_payment_status AS finalPaymentStatus,
@@ -464,6 +535,7 @@ async function reconcileOrderSaleIncentivesSafely(input = {}) {
 
 module.exports = {
   normalizePositiveId,
+  allocateOrderActualSaleAmounts,
   isVehicleItem,
   isAccessoryItem,
   isRepairItem,
