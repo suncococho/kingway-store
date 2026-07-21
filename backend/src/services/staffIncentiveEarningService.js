@@ -1,6 +1,7 @@
 const {
   moneyToCents,
   centsToMoney,
+  splitFixedAmount,
   calculateBikeStageIncentive,
   calculateAccessoryIncentive
 } = require("./staffIncentiveCalculator");
@@ -25,6 +26,120 @@ function normalizeMoney(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return 0;
   return Number(amount.toFixed(2));
+}
+
+function buildSalesAssignmentShares(order = {}) {
+  const primaryStaffId = normalizePositiveId(
+    order.salesStaffId ?? order.sales_staff_id
+  );
+
+  const supportStaffId = normalizePositiveId(
+    order.salesSupportStaffId ??
+    order.sales_support_staff_id
+  );
+
+  if (!primaryStaffId) {
+    return [];
+  }
+
+  const primaryStaffName =
+    order.salesStaffName ??
+    order.sales_staff_name ??
+    null;
+
+  const supportStaffName =
+    order.salesSupportStaffName ??
+    order.sales_support_staff_name ??
+    null;
+
+  if (
+    !supportStaffId ||
+    supportStaffId === primaryStaffId
+  ) {
+    return [
+      {
+        staffUserId: primaryStaffId,
+        staffName: primaryStaffName,
+        assignmentRole: "PRIMARY",
+        assignedRatio: 1
+      }
+    ];
+  }
+
+  return [
+    {
+      staffUserId: primaryStaffId,
+      staffName: primaryStaffName,
+      assignmentRole: "PRIMARY",
+      assignedRatio: 0.7
+    },
+    {
+      staffUserId: supportStaffId,
+      staffName: supportStaffName,
+      assignmentRole: "SUPPORT",
+      assignedRatio: 0.3
+    }
+  ];
+}
+
+function splitCandidateBySalesAssignments(
+  candidate,
+  order
+) {
+  if (!candidate) return [];
+
+  const shares = buildSalesAssignmentShares(order);
+
+  if (!shares.length) {
+    return [];
+  }
+
+  if (shares.length === 1) {
+    const share = shares[0];
+
+    return [
+      {
+        ...candidate,
+        staffUserId: share.staffUserId,
+        assignedRatio: 1,
+        metadata: {
+          ...(candidate.metadata || {}),
+          sharedSale: false,
+          salesAssignmentRole:
+            share.assignmentRole,
+          assignedStaffName:
+            share.staffName || null
+        }
+      }
+    ];
+  }
+
+  const split = splitFixedAmount(
+    candidate.finalAmount,
+    0.7
+  );
+
+  return shares.map((share) => ({
+    ...candidate,
+    staffUserId: share.staffUserId,
+    assignedRatio: share.assignedRatio,
+    finalAmount:
+      share.assignmentRole === "PRIMARY"
+        ? split.primaryAmount
+        : split.supportAmount,
+    metadata: {
+      ...(candidate.metadata || {}),
+      sharedSale: true,
+      salesAssignmentRole:
+        share.assignmentRole,
+      assignedStaffName:
+        share.staffName || null,
+      primarySalesStaffId:
+        shares[0].staffUserId,
+      supportSalesStaffId:
+        shares[1].staffUserId
+    }
+  }));
 }
 
 function allocateOrderActualSaleAmounts(
@@ -347,20 +462,32 @@ function buildOrderSaleIncentiveCandidates({
           actualSaleAmounts.get(item) ??
           normalizeMoney(item.lineTotal)
       });
-      if (candidate) candidates.push(candidate);
+      if (candidate) {
+        candidates.push(
+          ...splitCandidateBySalesAssignments(
+            candidate,
+            order
+          )
+        );
+      }
     }
   }
 
   if (isPurchaseConfirmationComplete(confirmation)) {
     for (const item of items.filter(isVehicleItem)) {
+      const candidate = buildBikeSaleCandidate({
+        order,
+        item,
+        plan,
+        triggerSource,
+        confirmation
+      });
+
       candidates.push(
-        buildBikeSaleCandidate({
-          order,
-          item,
-          plan,
-          triggerSource,
-          confirmation
-        })
+        ...splitCandidateBySalesAssignments(
+          candidate,
+          order
+        )
       );
     }
   }
@@ -392,6 +519,8 @@ async function loadOrderSaleIncentiveSnapshot(connection, storeId, orderId) {
         store_id AS storeId,
         sales_staff_id AS salesStaffId,
         sales_staff_name AS salesStaffName,
+        sales_support_staff_id AS salesSupportStaffId,
+        sales_support_staff_name AS salesSupportStaffName,
         status,
         order_type AS orderType,
         total_amount AS totalAmount,
@@ -535,6 +664,8 @@ async function reconcileOrderSaleIncentivesSafely(input = {}) {
 
 module.exports = {
   normalizePositiveId,
+  buildSalesAssignmentShares,
+  splitCandidateBySalesAssignments,
   allocateOrderActualSaleAmounts,
   isVehicleItem,
   isAccessoryItem,

@@ -241,6 +241,185 @@ function testAccessoryUsesDiscountedAmount() {
   );
 }
 
+function testSharedBikeSaleSplitsSeventyThirty() {
+  const evaluation = buildOrderSaleIncentiveCandidates({
+    snapshot: {
+      order: createPaidOrder({
+        salesSupportStaffId: 9,
+        salesSupportStaffName: "李協助"
+      }),
+      purchaseConfirmation: createCompletedConfirmation(),
+      items: [createVehicleItem()]
+    },
+    plan,
+    triggerSource: "PURCHASE_CONFIRMATION_SUBMITTED"
+  });
+
+  assert.strictEqual(evaluation.eligible, true);
+  assert.strictEqual(evaluation.candidates.length, 2);
+
+  const primary = evaluation.candidates.find(
+    (event) => event.staffUserId === 8
+  );
+  const support = evaluation.candidates.find(
+    (event) => event.staffUserId === 9
+  );
+
+  assert(primary);
+  assert(support);
+
+  assert.strictEqual(primary.incentiveType, "BIKE");
+  assert.strictEqual(primary.calculatedAmount, 420);
+  assert.strictEqual(primary.assignedRatio, 0.7);
+  assert.strictEqual(primary.finalAmount, 294);
+  assert.strictEqual(
+    primary.metadata.salesAssignmentRole,
+    "PRIMARY"
+  );
+
+  assert.strictEqual(support.incentiveType, "BIKE");
+  assert.strictEqual(support.calculatedAmount, 420);
+  assert.strictEqual(support.assignedRatio, 0.3);
+  assert.strictEqual(support.finalAmount, 126);
+  assert.strictEqual(
+    support.metadata.salesAssignmentRole,
+    "SUPPORT"
+  );
+
+  assert.strictEqual(
+    primary.finalAmount + support.finalAmount,
+    420
+  );
+}
+
+function testSharedAccessorySplitsSeventyThirty() {
+  const evaluation = buildOrderSaleIncentiveCandidates({
+    snapshot: {
+      order: createPaidOrder({
+        salesSupportStaffId: 9,
+        salesSupportStaffName: "李協助"
+      }),
+      purchaseConfirmation: null,
+      items: [createAccessoryItem()]
+    },
+    plan,
+    triggerSource: "PAYMENT_COMPLETED"
+  });
+
+  assert.strictEqual(evaluation.eligible, true);
+  assert.strictEqual(evaluation.candidates.length, 2);
+
+  const primary = evaluation.candidates.find(
+    (event) => event.staffUserId === 8
+  );
+  const support = evaluation.candidates.find(
+    (event) => event.staffUserId === 9
+  );
+
+  assert(primary);
+  assert(support);
+
+  assert.strictEqual(primary.incentiveType, "ACCESSORY");
+  assert.strictEqual(primary.calculatedAmount, 100);
+  assert.strictEqual(primary.assignedRatio, 0.7);
+  assert.strictEqual(primary.finalAmount, 70);
+
+  assert.strictEqual(support.incentiveType, "ACCESSORY");
+  assert.strictEqual(support.calculatedAmount, 100);
+  assert.strictEqual(support.assignedRatio, 0.3);
+  assert.strictEqual(support.finalAmount, 30);
+
+  assert.strictEqual(
+    primary.finalAmount + support.finalAmount,
+    100
+  );
+}
+
+async function testSharedReconciliationCreatesSeparateEvents() {
+  const saved = [];
+
+  const dependencies = {
+    async loadOrderSaleIncentiveSnapshot() {
+      return {
+        order: createPaidOrder({
+          salesSupportStaffId: 9,
+          salesSupportStaffName: "李協助"
+        }),
+        purchaseConfirmation: createCompletedConfirmation(),
+        items: [
+          createVehicleItem(),
+          createAccessoryItem()
+        ]
+      };
+    },
+
+    async getActiveIncentivePlan() {
+      return plan;
+    },
+
+    async upsertIncentiveEvent(connection, event) {
+      saved.push(event);
+      return {
+        action: "CREATED",
+        event
+      };
+    }
+  };
+
+  const result = await reconcileOrderSaleIncentives({
+    connection: {},
+    storeId: 1,
+    orderId: 100,
+    triggerSource: "SHARED_SALE_TEST",
+    dependencies
+  });
+
+  assert.strictEqual(result.eligible, true);
+  assert.strictEqual(result.results.length, 4);
+  assert.strictEqual(saved.length, 4);
+
+  const keys = saved.map((event) => [
+    event.staffUserId,
+    event.incentiveType,
+    event.earningStage,
+    event.sourceType,
+    event.sourceId,
+    event.sourceLineId
+  ].join(":"));
+
+  assert.strictEqual(
+    new Set(keys).size,
+    keys.length
+  );
+
+  const bikeEvents = saved.filter(
+    (event) => event.incentiveType === "BIKE"
+  );
+
+  const accessoryEvents = saved.filter(
+    (event) => event.incentiveType === "ACCESSORY"
+  );
+
+  assert.strictEqual(bikeEvents.length, 2);
+  assert.strictEqual(accessoryEvents.length, 2);
+
+  assert.strictEqual(
+    bikeEvents.reduce(
+      (sum, event) => sum + event.finalAmount,
+      0
+    ),
+    420
+  );
+
+  assert.strictEqual(
+    accessoryEvents.reduce(
+      (sum, event) => sum + event.finalAmount,
+      0
+    ),
+    100
+  );
+}
+
 function testUnpaidOrderEarnsNothing() {
   const evaluation = buildOrderSaleIncentiveCandidates({
     snapshot: {
@@ -358,10 +537,13 @@ async function run() {
   testBikeEarns420PerVehicle();
   testDiscountAllocation();
   testAccessoryUsesDiscountedAmount();
+  testSharedBikeSaleSplitsSeventyThirty();
+  testSharedAccessorySplitsSeventyThirty();
   testUnpaidOrderEarnsNothing();
   testRepairOrderAccessoriesExcluded();
   testOrdinaryPartsExcluded();
   await testReconciliationUsesIdempotentKeys();
+  await testSharedReconciliationCreatesSeparateEvents();
 
   console.log("staff incentive earning service tests passed");
 }
