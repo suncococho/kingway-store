@@ -1064,7 +1064,7 @@ function OrdersPage() {
           "/orders/" + detail.id + "/sales-followup",
           {
             method: "PUT",
-            body: {
+            body: JSON.stringify({
               status: salesFollowupForm.status,
               contactMethod:
                 salesFollowupForm.contactMethod,
@@ -1075,7 +1075,7 @@ function OrdersPage() {
               unresolvedEmployeeIssue:
                 salesFollowupForm.unresolvedEmployeeIssue,
               note: salesFollowupForm.note
-            }
+            })
           }
         );
 

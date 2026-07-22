@@ -53,6 +53,9 @@ const {
   updateReplacementConfirmation
 } = require("../services/repairReplacementConfirmationService");
 const { resolveStaffAssignment } = require("../services/staffAssignmentService");
+const {
+  reconcileOrderSaleIncentivesSafely
+} = require("../services/staffIncentiveEarningService");
 
 const router = express.Router();
 const REPAIR_ALLOWED_ROLES = ["ADMIN", "MANAGER", "STAFF", "CASHIER", "REPAIR", "USER", "EMPLOYEE"];
@@ -583,6 +586,19 @@ router.patch("/:id/inspection", async (req, res, next) => {
       [Number(inspectionFee || 0), notes, req.params.id, storeId]
     );
 
+    const [repairRows] = await pool.query(
+      `SELECT order_id AS orderId FROM repair_orders WHERE id = ? AND store_id = ? LIMIT 1`,
+      [req.params.id, storeId]
+    );
+    if (repairRows[0]?.orderId) {
+      await reconcileOrderSaleIncentivesSafely({
+        connection: pool,
+        storeId,
+        orderId: repairRows[0].orderId,
+        triggerSource: "REPAIR_INSPECTION_UPDATED"
+      });
+    }
+
     return res.json({ ok: true });
   } catch (error) {
     return next(error);
@@ -742,6 +758,19 @@ router.patch("/:id/repair-staff", async (req, res, next) => {
       },
       req.user?.id || null
     );
+
+    const [linkedRows] = await pool.query(
+      `SELECT order_id AS orderId FROM repair_orders WHERE id = ? AND store_id = ? LIMIT 1`,
+      [repairId, storeId]
+    );
+    if (linkedRows[0]?.orderId) {
+      await reconcileOrderSaleIncentivesSafely({
+        connection: pool,
+        storeId,
+        orderId: linkedRows[0].orderId,
+        triggerSource: "REPAIR_STAFF_ASSIGNED"
+      });
+    }
 
     return res.json({
       ok: true,

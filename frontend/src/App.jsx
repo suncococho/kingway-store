@@ -31,6 +31,7 @@ import StaffPage from "./pages/StaffPage";
 import KPIPage from "./pages/KPIPage";
 import StaffKpiPage from "./pages/StaffKpiPage";
 import PayrollPage from "./pages/PayrollPage";
+import StaffIncentivesPage from "./pages/StaffIncentivesPage";
 import MorePage from "./pages/MorePage";
 import SettingsPage from "./pages/SettingsPage";
 import StoreSettingsPage from "./pages/StoreSettingsPage";
@@ -143,6 +144,7 @@ function App() {
         <Route path="/kpi" element={<KPIPage />} />
         <Route path="/staff-kpi" element={<StaffKpiPage />} />
         <Route path="/payroll" element={<PayrollPage />} />
+        <Route path="/staff-incentives" element={<StaffIncentivesPage />} />
         <Route path="/settings/store" element={<StoreSettingsPage />} />
         <Route path="/settings/line" element={<StoreLineSettingsPage />} />
         <Route path="/settings/line-channels" element={<StoreLineChannelsPage />} />

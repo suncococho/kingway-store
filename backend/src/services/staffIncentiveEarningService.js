@@ -3,7 +3,8 @@ const {
   centsToMoney,
   splitFixedAmount,
   calculateBikeStageIncentive,
-  calculateAccessoryIncentive
+  calculateAccessoryIncentive,
+  calculateRepairInspectionIncentive
 } = require("./staffIncentiveCalculator");
 
 const {
@@ -350,6 +351,84 @@ function isRepairLinkedOrder(snapshot = {}) {
   );
 }
 
+function buildRepairInspectionCandidate({
+  order,
+  repairOrder,
+  plan,
+  triggerSource
+}) {
+  if (!repairOrder) {
+    return { candidate: null, reason: "REPAIR_ORDER_EXCLUDED" };
+  }
+
+  const staffUserId = normalizePositiveId(
+    repairOrder.repairStaffId ?? repairOrder.repair_staff_id
+  );
+  if (!staffUserId) {
+    return { candidate: null, reason: "REPAIR_STAFF_NOT_ASSIGNED" };
+  }
+
+  const inspectionFee = normalizeMoney(
+    repairOrder.inspectionFee ?? repairOrder.inspection_fee
+  );
+  const orderSource = normalizeCategory(order.source);
+  const orderType = normalizeCategory(order.orderType ?? order.order_type);
+  const isWarranty = orderSource.includes("WARRANTY") || orderType.includes("WARRANTY");
+  const isRepeat = orderSource.includes("REPEAT") || orderType.includes("REPEAT");
+  const calculation = calculateRepairInspectionIncentive({
+    inspectionFee,
+    collectedAmount: isOrderPaid(order) ? inspectionFee : 0,
+    inspectionNotes:
+      repairOrder.inspectionNotes ?? repairOrder.inspection_notes ?? "",
+    isPaid: isOrderPaid(order),
+    isFree: inspectionFee <= 0,
+    isWarranty,
+    isRepeat,
+    assignedRatio: 1,
+    plan: {
+      ...plan,
+      requiredInspectionCollection: 400
+    }
+  });
+
+  if (!calculation.eligible) {
+    return { candidate: null, reason: calculation.reason };
+  }
+
+  return {
+    reason: null,
+    candidate: {
+      storeId: normalizePositiveId(order.storeId),
+      staffUserId,
+      planVersionId: normalizePositiveId(plan.id),
+      incentiveType: "REPAIR_INSPECTION",
+      earningStage: "INSPECTION",
+      sourceType: "REPAIR",
+      sourceId: normalizePositiveId(repairOrder.id),
+      sourceLineId: 0,
+      productId: null,
+      productNameSnapshot:
+        repairOrder.bikeModel || repairOrder.bike_model || "維修初步檢查",
+      quantity: 1,
+      actualSaleAmount: inspectionFee,
+      rate: 0,
+      calculatedAmount: normalizeMoney(calculation.baseAmount),
+      assignedRatio: 1,
+      finalAmount: normalizeMoney(calculation.finalAmount),
+      status: "EARNED",
+      earnedAt: new Date(),
+      metadata: {
+        triggerSource,
+        orderId: normalizePositiveId(order.id),
+        repairOrderId: normalizePositiveId(repairOrder.id),
+        inspectionFee,
+        repairStaffName:
+          repairOrder.repairStaffName ?? repairOrder.repair_staff_name ?? null
+      }
+    }
+  };
+}
+
 function buildBikeSaleCandidate({
   order,
   item,
@@ -609,14 +688,6 @@ function buildOrderSaleIncentiveCandidates({
     return { eligible: false, reason: "ORDER_NOT_FOUND", candidates: [] };
   }
 
-  if (!normalizePositiveId(order.salesStaffId)) {
-    return {
-      eligible: false,
-      reason: "SALES_STAFF_NOT_ASSIGNED",
-      candidates: []
-    };
-  }
-
   if (isExcludedOrder(order)) {
     return { eligible: false, reason: "ORDER_EXCLUDED", candidates: [] };
   }
@@ -636,6 +707,31 @@ function buildOrderSaleIncentiveCandidates({
   const candidates = [];
   const repairLinked = isRepairLinkedOrder(snapshot);
 
+  if (repairLinked) {
+    const repairEvaluation = buildRepairInspectionCandidate({
+      order,
+      repairOrder: snapshot.repairOrder || null,
+      plan,
+      triggerSource
+    });
+    if (repairEvaluation.candidate) {
+      candidates.push(repairEvaluation.candidate);
+    }
+    return {
+      eligible: candidates.length > 0,
+      reason: candidates.length > 0 ? null : repairEvaluation.reason,
+      candidates
+    };
+  }
+
+  if (!normalizePositiveId(order.salesStaffId)) {
+    return {
+      eligible: false,
+      reason: "SALES_STAFF_NOT_ASSIGNED",
+      candidates: []
+    };
+  }
+
   const actualSaleAmounts =
     allocateOrderActualSaleAmounts(
       items,
@@ -643,25 +739,23 @@ function buildOrderSaleIncentiveCandidates({
       order.total_amount
     );
 
-  if (!repairLinked) {
-    for (const item of items.filter(isAccessoryItem)) {
-      const candidate = buildAccessoryCandidate({
-        order,
-        item,
-        plan,
-        triggerSource,
-        actualSaleAmount:
-          actualSaleAmounts.get(item) ??
-          normalizeMoney(item.lineTotal)
-      });
-      if (candidate) {
-        candidates.push(
-          ...splitCandidateBySalesAssignments(
-            candidate,
-            order
-          )
-        );
-      }
+  for (const item of items.filter(isAccessoryItem)) {
+    const candidate = buildAccessoryCandidate({
+      order,
+      item,
+      plan,
+      triggerSource,
+      actualSaleAmount:
+        actualSaleAmounts.get(item) ??
+        normalizeMoney(item.lineTotal)
+    });
+    if (candidate) {
+      candidates.push(
+        ...splitCandidateBySalesAssignments(
+          candidate,
+          order
+        )
+      );
     }
   }
 
@@ -854,6 +948,42 @@ async function loadOrderSaleIncentiveSnapshot(connection, storeId, orderId) {
     [normalizedOrderId, normalizedStoreId]
   );
 
+  let repairOrder = null;
+  if (isRepairLinkedOrder({ order, items: itemRows })) {
+    const repairOrderId = normalizePositiveId(order.repairOrderId);
+    const [repairRows] = await connection.query(
+      `
+        SELECT
+          id,
+          order_id AS orderId,
+          bike_model AS bikeModel,
+          inspection_fee AS inspectionFee,
+          inspection_notes AS inspectionNotes,
+          repair_staff_id AS repairStaffId,
+          repair_staff_name AS repairStaffName,
+          status,
+          deleted_at AS deletedAt
+        FROM repair_orders
+        WHERE store_id = ?
+          AND deleted_at IS NULL
+          AND (
+            order_id = ?
+            OR (? IS NOT NULL AND id = ?)
+          )
+        ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, id DESC
+        LIMIT 1
+      `,
+      [
+        normalizedStoreId,
+        normalizedOrderId,
+        repairOrderId,
+        repairOrderId,
+        repairOrderId
+      ]
+    );
+    repairOrder = repairRows[0] || null;
+  }
+
   let orderSalesFollowup = null;
 
   if (
@@ -894,6 +1024,7 @@ async function loadOrderSaleIncentiveSnapshot(connection, storeId, orderId) {
     purchaseConfirmation:
       confirmationRows[0] || null,
     orderSalesFollowup,
+    repairOrder,
     items: itemRows
   };
 }
@@ -980,6 +1111,7 @@ module.exports = {
   isOrderSalesFollowupEligible,
   isExcludedOrder,
   isRepairLinkedOrder,
+  buildRepairInspectionCandidate,
   buildBikeHandoverCandidate,
   buildBikeFollowupCandidate,
   buildOrderSaleIncentiveCandidates,
