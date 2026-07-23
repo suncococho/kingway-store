@@ -19,6 +19,11 @@ const {
   listAdminAdjustments,
   listAdminPayouts
 } = require("../services/staffIncentiveDashboardService");
+const {
+  signIncentiveAgreement,
+  getAgreementPdfForStaff,
+  getAgreementPdfForAdmin
+} = require("../services/staffIncentiveAgreementService");
 
 const router = express.Router();
 const ALL_STAFF_ROLES = [
@@ -44,6 +49,18 @@ function requestStaffId(req) {
   return Number(req.user?.id || 0);
 }
 
+function requestIp(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return forwarded || req.ip || req.socket?.remoteAddress || null;
+}
+
+function agreementPdfFileName(agreement) {
+  const safe = String(agreement?.agreementNumber || `agreement-${agreement?.id || "document"}`)
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .slice(0, 100);
+  return `${safe}.pdf`;
+}
+
 router.get("/me", async (req, res, next) => {
   try {
     return res.json(
@@ -67,6 +84,43 @@ router.get("/plan", async (req, res, next) => {
         month: normalizeMonth(req.query.month)
       })
     );
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/agreements/sign", async (req, res, next) => {
+  try {
+    const result = await withTransaction((connection) =>
+      signIncentiveAgreement(connection, {
+        storeId: requestStoreId(req),
+        staffUserId: requestStaffId(req),
+        planVersionId: req.body?.planVersionId,
+        signatureData: req.body?.signatureData,
+        requiredChecks: req.body?.requiredChecks,
+        signerIp: requestIp(req),
+        signerUserAgent: req.get("user-agent") || null
+      })
+    );
+    return res.status(result.alreadySigned ? 200 : 201).json(result);
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/agreements/me/pdf", async (req, res, next) => {
+  try {
+    const result = await getAgreementPdfForStaff(pool, {
+      storeId: requestStoreId(req),
+      staffUserId: requestStaffId(req),
+      agreementId: req.query.agreementId || null
+    });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${agreementPdfFileName(result.agreement)}"`
+    );
+    return res.sendFile(result.absolutePath);
   } catch (error) {
     return next(error);
   }
@@ -138,6 +192,27 @@ router.get(
           storeId: requestStoreId(req)
         })
       });
+    } catch (error) {
+      return next(error);
+    }
+  }
+);
+
+router.get(
+  "/admin/agreements/:agreementId/pdf",
+  authorize(["ADMIN"]),
+  async (req, res, next) => {
+    try {
+      const result = await getAgreementPdfForAdmin(pool, {
+        storeId: requestStoreId(req),
+        agreementId: req.params.agreementId
+      });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${agreementPdfFileName(result.agreement)}"`
+      );
+      return res.sendFile(result.absolutePath);
     } catch (error) {
       return next(error);
     }

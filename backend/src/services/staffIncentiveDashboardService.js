@@ -424,6 +424,8 @@ async function listAdminAgreements(connection, { storeId }) {
         a.agreement_number AS agreementNumber,
         a.status AS agreementStatus,
         a.pdf_path AS pdfPath,
+        a.document_hash AS documentHash,
+        a.authentication_method AS authenticationMethod,
         a.signed_at AS signedAt
       FROM staff_users su
       INNER JOIN store_memberships sm
@@ -465,6 +467,8 @@ async function listAdminAgreements(connection, { storeId }) {
     agreementNumber: row.agreementNumber || null,
     agreementStatus: row.agreementStatus || "UNSIGNED",
     pdfPath: row.pdfPath || null,
+    documentHash: row.documentHash || null,
+    authenticationMethod: row.authenticationMethod || null,
     signedAt: row.signedAt || null
   }));
 }

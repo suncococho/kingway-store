@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import AdminSectionHeader from "../components/AdminSectionHeader";
+import SignaturePad from "../components/SignaturePad";
 import DataTable from "../components/DataTable";
 import FilterBar from "../components/FilterBar";
 import PageHeader from "../components/PageHeader";
 import SectionTabs from "../components/SectionTabs";
 import StatusBadge from "../components/StatusBadge";
-import { apiRequest } from "../lib/api";
+import { apiOpenFile, apiRequest } from "../lib/api";
 import { getStoredUser } from "../lib/auth";
 
 const TYPE_LABELS = {
@@ -20,6 +21,14 @@ const STAGE_LABELS = {
   ITEM: "配件",
   INSPECTION: "初步檢查"
 };
+const AGREEMENT_CHECKS = [
+  ["policyRead", "本人已完整閱讀本績效辦法與說明。"],
+  ["rulesAccepted", "本人理解各項績效須符合實際完成、收款及系統紀錄條件。"],
+  ["individualAccessoryBasis", "本人理解配件績效按個別品項實際成交價 10% 計算，不以整月總額概括計算。"],
+  ["noAutomaticClawback", "本人理解已核准或已支付績效不會自動扣回，更正須以有紀錄的調整程序處理。"],
+  ["ordinaryWorkDuty", "本人理解一般工作仍屬職務內容，不得因未設績效而拒絕執行。"]
+];
+
 const STATUS_LABELS = {
   PENDING: "待確認",
   EARNED: "已取得",
@@ -80,11 +89,6 @@ function Status({ value }) {
   return <StatusBadge tone={statusTone(value)}>{STATUS_LABELS[value] || value || "-"}</StatusBadge>;
 }
 
-function safeDocumentUrl(path) {
-  const value = String(path || "").trim();
-  if (value.startsWith("/files/") || value.startsWith("/api/")) return value;
-  return null;
-}
 
 function EventTable({ events, emptyText = "目前沒有績效紀錄。", showStaff = false, action = null }) {
   const columns = [
@@ -156,6 +160,11 @@ function StaffIncentivesPage() {
   const [eventFilters, setEventFilters] = useState({ staffUserId: "", status: "", type: "" });
   const [disputeForm, setDisputeForm] = useState({ eventId: "", reason: "" });
   const [adminDispute, setAdminDispute] = useState({ id: "", status: "REVIEWING", adminResponse: "" });
+  const [agreementSaving, setAgreementSaving] = useState(false);
+  const [agreementForm, setAgreementForm] = useState({
+    requiredChecks: Object.fromEntries(AGREEMENT_CHECKS.map(([key]) => [key, false])),
+    signatureData: ""
+  });
 
   async function loadData() {
     setLoading(true);
@@ -288,9 +297,79 @@ function StaffIncentivesPage() {
     }
   }
 
+  function updateAgreementCheck(key, checked) {
+    setAgreementForm((current) => ({
+      ...current,
+      requiredChecks: {
+        ...current.requiredChecks,
+        [key]: checked
+      }
+    }));
+  }
+
+  async function signAgreement(event) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+    if (!selfData?.plan) {
+      setError("目前沒有可簽署的生效績效辦法。");
+      return;
+    }
+    if (!Object.values(agreementForm.requiredChecks).every(Boolean)) {
+      setError("請逐項確認績效辦法與同意內容。");
+      return;
+    }
+    if (!agreementForm.signatureData) {
+      setError("請完成並確認電子簽名。");
+      return;
+    }
+    setAgreementSaving(true);
+    try {
+      const response = await apiRequest("/staff-incentives/agreements/sign", {
+        method: "POST",
+        body: JSON.stringify({
+          planVersionId: selfData.plan.id,
+          requiredChecks: agreementForm.requiredChecks,
+          signatureData: agreementForm.signatureData
+        }),
+        processingMessage: "簽署績效同意書中",
+        processingDescription: "正在產生簽署紀錄與 PDF，請勿重複送出。"
+      });
+      setSuccess(response.alreadySigned ? "此版本已完成簽署。" : "績效同意書已簽署並產生 PDF。");
+      setAgreementForm({
+        requiredChecks: Object.fromEntries(AGREEMENT_CHECKS.map(([key]) => [key, false])),
+        signatureData: ""
+      });
+      await loadData();
+    } catch (requestError) {
+      setError(requestError.message || "績效同意書簽署失敗");
+    } finally {
+      setAgreementSaving(false);
+    }
+  }
+
+  async function openOwnAgreementPdf() {
+    setError("");
+    try {
+      const query = agreement?.id ? `?agreementId=${encodeURIComponent(agreement.id)}` : "";
+      await apiOpenFile(`/staff-incentives/agreements/me/pdf${query}`);
+    } catch (requestError) {
+      setError(requestError.message || "同意書 PDF 開啟失敗");
+    }
+  }
+
+  async function openAdminAgreementPdf(row) {
+    if (!row?.agreementId) return;
+    setError("");
+    try {
+      await apiOpenFile(`/staff-incentives/admin/agreements/${row.agreementId}/pdf`);
+    } catch (requestError) {
+      setError(requestError.message || "同意書 PDF 開啟失敗");
+    }
+  }
+
   const plan = selfData?.plan || null;
   const agreement = selfData?.agreement || null;
-  const agreementUrl = safeDocumentUrl(agreement?.pdfPath);
 
   return (
     <div>
@@ -358,13 +437,47 @@ function StaffIncentivesPage() {
             {plan?.agreementText ? <div className="content-card"><pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit" }}>{plan.agreementText}</pre></div> : null}
           </section>
           <section className="admin-panel">
-            <AdminSectionHeader eyebrow="同意書" title={agreement ? "已簽署" : "尚未簽署"} badges={<Status value={agreement ? "SIGNED" : "UNSIGNED"} />} />
-            <div className="metric-list">
-              <div className="metric-row"><span>同意書編號</span><strong>{agreement?.agreementNumber || "-"}</strong></div>
-              <div className="metric-row"><span>簽署時間</span><strong>{dateTime(agreement?.signedAt)}</strong></div>
-              <div className="metric-row"><span>文件雜湊</span><strong>{agreement?.documentHash || "-"}</strong></div>
-            </div>
-            {agreementUrl ? <a className="secondary-button" href={agreementUrl} target="_blank" rel="noreferrer">查看 PDF</a> : <p className="muted-text">目前沒有可開啟的 PDF。</p>}
+            <AdminSectionHeader
+              eyebrow="同意書"
+              title={agreement ? "已簽署" : "尚未簽署"}
+              description={agreement ? "此版本已完成電子簽名並保存 PDF。" : "請逐項確認內容後完成本人電子簽名。"}
+              badges={<Status value={agreement ? "SIGNED" : "UNSIGNED"} />}
+            />
+            {agreement ? (
+              <>
+                <div className="metric-list">
+                  <div className="metric-row"><span>同意書編號</span><strong>{agreement.agreementNumber || "-"}</strong></div>
+                  <div className="metric-row"><span>簽署時間</span><strong>{dateTime(agreement.signedAt)}</strong></div>
+                  <div className="metric-row"><span>文件雜湊</span><strong style={{ overflowWrap: "anywhere" }}>{agreement.documentHash || "-"}</strong></div>
+                </div>
+                <button type="button" className="secondary-button" onClick={openOwnAgreementPdf}>查看已簽署 PDF</button>
+              </>
+            ) : plan ? (
+              <form onSubmit={signAgreement}>
+                <div className="metric-list">
+                  {AGREEMENT_CHECKS.map(([key, label]) => (
+                    <label className="metric-row" key={key} style={{ alignItems: "flex-start", gap: 12 }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(agreementForm.requiredChecks[key])}
+                        onChange={(event) => updateAgreementCheck(key, event.target.checked)}
+                      />
+                      <span style={{ flex: 1 }}>{label}</span>
+                    </label>
+                  ))}
+                </div>
+                <SignaturePad
+                  value={agreementForm.signatureData}
+                  onChange={(signatureData) => setAgreementForm((current) => ({ ...current, signatureData }))}
+                />
+                <p className="muted-text">送出後會記錄登入員工、時間、IP、瀏覽器資訊及文件雜湊，並將簽署 PDF 保存於門市 NAS。</p>
+                <button type="submit" className="primary-button" disabled={agreementSaving}>
+                  {agreementSaving ? "簽署中..." : "同意並完成簽署"}
+                </button>
+              </form>
+            ) : (
+              <p className="muted-text">目前沒有可簽署的生效績效辦法。</p>
+            )}
           </section>
         </div>
       ) : null}
@@ -434,7 +547,8 @@ function StaffIncentivesPage() {
             { key: "planVersion", label: "版本", render: (row) => row.planVersion || "尚無生效版本" },
             { key: "agreementStatus", label: "狀態", render: (row) => <Status value={row.agreementStatus} /> },
             { key: "agreementNumber", label: "同意書編號", render: (row) => row.agreementNumber || "-" },
-            { key: "signedAt", label: "簽署時間", render: (row) => dateTime(row.signedAt) }
+            { key: "signedAt", label: "簽署時間", render: (row) => dateTime(row.signedAt) },
+            { key: "pdf", label: "PDF", render: (row) => row.agreementId ? <button type="button" className="secondary-button" onClick={() => openAdminAgreementPdf(row)}>查看 PDF</button> : "-" }
           ]} rows={adminData.agreements} emptyText="目前沒有員工資料。" cardTitle={(row) => row.staffDisplayName} cardBadges={(row) => <Status value={row.agreementStatus} />} />
         </section>
       ) : null}
