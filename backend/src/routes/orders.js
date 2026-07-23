@@ -3116,7 +3116,7 @@ router.post("/:id/notify-pickup", requireOrderManagementFeature, async (req, res
   }
 });
 
-router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), requireOrderManagementFeature, async (req, res, next) => {
+router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER", "CASHIER", "REPAIR"]), requireOrderManagementFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     const [orderRows] = await pool.query(
