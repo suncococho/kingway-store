@@ -28,6 +28,7 @@ assert(page.includes('import SignaturePad from "../components/SignaturePad"'), "
 assert(page.includes('apiRequest("/staff-incentives/agreements/sign"'), "agreement signing request missing");
 assert(page.includes("planVersionId: selfData.plan.id"), "agreement signing must submit displayed plan id");
 assert(page.includes("同意並完成簽署"), "agreement submit button missing");
+assert(page.includes("案件完成責任") && page.includes("pendingUntilComplete"), "responsibility agreement UI missing");
 assert(page.includes("openOwnAgreementPdf"), "employee agreement PDF action missing");
 assert(page.includes("openAdminAgreementPdf"), "admin agreement PDF action missing");
 assert(page.includes('String(currentUser?.role || "").trim().toUpperCase() === "ADMIN"'), "admin UI must be exact ADMIN only");

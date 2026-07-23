@@ -47,7 +47,7 @@ function createConnection() {
           repairInspectionAmount: "100.00",
           effectiveFrom: new Date("2026-07-01T00:00:00+08:00"),
           effectiveTo: null,
-          agreementText: "測試補充條款"
+          agreementText: "測試案件完成責任條款"
         }]];
       }
 
@@ -91,11 +91,13 @@ function createConnection() {
 async function run() {
   const connection = createConnection();
   const requiredChecks = {
-    policyRead: true,
-    rulesAccepted: true,
-    individualAccessoryBasis: true,
-    noAutomaticClawback: true,
-    ordinaryWorkDuty: true
+    completionStandards: true,
+    caseOwnership: true,
+    truthfulRecords: true,
+    ordinaryWorkDuty: true,
+    pendingUntilComplete: true,
+    exceptionReporting: true,
+    policyAccepted: true
   };
 
   const result = await signIncentiveAgreement(connection, {

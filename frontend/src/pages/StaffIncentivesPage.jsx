@@ -22,11 +22,13 @@ const STAGE_LABELS = {
   INSPECTION: "初步檢查"
 };
 const AGREEMENT_CHECKS = [
-  ["policyRead", "本人已完整閱讀本績效辦法與說明。"],
-  ["rulesAccepted", "本人理解各項績效須符合實際完成、收款及系統紀錄條件。"],
-  ["individualAccessoryBasis", "本人理解配件績效按個別品項實際成交價 10% 計算，不以整月總額概括計算。"],
-  ["noAutomaticClawback", "本人理解已核准或已支付績效不會自動扣回，更正須以有紀錄的調整程序處理。"],
-  ["ordinaryWorkDuty", "本人理解一般工作仍屬職務內容，不得因未設績效而拒絕執行。"]
+  ["completionStandards", "我已閱讀並了解車輛銷售、交車、配件、維修檢查及售後追蹤之完成標準。"],
+  ["caseOwnership", "我了解接受案件或被指定為負責人後，應持續處理至本人負責階段完成，或完成明確交接。"],
+  ["truthfulRecords", "我了解系統紀錄必須與實際工作一致，不得虛報、代簽、倒填或提前標示完成。"],
+  ["ordinaryWorkDuty", "我了解未設績效獎金之一般工作仍屬本人職務，不得拒絕、拖延或消極處理。"],
+  ["pendingUntilComplete", "我了解案件尚未符合完成條件時，相關績效得維持待確認，補正完成後再予認定。"],
+  ["exceptionReporting", "我了解遇有異常、安全疑慮、顧客爭議或無法完成時，應立即回報主管並留下紀錄。"],
+  ["policyAccepted", "我同意遵守 KINGWAY 案件完成責任及銷售服務績效制度。"]
 ];
 
 const STATUS_LABELS = {
@@ -425,7 +427,7 @@ function StaffIncentivesPage() {
       {tab === "PLAN" ? (
         <div className="admin-split-grid">
           <section className="admin-panel">
-            <AdminSectionHeader eyebrow="績效辦法" title={plan ? `版本 ${plan.version}` : "目前沒有生效中的績效辦法"} description={plan ? `生效日：${dateTime(plan.effectiveFrom)}` : "請洽管理員確認。"} />
+            <AdminSectionHeader eyebrow="績效辦法" title={plan ? `案件完成責任版本 ${plan.version}` : "目前沒有生效中的績效辦法"} description={plan ? `生效日：${dateTime(plan.effectiveFrom)}` : "請洽管理員確認。"} />
             <div className="metric-list">
               <div className="metric-row"><span>完成付款</span><strong>{money(plan?.bikeSaleAmount ?? 420)}</strong></div>
               <div className="metric-row"><span>完成交車</span><strong>{money(plan?.bikeHandoverAmount ?? 120)}</strong></div>
@@ -440,7 +442,7 @@ function StaffIncentivesPage() {
             <AdminSectionHeader
               eyebrow="同意書"
               title={agreement ? "已簽署" : "尚未簽署"}
-              description={agreement ? "此版本已完成電子簽名並保存 PDF。" : "請逐項確認內容後完成本人電子簽名。"}
+              description={agreement ? "此版本已完成電子簽名並保存 PDF。" : "請先閱讀案件完成責任，再逐項確認並完成本人電子簽名。"}
               badges={<Status value={agreement ? "SIGNED" : "UNSIGNED"} />}
             />
             {agreement ? (

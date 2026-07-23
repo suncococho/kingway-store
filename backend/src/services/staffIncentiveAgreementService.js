@@ -27,18 +27,22 @@ const FONT_PATH = path.join(
 );
 const PUBLIC_STORAGE_PREFIX = "/staff-incentive-agreements/";
 const REQUIRED_CHECK_KEYS = Object.freeze([
-  "policyRead",
-  "rulesAccepted",
-  "individualAccessoryBasis",
-  "noAutomaticClawback",
-  "ordinaryWorkDuty"
+  "completionStandards",
+  "caseOwnership",
+  "truthfulRecords",
+  "ordinaryWorkDuty",
+  "pendingUntilComplete",
+  "exceptionReporting",
+  "policyAccepted"
 ]);
 const CHECK_LABELS = Object.freeze({
-  policyRead: "本人已完整閱讀本績效辦法與說明。",
-  rulesAccepted: "本人理解各項績效須符合實際完成、收款及系統紀錄條件。",
-  individualAccessoryBasis: "本人理解配件績效按個別品項實際成交價 10% 計算，不以整月總額概括計算。",
-  noAutomaticClawback: "本人理解已核准或已支付績效不會自動扣回，更正須以有紀錄的調整程序處理。",
-  ordinaryWorkDuty: "本人理解一般工作仍屬職務內容，不得因未設績效而拒絕執行。"
+  completionStandards: "我已閱讀並了解車輛銷售、交車、配件、維修檢查及售後追蹤之完成標準。",
+  caseOwnership: "我了解接受案件或被指定為負責人後，應持續處理至本人負責階段完成，或完成明確交接。",
+  truthfulRecords: "我了解系統紀錄必須與實際工作一致，不得虛報、代簽、倒填或提前標示完成。",
+  ordinaryWorkDuty: "我了解未設績效獎金之一般工作仍屬本人職務，不得拒絕、拖延或消極處理。",
+  pendingUntilComplete: "我了解案件尚未符合完成條件時，相關績效得維持待確認，補正完成後再予認定。",
+  exceptionReporting: "我了解遇有異常、安全疑慮、顧客爭議或無法完成時，應立即回報主管並留下紀錄。",
+  policyAccepted: "我同意遵守 KINGWAY 案件完成責任及銷售服務績效制度。"
 });
 
 function normalizePositiveId(value, label) {
@@ -232,9 +236,9 @@ function renderAgreementPdf({
       size: "A4",
       margin: 48,
       info: {
-        Title: "KINGWAY 員工銷售服務績效辦法暨同意書",
+        Title: "KINGWAY 員工銷售服務績效與案件完成責任同意書",
         Author: "KINGWAY",
-        Subject: "員工銷售服務績效辦法暨同意書",
+        Subject: "員工銷售服務績效與案件完成責任同意書",
         Creator: "KINGWAY Store"
       }
     });
@@ -244,7 +248,7 @@ function renderAgreementPdf({
     doc.registerFont("NotoSansTC", FONT_PATH);
     doc.font("NotoSansTC");
 
-    doc.fontSize(18).text("KINGWAY 員工銷售服務績效辦法暨同意書", { align: "center" });
+    doc.fontSize(18).text("KINGWAY 員工銷售服務績效與案件完成責任同意書", { align: "center" });
     doc.moveDown(0.5);
     writeRule(doc, "同意書編號", agreementNumber);
     writeRule(doc, "門市", `${staff.storeName}（#${storeId}）`);
@@ -266,7 +270,7 @@ function renderAgreementPdf({
 
     if (plan.agreementText) {
       doc.moveDown(0.6);
-      doc.fontSize(13).text("二、門市補充辦法");
+      doc.fontSize(13).text("二、案件完成責任與門市辦法");
       doc.moveDown(0.25);
       writeText(doc, plan.agreementText);
     }
@@ -287,7 +291,7 @@ function renderAgreementPdf({
     const signatureY = doc.y;
     doc.image(signatureBuffer, doc.x, signatureY, { fit: [230, 110] });
     doc.y = signatureY + 120;
-    writeText(doc, "本人確認以上資料與電子簽名為本人意思表示，並同意依本辦法及公司依法公告之後續有效版本辦理。", { fontSize: 9.5 });
+    writeText(doc, "本人確認以上資料與電子簽名為本人意思表示，並同意依本辦法完成本人所承接或被指定之案件責任。後續版本如有變更，應另行閱讀並依系統要求重新確認。", { fontSize: 9.5 });
     doc.end();
   });
 }
