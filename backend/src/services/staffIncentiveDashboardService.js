@@ -302,7 +302,7 @@ async function getSelfDashboard(connection, { storeId, staffUserId, month }) {
   const normalizedStoreId = normalizePositiveId(storeId, "門市");
   const normalizedStaffUserId = normalizePositiveId(staffUserId, "員工");
   const range = getMonthRange(month);
-  const effectiveAt = new Date(`${range.month}-15T12:00:00+08:00`);
+  const effectiveAt = new Date();
   const [staff, plan, events] = await Promise.all([
     loadStaffProfile(connection, normalizedStoreId, normalizedStaffUserId),
     getActiveIncentivePlan(connection, normalizedStoreId, effectiveAt),
@@ -335,7 +335,7 @@ async function getPlanForStaff(connection, { storeId, staffUserId, month }) {
   const plan = await getActiveIncentivePlan(
     connection,
     normalizePositiveId(storeId, "門市"),
-    new Date(`${range.month}-15T12:00:00+08:00`)
+    new Date()
   );
   const agreement = plan
     ? await getSignedIncentiveAgreement(connection, {
