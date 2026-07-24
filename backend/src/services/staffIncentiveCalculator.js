@@ -1,5 +1,7 @@
 const DEFAULT_INCENTIVE_PLAN = Object.freeze({
-  bikeSaleAmount: 600,
+  bikeTotalAmount: 600,
+  payoutMode: "ALL_STAGES_COMPLETED",
+  bikeSaleAmount: 0,
   bikeHandoverAmount: 0,
   bikeFollowupAmount: 0,
   accessoryRate: 0.1,
@@ -65,6 +67,9 @@ function calculateBikeStageIncentive({
   const normalizedStage = String(stage || "").trim().toUpperCase();
 
   const amountByStage = {
+    ALL_STAGES: toFiniteNumber(
+      plan.bikeTotalAmount ?? DEFAULT_INCENTIVE_PLAN.bikeTotalAmount
+    ),
     SALE: toFiniteNumber(plan.bikeSaleAmount),
     HANDOVER: toFiniteNumber(plan.bikeHandoverAmount),
     FOLLOWUP: toFiniteNumber(plan.bikeFollowupAmount)

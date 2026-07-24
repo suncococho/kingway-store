@@ -18,6 +18,7 @@ const STAGE_LABELS = {
   SALE: "成交",
   HANDOVER: "交車",
   FOLLOWUP: "售後追蹤",
+  ALL_STAGES: "三階段全部完成",
   ITEM: "配件",
   INSPECTION: "初步檢查"
 };
@@ -431,13 +432,14 @@ function StaffIncentivesPage() {
           <section className="admin-panel">
             <AdminSectionHeader eyebrow="績效辦法" title={plan ? `案件完成責任版本 ${plan.version}` : "目前沒有生效中的績效辦法"} description={plan ? `生效日：${dateTime(plan.effectiveFrom)}` : "請洽管理員確認。"} />
             <div className="metric-list">
-              <div className="metric-row"><span>完成付款</span><strong>{money(plan?.bikeSaleAmount ?? 600)}</strong></div>
-              <div className="metric-row"><span>完成交車</span><strong>{money(plan?.bikeHandoverAmount ?? 0)}</strong></div>
-              <div className="metric-row"><span>售後追蹤</span><strong>{money(plan?.bikeFollowupAmount ?? 0)}</strong></div>
+              <div className="metric-row"><span>車輛銷售</span><strong>完成條件</strong></div>
+              <div className="metric-row"><span>完成交車</span><strong>完成條件</strong></div>
+              <div className="metric-row"><span>售後追蹤</span><strong>完成條件</strong></div>
+              <div className="metric-row"><span>三階段全部完成後一次給付</span><strong>{money(plan?.bikeTotalAmount ?? 600)}</strong></div>
               <div className="metric-row"><span>配件</span><strong>{Math.round(Number(plan?.accessoryRate ?? 0.1) * 100)}%</strong></div>
               <div className="metric-row"><span>維修初步檢查</span><strong>{money(plan?.repairInspectionAmount ?? 100)}</strong></div>
             </div>
-            <p className="muted-text">符合完成條件的電動自行車每台 NT$600；交車與售後追蹤僅保留為 NT$0 工作紀錄。共同銷售依預先指定 70% / 30%。配件依個別品項實際成交價 10%。一般自行車零件、維修零件、工資、安裝費、運費等不列入配件績效。</p>
+            <p className="muted-text">車輛銷售、完成交車、售後追蹤三階段全部完成後，每台一次給付 NT$600；任一階段未完成皆不產生車輛績效金額事件。共同銷售依預先指定 70% / 30%。配件依個別品項實際成交價 10%。一般自行車零件、維修零件、工資、安裝費、運費等不列入配件績效。</p>
             {plan?.agreementText ? <div className="content-card"><pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit" }}>{plan.agreementText}</pre></div> : null}
           </section>
           <section className="admin-panel">

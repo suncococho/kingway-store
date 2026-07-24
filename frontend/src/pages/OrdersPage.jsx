@@ -127,7 +127,12 @@ function buildSalesFollowupForm(followup = null) {
       Boolean(followup?.employeeCausedIssue),
     unresolvedEmployeeIssue:
       Boolean(followup?.unresolvedEmployeeIssue),
-    note: followup?.note || ""
+    note: followup?.note || "",
+    attemptedAt: getTaipeiDatetimeLocal(),
+    clientRequestId: crypto.randomUUID(),
+    attemptResult: "NO_RESPONSE",
+    attemptNote: "",
+    noResponseApprovalReason: followup?.noResponseApprovalReason || ""
   };
 }
 
@@ -1017,6 +1022,27 @@ function OrdersPage() {
     });
   }
 
+  async function addSalesFollowupAttempt() {
+    if (!detail?.id) return;
+    try {
+      const response = await apiRequest("/orders/" + detail.id + "/sales-followup/attempts", {
+        method: "POST",
+        body: JSON.stringify({
+          attemptedAt: salesFollowupForm.attemptedAt,
+          clientRequestId: salesFollowupForm.clientRequestId,
+          contactMethod: salesFollowupForm.contactMethod,
+          result: salesFollowupForm.attemptResult,
+          note: salesFollowupForm.attemptNote
+        })
+      });
+      setSalesFollowup({ loading: false, error: "", followup: response.followup });
+      setSalesFollowupForm(buildSalesFollowupForm(response.followup));
+      setToastMessage(response.message || "聯絡紀錄已新增");
+    } catch (error) {
+      setSalesFollowup((current) => ({ ...current, error: error.message || "聯絡紀錄新增失敗" }));
+    }
+  }
+
   async function saveSalesFollowup(event) {
     event?.preventDefault();
 
@@ -1074,7 +1100,8 @@ function OrdersPage() {
                 salesFollowupForm.employeeCausedIssue,
               unresolvedEmployeeIssue:
                 salesFollowupForm.unresolvedEmployeeIssue,
-              note: salesFollowupForm.note
+              note: salesFollowupForm.note,
+              noResponseApprovalReason: salesFollowupForm.noResponseApprovalReason
             })
           }
         );
@@ -2114,6 +2141,13 @@ if (!window.confirm(
                         <option value="1">尚未解決</option>
                       </select>
                     </label>
+
+                    <label className="form-field"><span>聯絡日期時間</span><input type="datetime-local" value={salesFollowupForm.attemptedAt} onChange={(event) => setSalesFollowupForm((current) => ({ ...current, attemptedAt: event.target.value }))} /></label>
+                    <label className="form-field"><span>聯絡結果</span><select value={salesFollowupForm.attemptResult} onChange={(event) => setSalesFollowupForm((current) => ({ ...current, attemptResult: event.target.value }))}><option value="NO_RESPONSE">無法聯絡</option><option value="NO_ISSUE">使用正常／無問題</option><option value="ISSUE_RESOLVED">問題已解決</option><option value="ISSUE_UNRESOLVED">問題尚未解決</option><option value="OTHER">其他</option></select></label>
+                    <label className="form-field field-item-wide"><span>聯絡紀錄備註</span><input value={salesFollowupForm.attemptNote} onChange={(event) => setSalesFollowupForm((current) => ({ ...current, attemptNote: event.target.value }))} placeholder="記錄本次聯絡內容" /></label>
+                    <div className="action-row field-item-wide"><button type="button" className="secondary-button" onClick={addSalesFollowupAttempt}>新增聯絡嘗試</button></div>
+                    {salesFollowup.followup?.attempts?.length ? <div className="field-item field-item-wide"><div className="field-label">聯絡嘗試紀錄</div>{salesFollowup.followup.attempts.map((attempt) => <div key={attempt.id} className="field-value">{formatTaipeiDateTime(attempt.attemptedAt)} / {({ LINE: "LINE", PHONE: "電話", IN_PERSON: "現場", OTHER: "其他" }[attempt.contactMethod] || attempt.contactMethod)} / {({ NO_RESPONSE: "未回覆", NO_ISSUE: "無異常", ISSUE_RESOLVED: "問題已處理", ISSUE_UNRESOLVED: "問題尚未處理", OTHER: "其他" }[attempt.result] || attempt.result)} / {attempt.note || "-"}</div>)}</div> : null}
+                    {salesFollowupForm.customerResult === "NO_RESPONSE" && String(currentUser?.role || "").toUpperCase() === "ADMIN" ? <label className="form-field field-item-wide"><span>客戶未回覆核准原因（限管理員）</span><textarea rows="2" value={salesFollowupForm.noResponseApprovalReason} onChange={(event) => setSalesFollowupForm((current) => ({ ...current, noResponseApprovalReason: event.target.value }))} placeholder="至少兩次有效聯絡且間隔六小時後，由管理員填寫" /></label> : null}
 
                     <label className="form-field field-item-wide">
                       <span>追蹤備註</span>

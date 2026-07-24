@@ -153,31 +153,27 @@ function testBikeWaitsForPurchaseConfirmation() {
   assert.strictEqual(evaluation.candidates.length, 0);
 }
 
-function testBikeEarns600PerVehicle() {
-  const evaluation = buildOrderSaleIncentiveCandidates({
-    snapshot: {
-      order: createPaidOrder(),
-      purchaseConfirmation: createCompletedConfirmation(),
-      items: [
-        createVehicleItem({
-          quantity: 2,
-          lineTotal: 100000
-        })
-      ]
-    },
-    plan,
-    triggerSource: "PURCHASE_CONFIRMATION_SUBMITTED"
-  });
+function testBikePaysOnlyAfterAllStages() {
+  const base = { purchaseConfirmation: createCompletedConfirmation(), items: [createVehicleItem()] };
+  const sale = buildOrderSaleIncentiveCandidates({ snapshot: { ...base, order: createPaidOrder() }, plan });
+  assert.strictEqual(sale.candidates.filter((event) => event.incentiveType === "BIKE").length, 0);
 
-  assert.strictEqual(evaluation.eligible, true);
-  assert.strictEqual(evaluation.candidates.length, 1);
+  const handover = buildOrderSaleIncentiveCandidates({ snapshot: { ...base, order: createPaidOrder({ handoverConfirmedAt: "2026-07-21T10:00:00.000Z" }) }, plan });
+  assert.strictEqual(handover.candidates.filter((event) => event.incentiveType === "BIKE").length, 0);
 
-  const event = evaluation.candidates[0];
-  assert.strictEqual(event.incentiveType, "BIKE");
-  assert.strictEqual(event.earningStage, "SALE");
-  assert.strictEqual(event.quantity, 2);
-  assert.strictEqual(event.calculatedAmount, 1200);
-  assert.strictEqual(event.finalAmount, 1200);
+  const followup = { id: 71, status: "COMPLETED", contactMethod: "LINE", customerResult: "NO_ISSUE", unresolvedEmployeeIssue: 0, completedAt: "2026-07-22T10:00:00.000Z" };
+  const complete = buildOrderSaleIncentiveCandidates({ snapshot: { ...base, order: createPaidOrder({ handoverConfirmedAt: "2026-07-21T10:00:00.000Z" }), orderSalesFollowup: followup }, plan });
+  const [single] = complete.candidates.filter((event) => event.incentiveType === "BIKE");
+  assert.strictEqual(single.earningStage, "ALL_STAGES");
+  assert.strictEqual(single.finalAmount, 600);
+
+  const shared = buildOrderSaleIncentiveCandidates({ snapshot: { ...base, order: createPaidOrder({ salesSupportStaffId: 9, salesSupportStaffName: "李協助", handoverConfirmedAt: "2026-07-21T10:00:00.000Z" }), orderSalesFollowup: followup }, plan });
+  assert.deepStrictEqual(shared.candidates.filter((event) => event.incentiveType === "BIKE").map((event) => event.finalAmount).sort((a, b) => b - a), [420, 180]);
+
+  const quantityTwo = buildOrderSaleIncentiveCandidates({ snapshot: { order: createPaidOrder({ handoverConfirmedAt: "2026-07-21T10:00:00.000Z" }), purchaseConfirmation: createCompletedConfirmation(), orderSalesFollowup: followup, items: [createVehicleItem({ quantity: 2, lineTotal: 100000 })] }, plan });
+  const units = quantityTwo.candidates.filter((event) => event.incentiveType === "BIKE");
+  assert.strictEqual(units.reduce((sum, event) => sum + event.finalAmount, 0), 1200);
+  assert.strictEqual(new Set(units.map((event) => event.sourceUnitKey)).size, units.length);
 }
 
 function testDiscountAllocation() {
@@ -242,57 +238,6 @@ function testAccessoryUsesDiscountedAmount() {
   );
 }
 
-function testSharedBikeSaleSplitsSeventyThirty() {
-  const evaluation = buildOrderSaleIncentiveCandidates({
-    snapshot: {
-      order: createPaidOrder({
-        salesSupportStaffId: 9,
-        salesSupportStaffName: "李協助"
-      }),
-      purchaseConfirmation: createCompletedConfirmation(),
-      items: [createVehicleItem()]
-    },
-    plan,
-    triggerSource: "PURCHASE_CONFIRMATION_SUBMITTED"
-  });
-
-  assert.strictEqual(evaluation.eligible, true);
-  assert.strictEqual(evaluation.candidates.length, 2);
-
-  const primary = evaluation.candidates.find(
-    (event) => event.staffUserId === 8
-  );
-  const support = evaluation.candidates.find(
-    (event) => event.staffUserId === 9
-  );
-
-  assert(primary);
-  assert(support);
-
-  assert.strictEqual(primary.incentiveType, "BIKE");
-  assert.strictEqual(primary.calculatedAmount, 600);
-  assert.strictEqual(primary.assignedRatio, 0.7);
-  assert.strictEqual(primary.finalAmount, 420);
-  assert.strictEqual(
-    primary.metadata.salesAssignmentRole,
-    "PRIMARY"
-  );
-
-  assert.strictEqual(support.incentiveType, "BIKE");
-  assert.strictEqual(support.calculatedAmount, 600);
-  assert.strictEqual(support.assignedRatio, 0.3);
-  assert.strictEqual(support.finalAmount, 180);
-  assert.strictEqual(
-    support.metadata.salesAssignmentRole,
-    "SUPPORT"
-  );
-
-  assert.strictEqual(
-    primary.finalAmount + support.finalAmount,
-    600
-  );
-}
-
 function testSharedAccessorySplitsSeventyThirty() {
   const evaluation = buildOrderSaleIncentiveCandidates({
     snapshot: {
@@ -344,9 +289,11 @@ async function testSharedReconciliationCreatesSeparateEvents() {
       return {
         order: createPaidOrder({
           salesSupportStaffId: 9,
-          salesSupportStaffName: "李協助"
+          salesSupportStaffName: "李協助",
+          handoverConfirmedAt: "2026-07-21T10:00:00.000Z"
         }),
         purchaseConfirmation: createCompletedConfirmation(),
+        orderSalesFollowup: { id: 71, status: "COMPLETED", customerResult: "NO_ISSUE", unresolvedEmployeeIssue: 0, completedAt: "2026-07-22T10:00:00.000Z" },
         items: [
           createVehicleItem(),
           createAccessoryItem()
@@ -418,197 +365,6 @@ async function testSharedReconciliationCreatesSeparateEvents() {
       0
     ),
     100
-  );
-}
-
-function testBikeHandoverIsZeroValueHistory() {
-  const evaluation =
-    buildOrderSaleIncentiveCandidates({
-      snapshot: {
-        order: createPaidOrder({
-          handoverConfirmedAt:
-            "2026-07-21T10:00:00.000Z"
-        }),
-        purchaseConfirmation:
-          createCompletedConfirmation(),
-        items: [createVehicleItem()]
-      },
-      plan,
-      triggerSource: "HANDOVER_TEST"
-    });
-
-  assert.strictEqual(evaluation.eligible, true);
-
-  const events = evaluation.candidates.filter(
-    (event) => event.incentiveType === "BIKE"
-  );
-
-  assert.strictEqual(events.length, 2);
-
-  const sale = events.find(
-    (event) => event.earningStage === "SALE"
-  );
-
-  const handover = events.find(
-    (event) => event.earningStage === "HANDOVER"
-  );
-
-  assert(sale);
-  assert(handover);
-  assert.strictEqual(sale.finalAmount, 600);
-  assert.strictEqual(handover.calculatedAmount, 0);
-  assert.strictEqual(handover.finalAmount, 0);
-  assert.strictEqual(handover.assignedRatio, 1);
-}
-
-function testSharedBikeHandoverSplitsSeventyThirty() {
-  const evaluation =
-    buildOrderSaleIncentiveCandidates({
-      snapshot: {
-        order: createPaidOrder({
-          salesSupportStaffId: 9,
-          salesSupportStaffName: "李協助",
-          handoverConfirmedAt:
-            "2026-07-21T10:00:00.000Z"
-        }),
-        purchaseConfirmation:
-          createCompletedConfirmation(),
-        items: [createVehicleItem()]
-      },
-      plan,
-      triggerSource: "SHARED_HANDOVER_TEST"
-    });
-
-  assert.strictEqual(evaluation.eligible, true);
-
-  const events = evaluation.candidates.filter(
-    (event) => event.earningStage === "HANDOVER"
-  );
-
-  assert.strictEqual(events.length, 2);
-
-  const primary = events.find(
-    (event) => event.staffUserId === 8
-  );
-
-  const support = events.find(
-    (event) => event.staffUserId === 9
-  );
-
-  assert(primary);
-  assert(support);
-
-  assert.strictEqual(primary.assignedRatio, 0.7);
-  assert.strictEqual(primary.finalAmount, 0);
-
-  assert.strictEqual(support.assignedRatio, 0.3);
-  assert.strictEqual(support.finalAmount, 0);
-
-  assert.strictEqual(
-    primary.finalAmount + support.finalAmount,
-    0
-  );
-}
-
-function testBikeFollowupIsZeroValueHistory() {
-  const evaluation =
-    buildOrderSaleIncentiveCandidates({
-      snapshot: {
-        order: createPaidOrder({
-          handoverConfirmedAt:
-            "2026-07-21T10:00:00.000Z"
-        }),
-        purchaseConfirmation:
-          createCompletedConfirmation(),
-        orderSalesFollowup: {
-          id: 71,
-          status: "COMPLETED",
-          contactMethod: "LINE",
-          customerResult: "NO_ISSUE",
-          employeeCausedIssue: 0,
-          unresolvedEmployeeIssue: 0,
-          completedByStaffId: 8,
-          completedAt:
-            "2026-07-22T10:00:00.000Z"
-        },
-        items: [createVehicleItem()]
-      },
-      plan,
-      triggerSource: "FOLLOWUP_TEST"
-    });
-
-  const bikeEvents =
-    evaluation.candidates.filter(
-      (event) => event.incentiveType === "BIKE"
-    );
-
-  assert.strictEqual(bikeEvents.length, 3);
-
-  const followup = bikeEvents.find(
-    (event) => event.earningStage === "FOLLOWUP"
-  );
-
-  assert(followup);
-  assert.strictEqual(followup.calculatedAmount, 0);
-  assert.strictEqual(followup.finalAmount, 0);
-  assert.strictEqual(followup.assignedRatio, 1);
-}
-
-function testSharedBikeFollowupSplitsSeventyThirty() {
-  const evaluation =
-    buildOrderSaleIncentiveCandidates({
-      snapshot: {
-        order: createPaidOrder({
-          salesSupportStaffId: 9,
-          salesSupportStaffName: "李協助",
-          handoverConfirmedAt:
-            "2026-07-21T10:00:00.000Z"
-        }),
-        purchaseConfirmation:
-          createCompletedConfirmation(),
-        orderSalesFollowup: {
-          id: 72,
-          status: "COMPLETED",
-          contactMethod: "PHONE",
-          customerResult: "ISSUE_RESOLVED",
-          unresolvedEmployeeIssue: 0,
-          completedByStaffId: 8,
-          completedAt:
-            "2026-07-22T10:00:00.000Z"
-        },
-        items: [createVehicleItem()]
-      },
-      plan,
-      triggerSource:
-        "SHARED_FOLLOWUP_TEST"
-    });
-
-  const events = evaluation.candidates.filter(
-    (event) => event.earningStage === "FOLLOWUP"
-  );
-
-  assert.strictEqual(events.length, 2);
-
-  const primary = events.find(
-    (event) => event.staffUserId === 8
-  );
-
-  const support = events.find(
-    (event) => event.staffUserId === 9
-  );
-
-  assert(primary);
-  assert(support);
-
-  assert.strictEqual(primary.assignedRatio, 0.7);
-  assert.strictEqual(primary.finalAmount, 0);
-
-  assert.strictEqual(support.assignedRatio, 0.3);
-  assert.strictEqual(support.finalAmount, 0);
-
-  assert.strictEqual(
-    primary.finalAmount + support.finalAmount,
-    0
   );
 }
 
@@ -921,8 +677,9 @@ async function testReconciliationUsesIdempotentKeys() {
   const dependencies = {
     async loadOrderSaleIncentiveSnapshot() {
       return {
-        order: createPaidOrder(),
+        order: createPaidOrder({ handoverConfirmedAt: "2026-07-21T10:00:00.000Z" }),
         purchaseConfirmation: createCompletedConfirmation(),
+        orderSalesFollowup: { id: 71, status: "COMPLETED", customerResult: "NO_ISSUE", unresolvedEmployeeIssue: 0, completedAt: "2026-07-22T10:00:00.000Z" },
         items: [createVehicleItem(), createAccessoryItem()]
       };
     },
@@ -970,15 +727,10 @@ async function run() {
   testPurchaseConfirmationCompletion();
   testAccessoryEarnsAfterPaymentWithoutConfirmation();
   testBikeWaitsForPurchaseConfirmation();
-  testBikeEarns600PerVehicle();
+  testBikePaysOnlyAfterAllStages();
   testDiscountAllocation();
   testAccessoryUsesDiscountedAmount();
-  testSharedBikeSaleSplitsSeventyThirty();
   testSharedAccessorySplitsSeventyThirty();
-  testBikeHandoverIsZeroValueHistory();
-  testSharedBikeHandoverSplitsSeventyThirty();
-  testBikeFollowupIsZeroValueHistory();
-  testSharedBikeFollowupSplitsSeventyThirty();
   testIneligibleBikeFollowupsEarnNothing();
   testUnpaidOrderEarnsNothing();
   testRepairOrderAccessoriesIncluded();

@@ -28,6 +28,7 @@ const INCENTIVE_TYPES = new Set([
 ]);
 
 const EARNING_STAGES = new Set([
+  "ALL_STAGES",
   "SALE",
   "HANDOVER",
   "FOLLOWUP",
@@ -143,6 +144,8 @@ function mapPlanRow(row) {
     storeId: Number(row.storeId),
     version: row.version,
     status: row.status,
+    bikeTotalAmount: Number(row.bikeTotalAmount ?? 600),
+    payoutMode: row.payoutMode || "ALL_STAGES_COMPLETED",
     bikeSaleAmount: Number(row.bikeSaleAmount),
     bikeHandoverAmount: Number(row.bikeHandoverAmount),
     bikeFollowupAmount: Number(row.bikeFollowupAmount),
@@ -175,6 +178,7 @@ function mapEventRow(row) {
     sourceType: row.sourceType,
     sourceId: Number(row.sourceId),
     sourceLineId: Number(row.sourceLineId || 0),
+    sourceUnitKey: row.sourceUnitKey || "",
     productId:
       row.productId === null || row.productId === undefined
         ? null
@@ -218,6 +222,8 @@ async function getActiveIncentivePlan(
         store_id AS storeId,
         version,
         status,
+        bike_total_amount AS bikeTotalAmount,
+        payout_mode AS payoutMode,
         bike_sale_amount AS bikeSaleAmount,
         bike_handover_amount AS bikeHandoverAmount,
         bike_followup_amount AS bikeFollowupAmount,
@@ -313,6 +319,7 @@ async function readIncentiveEventById(
         e.source_type AS sourceType,
         e.source_id AS sourceId,
         e.source_line_id AS sourceLineId,
+        e.source_unit_key AS sourceUnitKey,
         e.product_id AS productId,
         e.product_name_snapshot AS productNameSnapshot,
         e.quantity,
@@ -386,6 +393,7 @@ function normalizeEventPayload(input) {
       "來源明細",
       0
     ),
+    sourceUnitKey: String(input.sourceUnitKey || "").trim().slice(0, 191),
     productId: normalizeOptionalPositiveId(
       input.productId,
       "商品"
@@ -443,6 +451,7 @@ async function upsertIncentiveEvent(connection, input) {
         AND source_type = ?
         AND source_id = ?
         AND source_line_id = ?
+        AND source_unit_key = ?
       LIMIT 1
       FOR UPDATE
     `,
@@ -453,7 +462,8 @@ async function upsertIncentiveEvent(connection, input) {
       event.earningStage,
       event.sourceType,
       event.sourceId,
-      event.sourceLineId
+      event.sourceLineId,
+      event.sourceUnitKey
     ]
   );
 
@@ -538,6 +548,7 @@ async function upsertIncentiveEvent(connection, input) {
         source_type,
         source_id,
         source_line_id,
+        source_unit_key,
         product_id,
         product_name_snapshot,
         quantity,
@@ -553,7 +564,7 @@ async function upsertIncentiveEvent(connection, input) {
       )
       VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `,
     [
@@ -565,6 +576,7 @@ async function upsertIncentiveEvent(connection, input) {
       event.sourceType,
       event.sourceId,
       event.sourceLineId,
+      event.sourceUnitKey,
       event.productId,
       event.productNameSnapshot,
       event.quantity,
@@ -686,6 +698,7 @@ async function listIncentiveEvents(
         e.source_type AS sourceType,
         e.source_id AS sourceId,
         e.source_line_id AS sourceLineId,
+        e.source_unit_key AS sourceUnitKey,
         e.product_id AS productId,
         e.product_name_snapshot AS productNameSnapshot,
         e.quantity,

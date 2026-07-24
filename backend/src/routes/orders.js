@@ -59,7 +59,8 @@ const {
 } = require("../services/staffIncentiveEarningService");
 const {
   getOrderSalesFollowup,
-  saveOrderSalesFollowup
+  saveOrderSalesFollowup,
+  addOrderSalesFollowupAttempt
 } = require("../services/orderSalesFollowupService");
 
 
@@ -1113,6 +1114,22 @@ router.get(
     } catch (error) {
       return next(error);
     }
+  }
+);
+
+router.post(
+  "/:id/sales-followup/attempts",
+  requireOrderManagementFeature,
+  async (req, res, next) => {
+    try {
+      const orderId = Number(req.params.id);
+      const staffUserId = Number(req.user?.id || 0);
+      if (!Number.isSafeInteger(orderId) || orderId <= 0) throw createError("找不到訂單", 404);
+      const followup = await withTransaction((connection) =>
+        addOrderSalesFollowupAttempt(orderId, req.storeId, req.body || {}, staffUserId, connection)
+      );
+      return res.status(201).json({ message: "聯絡紀錄已新增", followup });
+    } catch (error) { return next(error); }
   }
 );
 

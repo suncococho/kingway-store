@@ -8,16 +8,19 @@ const {
   calculateRepairInspectionIncentive
 } = require("../src/services/staffIncentiveCalculator");
 
+const bikeAllStages = calculateBikeStageIncentive({ stage: "ALL_STAGES" });
 const bikeSale = calculateBikeStageIncentive({ stage: "SALE" });
 const bikeHandover = calculateBikeStageIncentive({ stage: "HANDOVER" });
 const bikeFollowup = calculateBikeStageIncentive({ stage: "FOLLOWUP" });
 
-assert.strictEqual(bikeSale.finalAmount, 600);
+assert.strictEqual(bikeAllStages.finalAmount, 600);
+assert.strictEqual(bikeSale.finalAmount, 0);
 assert.strictEqual(bikeHandover.finalAmount, 0);
 assert.strictEqual(bikeFollowup.finalAmount, 0);
 
 assert.strictEqual(
-  bikeSale.finalAmount +
+  bikeAllStages.finalAmount +
+    bikeSale.finalAmount +
     bikeHandover.finalAmount +
     bikeFollowup.finalAmount,
   600
@@ -34,7 +37,7 @@ assert.deepStrictEqual(sharedBike, {
 
 assert.strictEqual(
   calculateBikeStageIncentive({
-    stage: "SALE",
+    stage: "ALL_STAGES",
     assignedRatio: 0.7
   }).finalAmount,
   420
@@ -42,7 +45,7 @@ assert.strictEqual(
 
 assert.strictEqual(
   calculateBikeStageIncentive({
-    stage: "SALE",
+    stage: "ALL_STAGES",
     assignedRatio: 0.3
   }).finalAmount,
   180

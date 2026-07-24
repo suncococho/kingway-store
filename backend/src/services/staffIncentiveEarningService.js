@@ -353,7 +353,11 @@ function isOrderSalesFollowupEligible(
     Boolean(completedAt) &&
     (
       customerResult === "NO_ISSUE" ||
-      customerResult === "ISSUE_RESOLVED"
+      customerResult === "ISSUE_RESOLVED" ||
+      (customerResult === "NO_RESPONSE" &&
+       Boolean(source.noResponseApprovedBy ?? source.no_response_approved_by) &&
+       Boolean(source.noResponseApprovedAt ?? source.no_response_approved_at) &&
+       Boolean(String(source.noResponseApprovalReason ?? source.no_response_approval_reason ?? "").trim()))
     ) &&
     !unresolvedEmployeeIssue
   );
@@ -449,55 +453,48 @@ function buildRepairInspectionCandidate({
   };
 }
 
-function buildBikeSaleCandidate({
-  order,
-  item,
-  plan,
-  triggerSource,
-  confirmation
+function buildBikeAllStagesCandidate({
+  order, item, unitIndex, plan, triggerSource, confirmation, followup
 }) {
-  const quantity = normalizeQuantity(item.quantity);
   const calculation = calculateBikeStageIncentive({
-    stage: "SALE",
-    assignedRatio: 1,
-    plan
+    stage: "ALL_STAGES", assignedRatio: 1, plan
   });
-  const calculatedAmount = normalizeMoney(calculation.baseAmount * quantity);
-  const finalAmount = normalizeMoney(calculation.finalAmount * quantity);
-
+  const vehicleUnitIndex = Number(unitIndex);
+  const orderItemId = normalizePositiveId(item.id);
+  const sourceUnitKey = `ORDER:${String(order.id)}:ITEM:${String(orderItemId)}:UNIT:${String(vehicleUnitIndex)}`;
   return {
     storeId: normalizePositiveId(order.storeId),
     staffUserId: normalizePositiveId(order.salesStaffId),
     planVersionId: normalizePositiveId(plan.id),
     incentiveType: "BIKE",
-    earningStage: "SALE",
+    earningStage: "ALL_STAGES",
     sourceType: "ORDER_ITEM",
     sourceId: normalizePositiveId(order.id),
-    sourceLineId: normalizePositiveId(item.id),
+    sourceLineId: orderItemId,
+    sourceUnitKey,
     productId: normalizePositiveId(item.productId),
-    productNameSnapshot:
-      item.productNameSnapshot || item.name || null,
-    quantity,
-    actualSaleAmount: normalizeMoney(item.lineTotal),
+    productNameSnapshot: item.productNameSnapshot || item.name || null,
+    quantity: 1,
+    actualSaleAmount: normalizeMoney(normalizeMoney(item.lineTotal) / normalizeQuantity(item.quantity)),
     rate: 0,
-    calculatedAmount,
+    calculatedAmount: normalizeMoney(calculation.baseAmount),
     assignedRatio: 1,
-    finalAmount,
+    finalAmount: normalizeMoney(calculation.finalAmount),
     status: "EARNED",
     metadata: {
-      triggerSource,
-      orderId: Number(order.id),
-      orderItemId: Number(item.id),
+      triggerSource, orderId: Number(order.id), orderItemId, vehicleUnitIndex,
+      sourceUnitKey, vehiclePayoutKey: sourceUnitKey, payoutMode: "ALL_STAGES_COMPLETED",
       purchaseConfirmationId: normalizePositiveId(confirmation?.id),
       purchaseConfirmationCompleted: true,
-      vehicleCategorySnapshot:
-        item.productCategorySnapshot || item.category || null,
+      handoverConfirmedAt: order.handoverConfirmedAt ?? order.handover_confirmed_at ?? null,
+      orderSalesFollowupId: normalizePositiveId(followup?.id),
+      followupCompletedAt: followup?.completedAt ?? followup?.completed_at ?? null,
+      vehicleCategorySnapshot: item.productCategorySnapshot || item.category || null,
       vehicleMasterCategory: item.masterCategory || null,
       vehicleSku: item.skuSnapshot || item.sku || null
     }
   };
 }
-
 function buildBikeHandoverCandidate({
   order,
   item,
@@ -785,66 +782,19 @@ function buildOrderSaleIncentiveCandidates({
     };
   }
 
-  if (isPurchaseConfirmationComplete(confirmation)) {
+  const salesFollowup = snapshot.orderSalesFollowup || snapshot.salesFollowup || null;
+
+  if (
+    isPurchaseConfirmationComplete(confirmation) &&
+    isOrderHandoverComplete(order) &&
+    isOrderSalesFollowupEligible(salesFollowup)
+  ) {
     for (const item of items.filter(isVehicleItem)) {
-      const candidate = buildBikeSaleCandidate({
-        order,
-        item,
-        plan,
-        triggerSource,
-        confirmation
-      });
-
-      candidates.push(
-        ...splitCandidateBySalesAssignments(
-          candidate,
-          order
-        )
-      );
-
-      if (isOrderHandoverComplete(order)) {
-        const handoverCandidate =
-          buildBikeHandoverCandidate({
-            order,
-            item,
-            plan,
-            triggerSource,
-            confirmation
-          });
-
-        candidates.push(
-          ...splitCandidateBySalesAssignments(
-            handoverCandidate,
-            order
-          )
-        );
-
-        const salesFollowup =
-          snapshot.orderSalesFollowup ||
-          snapshot.salesFollowup ||
-          null;
-
-        if (
-          isOrderSalesFollowupEligible(
-            salesFollowup
-          )
-        ) {
-          const followupCandidate =
-            buildBikeFollowupCandidate({
-              order,
-              item,
-              plan,
-              triggerSource,
-              followup: salesFollowup
-            });
-
-          candidates.push(
-            ...splitCandidateBySalesAssignments(
-              followupCandidate,
-              order
-            )
-          );
-        }
+      for (let unitIndex = 1; unitIndex <= normalizeQuantity(item.quantity); unitIndex += 1) {
+        const candidate = buildBikeAllStagesCandidate({
+          order, item, unitIndex, plan, triggerSource, confirmation, followup: salesFollowup
+        });
+        candidates.push(...splitCandidateBySalesAssignments(candidate, order));
       }
     }
   }
@@ -1037,6 +987,9 @@ async function loadOrderSaleIncentiveSnapshot(connection, storeId, orderId) {
           completed_by_staff_name
             AS completedByStaffName,
           completed_at AS completedAt,
+          no_response_approved_by AS noResponseApprovedBy,
+          no_response_approved_at AS noResponseApprovedAt,
+          no_response_approval_reason AS noResponseApprovalReason,
           created_at AS createdAt,
           updated_at AS updatedAt
         FROM order_sales_followups
@@ -1095,6 +1048,32 @@ async function reconcileOrderSaleIncentives({
     plan,
     triggerSource
   });
+
+  if (isExcludedOrder(snapshot.order)) {
+    await connection.query(
+      `UPDATE staff_incentive_events
+       SET status = 'VOID',
+           void_reason = 'ORDER_CANCELED_OR_FULLY_REFUNDED',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE store_id = ? AND source_id = ?
+         AND incentive_type IN ('BIKE', 'ACCESSORY')
+         AND status IN ('PENDING', 'EARNED')`,
+      [storeId, orderId]
+    );
+    const [lockedRows] = await connection.query(
+      `SELECT id, status FROM staff_incentive_events
+       WHERE store_id = ? AND source_id = ?
+         AND incentive_type IN ('BIKE', 'ACCESSORY')
+         AND status IN ('APPROVED', 'PAID')`,
+      [storeId, orderId]
+    );
+    return {
+      ...evaluation,
+      results: [],
+      managerAdjustmentRequired: lockedRows.length > 0,
+      lockedEvents: lockedRows
+    };
+  }
 
   if (!evaluation.eligible) {
     return { ...evaluation, results: [] };

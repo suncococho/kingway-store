@@ -2,6 +2,8 @@ const assert = require("assert");
 
 const {
   normalizeFollowupPayload,
+  normalizeAttemptedAt,
+  addOrderSalesFollowupAttempt,
   saveOrderSalesFollowup
 } = require(
   "../src/services/orderSalesFollowupService"
@@ -22,6 +24,16 @@ function expectError(fn, messagePart) {
     error.message.includes(messagePart),
     error.message
   );
+}
+
+function testAttemptedAtValidation() {
+  const dayjs = require("dayjs");
+  const now = dayjs("2026-07-25T12:00:00+08:00");
+  assert.strictEqual(normalizeAttemptedAt("2026-07-25T10:00:00", "2026-07-25T00:00:00.000Z", now), "2026-07-25 02:00:00");
+  assert.strictEqual(normalizeAttemptedAt(undefined, "2026-07-25T00:00:00.000Z", now), "2026-07-25 04:00:00");
+  expectError(() => normalizeAttemptedAt("2026-07-25T13:00:00", "2026-07-25T00:00:00.000Z", now), "晚於現在");
+  expectError(() => normalizeAttemptedAt("2026-07-25T07:00:00", "2026-07-25T00:00:01.000Z", now), "早於交車");
+  expectError(() => normalizeAttemptedAt("2026-07-22T11:59:59", "2026-07-20T00:00:00.000Z", now), "72 小時");
 }
 
 function testCompletedRequiresContactMethod() {
@@ -141,7 +153,9 @@ function testUnresolvedRequiresEmployeeCause() {
 }
 
 function createSaveMockConnection({
-  handoverConfirmedAt
+  handoverConfirmedAt,
+  actorRole = "ADMIN",
+  attemptRows = []
 }) {
   const queries = [];
   let savedRow = null;
@@ -172,8 +186,22 @@ function createSaveMockConnection({
       ) {
         return [[{
           id: 100,
-          handoverConfirmedAt
+          handoverConfirmedAt,
+          salesStaffId: 8,
+          salesSupportStaffId: null
         }]];
+      }
+
+      if (normalizedSql.includes("FROM staff_users")) {
+        return [[{ id: 8, role: actorRole }]];
+      }
+
+      if (normalizedSql.includes("SELECT id FROM order_sales_followups")) {
+        return [[]];
+      }
+
+      if (normalizedSql.includes("FROM order_sales_followup_attempts")) {
+        return [attemptRows];
       }
 
       if (
@@ -196,7 +224,10 @@ function createSaveMockConnection({
           completedAt:
             "2026-07-22T10:00:00.000Z",
           createdByStaffId: params[11],
-          updatedByStaffId: params[12]
+          updatedByStaffId: params[12],
+          noResponseApprovedBy: params[13] || savedRow?.noResponseApprovedBy || null,
+          noResponseApprovedAt: params[13] ? "2026-07-25T04:00:00.000Z" : savedRow?.noResponseApprovedAt || null,
+          noResponseApprovalReason: params[15] || savedRow?.noResponseApprovalReason || null
         };
 
         return [{
@@ -335,7 +366,53 @@ async function testCompletedFollowupIsSaved() {
   );
 }
 
+async function testNoResponseApprovalRules() {
+  const payload = { status: "COMPLETED", contactMethod: "LINE", customerResult: "NO_RESPONSE", noResponseApprovalReason: "已依規定聯絡兩次" };
+  const attempt = async (options) => {
+    let error;
+    try { await saveOrderSalesFollowup(100, 1, payload, 8, "管理員", createSaveMockConnection({ handoverConfirmedAt: "2026-07-24T00:00:00.000Z", ...options })); } catch (caught) { error = caught; }
+    return error;
+  };
+  let error = await attempt({ attemptRows: [{ id: 1, attemptedAt: "2026-07-25T01:00:00.000Z" }] });
+  assert.strictEqual(error.statusCode, 409);
+  error = await attempt({ attemptRows: [{ id: 1, attemptedAt: "2026-07-25T01:00:00.000Z" }, { id: 2, attemptedAt: "2026-07-25T06:59:59.000Z" }] });
+  assert.strictEqual(error.statusCode, 409);
+
+  const connection = createSaveMockConnection({ handoverConfirmedAt: "2026-07-24T00:00:00.000Z", actorRole: "ADMIN", attemptRows: [{ id: 1, attemptedAt: "2026-07-25T01:00:00.000Z" }, { id: 2, attemptedAt: "2026-07-25T07:00:00.000Z" }] });
+  const approved = await saveOrderSalesFollowup(100, 1, payload, 8, "管理員", connection);
+  assert.strictEqual(approved.status, "COMPLETED");
+  assert.strictEqual(approved.customerResult, "NO_RESPONSE");
+  assert.strictEqual(approved.noResponseApprovedBy, 8);
+  assert(approved.noResponseApprovedAt);
+  assert.strictEqual(approved.noResponseApprovalReason, "已依規定聯絡兩次");
+
+  const ordinary = await saveOrderSalesFollowup(100, 1, { status: "COMPLETED", contactMethod: "PHONE", customerResult: "NO_ISSUE" }, 8, "管理員", connection);
+  assert.strictEqual(ordinary.noResponseApprovedBy, 8);
+  assert.strictEqual(ordinary.noResponseApprovalReason, "已依規定聯絡兩次");
+}
+
+async function testDuplicateClientRequestIdIsIdempotent() {
+  const seen = new Set();
+  let rowCount = 0;
+  const connection = { async query(sql, params = []) {
+    const text = String(sql).replace(/\s+/g, " ").trim();
+    if (text.includes("INFORMATION_SCHEMA.TABLES")) return [[{ existsFlag: 1 }]];
+    if (text.includes("FROM orders")) return [[{ id: 100, handoverConfirmedAt: "2026-07-24T00:00:00.000Z", salesStaffId: 8, salesSupportStaffId: null }]];
+    if (text.includes("FROM staff_users")) return [[{ id: 8, role: "STAFF" }]];
+    if (text.includes("SELECT id FROM order_sales_followups")) return [[]];
+    if (text.includes("INSERT INTO order_sales_followup_attempts")) { if (!seen.has(params[3])) { seen.add(params[3]); rowCount += 1; } return [{ affectedRows: 1, insertId: 61 }]; }
+    if (text.includes("FROM order_sales_followups")) return [[{ id: 51, storeId: 1, orderId: 100, status: "PENDING" }]];
+    if (text.includes("FROM order_sales_followup_attempts")) return [[{ id: 61, clientRequestId: [...seen][0], staffUserId: 8 }]];
+    throw new Error(`Unexpected query: `);
+  } };
+  const payload = { clientRequestId: "123e4567-e89b-42d3-a456-426614174000", contactMethod: "LINE", result: "NO_RESPONSE" };
+  await addOrderSalesFollowupAttempt(100, 1, payload, 8, connection);
+  await addOrderSalesFollowupAttempt(100, 1, payload, 8, connection);
+  assert.strictEqual(rowCount, 1);
+}
+
 async function run() {
+  testAttemptedAtValidation();
   testCompletedRequiresContactMethod();
   testCompletedRequiresCustomerResult();
   testCompletedRequiresStaff();
@@ -344,6 +421,8 @@ async function run() {
   testUnresolvedRequiresEmployeeCause();
   await testCannotCompleteBeforeHandover();
   await testCompletedFollowupIsSaved();
+  await testNoResponseApprovalRules();
+  await testDuplicateClientRequestIdIsIdempotent();
 
   console.log(
     "order sales follow-up service tests passed"
