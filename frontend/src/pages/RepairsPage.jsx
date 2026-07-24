@@ -60,6 +60,23 @@ function getEstimateTone(row) {
   return "neutral";
 }
 
+const WARRANTY_REVIEW_LABELS = {
+  PENDING_HEADQUARTERS: "等待總公司判定",
+  NEED_MORE_INFORMATION: "需補充資料",
+  APPROVED: "保固核准",
+  REJECTED: "保固不成立"
+};
+
+function getWarrantyReviewStatus(row) {
+  return String(row?.warrantyReviewStatus || "NOT_REQUESTED").toUpperCase();
+}
+
+function getWarrantyReviewTone(status) {
+  if (status === "APPROVED") return "success";
+  if (status === "REJECTED") return "danger";
+  return "warning";
+}
+
 function getRepairStatusTone(status) {
   if (["repairing", "in_progress"].includes(String(status || "").trim())) {
     return "warning";
@@ -242,6 +259,11 @@ function RepairsPage() {
     { key: "REPAIRING", label: "維修中" },
     { key: "COMPLETED", label: "已完成待取車" },
     { key: "PICKED_UP", label: "已取車" },
+    { key: "WARRANTY_PENDING", label: "保固審查中" },
+    { key: "WARRANTY_HQ", label: "等待總公司判定" },
+    { key: "WARRANTY_MORE_INFO", label: "需補充資料" },
+    { key: "WARRANTY_APPROVED", label: "保固核准" },
+    { key: "WARRANTY_REJECTED", label: "保固不成立" },
     { key: "CREATE", label: "新增預約" },
     { key: "GUIDE", label: "維修須知" }
   ];
@@ -464,6 +486,12 @@ function RepairsPage() {
       if (tab === "PICKED_UP") {
         return item.status === "picked_up";
       }
+      const warrantyStatus = getWarrantyReviewStatus(item);
+      if (tab === "WARRANTY_PENDING") return ["PENDING_HEADQUARTERS", "NEED_MORE_INFORMATION"].includes(warrantyStatus);
+      if (tab === "WARRANTY_HQ") return warrantyStatus === "PENDING_HEADQUARTERS";
+      if (tab === "WARRANTY_MORE_INFO") return warrantyStatus === "NEED_MORE_INFORMATION";
+      if (tab === "WARRANTY_APPROVED") return warrantyStatus === "APPROVED";
+      if (tab === "WARRANTY_REJECTED") return warrantyStatus === "REJECTED";
       return true;
     });
   }, [rows, searchTerm, tab]);
@@ -678,6 +706,8 @@ function RepairsPage() {
           <StatusBadge tone={row.surveyId ? "info" : "neutral"}>{row.surveyLabel}</StatusBadge>
           <StatusBadge tone={getQuoteConfirmationTone(row.quoteConfirmationStatus)}>{row.quoteConfirmationLabel}</StatusBadge>
           <StatusBadge tone={getRepairConfirmationTone(row.repairConfirmationStatus)}>{row.repairConfirmationLabel}</StatusBadge>
+          {WARRANTY_REVIEW_LABELS[getWarrantyReviewStatus(row)] ? <StatusBadge tone={getWarrantyReviewTone(getWarrantyReviewStatus(row))}>{WARRANTY_REVIEW_LABELS[getWarrantyReviewStatus(row)]}</StatusBadge> : null}
+          {row.warrantyPartName ? <span className="muted-text">審查零件：{row.warrantyPartName}</span> : null}
           {row.attachmentCount ? <StatusBadge tone="info">附件 {row.attachmentCount}</StatusBadge> : null}
         </div>
       ),
@@ -966,7 +996,9 @@ function RepairsPage() {
                 <StatusBadge tone={row.completedAt ? "success" : "neutral"}>{row.completionNoticeLabel}</StatusBadge>
                 <StatusBadge tone={row.surveyId ? "info" : "neutral"}>{row.surveyLabel}</StatusBadge>
                 <StatusBadge tone={getRepairConfirmationTone(row.repairConfirmationStatus)}>{row.repairConfirmationLabel}</StatusBadge>
-                {row.attachmentCount ? <StatusBadge tone="info">附件 {row.attachmentCount}</StatusBadge> : null}
+                {WARRANTY_REVIEW_LABELS[getWarrantyReviewStatus(row)] ? <StatusBadge tone={getWarrantyReviewTone(getWarrantyReviewStatus(row))}>{WARRANTY_REVIEW_LABELS[getWarrantyReviewStatus(row)]}</StatusBadge> : null}
+          {row.warrantyPartName ? <span className="muted-text">審查零件：{row.warrantyPartName}</span> : null}
+          {row.attachmentCount ? <StatusBadge tone="info">附件 {row.attachmentCount}</StatusBadge> : null}
               </>
             )}
             cardFooter={(row) => (

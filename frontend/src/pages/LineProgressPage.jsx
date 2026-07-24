@@ -15,6 +15,9 @@ import {
 
 const money = (v) => `NT$ ${Number(v || 0).toLocaleString()}`;
 
+const WARRANTY_LABELS = { PENDING_HEADQUARTERS: "等待總公司判定", NEED_MORE_INFORMATION: "需補充資料", APPROVED: "保固核准", REJECTED: "保固不成立", CANCELED: "已取消" };
+const isWarrantyPending = (repair) => ["PENDING_HEADQUARTERS", "NEED_MORE_INFORMATION"].includes(String(repair?.warrantyReviewStatus || "NOT_REQUESTED").toUpperCase());
+
 function normalizeText(value) {
   return String(value || "").trim();
 }
@@ -435,8 +438,9 @@ export default function LineProgressPage() {
                         <Row label="車款" value={r.bikeModel || "-"} />
                         <Row label="問題" value={r.issueDescription || "-"} />
                         <RepairSteps status={r.status} />
+                        {String(r.warrantyReviewStatus || "NOT_REQUESTED").toUpperCase() !== "NOT_REQUESTED" ? <WarrantyProgressBlock repair={r} /> : null}
                         <Row label="維修狀態" value={formatRepairStatus(r.status)} />
-                        <Row label="報價" value={money(r.estimateAmount)} />
+                        <Row label="報價" value={isWarrantyPending(r) ? "費用待總公司判定" : money(r.estimateAmount)} />
                         <QuoteConfirmationBlock
                           repair={r}
                           submitting={Boolean(quoteSubmitting[r.id])}
@@ -462,8 +466,29 @@ export default function LineProgressPage() {
   );
 }
 
+function WarrantyProgressBlock({ repair }) {
+  const status = String(repair?.warrantyReviewStatus || "NOT_REQUESTED").toUpperCase();
+  return (
+    <NoticeBlock tone={status === "APPROVED" ? "success" : status === "REJECTED" ? "danger" : "info"}>
+      <strong>{WARRANTY_LABELS[status] || "保固審查中"}</strong>
+      <div style={{ marginTop: 8, fontWeight: 800 }}>此項目僅代表已受理保固審查，不代表免費維修已獲核准。</div>
+      {isWarrantyPending(repair) ? <>
+        <div style={{ marginTop: 8 }}>費用：待總公司判定</div>
+        <div>預估金額：尚未確定</div>
+        <div>客戶負擔：判定後另行通知或報價</div>
+        <div style={{ marginTop: 10 }}>本次送修零件仍在保固期間內，門市已完成初步檢查，現正送交總公司判定故障原因。</div>
+        <div style={{ marginTop: 8 }}>是否屬於產品本身瑕疵，或因使用、碰撞、進水、改裝及其他外部因素所造成，將以總公司最終檢查結果為準。</div>
+        <div style={{ marginTop: 8 }}>目前尚未確認為免費保固維修，也尚未產生正式維修費用。判定完成後，門市將另行通知保固結果或提供正式維修報價。</div>
+      </> : null}
+      {repair?.warrantyReviewReason ? <div style={{ marginTop: 8 }}>判定原因：{repair.warrantyReviewReason}</div> : null}
+      {repair?.warrantyCustomerNote ? <div style={{ marginTop: 8 }}>{repair.warrantyCustomerNote}</div> : null}
+    </NoticeBlock>
+  );
+}
+
 function QuoteConfirmationBlock({ repair, submitting, message, onApprove, onReject }) {
   const [expanded, setExpanded] = useState(false);
+  if (isWarrantyPending(repair)) return null;
   const status = getQuoteStatus(repair);
   const amount = Number(repair?.estimateAmount || 0);
   const showPendingActions = status === "PENDING" || status === "FAILED";

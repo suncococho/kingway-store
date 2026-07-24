@@ -41,6 +41,7 @@ const {
   getRepairConfirmationBlockReason
 } = require("../services/repairConfirmationService");
 const { suppressPickupReminder } = require("../services/repairPickupReminderService");
+const { WARRANTY_REVIEW_STATUS, assertRepairStartAllowed, normalizeWarrantyReviewStatus } = require("../services/repairWarrantyReviewService");
 const {
   assertReplacementConfirmationsComplete,
   crossCheckReplacementConfirmation,
@@ -399,6 +400,9 @@ router.get("/",  async (req, res, next) => {
           ${selectColumn(repairColumns, "ro", "status", "status", "'reserved'")},
           ${selectColumn(repairColumns, "ro", "estimate_amount", "estimateAmount", "0")},
           ${selectColumn(repairColumns, "ro", "estimate_details", "estimateDetails")},
+          ${selectColumn(repairColumns, "ro", "warranty_review_status", "warrantyReviewStatus", "'NOT_REQUESTED'")},
+          ${selectColumn(repairColumns, "ro", "warranty_part_name", "warrantyPartName", "NULL")},
+          ${selectColumn(repairColumns, "ro", "warranty_review_decided_at", "warrantyReviewDecidedAt", "NULL")},
           ${selectColumn(repairColumns, "ro", "base_fee", "baseFee", "0")},
           ${selectColumn(repairColumns, "ro", "storage_fee", "storageFee", "0")},
           ${selectColumn(repairColumns, "ro", "completed_at", "completedAt")},
@@ -1041,7 +1045,9 @@ router.get("/:id",  async (req, res, next) => {
     const quoteConfirmationStatus = latestQuoteSentLog ? "SENT" : latestQuoteFailedLog ? "FAILED" : "NOT_SENT";
 
     const quoteAccepted = isRepairQuoteAccepted({ ...rows[0], status: normalizedStatus, });
-    const canStartRepair = canStartRepairAction({ ...rows[0], status: normalizedStatus, });
+    const warrantyStatus = normalizeWarrantyReviewStatus(rows[0].warranty_review_status);
+    const warrantyAllowsRepair = warrantyStatus === WARRANTY_REVIEW_STATUS.NOT_REQUESTED || [WARRANTY_REVIEW_STATUS.APPROVED, WARRANTY_REVIEW_STATUS.REJECTED].includes(warrantyStatus);
+    const canStartRepair = warrantyAllowsRepair && canStartRepairAction({ ...rows[0], status: normalizedStatus, });
 
     return res.json({
       ...rows[0],
@@ -1372,7 +1378,17 @@ router.post("/:id/send-quote-confirmation", async (req, res, next) => {
   try {
     const storeId = req.storeId;
     await assertRepairBelongsToStore(req.params.id, storeId);
+    const [quoteRows] = await pool.query(
+      "SELECT warranty_review_status AS warrantyReviewStatus, quote_status AS quoteStatus FROM repair_orders WHERE id = ? AND store_id = ? LIMIT 1",
+      [req.params.id, storeId]
+    );
+    const isWarrantyDraft = ["APPROVED", "REJECTED"].includes(normalizeWarrantyReviewStatus(quoteRows[0]?.warrantyReviewStatus)) && quoteRows[0]?.quoteStatus === "draft";
+    if (isWarrantyDraft) {
+      await assertReplacementConfirmationsComplete(req.params.id, storeId);
+    }
     const result = await sendRepairQuoteConfirmationIfNeeded(req.params.id, storeId, req.user.id, {
+      forceSend: true,
+      finalizeDraft: true,
       source: "manual_resend"
     });
     const quoteConfirmationStatus = result.sent || result.reused ? "SENT" : result.warning ? "FAILED" : "NOT_SENT";
@@ -1693,6 +1709,13 @@ router.post("/:id/offline-complete", async (req, res, next) => {
     await connection.beginTransaction();
 
     await assertRepairBelongsToStore(req.params.id, storeId, connection);
+    const [warrantyRows] = await connection.query(
+      "SELECT warranty_review_status AS warrantyReviewStatus FROM repair_orders WHERE id = ? AND store_id = ? FOR UPDATE",
+      [req.params.id, storeId]
+    );
+    if (![WARRANTY_REVIEW_STATUS.NOT_REQUESTED, WARRANTY_REVIEW_STATUS.CANCELED].includes(normalizeWarrantyReviewStatus(warrantyRows[0]?.warrantyReviewStatus))) {
+      throw createError("保固審查維修不得使用現場完成功能，請依判定、最終報價及客戶同意流程辦理", 400);
+    }
     await assertReplacementConfirmationsComplete(req.params.id, storeId, connection);
     // REPAIRS_OFFLINE_COMPLETE_STORE_SCOPE_V1
 
@@ -1779,6 +1802,7 @@ router.post("/:id/approve", async (req, res, next) => {
         SELECT
           customer_estimate_response AS customerEstimateResponse,
           quote_status AS quoteStatus,
+          warranty_review_status AS warrantyReviewStatus,
           status,
           completed_at AS completedAt,
           picked_up_at AS pickedUpAt
@@ -1795,6 +1819,7 @@ router.post("/:id/approve", async (req, res, next) => {
     }
 
     assertRepairEditable(repairs[0]);
+    assertRepairStartAllowed(repairs[0]);
 
     if (!canStartRepairAction(repairs[0])) {
       throw createError("客戶尚未同意報價，無法開始維修", 400);

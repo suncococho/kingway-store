@@ -22,6 +22,7 @@ const {
   notifyRepairQuoteAcceptedWorkOrder
 } = require("../services/notificationEventService");
 const { saveRepairAttachment } = require("../services/repairAttachmentService");
+const { assertCustomerApprovalAllowed } = require("../services/repairWarrantyReviewService");
 const {
   REPAIR_RESERVATION_SLOT_EXPIRED_CODE,
   REPAIR_RESERVATION_SLOT_EXPIRED_MESSAGE,
@@ -455,6 +456,7 @@ async function handleLineProgressQuoteResponse(req, res, next, approved) {
           ro.estimate_amount AS estimateAmount,
           ro.customer_estimate_response AS customerEstimateResponse,
           ro.quote_status AS quoteStatus,
+          ro.warranty_review_status AS warrantyReviewStatus,
           c.name AS customerName,
           c.phone AS customerPhone,
           c.line_user_id AS lineUserId
@@ -475,6 +477,8 @@ async function handleLineProgressQuoteResponse(req, res, next, approved) {
     if (!repair) {
       return res.status(404).json({ message: "找不到您的維修單" });
     }
+
+    assertCustomerApprovalAllowed(repair);
 
     const alreadyApproved = repair.customerEstimateResponse === "approved" || repair.quoteStatus === "approved";
     const alreadyRejected = repair.customerEstimateResponse === "rejected" || repair.quoteStatus === "rejected";

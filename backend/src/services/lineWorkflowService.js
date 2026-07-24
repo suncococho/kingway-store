@@ -9,6 +9,7 @@ const {
   sendLineMessage: sendLinePushMessage
 } = require("../utils/line");
 const { createError } = require("../utils/errors");
+const { assertCustomerApprovalAllowed, assertQuoteAllowed } = require("./repairWarrantyReviewService");
 const { sanitizeLogObject } = require("../utils/logSanitizer");
 const {
   assertFutureRepairReservationSlot,
@@ -1384,6 +1385,7 @@ async function getRepairOrderForQuotation(repairId, connection = pool, storeId =
         ${hasColumn(repairColumns, "cross_check_status") ? "ro.cross_check_status" : "'PENDING'"} AS crossCheckStatus,
         ${hasColumn(repairColumns, "cross_checked_at") ? "ro.cross_checked_at" : "NULL"} AS crossCheckedAt,
         ${hasColumn(repairColumns, "customer_confirmed_at") ? "ro.customer_confirmed_at" : "NULL"} AS customerConfirmedAt,
+        ${hasColumn(repairColumns, "warranty_review_status") ? "ro.warranty_review_status" : "'NOT_REQUESTED'"} AS warrantyReviewStatus,
         ro.customer_estimate_response AS customerEstimateResponse,
         ro.customer_estimate_responded_at AS customerEstimateRespondedAt,
         ro.store_id AS storeId,
@@ -4347,6 +4349,7 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
           store_id AS storeId,
           status,
         ${hasColumn(repairColumns, "quote_status") ? "quote_status" : "'pending'"} AS quoteStatus,
+        ${hasColumn(repairColumns, "warranty_review_status") ? "warranty_review_status" : "'NOT_REQUESTED'"} AS warrantyReviewStatus,
         customer_estimate_response AS customerEstimateResponse
         FROM repair_orders
         WHERE id = ?
@@ -4361,6 +4364,8 @@ async function applyRepairEstimateCustomerResponse(repairId, approved, staffId =
     if (!repair) {
       throw createError("找不到維修工單", 404);
     }
+
+    assertCustomerApprovalAllowed(repair);
 
     const alreadyAccepted =
       approved &&
@@ -4633,6 +4638,10 @@ async function sendRepairQuoteConfirmationIfNeeded(repairId, storeId, staffId = 
     throw createError("找不到維修工單", 404);
   }
   assertRepairReadyForCustomerQuote(repairInfo);
+  const isWarrantyFinalDraft = ["APPROVED", "REJECTED"].includes(String(repairInfo.warrantyReviewStatus || "").toUpperCase()) && repairInfo.quoteStatus === "draft";
+  if (isWarrantyFinalDraft && !options.finalizeDraft) {
+    throw createError("保固最終報價需完成交叉確認後才能發送", 400);
+  }
 
   const link = buildRepairQuoteConfirmationUrl(repairInfo.id);
   const payload = buildRepairQuoteNotificationLogPayload(repairInfo, {
@@ -4769,6 +4778,7 @@ async function saveRepairEstimateDraft(repairId, estimatePayload, staffId = null
 
   const currentStatus = String(repairInfo.status || "").trim();
   const quoteStatus = String(repairInfo.quoteStatus || "").trim();
+  const warrantyFinalQuote = ["APPROVED", "REJECTED"].includes(String(repairInfo.warrantyReviewStatus || "").toUpperCase());
   const isFinalizedRepair =
     ["completed", "completed_waiting_pickup", "picked_up"].includes(currentStatus) ||
     Boolean(repairInfo.completedAt) ||
@@ -4780,6 +4790,12 @@ async function saveRepairEstimateDraft(repairId, estimatePayload, staffId = null
   }
   if (isQuoteAccepted) {
     throw createError("客戶已同意報價，無法再次修改報價草稿", 400);
+  }
+  if (warrantyFinalQuote) {
+    const [staffRows] = await connection.query("SELECT role FROM staff_users WHERE id = ? AND is_active = 1 LIMIT 1", [staffId]);
+    if (!["ADMIN", "MANAGER"].includes(String(staffRows[0]?.role || "").toUpperCase())) {
+      throw createError("僅管理員或店長可建立保固判定後的最終報價", 403);
+    }
   }
   assertRepairReadyForQuoteDraft(repairInfo);
 
@@ -4821,7 +4837,7 @@ async function saveRepairEstimateDraft(repairId, estimatePayload, staffId = null
     params.push(normalized.laborFee);
   }
   if (hasColumn(repairColumns, "quote_status")) {
-    updates.push("quote_status = 'pending'");
+    updates.push(warrantyFinalQuote ? "quote_status = 'draft'" : "quote_status = 'pending'");
   }
   if (hasColumn(repairColumns, "quote_notes")) {
     updates.push("quote_notes = ?");
@@ -4883,6 +4899,7 @@ async function saveRepairEstimateDraft(repairId, estimatePayload, staffId = null
   return {
     repairInfo,
     ...normalized,
+    warrantyFinalQuote,
     quoteCoreChanged,
     crossCheckStatus: quoteCoreChanged ? "PENDING" : repairInfo.crossCheckStatus || "PENDING"
   };
@@ -4897,6 +4914,14 @@ async function sendRepairEstimateQuotation(repairId, estimatePayload, staffId = 
   const repairInfo = await getRepairOrderForQuotation(repairId, connection, scopedStoreId);
   if (!repairInfo) {
     return null;
+  }
+
+  if (draft.warrantyFinalQuote) {
+    return {
+      totalAmount: draft.totalAmount, inspectionFee: draft.inspectionFee, partsFee: draft.partsFee, laborFee: draft.laborFee, items: draft.items,
+      finalQuoteDraft: true,
+      quoteConfirmation: { sent: false, deferred: true, message: "最終報價已建立，待交叉確認後發送" }
+    };
   }
 
   const currentStatus = String(repairInfo.status || "").trim();

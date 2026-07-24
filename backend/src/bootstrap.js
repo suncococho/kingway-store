@@ -616,6 +616,27 @@ async function ensureV2Schema() {
   await addColumnIfMissing("repair_orders", "quote_notes", "TEXT NULL");
   await addColumnIfMissing("repair_orders", "quote_items_json", "LONGTEXT NULL");
   await addColumnIfMissing("repair_orders", "customer_confirmed_at", "DATETIME NULL");
+  await addColumnIfMissing("repair_orders", "warranty_review_status", "VARCHAR(40) NOT NULL DEFAULT 'NOT_REQUESTED'");
+  await addColumnIfMissing("repair_orders", "warranty_review_requested_at", "DATETIME NULL");
+  await addColumnIfMissing("repair_orders", "warranty_review_requested_by", "BIGINT UNSIGNED NULL");
+  await addColumnIfMissing("repair_orders", "warranty_review_decided_at", "DATETIME NULL");
+  await addColumnIfMissing("repair_orders", "warranty_review_decided_by", "BIGINT UNSIGNED NULL");
+  await addColumnIfMissing("repair_orders", "warranty_review_reason", "TEXT NULL");
+  await addColumnIfMissing("repair_orders", "warranty_review_note", "TEXT NULL");
+  await addColumnIfMissing("repair_orders", "warranty_review_reference", "VARCHAR(160) NULL");
+  await addColumnIfMissing("repair_orders", "warranty_review_request_attachment_json", "LONGTEXT NULL");
+  await addColumnIfMissing("repair_orders", "warranty_review_result_attachment_json", "LONGTEXT NULL");
+  await addColumnIfMissing("repair_orders", "warranty_part_name", "VARCHAR(255) NULL");
+  await addColumnIfMissing("repair_orders", "warranty_purchase_date", "DATE NULL");
+  await addColumnIfMissing("repair_orders", "warranty_expiration_date", "DATE NULL");
+  await addColumnIfMissing("repair_orders", "warranty_purchase_proof_checked", "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumnIfMissing("repair_orders", "warranty_serial_number", "VARCHAR(180) NULL");
+  await addColumnIfMissing("repair_orders", "warranty_symptom", "TEXT NULL");
+  await addColumnIfMissing("repair_orders", "warranty_exterior_damage", "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumnIfMissing("repair_orders", "warranty_water_ingress", "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumnIfMissing("repair_orders", "warranty_collision_damage", "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumnIfMissing("repair_orders", "warranty_modified", "TINYINT(1) NOT NULL DEFAULT 0");
+  await addColumnIfMissing("repair_orders", "warranty_customer_note", "TEXT NULL");
   await addColumnIfMissing("orders", "repair_order_id", "BIGINT UNSIGNED NULL");
   await pool.query(`
     UPDATE repair_orders ro

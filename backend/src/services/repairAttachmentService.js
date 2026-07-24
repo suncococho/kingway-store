@@ -5,6 +5,7 @@ const { pool } = require("../db");
 const { createError } = require("../utils/errors");
 
 const MAX_REPAIR_ATTACHMENTS = 5;
+const MAX_REPAIR_WORKFLOW_ATTACHMENTS = 20;
 const IMAGE_SIZE_LIMIT = 10 * 1024 * 1024;
 const VIDEO_SIZE_LIMIT = 80 * 1024 * 1024;
 const storageRoot = path.join(__dirname, "..", "..", "storage");
@@ -99,15 +100,15 @@ async function listRepairAttachments(repairOrderId, storeId, connection = pool) 
   return rows.map(normalizeAttachmentRow);
 }
 
-async function countRepairAttachments(repairOrderId, storeId, connection = pool) {
+async function countRepairAttachments(repairOrderId, storeId, uploadedBy = null, connection = pool) {
+  const params = [repairOrderId, storeId];
+  const uploaderClause = uploadedBy ? " AND uploaded_by = ?" : "";
+  if (uploadedBy) params.push(uploadedBy);
   const [[row]] = await connection.query(
-    `
-      SELECT COUNT(*) AS count
-      FROM repair_order_attachments
-      WHERE repair_order_id = ?
-        AND store_id = ?
-    `,
-    [repairOrderId, storeId]
+    `SELECT COUNT(*) AS count
+     FROM repair_order_attachments
+     WHERE repair_order_id = ? AND store_id = ?${uploaderClause}`,
+    params
   );
   return Number(row?.count || 0);
 }
@@ -147,9 +148,17 @@ async function saveRepairAttachment({
   }
 
   const attachmentRule = validateAttachmentPayload(contentType, buffer);
-  const currentCount = await countRepairAttachments(scopedRepairOrderId, scopedStoreId, connection);
-  if (currentCount >= MAX_REPAIR_ATTACHMENTS) {
-    throw createError("每筆維修預約最多可上傳 5 個檔案", 400);
+  const normalizedUploadedBy = String(uploadedBy || "customer").trim() || "customer";
+  const isCustomerUpload = normalizedUploadedBy === "customer";
+  const currentCount = await countRepairAttachments(
+    scopedRepairOrderId,
+    scopedStoreId,
+    isCustomerUpload ? "customer" : null,
+    connection
+  );
+  const limit = isCustomerUpload ? MAX_REPAIR_ATTACHMENTS : MAX_REPAIR_WORKFLOW_ATTACHMENTS;
+  if (currentCount >= limit) {
+    throw createError(isCustomerUpload ? "每筆維修預約最多可上傳 5 個檔案" : "每筆維修單最多可保留 20 個附件", 400);
   }
 
   const storedName = `${crypto.randomUUID()}${attachmentRule.extension}`;
@@ -186,7 +195,7 @@ async function saveRepairAttachment({
     [
       scopedStoreId,
       scopedRepairOrderId,
-      String(uploadedBy || "customer").trim() || "customer",
+      normalizedUploadedBy,
       attachmentRule.fileType,
       sanitizeOriginalName(originalName),
       storedName,
@@ -201,7 +210,7 @@ async function saveRepairAttachment({
     id: result.insertId,
     storeId: scopedStoreId,
     repairOrderId: scopedRepairOrderId,
-    uploadedBy: String(uploadedBy || "customer").trim() || "customer",
+    uploadedBy: normalizedUploadedBy,
     fileType: attachmentRule.fileType,
     originalName: sanitizeOriginalName(originalName),
     storedName,
@@ -217,6 +226,7 @@ module.exports = {
   ALLOWED_ATTACHMENT_TYPES,
   IMAGE_SIZE_LIMIT,
   MAX_REPAIR_ATTACHMENTS,
+  MAX_REPAIR_WORKFLOW_ATTACHMENTS,
   VIDEO_SIZE_LIMIT,
   ensureRepairOrderAttachmentsSchema,
   listRepairAttachments,

@@ -49,6 +49,21 @@ function resolveLineAccessToken(config, options = {}) {
   return scopedAccessToken || config.line.channelAccessToken;
 }
 
+function isLineDeliverySuppressed() {
+  const messagingEnabled = String(process.env.LINE_MESSAGING_ENABLED || "true").trim().toLowerCase();
+  const mockMode = String(process.env.LINE_MOCK_MODE || "false").trim().toLowerCase();
+  return ["false", "0", "no", "off"].includes(messagingEnabled) || ["true", "1", "yes", "on"].includes(mockMode);
+}
+
+function logLineDryRun(deliveryType, target, messages) {
+  console.info("[line:dry-run]", {
+    deliveryType,
+    targetPresent: Boolean(target),
+    messageCount: Array.isArray(messages) ? messages.length : 0
+  });
+  return { ok: true, dryRun: true, delivered: false };
+}
+
 function buildSafeLineApiError(responseStatus, details) {
   const normalizedDetails = String(details || "").trim();
   let safeDetails = normalizedDetails;
@@ -69,6 +84,7 @@ function buildSafeLineApiError(responseStatus, details) {
 }
 
 async function sendLineReply(config, replyToken, messages, options = {}) {
+  if (isLineDeliverySuppressed()) return logLineDryRun("reply", replyToken, messages);
   const normalizedOptions = normalizeLineSendOptions(options);
   const channelAccessToken = resolveLineAccessToken(config, normalizedOptions);
 
@@ -100,6 +116,7 @@ async function sendLineReply(config, replyToken, messages, options = {}) {
 }
 
 async function sendLineMessage(config, to, messages, options = {}) {
+  if (isLineDeliverySuppressed()) return logLineDryRun("push", to, messages);
   const normalizedOptions = normalizeLineSendOptions(options);
   const channelAccessToken = resolveLineAccessToken(config, normalizedOptions);
 
@@ -135,6 +152,7 @@ module.exports = {
   normalizeLineSendOptions,
   verifyLineSignature,
   resolveLineAccessToken,
+  isLineDeliverySuppressed,
   sendLineReply,
   sendLineMessage
 };

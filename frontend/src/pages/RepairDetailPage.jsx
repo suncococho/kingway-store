@@ -5,6 +5,7 @@ import FilterBar from "../components/FilterBar";
 import PageHeader from "../components/PageHeader";
 import ProductImage from "../components/ProductImage";
 import StatusBadge from "../components/StatusBadge";
+import WarrantyReviewPanel from "../components/WarrantyReviewPanel";
 import { apiRequest } from "../lib/api";
 import { getStoredUser } from "../lib/auth";
 import { formatTaipeiDate, formatTaipeiDateTime, getCategoryLabel, getRepairStatusLabel } from "../lib/display";
@@ -973,7 +974,8 @@ function RepairDetailPage() {
     !detail.estimate_sent_at &&
     !["estimate_pending_approval", "estimate_approved", "customer_confirmed", "repairing"].includes(repairStatusValue) &&
     !["sent", "approved", "accepted"].includes(quoteStatusValue) &&
-    detail.customer_estimate_response !== "approved";
+    detail.customer_estimate_response !== "approved" &&
+    !["PENDING_HEADQUARTERS", "NEED_MORE_INFORMATION"].includes(String(detail.warranty_review_status || "NOT_REQUESTED").toUpperCase());
   const quoteAccepted = Boolean(detail.quoteAccepted) ||
     detail.customer_estimate_response === "approved" ||
     quoteStatusValue === "approved" ||
@@ -1013,6 +1015,9 @@ function RepairDetailPage() {
     replacementRows.every((item) => item.isReplaced && item.isTested && item.isStockHandled && item.crossCheckedAt);
   const currentUserCanCrossCheckQuote = canCrossCheckRepairQuote(currentUser);
 
+  const warrantyStatus = String(detail.warranty_review_status || "NOT_REQUESTED").toUpperCase();
+  const hasWarrantyReview = warrantyStatus !== "NOT_REQUESTED" && warrantyStatus !== "CANCELED";
+  const warrantyDecided = ["APPROVED", "REJECTED"].includes(warrantyStatus);
   const quoteWritten = quoteAccepted || canStartRepair || Number(detail.estimate_amount || 0) > 0;
   const repairSteps = [
     { label: "建立維修單", done: detail.reservation_status !== "pending_approval" },
@@ -1020,7 +1025,12 @@ function RepairDetailPage() {
       label: "初步診斷",
       done: diagnosisSaved
     },
-    { label: "填寫報價", done: quoteWritten },
+    ...(hasWarrantyReview ? [
+      { label: "保固審查", done: true },
+      { label: warrantyStatus === "NEED_MORE_INFORMATION" ? "需補充資料" : "等待總公司判定", done: warrantyDecided },
+      { label: warrantyStatus === "REJECTED" ? "保固不成立" : "保固核准", done: warrantyDecided }
+    ] : []),
+    { label: hasWarrantyReview ? "填寫最終報價" : "填寫報價", done: quoteWritten },
     { label: "交叉確認", done: crossCheckApproved },
     { label: "等待客戶同意", done: quoteAccepted || canStartRepair },
     { label: "維修中", done: detail.status === "repairing" || detail.status === "completed_waiting_pickup" || detail.status === "picked_up" },
@@ -1037,7 +1047,7 @@ function RepairDetailPage() {
         ? { label: "確認預約", action: () => respondReservation(true), tone: "blue" }
         : currentStep.label === "交叉確認"
           ? { label: "交叉確認", action: () => setCrossCheckModalOpen(true), tone: "blue" }
-        : currentStep.label === "填寫報價"
+        : ["填寫報價", "填寫最終報價"].includes(currentStep.label)
           ? canShowQuoteEditor
             ? { label: "儲存報價草稿", action: requestSaveEstimateDraft, tone: "blue" }
             : null
@@ -1612,6 +1622,8 @@ function RepairDetailPage() {
                   </button>
                 </div>
               ) : null}
+
+              <WarrantyReviewPanel detail={detail} repairId={id} canDecide={currentUserCanManagerCrossCheck} onUpdated={loadDetail} />
 
               {detail.reservation_status !== "pending_approval" && currentRepairAction ? (
                 <div className={`wizard-panel wizard-panel-${currentRepairAction.tone} sop-primary-action`}>
