@@ -69,6 +69,7 @@ services:
       - ./backend:/app
       - ./shared:/shared:ro
       - kingway-staging-uploads:/app/uploads
+      - /volume1/docker/kingway-store-staging-storage:/app/storage
     command: sh -c "npm install && npm start"
     networks:
       - kingway-staging-network

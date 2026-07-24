@@ -2,6 +2,11 @@
 -- 기존 420/120/60 event는 일절 수정하지 않는다.
 -- Production 실행은 backup 및 명시적 승인 후에만 허용한다.
 
+CREATE TABLE IF NOT EXISTS kingway_schema_migrations (
+  migration_key VARCHAR(190) NOT NULL PRIMARY KEY,
+  applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 START TRANSACTION;
 
 UPDATE staff_incentive_plan_versions
@@ -41,5 +46,8 @@ WHERE NOT EXISTS (
   WHERE p.store_id = s.id
     AND p.version = 'KINGWAY-2026-07-SALE600-V2'
 );
+
+INSERT IGNORE INTO kingway_schema_migrations (migration_key)
+VALUES ('20260724_activate_staff_incentive_sale600');
 
 COMMIT;

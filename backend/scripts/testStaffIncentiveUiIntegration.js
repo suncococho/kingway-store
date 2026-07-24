@@ -13,6 +13,8 @@ const permissions = read("frontend/src/lib/permissions.js");
 const page = read("frontend/src/pages/StaffIncentivesPage.jsx");
 const repairs = read("backend/src/routes/repairs.js");
 const migration = read("database/migrations/20260724_activate_staff_incentive_sale600.sql");
+const rollbackMigration = read("database/migrations/20260724_activate_staff_incentive_sale600_rollback.sql");
+const stagingCompose = read("docker-compose.staging-restore.yml");
 
 assert(
   ordersPage.includes('body: JSON.stringify({\n              status: salesFollowupForm.status'),
@@ -38,5 +40,21 @@ assert(repairs.includes('triggerSource: "REPAIR_STAFF_ASSIGNED"'), "repair staff
 assert(migration.includes("'KINGWAY-2026-07-SALE600-V2'"), "default active plan migration missing");
 assert(migration.includes("600.00") && migration.includes("0.00") && migration.includes("0.00"), "bike plan amounts missing");
 assert(migration.includes("0.100000") && migration.includes("100.00"), "accessory/repair plan values missing");
+assert(
+  migration.includes("INSERT IGNORE INTO kingway_schema_migrations (migration_key)") &&
+    migration.includes("20260724_activate_staff_incentive_sale600"),
+  "sale600 migration marker missing"
+);
+assert(
+  rollbackMigration.includes("DELETE FROM kingway_schema_migrations") &&
+    rollbackMigration.includes("AND NOT EXISTS (\n    SELECT 1\n    FROM staff_incentive_plan_versions"),
+  "sale600 rollback must remove its marker only after all V2 plans are removed"
+);
+assert(
+  stagingCompose.includes("- /volume1/docker/kingway-store-staging-storage:/app/storage") &&
+    stagingCompose.includes("- kingway-staging-uploads:/app/uploads") &&
+    stagingCompose.includes("- ./shared:/shared:ro"),
+  "staging storage/uploads/shared mounts missing"
+);
 
 console.log("staff incentive UI integration tests passed");
