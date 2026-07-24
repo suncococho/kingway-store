@@ -157,6 +157,7 @@ router.patch("/:id/warranty-review/supplement", async (req, res, next) => {
     const note = String(req.body?.note || "").trim();
     const ids = attachmentIds(req.body?.attachmentIds);
     if (!note && !ids.length) throw createError("請填寫補充說明或選擇附件", 400);
+    if (note.length > 4000) throw createError("補充說明不可超過 4000 個字元", 400);
     await connection.beginTransaction();
     const repair = await getRepairForUpdate(connection, req.params.id, req.storeId);
     assertWarrantyReviewMutable(repair);
@@ -168,7 +169,11 @@ router.patch("/:id/warranty-review/supplement", async (req, res, next) => {
        warranty_review_request_attachment_json = ?, updated_at = NOW() WHERE id = ? AND store_id = ?`,
       [note || null, JSON.stringify(ids), req.params.id, req.storeId]
     );
-    await logEvent(connection, req.params.id, "warranty_review_requested", "已補充資料並重新送審", req.user.id, { supplemented: true, attachmentIds: ids });
+    await logEvent(connection, req.params.id, "warranty_review_supplemented", "已補充資料並重新送審", req.user.id, {
+      supplemented: true,
+      supplementNote: note,
+      attachmentIds: ids
+    });
     await connection.commit();
     return res.json({ status: WARRANTY_REVIEW_STATUS.PENDING_HEADQUARTERS });
   } catch (error) {

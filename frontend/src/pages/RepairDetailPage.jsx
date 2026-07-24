@@ -8,6 +8,7 @@ import StatusBadge from "../components/StatusBadge";
 import WarrantyReviewPanel from "../components/WarrantyReviewPanel";
 import { apiRequest } from "../lib/api";
 import { getStoredUser } from "../lib/auth";
+import { isManagerOrAboveUser } from "../lib/roleAccess";
 import { formatTaipeiDate, formatTaipeiDateTime, getCategoryLabel, getRepairStatusLabel } from "../lib/display";
 
 function getStockTone(stock, reorderLevel) {
@@ -1014,6 +1015,7 @@ function RepairDetailPage() {
     !hasReplacementItems ||
     replacementRows.every((item) => item.isReplaced && item.isTested && item.isStockHandled && item.crossCheckedAt);
   const currentUserCanCrossCheckQuote = canCrossCheckRepairQuote(currentUser);
+  const currentUserCanManagerCrossCheck = isManagerOrAboveUser(currentUser);
 
   const warrantyStatus = String(detail.warranty_review_status || "NOT_REQUESTED").toUpperCase();
   const hasWarrantyReview = warrantyStatus !== "NOT_REQUESTED" && warrantyStatus !== "CANCELED";
@@ -1089,7 +1091,7 @@ function RepairDetailPage() {
         : repairConfirmationBlockReason || "系統將在維修完成且付款完成後自動發送維修確認書。";
   const attachmentRows = Array.isArray(detail.attachments) ? detail.attachments : [];
   const repairAttachmentsPanel = (
-    <section className="content-card">
+    <section className="content-card" id="repair-attachments">
       <div className="section-header">
         <div>
           <h2>客戶附件</h2>
