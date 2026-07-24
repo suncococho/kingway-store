@@ -12,9 +12,9 @@ const bikeSale = calculateBikeStageIncentive({ stage: "SALE" });
 const bikeHandover = calculateBikeStageIncentive({ stage: "HANDOVER" });
 const bikeFollowup = calculateBikeStageIncentive({ stage: "FOLLOWUP" });
 
-assert.strictEqual(bikeSale.finalAmount, 420);
-assert.strictEqual(bikeHandover.finalAmount, 120);
-assert.strictEqual(bikeFollowup.finalAmount, 60);
+assert.strictEqual(bikeSale.finalAmount, 600);
+assert.strictEqual(bikeHandover.finalAmount, 0);
+assert.strictEqual(bikeFollowup.finalAmount, 0);
 
 assert.strictEqual(
   bikeSale.finalAmount +
@@ -37,7 +37,7 @@ assert.strictEqual(
     stage: "SALE",
     assignedRatio: 0.7
   }).finalAmount,
-  294
+  420
 );
 
 assert.strictEqual(
@@ -45,7 +45,7 @@ assert.strictEqual(
     stage: "SALE",
     assignedRatio: 0.3
   }).finalAmount,
-  126
+  180
 );
 
 assert.strictEqual(isAccessoryCategory("ACCESSORY"), true);
@@ -70,12 +70,17 @@ assert.strictEqual(accessory.finalAmount, 120);
 const accessoryCustomPrice = calculateAccessoryIncentive({
   category: "AC",
   quantity: 1,
-  unitPrice: 1200,
-  lineTotal: 888,
+  unitPrice: 1000,
+  lineTotal: 800,
   isPaid: true
 });
 
-assert.strictEqual(accessoryCustomPrice.finalAmount, 88.8);
+assert.strictEqual(accessoryCustomPrice.finalAmount, 80);
+
+const accessoryQuantityTwo = calculateAccessoryIncentive({
+  category: "ACCESSORY", quantity: 2, unitPrice: 1000, lineTotal: 1600, isPaid: true
+});
+assert.strictEqual(accessoryQuantityTwo.finalAmount, 160);
 
 const sharedAccessory = calculateAccessoryIncentive({
   category: "ACCESSORY",
@@ -172,6 +177,13 @@ assert.throws(
       assignedRatio: 1.1
     }),
   RangeError
+);
+
+assert.strictEqual(
+  calculateRepairInspectionIncentive({
+    inspectionFee: 399, collectedAmount: 399, inspectionNotes: "檢查完成", isPaid: true
+  }).finalAmount,
+  0
 );
 
 console.log("staff incentive calculator tests passed");

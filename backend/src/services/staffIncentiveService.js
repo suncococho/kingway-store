@@ -434,7 +434,7 @@ async function upsertIncentiveEvent(connection, input) {
 
   const [existingRows] = await connection.query(
     `
-      SELECT id, status
+      SELECT id, status, plan_version_id AS planVersionId
       FROM staff_incentive_events
       WHERE store_id = ?
         AND staff_user_id = ?
@@ -458,6 +458,13 @@ async function upsertIncentiveEvent(connection, input) {
   );
 
   const existing = existingRows[0];
+
+  if (existing && Number(existing.planVersionId || 0) > 0 && Number(event.planVersionId || 0) > 0 && Number(existing.planVersionId) !== Number(event.planVersionId)) {
+    return {
+      action: "UNCHANGED_PLAN_TRANSITION_REQUIRES_REVIEW",
+      event: await readIncentiveEventById(connection, existing.id, event.storeId)
+    };
+  }
 
   if (existing && LOCKED_EVENT_STATUSES.has(existing.status)) {
     return {

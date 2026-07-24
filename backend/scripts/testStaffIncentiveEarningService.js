@@ -12,9 +12,9 @@ const {
 
 const plan = {
   id: 3,
-  bikeSaleAmount: 420,
-  bikeHandoverAmount: 120,
-  bikeFollowupAmount: 60,
+  bikeSaleAmount: 600,
+  bikeHandoverAmount: 0,
+  bikeFollowupAmount: 0,
   accessoryRate: 0.1,
   repairInspectionAmount: 100
 };
@@ -90,7 +90,7 @@ function testClassification() {
       productCategorySnapshot: "PT",
       masterCategory: "AC"
     }),
-    true
+    false
   );
 }
 
@@ -153,7 +153,7 @@ function testBikeWaitsForPurchaseConfirmation() {
   assert.strictEqual(evaluation.candidates.length, 0);
 }
 
-function testBikeEarns420PerVehicle() {
+function testBikeEarns600PerVehicle() {
   const evaluation = buildOrderSaleIncentiveCandidates({
     snapshot: {
       order: createPaidOrder(),
@@ -176,8 +176,8 @@ function testBikeEarns420PerVehicle() {
   assert.strictEqual(event.incentiveType, "BIKE");
   assert.strictEqual(event.earningStage, "SALE");
   assert.strictEqual(event.quantity, 2);
-  assert.strictEqual(event.calculatedAmount, 840);
-  assert.strictEqual(event.finalAmount, 840);
+  assert.strictEqual(event.calculatedAmount, 1200);
+  assert.strictEqual(event.finalAmount, 1200);
 }
 
 function testDiscountAllocation() {
@@ -270,18 +270,18 @@ function testSharedBikeSaleSplitsSeventyThirty() {
   assert(support);
 
   assert.strictEqual(primary.incentiveType, "BIKE");
-  assert.strictEqual(primary.calculatedAmount, 420);
+  assert.strictEqual(primary.calculatedAmount, 600);
   assert.strictEqual(primary.assignedRatio, 0.7);
-  assert.strictEqual(primary.finalAmount, 294);
+  assert.strictEqual(primary.finalAmount, 420);
   assert.strictEqual(
     primary.metadata.salesAssignmentRole,
     "PRIMARY"
   );
 
   assert.strictEqual(support.incentiveType, "BIKE");
-  assert.strictEqual(support.calculatedAmount, 420);
+  assert.strictEqual(support.calculatedAmount, 600);
   assert.strictEqual(support.assignedRatio, 0.3);
-  assert.strictEqual(support.finalAmount, 126);
+  assert.strictEqual(support.finalAmount, 180);
   assert.strictEqual(
     support.metadata.salesAssignmentRole,
     "SUPPORT"
@@ -289,7 +289,7 @@ function testSharedBikeSaleSplitsSeventyThirty() {
 
   assert.strictEqual(
     primary.finalAmount + support.finalAmount,
-    420
+    600
   );
 }
 
@@ -409,7 +409,7 @@ async function testSharedReconciliationCreatesSeparateEvents() {
       (sum, event) => sum + event.finalAmount,
       0
     ),
-    420
+    600
   );
 
   assert.strictEqual(
@@ -421,7 +421,7 @@ async function testSharedReconciliationCreatesSeparateEvents() {
   );
 }
 
-function testBikeHandoverEarns120() {
+function testBikeHandoverIsZeroValueHistory() {
   const evaluation =
     buildOrderSaleIncentiveCandidates({
       snapshot: {
@@ -455,9 +455,9 @@ function testBikeHandoverEarns120() {
 
   assert(sale);
   assert(handover);
-  assert.strictEqual(sale.finalAmount, 420);
-  assert.strictEqual(handover.calculatedAmount, 120);
-  assert.strictEqual(handover.finalAmount, 120);
+  assert.strictEqual(sale.finalAmount, 600);
+  assert.strictEqual(handover.calculatedAmount, 0);
+  assert.strictEqual(handover.finalAmount, 0);
   assert.strictEqual(handover.assignedRatio, 1);
 }
 
@@ -499,18 +499,18 @@ function testSharedBikeHandoverSplitsSeventyThirty() {
   assert(support);
 
   assert.strictEqual(primary.assignedRatio, 0.7);
-  assert.strictEqual(primary.finalAmount, 84);
+  assert.strictEqual(primary.finalAmount, 0);
 
   assert.strictEqual(support.assignedRatio, 0.3);
-  assert.strictEqual(support.finalAmount, 36);
+  assert.strictEqual(support.finalAmount, 0);
 
   assert.strictEqual(
     primary.finalAmount + support.finalAmount,
-    120
+    0
   );
 }
 
-function testBikeFollowupEarns60() {
+function testBikeFollowupIsZeroValueHistory() {
   const evaluation =
     buildOrderSaleIncentiveCandidates({
       snapshot: {
@@ -549,8 +549,8 @@ function testBikeFollowupEarns60() {
   );
 
   assert(followup);
-  assert.strictEqual(followup.calculatedAmount, 60);
-  assert.strictEqual(followup.finalAmount, 60);
+  assert.strictEqual(followup.calculatedAmount, 0);
+  assert.strictEqual(followup.finalAmount, 0);
   assert.strictEqual(followup.assignedRatio, 1);
 }
 
@@ -601,14 +601,14 @@ function testSharedBikeFollowupSplitsSeventyThirty() {
   assert(support);
 
   assert.strictEqual(primary.assignedRatio, 0.7);
-  assert.strictEqual(primary.finalAmount, 42);
+  assert.strictEqual(primary.finalAmount, 0);
 
   assert.strictEqual(support.assignedRatio, 0.3);
-  assert.strictEqual(support.finalAmount, 18);
+  assert.strictEqual(support.finalAmount, 0);
 
   assert.strictEqual(
     primary.finalAmount + support.finalAmount,
-    60
+    0
   );
 }
 
@@ -690,7 +690,7 @@ function testUnpaidOrderEarnsNothing() {
   assert.strictEqual(evaluation.reason, "ORDER_NOT_PAID");
 }
 
-function testRepairOrderAccessoriesExcluded() {
+function testRepairOrderAccessoriesIncluded() {
   const evaluation = buildOrderSaleIncentiveCandidates({
     snapshot: {
       order: createPaidOrder({
@@ -703,8 +703,40 @@ function testRepairOrderAccessoriesExcluded() {
     plan
   });
 
-  assert.strictEqual(evaluation.eligible, false);
-  assert.strictEqual(evaluation.reason, "REPAIR_ORDER_EXCLUDED");
+  assert.strictEqual(evaluation.eligible, true);
+  assert.strictEqual(evaluation.candidates.length, 1);
+  assert.strictEqual(evaluation.candidates[0].incentiveType, "ACCESSORY");
+  assert.strictEqual(evaluation.candidates[0].finalAmount, 100);
+}
+
+function testRepairInspectionDoesNotRequireSalesStaff() {
+  const evaluation = buildOrderSaleIncentiveCandidates({
+    snapshot: {
+      order: createPaidOrder({
+        source: "repair_quote",
+        repairOrderId: 77,
+        salesStaffId: null,
+        salesStaffName: null
+      }),
+      purchaseConfirmation: null,
+      repairOrder: {
+        id: 77,
+        repairStaffId: 9,
+        inspectionFee: 400,
+        inspectionNotes: "已完成初步檢查"
+      },
+      items: []
+    },
+    plan
+  });
+
+  assert.strictEqual(evaluation.eligible, true);
+  assert.strictEqual(evaluation.candidates.length, 1);
+  assert.strictEqual(
+    evaluation.candidates[0].incentiveType,
+    "REPAIR_INSPECTION"
+  );
+  assert.strictEqual(evaluation.candidates[0].finalAmount, 100);
 }
 
 function testOrdinaryPartsExcluded() {
@@ -938,18 +970,19 @@ async function run() {
   testPurchaseConfirmationCompletion();
   testAccessoryEarnsAfterPaymentWithoutConfirmation();
   testBikeWaitsForPurchaseConfirmation();
-  testBikeEarns420PerVehicle();
+  testBikeEarns600PerVehicle();
   testDiscountAllocation();
   testAccessoryUsesDiscountedAmount();
   testSharedBikeSaleSplitsSeventyThirty();
   testSharedAccessorySplitsSeventyThirty();
-  testBikeHandoverEarns120();
+  testBikeHandoverIsZeroValueHistory();
   testSharedBikeHandoverSplitsSeventyThirty();
-  testBikeFollowupEarns60();
+  testBikeFollowupIsZeroValueHistory();
   testSharedBikeFollowupSplitsSeventyThirty();
   testIneligibleBikeFollowupsEarnNothing();
   testUnpaidOrderEarnsNothing();
-  testRepairOrderAccessoriesExcluded();
+  testRepairOrderAccessoriesIncluded();
+  testRepairInspectionDoesNotRequireSalesStaff();
   testOrdinaryPartsExcluded();
   await testSnapshotSkipsMissingFollowupTable();
   await testSnapshotLoadsFollowupWhenTableExists();

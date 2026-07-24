@@ -22,7 +22,11 @@ assert(service.includes("staff-incentive-agreements") && service.includes("resol
 assert(service.includes("a.staff_user_id = ?") && service.includes("a.store_id = ?"), "self PDF store/staff scoping missing");
 assert(route.includes('router.post("/agreements/sign"'), "sign route missing");
 assert(route.includes('router.get("/agreements/me/pdf"'), "self PDF route missing");
-assert(route.includes('"/admin/agreements/:agreementId/pdf"') && route.includes('authorize(["ADMIN"])'), "admin PDF authorization missing");
+assert(
+  route.includes('"/admin/agreements/:agreementId/pdf"') &&
+    route.includes('authorize(["ADMIN", "MANAGER"])'),
+  "ADMIN/MANAGER agreement PDF read authorization missing"
+);
 assert(page.includes("<SignaturePad") && page.includes("AGREEMENT_CHECKS.map"), "agreement form UI missing");
 assert(page.includes("案件完成責任") && page.includes("不得虛報、代簽、倒填或提前標示完成"), "case responsibility UI text missing");
 assert(page.includes("planVersionId: selfData.plan.id"), "UI plan version binding missing");

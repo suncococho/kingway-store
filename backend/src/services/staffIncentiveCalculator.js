@@ -1,7 +1,7 @@
 const DEFAULT_INCENTIVE_PLAN = Object.freeze({
-  bikeSaleAmount: 420,
-  bikeHandoverAmount: 120,
-  bikeFollowupAmount: 60,
+  bikeSaleAmount: 600,
+  bikeHandoverAmount: 0,
+  bikeFollowupAmount: 0,
   accessoryRate: 0.1,
   repairInspectionAmount: 100,
   requiredInspectionCollection: 400

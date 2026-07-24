@@ -31,8 +31,10 @@ includes('"/admin/disputes/:id"', "admin dispute update route");
 includes('"/admin/adjustments"', "admin adjustment route");
 includes('"/admin/payouts"', "admin payout route");
 
-const adminGuardCount = (routeSource.match(/authorize\(\["ADMIN"\]\)/g) || []).length;
-assert(adminGuardCount >= 7, "all admin endpoints must use exact ADMIN authorization");
+const storeReadGuardCount = (routeSource.match(/authorize\(\["ADMIN", "MANAGER"\]\)/g) || []).length;
+const adminWriteGuardCount = (routeSource.match(/authorize\(\["ADMIN"\]\)/g) || []).length;
+assert(storeReadGuardCount >= 7, "store-wide read endpoints must allow ADMIN and MANAGER");
+assert(adminWriteGuardCount >= 1, "write endpoint must keep exact ADMIN authorization");
 assert(routeSource.includes("staffUserId: requestStaffId(req)"), "self API must use authenticated staff id");
 assert(!/req\.query\.staffUserId[\s\S]{0,180}getSelfDashboard/.test(routeSource), "self API must not accept another staff id");
 assert(routeSource.includes("withTransaction((connection) =>\n      createDispute"), "dispute creation must use transaction");

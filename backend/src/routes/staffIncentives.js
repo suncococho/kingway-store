@@ -144,7 +144,7 @@ router.post("/events/:eventId/disputes", async (req, res, next) => {
 
 router.get(
   "/admin/overview",
-  authorize(["ADMIN"]),
+  authorize(["ADMIN", "MANAGER"]),
   async (req, res, next) => {
     try {
       return res.json(
@@ -161,7 +161,7 @@ router.get(
 
 router.get(
   "/admin/events",
-  authorize(["ADMIN"]),
+  authorize(["ADMIN", "MANAGER"]),
   async (req, res, next) => {
     try {
       await assertIncentiveTablesReady(pool);
@@ -184,7 +184,7 @@ router.get(
 
 router.get(
   "/admin/agreements",
-  authorize(["ADMIN"]),
+  authorize(["ADMIN", "MANAGER"]),
   async (req, res, next) => {
     try {
       return res.json({
@@ -200,7 +200,7 @@ router.get(
 
 router.get(
   "/admin/agreements/:agreementId/pdf",
-  authorize(["ADMIN"]),
+  authorize(["ADMIN", "MANAGER"]),
   async (req, res, next) => {
     try {
       const result = await getAgreementPdfForAdmin(pool, {
@@ -221,7 +221,7 @@ router.get(
 
 router.get(
   "/admin/disputes",
-  authorize(["ADMIN"]),
+  authorize(["ADMIN", "MANAGER"]),
   async (req, res, next) => {
     try {
       return res.json({
@@ -259,7 +259,7 @@ router.patch(
 
 router.get(
   "/admin/adjustments",
-  authorize(["ADMIN"]),
+  authorize(["ADMIN", "MANAGER"]),
   async (req, res, next) => {
     try {
       return res.json({
@@ -275,7 +275,7 @@ router.get(
 
 router.get(
   "/admin/payouts",
-  authorize(["ADMIN"]),
+  authorize(["ADMIN", "MANAGER"]),
   async (req, res, next) => {
     try {
       return res.json({

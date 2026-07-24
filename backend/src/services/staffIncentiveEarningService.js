@@ -227,7 +227,27 @@ function isAccessoryItem(item = {}) {
     item.productCategorySnapshot ?? item.category
   );
   const masterCategory = normalizeCategory(item.masterCategory);
-  return snapshotCategory === "ACCESSORY" || masterCategory === "AC";
+  const sku = normalizeSku(item.skuSnapshot ?? item.sku);
+  const excludedCategories = [
+    "PT",
+    "PART",
+    "BIKE_PART",
+    "REPAIR_PART",
+    "RP",
+    "REPAIR"
+  ];
+  const excludedCategory =
+    excludedCategories.includes(snapshotCategory) ||
+    excludedCategories.includes(masterCategory);
+  const excludedSku = ["PT-", "RP-", "B-PT-", "R-PT-"].some(
+    (prefix) => sku.startsWith(prefix)
+  );
+
+  return (
+    !excludedCategory &&
+    !excludedSku &&
+    (snapshotCategory === "ACCESSORY" || masterCategory === "AC")
+  );
 }
 
 function isRepairItem(item = {}) {
@@ -717,18 +737,16 @@ function buildOrderSaleIncentiveCandidates({
     if (repairEvaluation.candidate) {
       candidates.push(repairEvaluation.candidate);
     }
-    return {
-      eligible: candidates.length > 0,
-      reason: candidates.length > 0 ? null : repairEvaluation.reason,
-      candidates
-    };
   }
 
-  if (!normalizePositiveId(order.salesStaffId)) {
+  if (!normalizePositiveId(order.salesStaffId) || order.salesStaffValid === 0) {
     return {
-      eligible: false,
-      reason: "SALES_STAFF_NOT_ASSIGNED",
-      candidates: []
+      eligible: candidates.length > 0,
+      reason:
+        candidates.length > 0
+          ? null
+          : "SALES_STAFF_NOT_ASSIGNED",
+      candidates
     };
   }
 
@@ -757,6 +775,14 @@ function buildOrderSaleIncentiveCandidates({
         )
       );
     }
+  }
+
+  if (repairLinked) {
+    return {
+      eligible: candidates.length > 0,
+      reason: candidates.length > 0 ? null : "REPAIR_ORDER_EXCLUDED",
+      candidates
+    };
   }
 
   if (isPurchaseConfirmationComplete(confirmation)) {
@@ -875,6 +901,12 @@ async function loadOrderSaleIncentiveSnapshot(connection, storeId, orderId) {
         store_id AS storeId,
         sales_staff_id AS salesStaffId,
         sales_staff_name AS salesStaffName,
+        EXISTS(
+          SELECT 1 FROM staff_users assigned_sales_staff
+          WHERE assigned_sales_staff.id = orders.sales_staff_id
+            AND assigned_sales_staff.store_id = orders.store_id
+            AND assigned_sales_staff.is_active = 1
+        ) AS salesStaffValid,
         sales_support_staff_id AS salesSupportStaffId,
         sales_support_staff_name AS salesSupportStaffName,
         status,

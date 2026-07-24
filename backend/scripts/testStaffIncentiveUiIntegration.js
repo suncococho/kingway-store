@@ -12,7 +12,7 @@ const navigation = read("frontend/src/lib/mobileNavigation.js");
 const permissions = read("frontend/src/lib/permissions.js");
 const page = read("frontend/src/pages/StaffIncentivesPage.jsx");
 const repairs = read("backend/src/routes/repairs.js");
-const migration = read("database/migrations/20260722_seed_default_staff_incentive_plan.sql");
+const migration = read("database/migrations/20260724_activate_staff_incentive_sale600.sql");
 
 assert(
   ordersPage.includes('body: JSON.stringify({\n              status: salesFollowupForm.status'),
@@ -31,11 +31,12 @@ assert(page.includes("同意並完成簽署"), "agreement submit button missing"
 assert(page.includes("案件完成責任") && page.includes("pendingUntilComplete"), "responsibility agreement UI missing");
 assert(page.includes("openOwnAgreementPdf"), "employee agreement PDF action missing");
 assert(page.includes("openAdminAgreementPdf"), "admin agreement PDF action missing");
-assert(page.includes('String(currentUser?.role || "").trim().toUpperCase() === "ADMIN"'), "admin UI must be exact ADMIN only");
+assert(page.includes('const canViewStore = ["ADMIN", "MANAGER"].includes(role)'), "ADMIN and MANAGER store read UI missing");
+assert(page.includes('disabled={!isAdmin || !adminDispute.id}'), "manager write controls must be disabled");
 assert(repairs.includes('triggerSource: "REPAIR_INSPECTION_UPDATED"'), "repair inspection trigger missing");
 assert(repairs.includes('triggerSource: "REPAIR_STAFF_ASSIGNED"'), "repair staff trigger missing");
-assert(migration.includes("'KINGWAY-2026-07-V1'"), "default active plan migration missing");
-assert(migration.includes("420.00") && migration.includes("120.00") && migration.includes("60.00"), "bike plan amounts missing");
+assert(migration.includes("'KINGWAY-2026-07-SALE600-V2'"), "default active plan migration missing");
+assert(migration.includes("600.00") && migration.includes("0.00") && migration.includes("0.00"), "bike plan amounts missing");
 assert(migration.includes("0.100000") && migration.includes("100.00"), "accessory/repair plan values missing");
 
 console.log("staff incentive UI integration tests passed");

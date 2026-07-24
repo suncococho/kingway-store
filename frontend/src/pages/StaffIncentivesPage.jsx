@@ -144,7 +144,9 @@ function SummaryCards({ summary = {} }) {
 
 function StaffIncentivesPage() {
   const currentUser = useMemo(() => getStoredUser(), []);
-  const isAdmin = String(currentUser?.role || "").trim().toUpperCase() === "ADMIN";
+  const role = String(currentUser?.role || "").trim().toUpperCase();
+  const isAdmin = role === "ADMIN";
+  const canViewStore = ["ADMIN", "MANAGER"].includes(role);
   const [month, setMonth] = useState(taipeiMonth());
   const [tab, setTab] = useState("SUMMARY");
   const [selfData, setSelfData] = useState(null);
@@ -174,7 +176,7 @@ function StaffIncentivesPage() {
     try {
       const self = await apiRequest(`/staff-incentives/me?month=${encodeURIComponent(month)}`);
       setSelfData(self);
-      if (isAdmin) {
+      if (canViewStore) {
         const [overview, events, agreements, disputes, adjustments, payouts] = await Promise.all([
           apiRequest(`/staff-incentives/admin/overview?month=${encodeURIComponent(month)}`),
           apiRequest(`/staff-incentives/admin/events?month=${encodeURIComponent(month)}`),
@@ -201,7 +203,7 @@ function StaffIncentivesPage() {
 
   useEffect(() => {
     loadData();
-  }, [month, isAdmin]);
+  }, [month, canViewStore]);
 
   const tabs = [
     { key: "SUMMARY", label: "本月績效" },
@@ -213,7 +215,7 @@ function StaffIncentivesPage() {
     { key: "PAID", label: "已支付" },
     { key: "PLAN", label: "績效辦法與同意書" },
     { key: "DISPUTE", label: "提出異議" },
-    ...(isAdmin
+    ...(canViewStore
       ? [
           { key: "ADMIN_OVERVIEW", label: "全體員工" },
           { key: "ADMIN_EVENTS", label: "全部績效明細" },
@@ -429,13 +431,13 @@ function StaffIncentivesPage() {
           <section className="admin-panel">
             <AdminSectionHeader eyebrow="績效辦法" title={plan ? `案件完成責任版本 ${plan.version}` : "目前沒有生效中的績效辦法"} description={plan ? `生效日：${dateTime(plan.effectiveFrom)}` : "請洽管理員確認。"} />
             <div className="metric-list">
-              <div className="metric-row"><span>完成付款</span><strong>{money(plan?.bikeSaleAmount ?? 420)}</strong></div>
-              <div className="metric-row"><span>完成交車</span><strong>{money(plan?.bikeHandoverAmount ?? 120)}</strong></div>
-              <div className="metric-row"><span>售後追蹤</span><strong>{money(plan?.bikeFollowupAmount ?? 60)}</strong></div>
+              <div className="metric-row"><span>完成付款</span><strong>{money(plan?.bikeSaleAmount ?? 600)}</strong></div>
+              <div className="metric-row"><span>完成交車</span><strong>{money(plan?.bikeHandoverAmount ?? 0)}</strong></div>
+              <div className="metric-row"><span>售後追蹤</span><strong>{money(plan?.bikeFollowupAmount ?? 0)}</strong></div>
               <div className="metric-row"><span>配件</span><strong>{Math.round(Number(plan?.accessoryRate ?? 0.1) * 100)}%</strong></div>
               <div className="metric-row"><span>維修初步檢查</span><strong>{money(plan?.repairInspectionAmount ?? 100)}</strong></div>
             </div>
-            <p className="muted-text">車輛完整績效共 NT$600；共同銷售依預先指定 70% / 30%。配件依個別品項實際成交價 10%。一般自行車零件、維修零件、工資、安裝費、運費等不列入配件績效。</p>
+            <p className="muted-text">符合完成條件的電動自行車每台 NT$600；交車與售後追蹤僅保留為 NT$0 工作紀錄。共同銷售依預先指定 70% / 30%。配件依個別品項實際成交價 10%。一般自行車零件、維修零件、工資、安裝費、運費等不列入配件績效。</p>
             {plan?.agreementText ? <div className="content-card"><pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit" }}>{plan.agreementText}</pre></div> : null}
           </section>
           <section className="admin-panel">
@@ -508,7 +510,7 @@ function StaffIncentivesPage() {
         </section>
       ) : null}
 
-      {isAdmin && tab === "ADMIN_OVERVIEW" ? (
+      {canViewStore && tab === "ADMIN_OVERVIEW" ? (
         <section className="admin-panel">
           <AdminSectionHeader eyebrow="管理用" title="全體員工績效摘要" description="僅供作業管理，不建立名次或公開排行榜。" />
           <DataTable
@@ -529,7 +531,7 @@ function StaffIncentivesPage() {
         </section>
       ) : null}
 
-      {isAdmin && tab === "ADMIN_EVENTS" ? (
+      {canViewStore && tab === "ADMIN_EVENTS" ? (
         <section className="admin-panel">
           <AdminSectionHeader eyebrow="管理用" title="全部績效明細" description="依員工、狀態與類型篩選。" />
           <FilterBar>
@@ -541,7 +543,7 @@ function StaffIncentivesPage() {
         </section>
       ) : null}
 
-      {isAdmin && tab === "ADMIN_AGREEMENTS" ? (
+      {canViewStore && tab === "ADMIN_AGREEMENTS" ? (
         <section className="admin-panel">
           <AdminSectionHeader eyebrow="管理用" title="績效同意書" description="查看目前生效版本的簽署狀態。" />
           <DataTable columns={[
@@ -555,7 +557,7 @@ function StaffIncentivesPage() {
         </section>
       ) : null}
 
-      {isAdmin && tab === "ADMIN_DISPUTES" ? (
+      {canViewStore && tab === "ADMIN_DISPUTES" ? (
         <div className="admin-split-grid">
           <section className="admin-panel">
             <AdminSectionHeader eyebrow="管理用" title="異議處理" description="選擇紀錄後在右側更新；不會自動修改績效金額。" />
@@ -565,21 +567,21 @@ function StaffIncentivesPage() {
               { key: "finalAmount", label: "金額", render: (row) => money(row.finalAmount) },
               { key: "reason", label: "原因" },
               { key: "status", label: "狀態", render: (row) => <Status value={row.status} /> },
-              { key: "action", label: "操作", render: (row) => <button type="button" className="secondary-button" onClick={() => chooseAdminDispute(row)}>處理</button> }
-            ]} rows={adminData.disputes} emptyText="目前沒有異議。" cardTitle={(row) => `${row.staffDisplayName} / ${money(row.finalAmount)}`} cardBadges={(row) => <Status value={row.status} />} cardFooter={(row) => <button type="button" className="secondary-button" onClick={() => chooseAdminDispute(row)}>處理</button>} />
+              { key: "action", label: "操作", render: (row) => isAdmin ? <button type="button" className="secondary-button" onClick={() => chooseAdminDispute(row)}>處理</button> : "唯讀" }
+            ]} rows={adminData.disputes} emptyText="目前沒有異議。" cardTitle={(row) => `${row.staffDisplayName} / ${money(row.finalAmount)}`} cardBadges={(row) => <Status value={row.status} />} cardFooter={(row) => isAdmin ? <button type="button" className="secondary-button" onClick={() => chooseAdminDispute(row)}>處理</button> : null} />
           </section>
           <section className="admin-panel">
             <AdminSectionHeader eyebrow="異議回覆" title={adminDispute.id ? `異議 #${adminDispute.id}` : "請選擇異議"} />
             <form onSubmit={saveAdminDispute}>
-              <label className="form-field"><span>狀態</span><select value={adminDispute.status} onChange={(event) => setAdminDispute((current) => ({ ...current, status: event.target.value }))} disabled={!adminDispute.id}>{["REVIEWING", "RESOLVED", "REJECTED"].map((value) => <option key={value} value={value}>{STATUS_LABELS[value]}</option>)}</select></label>
-              <label className="form-field"><span>管理員回覆</span><textarea rows={6} value={adminDispute.adminResponse} onChange={(event) => setAdminDispute((current) => ({ ...current, adminResponse: event.target.value }))} disabled={!adminDispute.id} /></label>
-              <button type="submit" className="primary-button" disabled={!adminDispute.id}>儲存處理結果</button>
+              <label className="form-field"><span>狀態</span><select value={adminDispute.status} onChange={(event) => setAdminDispute((current) => ({ ...current, status: event.target.value }))} disabled={!isAdmin || !adminDispute.id}>{["REVIEWING", "RESOLVED", "REJECTED"].map((value) => <option key={value} value={value}>{STATUS_LABELS[value]}</option>)}</select></label>
+              <label className="form-field"><span>管理員回覆</span><textarea rows={6} value={adminDispute.adminResponse} onChange={(event) => setAdminDispute((current) => ({ ...current, adminResponse: event.target.value }))} disabled={!isAdmin || !adminDispute.id} /></label>
+              <button type="submit" className="primary-button" disabled={!isAdmin || !adminDispute.id}>儲存處理結果</button>
             </form>
           </section>
         </div>
       ) : null}
 
-      {isAdmin && tab === "ADMIN_ADJUSTMENTS" ? (
+      {canViewStore && tab === "ADMIN_ADJUSTMENTS" ? (
         <section className="admin-panel">
           <AdminSectionHeader eyebrow="唯讀稽核" title="績效調整紀錄" description="已核准或已支付績效如需更正，應由具備稽核紀錄的調整流程處理。" />
           <DataTable columns={[
@@ -594,7 +596,7 @@ function StaffIncentivesPage() {
         </section>
       ) : null}
 
-      {isAdmin && tab === "ADMIN_PAYOUTS" ? (
+      {canViewStore && tab === "ADMIN_PAYOUTS" ? (
         <section className="admin-panel">
           <AdminSectionHeader eyebrow="唯讀月結" title={`${month} 月結支付`} description="本頁先提供核對與查詢，不在此版本直接執行支付。" />
           <DataTable columns={[
