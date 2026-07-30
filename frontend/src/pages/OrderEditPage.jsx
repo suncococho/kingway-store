@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiRequest } from "../lib/api";
+import { getStoredUser } from "../lib/auth";
 
 const money = (v) => `NT$ ${Number(v || 0).toLocaleString()}`;
 const categoryLabel = (value) => {
@@ -60,6 +61,9 @@ function formatWarrantyDisplay(form) {
 }
 
 function OrderEditPage() {
+  const currentUser = getStoredUser();
+  const canEditPricing =
+    String(currentUser?.role || "").trim().toUpperCase() === "ADMIN";
   const { id } = useParams();
   const navigate = useNavigate();
   const [form, setForm] = useState(null);
@@ -177,9 +181,13 @@ async function requestGoogleReviewCoupon() {
     setError("");
 
     try {
+      const itemsPayload = canEditPricing
+        ? items
+        : items.map(({ unitPrice, ...item }) => item);
+
       await apiRequest(`/orders/${id}/items`, {
         method: "PUT",
-        body: JSON.stringify({ items })
+        body: JSON.stringify({ items: itemsPayload })
       });
 
       const payload = {
@@ -189,6 +197,14 @@ async function requestGoogleReviewCoupon() {
         depositAmount,
         finalPaymentStatus: unpaidBalance <= 0 ? "PAID" : depositAmount > 0 ? "PARTIAL" : form.finalPaymentStatus
       };
+        if (!canEditPricing) {
+          [
+            "otherDiscount", "other_discount", "unitPrice", "unit_price", "price",
+            "salePrice", "sale_price", "lineTotal", "line_total", "totalAmount",
+            "total_amount", "discount", "manualDiscount", "manual_discount"
+          ].forEach((key) => delete payload[key]);
+        }
+
       if (form.warrantySchemaReady) {
         Object.assign(payload, {
           warrantyStartDate: form.warrantyStartDate || null,
@@ -626,10 +642,12 @@ async function requestGoogleReviewCoupon() {
               <input type="number" value={form.depositAmount} onChange={(e) => update("depositAmount", Number(e.target.value))} />
             </div>
 
-            <div className="kw-field">
-              <label>其他折扣</label>
-              <input type="number" value={form.otherDiscount} onChange={(e) => update("otherDiscount", Number(e.target.value))} />
-            </div>
+            {canEditPricing ? (
+              <div className="kw-field">
+                <label>其他折扣</label>
+                <input type="number" value={form.otherDiscount} onChange={(e) => update("otherDiscount", Number(e.target.value))} />
+              </div>
+            ) : null}
 
             <div className="kw-field">
               <label>付款狀態</label>
@@ -725,10 +743,14 @@ async function requestGoogleReviewCoupon() {
                       <span>數量</span>
                       <input type="number" min="1" value={item.quantity} onChange={(e) => updateItem(index, "quantity", Number(e.target.value))} />
                     </label>
-                    <label className="kw-edit-field">
+                    <div className="kw-edit-field">
                       <span>單價</span>
-                      <input type="number" min="0" value={item.unitPrice} onChange={(e) => updateItem(index, "unitPrice", Number(e.target.value))} />
-                    </label>
+                      {canEditPricing ? (
+                        <input type="number" min="0" value={item.unitPrice} onChange={(e) => updateItem(index, "unitPrice", Number(e.target.value))} />
+                      ) : (
+                        <strong>{money(item.unitPrice)}</strong>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}

@@ -117,6 +117,26 @@ function hasOwnPropertyValue(source, key) {
   return Object.prototype.hasOwnProperty.call(source || {}, key);
 }
 
+const ORDER_PRICE_DISCOUNT_FIELDS = [
+  "otherDiscount", "other_discount", "unitPrice", "unit_price", "price",
+  "salePrice", "sale_price", "lineTotal", "line_total", "totalAmount",
+  "total_amount", "discount", "manualDiscount", "manual_discount"
+];
+
+function hasOrderPriceDiscountField(body) {
+  if (ORDER_PRICE_DISCOUNT_FIELDS.some((field) => hasOwnPropertyValue(body, field))) return true;
+  return Array.isArray(body?.items) && body.items.some((item) =>
+    ORDER_PRICE_DISCOUNT_FIELDS.some((field) => hasOwnPropertyValue(item, field))
+  );
+}
+
+function assertAdminCanEditOrderPriceDiscount(req) {
+  const requesterRole = String(req.user?.role || "").trim().toUpperCase();
+  if (requesterRole !== "ADMIN" && hasOrderPriceDiscountField(req.body)) {
+    throw createError("\u53ea\u6709\u7ba1\u7406\u54e1\u53ef\u4ee5\u4fee\u6539\u50f9\u683c\u6216\u6298\u6263", 403);
+  }
+}
+
 function normalizeOrderCustomerSnapshot(value) {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -1521,6 +1541,7 @@ router.post("/", requirePosFeature, async (req, res, next) => {
 
 router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
   try {
+    assertAdminCanEditOrderPriceDiscount(req);
     const orderId = Number(req.params.id);
     const storeId = req.storeId;
     const {
@@ -1533,6 +1554,7 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
       depositAmount,
       unpaidBalance,
       otherDiscount,
+        other_discount: otherDiscountSnake,
       finalPaymentStatus,
       notes
     } = req.body;
@@ -1566,10 +1588,20 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
     }
 
     const hasDepositAmount = depositAmount !== undefined;
-    const hasOtherDiscount = otherDiscount !== undefined;
+    const hasOtherDiscount =
+      Object.prototype.hasOwnProperty.call(req.body || {}, "otherDiscount") ||
+      Object.prototype.hasOwnProperty.call(req.body || {}, "other_discount");
+    const requestedOtherDiscount =
+      otherDiscount !== undefined ? otherDiscount : otherDiscountSnake;
+    const requesterRole = String(req.user?.role || "").trim().toUpperCase();
+
+    if (hasOtherDiscount && requesterRole !== "ADMIN") {
+      throw createError("只有管理員可以修改其他折扣", 403);
+    }
+
     const hasFinalPaymentStatus = finalPaymentStatus !== undefined;
     const nextDepositAmount = hasDepositAmount ? Number(depositAmount || 0) : Number(rows[0].depositAmount || 0);
-    const nextOtherDiscount = hasOtherDiscount ? Number(otherDiscount || 0) : Number(rows[0].otherDiscount || 0);
+    const nextOtherDiscount = hasOtherDiscount ? Number(requestedOtherDiscount || 0) : Number(rows[0].otherDiscount || 0);
 
     const [sumRows] = await pool.query(
       `SELECT COALESCE(SUM(line_total), 0) AS itemTotal FROM order_items WHERE order_id = ? AND store_id = ?`,

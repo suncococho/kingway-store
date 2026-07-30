@@ -14,8 +14,31 @@ function mapCategory(category) {
   return "OTHER";
 }
 
+const ORDER_PRICE_DISCOUNT_FIELDS = [
+  "otherDiscount", "other_discount", "unitPrice", "unit_price", "price",
+  "salePrice", "sale_price", "lineTotal", "line_total", "totalAmount",
+  "total_amount", "discount", "manualDiscount", "manual_discount"
+];
+
+function hasOwnPropertyValue(source, key) {
+  return Object.prototype.hasOwnProperty.call(source || {}, key);
+}
+
+function assertAdminCanEditOrderPriceDiscount(req) {
+  const requesterRole = String(req.user?.role || "").trim().toUpperCase();
+  const hasPriceDiscountField = ORDER_PRICE_DISCOUNT_FIELDS.some((field) =>
+    hasOwnPropertyValue(req.body, field)
+  ) || (Array.isArray(req.body?.items) && req.body.items.some((item) =>
+    ORDER_PRICE_DISCOUNT_FIELDS.some((field) => hasOwnPropertyValue(item, field))
+  ));
+  if (requesterRole !== "ADMIN" && hasPriceDiscountField) {
+    throw createError("\u53ea\u6709\u7ba1\u7406\u54e1\u53ef\u4ee5\u4fee\u6539\u50f9\u683c\u6216\u6298\u6263", 403);
+  }
+}
+
 router.put("/:id/items", requireStoreFeature("orders_enabled"), async (req, res, next) => {
   try {
+    assertAdminCanEditOrderPriceDiscount(req);
     const orderId = Number(req.params.id);
     const items = Array.isArray(req.body.items) ? req.body.items : [];
     const storeId = req.storeId;
@@ -40,6 +63,15 @@ router.put("/:id/items", requireStoreFeature("orders_enabled"), async (req, res,
       const oldSubtotal = Number(oldSumRows[0]?.subtotal || 0);
       const oldTotal = Number(order.totalAmount || 0);
       const keepDiscount = Math.max(oldSubtotal - oldTotal, 0);
+      const [oldItemRows] = await tx.query(
+        `SELECT product_id AS productId, unit_price AS unitPrice
+         FROM order_items
+         WHERE order_id = ? AND store_id = ?`,
+        [orderId, storeId]
+      );
+      const oldUnitPrices = new Map(
+        oldItemRows.map((item) => [Number(item.productId), Number(item.unitPrice || 0)])
+      );
 
       const normalized = [];
       for (const item of items) {
@@ -55,7 +87,9 @@ router.put("/:id/items", requireStoreFeature("orders_enabled"), async (req, res,
         const product = products[0];
         if (!product) throw createError(`找不到商品 ID ${productId}`, 404);
 
-        const unitPrice = item.unitPrice !== undefined ? Number(item.unitPrice || 0) : Number(product.price || 0);
+        const unitPrice = item.unitPrice !== undefined
+          ? Number(item.unitPrice || 0)
+          : (oldUnitPrices.has(productId) ? oldUnitPrices.get(productId) : Number(product.price || 0));
         const lineTotal = quantity * unitPrice;
 
         normalized.push({
