@@ -7,7 +7,7 @@ const router = express.Router();
 const manage = requireStoreRole(["owner", "admin", "manager"]);
 router.use(authenticate, requireStoreScope(), requireStoreFeature("staff_management_enabled"));
 const storeId = (req) => Number(req.storeId), actorId = (req) => Number(req.user.id);
-const handler = (fn) => async (req,res,next) => { try { return res.json(await fn(req)); } catch(error) { return next(error); } };
+const handler = (fn) => async (req,res,next) => { try { return res.json(await fn(req)); } catch(error) { if(error.statusCode&&error.code)return res.status(error.statusCode).json({message:error.message,errorCode:error.code,...(error.details||{})});return next(error); } };
 router.get("/employment-profiles", manage, handler((req) => service.listEmploymentProfiles(storeId(req),actorId(req))));
 router.put("/employment-profiles/:staffUserId", manage, handler((req) => service.upsertEmploymentProfile(storeId(req),actorId(req),Number(req.params.staffUserId),req.body)));
 router.get("/periods", handler((req) => service.listPeriods(storeId(req),actorId(req))));

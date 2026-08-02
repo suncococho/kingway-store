@@ -57,6 +57,57 @@ test("tenant filters and overlap protection are present",()=>{
  assert.match(service,/SHIFT_OVERLAP/);
  assert.match(service,/尚缺/);
 });
+const policyShift={revision_id:5,period_id:4,shift_date:"2026-08-04",starts_at:"10:00:00",ends_at:"18:00:00",addedHours:8};
+const policyConnection=(results,calls=[])=>({calls,query:async(sql,params)=>{calls.push({sql,params});return [results.shift()];}});
+test("approved time off conflicts with assignment but rejected time off does not",async()=>{
+ const {validateShiftAssignment}=require("../src/services/staffSchedulingService");
+ await assert.rejects(validateShiftAssignment(policyConnection([[{id:91}]]),3,7,policyShift),error=>error.statusCode===409&&error.code==="APPROVED_TIME_OFF_CONFLICT");
+ const connection=policyConnection([[],[],[{maxWeeklyHours:40,scheduledHours:8}]]);
+ await validateShiftAssignment(connection,3,7,policyShift);
+ assert.match(connection.calls[0].sql,/status='APPROVED'/);
+});
+test("overlapping shift conflicts with assignment",async()=>{
+ const {validateShiftAssignment}=require("../src/services/staffSchedulingService");
+ await assert.rejects(validateShiftAssignment(policyConnection([[],[{id:92}]]),3,7,policyShift),error=>error.statusCode===409&&error.code==="SHIFT_OVERLAP");
+});
+test("max weekly hours rejects with hour details",async()=>{
+ assert.match(route,/errorCode:error\.code/);assert.match(route,/error\.details/);
+ const {validateShiftAssignment}=require("../src/services/staffSchedulingService");
+ await assert.rejects(validateShiftAssignment(policyConnection([[],[],[{maxWeeklyHours:"40.00",scheduledHours:"36.00"}]]),3,7,policyShift),error=>error.statusCode===409&&error.code==="MAX_WEEKLY_HOURS_EXCEEDED"&&error.details.scheduledHours===36&&error.details.addedHours===8&&error.details.maxWeeklyHours===40);
+});
+test("NOT_PREFERRED allows assignment and produces a warning",async()=>{
+ const {validateShiftAssignment,attachAssignmentWarnings}=require("../src/services/staffSchedulingService");
+ await validateShiftAssignment(policyConnection([[],[],[{maxWeeklyHours:null,scheduledHours:0}]]),3,7,policyShift);
+ const shifts=attachAssignmentWarnings([{id:11,warnings:[],assignmentWarnings:[]}],[{shiftId:11,staffUserId:7,displayName:"王小明",availabilitySubmitted:1,availableOrPreferred:0,notPreferred:1}]);
+ assert.deepEqual(shifts[0].assignmentWarnings[0],{staffUserId:7,displayName:"王小明",code:"NOT_PREFERRED",message:"員工已標記此時段為不希望排班"});
+});
+test("outside availability allows assignment and produces a warning",async()=>{
+ const {validateShiftAssignment,attachAssignmentWarnings}=require("../src/services/staffSchedulingService");
+ await validateShiftAssignment(policyConnection([[],[],[]]),3,7,policyShift);
+ const shifts=attachAssignmentWarnings([{id:11,warnings:[],assignmentWarnings:[]}],[{shiftId:11,staffUserId:7,displayName:"王小明",availabilitySubmitted:1,availableOrPreferred:0,notPreferred:0}]);
+ assert.equal(shifts[0].assignmentWarnings[0].message,"員工未提供此時段可排班");
+});
+test("missing availability submission allows assignment and produces a warning",async()=>{
+ const {validateShiftAssignment,attachAssignmentWarnings}=require("../src/services/staffSchedulingService");
+ await validateShiftAssignment(policyConnection([[],[],[]]),3,7,policyShift);
+ const shifts=attachAssignmentWarnings([{id:11,warnings:[],assignmentWarnings:[]}],[{shiftId:11,staffUserId:7,displayName:"王小明",availabilitySubmitted:0,availableOrPreferred:0,notPreferred:0}]);
+ assert.equal(shifts[0].assignmentWarnings[0].message,"員工尚未提交可排班時間");
+});
+test("contracted weekly hours allows assignment and produces a warning",async()=>{
+ const {validateShiftAssignment,attachAssignmentWarnings}=require("../src/services/staffSchedulingService");
+ await validateShiftAssignment(policyConnection([[],[],[{maxWeeklyHours:60,scheduledHours:44}]]),3,7,policyShift);
+ const shifts=attachAssignmentWarnings([{id:11,warnings:[],assignmentWarnings:[]}],[{shiftId:11,staffUserId:7,displayName:"王小明",availabilitySubmitted:1,availableOrPreferred:1,notPreferred:0,contractedWeeklyHours:40,scheduledHours:44}]);
+ assert.equal(shifts[0].assignmentWarnings[0].message,"已超過契約週工時");
+});
+test("conflict and warning queries remain scoped to the current store and latest submitted availability",async()=>{
+ const {validateShiftAssignment}=require("../src/services/staffSchedulingService");const connection=policyConnection([[],[],[]]);await validateShiftAssignment(connection,3,7,policyShift);
+ connection.calls.forEach(call=>assert.ok(call.params.includes(3),"store id must be bound"));
+ assert.match(service,/av\.store_id=a\.store_id/);assert.match(service,/status='SUBMITTED' ORDER BY av\.revision_no DESC LIMIT 1/);assert.doesNotMatch(service,/OUTSIDE_AVAILABILITY\"\)/);
+});
+test("draft warnings preserve legacy strings and expose structured assignment warnings",()=>{
+ const {attachAssignmentWarnings}=require("../src/services/staffSchedulingService");const shifts=attachAssignmentWarnings([{id:11,warnings:["休業日仍有班次","尚缺 1 人"],assignmentWarnings:[]}],[{shiftId:11,staffUserId:7,displayName:"王小明",availabilitySubmitted:0}]);
+ assert.deepEqual(shifts[0].warnings,["休業日仍有班次","尚缺 1 人","員工尚未提交可排班時間"]);assert.deepEqual(Object.keys(shifts[0].assignmentWarnings[0]),["staffUserId","displayName","code","message"]);
+});
 test("exactly nine separate tables are created",()=>{
  const sql=`${foundation}\n${drafts}`; const tables=[...sql.matchAll(/CREATE TABLE ([a-z_]+)/g)].map(m=>m[1]);
  assert.deepEqual(tables,["staff_employment_profiles","staff_schedule_periods","store_business_calendars","staff_availability_submissions","staff_availability_windows","staff_time_off_requests","work_schedule_revisions","work_shifts","work_shift_assignments"]);
