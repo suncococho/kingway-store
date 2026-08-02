@@ -57,7 +57,7 @@ test("tenant filters and overlap protection are present",()=>{
  assert.match(service,/SHIFT_OVERLAP/);
  assert.match(service,/尚缺/);
 });
-const policyShift={revision_id:5,period_id:4,shift_date:"2026-08-04",starts_at:"10:00:00",ends_at:"18:00:00",addedHours:8};
+const policyShift={revision_id:5,period_id:4,shiftDate:"2026-08-04",starts_at:"10:00:00",ends_at:"18:00:00",addedHours:8};
 const policyConnection=(results,calls=[])=>({calls,query:async(sql,params)=>{calls.push({sql,params});return [results.shift()];}});
 test("approved time off conflicts with assignment but rejected time off does not",async()=>{
  const {validateShiftAssignment}=require("../src/services/staffSchedulingService");
@@ -69,6 +69,28 @@ test("approved time off conflicts with assignment but rejected time off does not
 test("overlapping shift conflicts with assignment",async()=>{
  const {validateShiftAssignment}=require("../src/services/staffSchedulingService");
  await assert.rejects(validateShiftAssignment(policyConnection([[],[{id:92}]]),3,7,policyShift),error=>error.statusCode===409&&error.code==="SHIFT_OVERLAP");
+});
+function assignmentConnection(timeOff){
+ const calls=[];
+ return{calls,query:async(sql,params)=>{calls.push({sql,params});if(sql.includes("FROM staff_time_off_requests")){const shiftEnd=new Date(`${params[2]}T${params[3]}Z`),shiftStart=new Date(`${params[4]}T${params[5]}Z`);const conflict=timeOff&&timeOff.storeId===params[0]&&timeOff.staffUserId===params[1]&&timeOff.status==="APPROVED"&&new Date(timeOff.startsAt)<shiftEnd&&new Date(timeOff.endsAt)>shiftStart;return[conflict?[{id:timeOff.id}]:[]];}if(sql.startsWith("SELECT a.id FROM work_shift_assignments"))return[[]];if(sql.includes("max_weekly_hours"))return[[]];if(sql.startsWith("INSERT INTO work_shift_assignments"))return[{insertId:501}];throw new Error(`unexpected SQL: ${sql}`);}};
+}
+test("approved time-off SQL uses MySQL TIMESTAMP with stable parameter order",async()=>{
+ const {validateShiftAssignment}=require("../src/services/staffSchedulingService");const connection=assignmentConnection(null);await validateShiftAssignment(connection,7,12,{...policyShift,shiftDate:"2036-08-05"});
+ assert.match(connection.calls[0].sql,/status='APPROVED'/);assert.match(connection.calls[0].sql,/starts_at < TIMESTAMP\(\?, \?\) AND ends_at > TIMESTAMP\(\?, \?\)/);
+ assert.deepEqual(connection.calls[0].params,[7,12,"2036-08-05","18:00:00","2036-08-05","10:00:00"]);
+});
+test("approved overlap rejects before assignment INSERT",async()=>{
+ const {insertShiftAssignment}=require("../src/services/staffSchedulingService");const connection=assignmentConnection({id:3,storeId:7,staffUserId:12,status:"APPROVED",startsAt:"2036-08-05T09:00:00Z",endsAt:"2036-08-05T19:00:00Z"});
+ await assert.rejects(insertShiftAssignment(connection,7,12,8,{...policyShift,id:6,shiftDate:"2036-08-05"},{assignmentReason:"test"}),error=>error.statusCode===409&&error.code==="APPROVED_TIME_OFF_CONFLICT");
+ assert.equal(connection.calls.some(call=>call.sql.startsWith("INSERT INTO work_shift_assignments")),false);
+});
+test("rejected, other-store and other-staff time-off do not block assignment",async()=>{
+ const {insertShiftAssignment}=require("../src/services/staffSchedulingService");const cases=[{id:1,storeId:7,staffUserId:12,status:"REJECTED",startsAt:"2036-08-05T09:00:00Z",endsAt:"2036-08-05T19:00:00Z"},{id:2,storeId:8,staffUserId:12,status:"APPROVED",startsAt:"2036-08-05T09:00:00Z",endsAt:"2036-08-05T19:00:00Z"},{id:3,storeId:7,staffUserId:13,status:"APPROVED",startsAt:"2036-08-05T09:00:00Z",endsAt:"2036-08-05T19:00:00Z"}];
+ for(const fixture of cases){const connection=assignmentConnection(fixture);const result=await insertShiftAssignment(connection,7,12,8,{...policyShift,id:6,shiftDate:"2036-08-05"},{assignmentReason:"test"});assert.equal(result.id,501);assert.equal(connection.calls.filter(call=>call.sql.startsWith("INSERT INTO work_shift_assignments")).length,1);}
+});
+test("touching time-off boundaries are allowed",async()=>{
+ const {insertShiftAssignment}=require("../src/services/staffSchedulingService");const cases=[{id:1,storeId:7,staffUserId:12,status:"APPROVED",startsAt:"2036-08-05T08:00:00Z",endsAt:"2036-08-05T10:00:00Z"},{id:2,storeId:7,staffUserId:12,status:"APPROVED",startsAt:"2036-08-05T18:00:00Z",endsAt:"2036-08-05T19:00:00Z"}];
+ for(const fixture of cases){const connection=assignmentConnection(fixture);const result=await insertShiftAssignment(connection,7,12,8,{...policyShift,id:6,shiftDate:"2036-08-05"},{assignmentReason:"test"});assert.equal(result.id,501);}
 });
 test("max weekly hours rejects with hour details",async()=>{
  assert.match(route,/errorCode:error\.code/);assert.match(route,/error\.details/);
