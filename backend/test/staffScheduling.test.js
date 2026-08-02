@@ -101,25 +101,25 @@ test("NOT_PREFERRED allows assignment and produces a warning",async()=>{
  const {validateShiftAssignment,attachAssignmentWarnings}=require("../src/services/staffSchedulingService");
  await validateShiftAssignment(policyConnection([[],[],[{maxWeeklyHours:null,scheduledHours:0}]]),3,7,policyShift);
  const shifts=attachAssignmentWarnings([{id:11,warnings:[],assignmentWarnings:[]}],[{shiftId:11,staffUserId:7,displayName:"王小明",availabilitySubmitted:1,availableOrPreferred:0,notPreferred:1}]);
- assert.deepEqual(shifts[0].assignmentWarnings[0],{staffUserId:7,displayName:"王小明",code:"NOT_PREFERRED",message:"員工已標記此時段為不希望排班"});
+ assert.deepEqual(shifts[0].assignmentWarnings[0],{shiftId:11,staffUserId:7,displayName:"王小明",code:"NOT_PREFERRED",message:"員工已標記此時段為不希望排班"});
 });
 test("outside availability allows assignment and produces a warning",async()=>{
  const {validateShiftAssignment,attachAssignmentWarnings}=require("../src/services/staffSchedulingService");
  await validateShiftAssignment(policyConnection([[],[],[]]),3,7,policyShift);
  const shifts=attachAssignmentWarnings([{id:11,warnings:[],assignmentWarnings:[]}],[{shiftId:11,staffUserId:7,displayName:"王小明",availabilitySubmitted:1,availableOrPreferred:0,notPreferred:0}]);
- assert.equal(shifts[0].assignmentWarnings[0].message,"員工未提供此時段可排班");
+ assert.deepEqual(shifts[0].assignmentWarnings[0],{shiftId:11,staffUserId:7,displayName:"王小明",code:"OUTSIDE_AVAILABILITY",message:"員工未提供此時段可排班"});
 });
 test("missing availability submission allows assignment and produces a warning",async()=>{
  const {validateShiftAssignment,attachAssignmentWarnings}=require("../src/services/staffSchedulingService");
  await validateShiftAssignment(policyConnection([[],[],[]]),3,7,policyShift);
  const shifts=attachAssignmentWarnings([{id:11,warnings:[],assignmentWarnings:[]}],[{shiftId:11,staffUserId:7,displayName:"王小明",availabilitySubmitted:0,availableOrPreferred:0,notPreferred:0}]);
- assert.equal(shifts[0].assignmentWarnings[0].message,"員工尚未提交可排班時間");
+ assert.deepEqual(shifts[0].assignmentWarnings[0],{shiftId:11,staffUserId:7,displayName:"王小明",code:"AVAILABILITY_NOT_SUBMITTED",message:"員工尚未提交可排班時間"});
 });
 test("contracted weekly hours allows assignment and produces a warning",async()=>{
  const {validateShiftAssignment,attachAssignmentWarnings}=require("../src/services/staffSchedulingService");
  await validateShiftAssignment(policyConnection([[],[],[{maxWeeklyHours:60,scheduledHours:44}]]),3,7,policyShift);
  const shifts=attachAssignmentWarnings([{id:11,warnings:[],assignmentWarnings:[]}],[{shiftId:11,staffUserId:7,displayName:"王小明",availabilitySubmitted:1,availableOrPreferred:1,notPreferred:0,contractedWeeklyHours:40,scheduledHours:44}]);
- assert.equal(shifts[0].assignmentWarnings[0].message,"已超過契約週工時");
+ assert.deepEqual(shifts[0].assignmentWarnings[0],{shiftId:11,staffUserId:7,displayName:"王小明",code:"CONTRACTED_WEEKLY_HOURS_EXCEEDED",message:"已超過契約週工時"});
 });
 test("conflict and warning queries remain scoped to the current store and latest submitted availability",async()=>{
  const {validateShiftAssignment}=require("../src/services/staffSchedulingService");const connection=policyConnection([[],[],[]]);await validateShiftAssignment(connection,3,7,policyShift);
@@ -128,7 +128,7 @@ test("conflict and warning queries remain scoped to the current store and latest
 });
 test("draft warnings preserve legacy strings and expose structured assignment warnings",()=>{
  const {attachAssignmentWarnings}=require("../src/services/staffSchedulingService");const shifts=attachAssignmentWarnings([{id:11,warnings:["休業日仍有班次","尚缺 1 人"],assignmentWarnings:[]}],[{shiftId:11,staffUserId:7,displayName:"王小明",availabilitySubmitted:0}]);
- assert.deepEqual(shifts[0].warnings,["休業日仍有班次","尚缺 1 人","員工尚未提交可排班時間"]);assert.deepEqual(Object.keys(shifts[0].assignmentWarnings[0]),["staffUserId","displayName","code","message"]);
+ assert.deepEqual(shifts[0].warnings,["休業日仍有班次","尚缺 1 人","員工尚未提交可排班時間"]);assert.deepEqual(Object.keys(shifts[0].assignmentWarnings[0]),["shiftId","staffUserId","displayName","code","message"]);
 });
 test("exactly nine separate tables are created",()=>{
  const sql=`${foundation}\n${drafts}`; const tables=[...sql.matchAll(/CREATE TABLE ([a-z_]+)/g)].map(m=>m[1]);
