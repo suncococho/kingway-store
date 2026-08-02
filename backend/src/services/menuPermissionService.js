@@ -11,6 +11,7 @@ const MENU_CATALOG = [
   { key: "sales_management", label: "銷售管理", description: "銷售統計、銷售報表與營業分析，限店長以上" },
   { key: "suppliers", label: "供應商管理" },
   { key: "staff", label: "員工管理" },
+  { key: "staff_scheduling", label: "員工排班" },
   { key: "coupons", label: "優惠券" },
   { key: "line", label: "LINE 管理" },
   { key: "settings", label: "系統設定" },
@@ -35,6 +36,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     sales_management: allow(),
     suppliers: allow(),
     staff: allow(),
+    staff_scheduling: allow(),
     coupons: allow(),
     line: allow(),
     settings: allow(),
@@ -48,14 +50,16 @@ const DEFAULT_ROLE_PERMISSIONS = {
     pos: allow(),
     orders: allow(),
     customers: allow(),
-    coupons: allow()
+    staff_scheduling: allow(),
+    coupons: allow(),
   },
   REPAIR: {
     ...allPermissions(false),
     dashboard: allow(),
     orders: allow(),
     repairs: allow(),
-    customers: allow()
+    customers: allow(),
+    staff_scheduling: allow()
   },
   INVENTORY: {
     ...allPermissions(false),
@@ -63,6 +67,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     products: allow(),
     inventory: allow(),
     suppliers: allow(),
+    staff_scheduling: allow(),
     store_replenishment_requests: allow(),
     store_transfers: allow(),
     inbound_transfers: allow()

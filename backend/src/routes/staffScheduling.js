@@ -4,15 +4,15 @@ const { authenticate, requireStoreScope, requireStoreRole } = require("../middle
 const { requireStoreFeature } = require("../middleware/storeFeature");
 const service = require("../services/staffSchedulingService");
 const router = express.Router();
-const manage = requireStoreRole(["owner", "admin"]);
+const manage = requireStoreRole(["owner", "admin", "manager"]);
 router.use(authenticate, requireStoreScope(), requireStoreFeature("staff_management_enabled"));
 const storeId = (req) => Number(req.storeId), actorId = (req) => Number(req.user.id);
 const handler = (fn) => async (req,res,next) => { try { return res.json(await fn(req)); } catch(error) { return next(error); } };
-router.get("/employment-profiles", handler((req) => service.listEmploymentProfiles(storeId(req),actorId(req))));
+router.get("/employment-profiles", manage, handler((req) => service.listEmploymentProfiles(storeId(req),actorId(req))));
 router.put("/employment-profiles/:staffUserId", manage, handler((req) => service.upsertEmploymentProfile(storeId(req),actorId(req),Number(req.params.staffUserId),req.body)));
 router.get("/periods", handler((req) => service.listPeriods(storeId(req),actorId(req))));
 router.post("/periods", manage, handler((req) => service.createPeriod(storeId(req),actorId(req),req.body)));
-router.get("/calendar", handler((req) => service.listCalendar(storeId(req),actorId(req),req.query.from,req.query.to)));
+router.get("/calendar", manage, handler((req) => service.listCalendar(storeId(req),actorId(req),req.query.from,req.query.to)));
 router.put("/calendar/:businessDate", manage, handler((req) => service.upsertCalendar(storeId(req),actorId(req),{...req.body,businessDate:req.params.businessDate})));
 router.post("/periods/:periodId/calendar/defaults", manage, handler((req) => service.seedCalendarDefaults(storeId(req),actorId(req),Number(req.params.periodId),req.body)));
 router.get("/me/availability", handler((req) => service.getAvailability(storeId(req),actorId(req),Number(req.query.periodId))));
@@ -22,7 +22,7 @@ router.get("/time-off", handler((req) => service.listTimeOff(storeId(req),actorI
 router.post("/me/time-off", handler((req) => service.createTimeOff(storeId(req),actorId(req),req.body)));
 router.patch("/time-off/:id/review", manage, handler((req) => service.reviewTimeOff(storeId(req),actorId(req),Number(req.params.id),req.body)));
 router.post("/periods/:periodId/revisions", manage, handler((req) => service.createRevision(storeId(req),actorId(req),Number(req.params.periodId),req.body)));
-router.get("/revisions/:revisionId", handler((req) => service.getDraft(storeId(req),actorId(req),Number(req.params.revisionId))));
+router.get("/revisions/:revisionId", manage, handler((req) => service.getDraft(storeId(req),actorId(req),Number(req.params.revisionId))));
 router.post("/revisions/:revisionId/shifts", manage, handler((req) => service.createShift(storeId(req),actorId(req),Number(req.params.revisionId),req.body)));
 router.post("/shifts/:shiftId/assignments", manage, handler((req) => service.assignShift(storeId(req),actorId(req),Number(req.params.shiftId),req.body)));
 module.exports = router;
