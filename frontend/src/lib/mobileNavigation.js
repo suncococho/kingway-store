@@ -20,6 +20,7 @@ const FEATURE_ROUTE_MAP = {
   "/orders": "orders_enabled",
   "/staff": "staff_management_enabled",
   "/staff-attendance": "staff_management_enabled",
+  "/staff-scheduling": "staff_management_enabled",
   "/kpi": "staff_management_enabled",
   "/staff-kpi": "staff_management_enabled",
   "/payroll": "staff_management_enabled"
@@ -61,6 +62,7 @@ export const mobileMenuSections = [
     items: [
       { to: "/staff", label: "員工管理", description: "員工資料、LINE 綁定與手動 KPI", menuKey: "staff" },
       { to: "/staff-attendance", label: "出勤", description: "打卡與歷史紀錄", menuKey: "staff" },
+      { to: "/staff-scheduling", label: "員工排班", description: "可排班時間、休假申請與排班草稿", menuKey: "staff" },
       { to: "/staff-kpi", label: "KPI / 評價", description: "工作處理紀錄、分數與詳細事件", menuKey: "staff" },
       { to: "/payroll", label: "薪資", description: "月度出勤彙整", menuKey: "staff" }
     ]

@@ -28,6 +28,7 @@ import CouponsPage from "./pages/CouponsPage";
 import SurveysPage from "./pages/SurveysPage";
 import StaffAttendancePage from "./pages/StaffAttendancePage";
 import StaffPage from "./pages/StaffPage";
+import StaffSchedulingPage from "./pages/StaffSchedulingPage";
 import KPIPage from "./pages/KPIPage";
 import StaffKpiPage from "./pages/StaffKpiPage";
 import PayrollPage from "./pages/PayrollPage";
@@ -139,6 +140,7 @@ function App() {
         <Route path="/surveys" element={<SurveysPage />} />
         <Route path="/staff-attendance" element={<StaffAttendancePage />} />
         <Route path="/staff" element={<StaffPage />} />
+        <Route path="/staff-scheduling" element={<StaffSchedulingPage />} />
         <Route path="/attendance" element={<Navigate to="/staff-attendance" replace />} />
         <Route path="/kpi" element={<KPIPage />} />
         <Route path="/staff-kpi" element={<StaffKpiPage />} />

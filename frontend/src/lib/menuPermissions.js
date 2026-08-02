@@ -51,6 +51,7 @@ export const PATH_MENU_KEY_MAP = [
   { path: "/hq-transfer-report", key: "store_transfers" },
   { path: "/staff", key: "staff" },
   { path: "/staff-attendance", key: "staff" },
+  { path: "/staff-scheduling", key: "staff" },
   { path: "/attendance", key: "staff" },
   { path: "/kpi", key: "staff" },
   { path: "/staff-kpi", key: "staff" },
