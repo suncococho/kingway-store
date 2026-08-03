@@ -27,7 +27,8 @@ const FEATURE_KEYS = [
   "line_enabled",
   "telegram_enabled",
   "sales_dashboard_enabled",
-  "staff_management_enabled"
+  "staff_management_enabled",
+  "staff_workday_selection_enabled"
 ];
 const PLAN_PRESET_KEYS = ["FREE", "TRIAL", "PREMIUM"];
 const FEATURE_PRESETS = {
@@ -42,7 +43,8 @@ const FEATURE_PRESETS = {
     line_enabled: true,
     telegram_enabled: false,
     sales_dashboard_enabled: false,
-    staff_management_enabled: false
+    staff_management_enabled: false,
+    staff_workday_selection_enabled: false
   },
   PREMIUM: {
     pos_enabled: true,
@@ -55,7 +57,8 @@ const FEATURE_PRESETS = {
     line_enabled: true,
     telegram_enabled: false,
     sales_dashboard_enabled: true,
-    staff_management_enabled: true
+    staff_management_enabled: true,
+    staff_workday_selection_enabled: false
   }
 };
 FEATURE_PRESETS.TRIAL = FEATURE_PRESETS.PREMIUM;

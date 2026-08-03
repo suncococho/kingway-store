@@ -10,7 +10,8 @@ export const DEFAULT_STORE_FEATURES = {
   purchase_confirmations_enabled: true,
   repairs_enabled: true,
   staff_management_enabled: true,
-  orders_enabled: true
+  orders_enabled: true,
+  staff_workday_selection_enabled: false
 };
 
 function normalizeFeatures(features) {

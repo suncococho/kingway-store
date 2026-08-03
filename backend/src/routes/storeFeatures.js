@@ -13,7 +13,8 @@ const STORE_STAFF_FEATURE_KEYS = [
   "purchase_confirmations_enabled",
   "repairs_enabled",
   "staff_management_enabled",
-  "orders_enabled"
+  "orders_enabled",
+  "staff_workday_selection_enabled"
 ];
 
 function resolveStoreId(req) {
@@ -24,7 +25,8 @@ function resolveStoreId(req) {
 
 function buildFeatureResponse(row) {
   return STORE_STAFF_FEATURE_KEYS.reduce((features, key) => {
-    features[key] = row?.[key] === undefined || row?.[key] === null ? true : Boolean(row[key]);
+    const fallback = key === "staff_workday_selection_enabled" ? false : true;
+    features[key] = row?.[key] === undefined || row?.[key] === null ? fallback : Boolean(row[key]);
     return features;
   }, {});
 }

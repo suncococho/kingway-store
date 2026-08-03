@@ -1,0 +1,2 @@
+const REQUEST_LABELS={DRAFT:"草稿",PENDING:"待審核",PARTIALLY_APPROVED:"部分核准",APPROVED:"已核准",REJECTED:"已拒絕",CANCELLED:"已取消"};
+export default function WorkdaySummaryCards({summary}){const score=summary?.score||{};return <div className="workday-summary-cards"><article><small>本週上限</small><strong>{score.maxSelectableDays??"—"} 天</strong></article><article><small>分數級距</small><strong>{score.status==="INSUFFICIENT_DATA"?"分數資料不足":score.tierName||"—"}</strong></article><article><small>申請狀態</small><strong>{REQUEST_LABELS[summary?.request?.status]||"尚未建立"}</strong></article></div>}

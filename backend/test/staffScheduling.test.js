@@ -24,7 +24,8 @@ test("regular staff initial load excludes manager-only scheduling APIs",()=>{
  assert.match(schedulingPage,/manager\?\[schedulingApi\.profiles\(\)\]:\[\]/);
  assert.doesNotMatch(schedulingPage,/Promise\.all\(\[schedulingApi\.periods\(\),schedulingApi\.profiles/);
  assert.match(schedulingPage,/error\.message === "Not Found" \? fallback/);
- assert.match(schedulingPage,/tabs\.filter\(t=>manager\|\|!\["排班草稿","僱用資料"\]\.includes\(t\)\)/);
+ assert.match(schedulingPage,/features\.staff_workday_selection_enabled\|\|t!=="我的工作日"/);
+ assert.match(schedulingPage,/manager\|\|!\["排班草稿","僱用資料"\]\.includes\(t\)/);
 });
 test("manager mutations use server-side store role middleware",()=>{
  const protectedRoutes=["employment-profiles/:staffUserId","/periods\"","calendar/:businessDate","calendar/defaults","time-off/:id/review","periods/:periodId/revisions","revisions/:revisionId/shifts","shifts/:shiftId/assignments"];

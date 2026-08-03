@@ -1,0 +1,1 @@
+ALTER TABLE store_features DROP COLUMN staff_workday_selection_enabled;

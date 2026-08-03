@@ -11,7 +11,8 @@ const ALLOWED_FEATURE_KEYS = new Set([
   "line_enabled",
   "telegram_enabled",
   "sales_dashboard_enabled",
-  "staff_management_enabled"
+  "staff_management_enabled",
+  "staff_workday_selection_enabled"
 ]);
 
 function resolveStoreId(req) {
@@ -44,15 +45,17 @@ function requireStoreFeature(featureKey) {
           `,
           [storeId]
         );
+        if (featureKey === "staff_workday_selection_enabled") return res.status(403).json({ message: "員工工作日申請功能尚未啟用。", errorCode: "FEATURE_DISABLED" });
         return next();
       }
 
       if (rows[0].enabled === null || rows[0].enabled === undefined) {
+        if (featureKey === "staff_workday_selection_enabled") return res.status(403).json({ message: "員工工作日申請功能尚未啟用。", errorCode: "FEATURE_DISABLED" });
         return next();
       }
 
       if (!Boolean(rows[0].enabled)) {
-        return res.status(403).json({ message: "此功能未啟用，請聯絡平台管理員。" });
+        return res.status(403).json({ message: "此功能未啟用，請聯絡平台管理員。", errorCode: "FEATURE_DISABLED" });
       }
 
       return next();

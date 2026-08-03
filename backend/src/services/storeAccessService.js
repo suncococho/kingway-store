@@ -42,7 +42,8 @@ const FEATURE_PRESETS = {
     line_enabled: 1,
     telegram_enabled: 0,
     sales_dashboard_enabled: 1,
-    staff_management_enabled: 1
+    staff_management_enabled: 1,
+    staff_workday_selection_enabled: 0
   },
   trial: {
     pos_enabled: 1,
@@ -55,7 +56,8 @@ const FEATURE_PRESETS = {
     line_enabled: 1,
     telegram_enabled: 0,
     sales_dashboard_enabled: 1,
-    staff_management_enabled: 1
+    staff_management_enabled: 1,
+    staff_workday_selection_enabled: 0
   },
   premium: {
     pos_enabled: 1,
@@ -68,7 +70,8 @@ const FEATURE_PRESETS = {
     line_enabled: 1,
     telegram_enabled: 0,
     sales_dashboard_enabled: 1,
-    staff_management_enabled: 1
+    staff_management_enabled: 1,
+    staff_workday_selection_enabled: 0
   }
 };
 const EXPLICIT_PLAN_VALUES = new Set(["free", "trial", "premium"]);

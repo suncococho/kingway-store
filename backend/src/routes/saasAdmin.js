@@ -437,7 +437,8 @@ const FEATURE_CONFIG = [
   { key: "line_enabled", label: "LINE 流程", description: "客戶 LINE 綁定、通知與確認按鈕流程。" },
   { key: "telegram_enabled", label: "Telegram 通知", description: "舊通知相容開關；不修改 token 設定。" },
   { key: "sales_dashboard_enabled", label: "銷售儀表板", description: "銷售統計、營運數據與管理報表。" },
-  { key: "staff_management_enabled", label: "員工管理", description: "出勤、KPI、薪資與營運檢查事項。" }
+  { key: "staff_management_enabled", label: "員工管理", description: "出勤、KPI、薪資與營運檢查事項。" },
+  { key: "staff_workday_selection_enabled", label: "員工工作日申請", description: "員工月曆選日與管理員審核；預設停用。" }
 ];
 
 function rowToFeatures(row) {

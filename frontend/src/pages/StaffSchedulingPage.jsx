@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
 import { getStoredUser } from "../lib/auth";
 import { schedulingApi } from "../lib/staffSchedulingApi";
+import { useStoreFeatures } from "../hooks/useStoreFeatures";
+import WorkdaySelectionPanel from "../components/scheduling/WorkdaySelectionPanel";
 const friendlyError = (error, fallback) => !error?.message || error.message === "Not Found" ? fallback : error.message;
-const tabs=["我的可排班時間","休假申請","排班草稿","僱用資料"];
+const tabs=["我的工作日","我的可排班時間","休假申請","排班草稿","僱用資料"];
 const box={background:"#fff",border:"1px solid #e5e7eb",borderRadius:12,padding:16,marginBottom:16};
 const field={padding:"10px 12px",border:"1px solid #d1d5db",borderRadius:8,minWidth:140};
 const button={padding:"10px 14px",border:0,borderRadius:8,background:"#2563eb",color:"#fff",fontWeight:700,cursor:"pointer"};
 const labels={DRAFT:"草稿",SUBMITTED:"已提交",PENDING:"待審核",APPROVED:"已核准",REJECTED:"已拒絕",CANCELLED:"已取消",FULL_TIME:"全職",PART_TIME:"兼職",CONTRACT:"契約",TEMPORARY:"臨時"};
 
 export default function StaffSchedulingPage(){
+ const { features }=useStoreFeatures();
  const user=getStoredUser(); const storeRole=String(user?.storeRole||user?.store_role||"").toLowerCase(); const manager=storeRole?["owner","admin","manager"].includes(storeRole):["ADMIN","MANAGER"].includes(String(user?.role||"").toUpperCase());
- const [tab,setTab]=useState(tabs[0]),[periods,setPeriods]=useState([]),[periodId,setPeriodId]=useState(""),[profiles,setProfiles]=useState([]),[timeOff,setTimeOff]=useState([]),[availability,setAvailability]=useState(null),[draft,setDraft]=useState(null),[message,setMessage]=useState(""),[loadErrors,setLoadErrors]=useState({});
+ const [tab,setTab]=useState(tabs[1]),[periods,setPeriods]=useState([]),[periodId,setPeriodId]=useState(""),[profiles,setProfiles]=useState([]),[timeOff,setTimeOff]=useState([]),[availability,setAvailability]=useState(null),[draft,setDraft]=useState(null),[message,setMessage]=useState(""),[loadErrors,setLoadErrors]=useState({});
  const [windowForm,setWindowForm]=useState({specificDate:"",startsAt:"10:00",endsAt:"19:00",preference:"AVAILABLE",note:""});
  const [leave,setLeave]=useState({leaveType:"PERSONAL",startsAt:"",endsAt:"",publicNote:"",privateReason:""});
  const [periodForm,setPeriodForm]=useState({name:"",startsOn:"",endsOn:"",inputDeadlineAt:"",timezone:"Asia/Taipei"});
@@ -23,7 +26,8 @@ export default function StaffSchedulingPage(){
  const saveWindows=async(submit=false)=>{const next=[...windows,windowForm].filter(w=>w.specificDate&&w.startsAt&&w.endsAt);const result=await run(()=>schedulingApi.saveAvailability(periodId,{windows:next},submit),submit?"可排班時間已提交":"草稿已儲存");if(result){setAvailability({...result,windows:next});setWindowForm({...windowForm,specificDate:"",note:""});}};
  return <div style={{padding:"20px",maxWidth:1200,margin:"0 auto"}}>
   <h1>員工排班</h1><p style={{color:"#64748b"}}>提交可排班時間、申請休假，並查看門市草稿班表。所有時間以台北時區顯示。</p>
-  <div style={{display:"flex",gap:8,overflowX:"auto",marginBottom:16}}>{tabs.filter(t=>manager||!["排班草稿","僱用資料"].includes(t)).map(t=><button key={t} style={{...button,background:tab===t?"#1d4ed8":"#e2e8f0",color:tab===t?"#fff":"#334155",whiteSpace:"nowrap"}} onClick={()=>setTab(t)}>{t}</button>)}</div>
+  <div style={{display:"flex",gap:8,overflowX:"auto",marginBottom:16}}>{tabs.filter(t=>(features.staff_workday_selection_enabled||t!=="我的工作日")&&(manager||!["排班草稿","僱用資料"].includes(t))).map(t=><button key={t} style={{...button,background:tab===t?"#1d4ed8":"#e2e8f0",color:tab===t?"#fff":"#334155",whiteSpace:"nowrap"}} onClick={()=>setTab(t)}>{t}</button>)}</div>
+  {tab==="我的工作日"&&features.staff_workday_selection_enabled&&<WorkdaySelectionPanel periodId={periodId} manager={manager}/>}
   {message&&<div style={{...box,background:"#eff6ff",color:"#1e40af"}}>{message}</div>}
   {tab==="我的可排班時間"&&<section style={box}><h2>我的可排班時間</h2>{(loadErrors.periods||loadErrors.availability)&&<p style={{color:"rgb(185,28,28)"}}>{loadErrors.periods||loadErrors.availability}</p>}<select style={field} value={periodId} onChange={e=>setPeriodId(e.target.value)}><option value="">請選擇期間</option>{periods.map(p=><option key={p.id} value={p.id}>{p.name}（{String(p.starts_on).slice(0,10)}～{String(p.ends_on).slice(0,10)}）</option>)}</select><p>目前狀態：{labels[availability?.status]||"尚未建立"}</p>
    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><input type="date" style={field} value={windowForm.specificDate} onChange={e=>setWindowForm({...windowForm,specificDate:e.target.value})}/><input type="time" style={field} value={windowForm.startsAt} onChange={e=>setWindowForm({...windowForm,startsAt:e.target.value})}/><input type="time" style={field} value={windowForm.endsAt} onChange={e=>setWindowForm({...windowForm,endsAt:e.target.value})}/><select style={field} value={windowForm.preference} onChange={e=>setWindowForm({...windowForm,preference:e.target.value})}><option value="AVAILABLE">可上班</option><option value="PREFERRED">希望排班</option><option value="NOT_PREFERRED">較不希望</option></select><button style={button} onClick={()=>saveWindows(false)}>加入並儲存</button></div>
