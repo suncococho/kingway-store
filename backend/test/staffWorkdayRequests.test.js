@@ -9,6 +9,44 @@ test("routes enforce feature, self identity and server-side manager review",()=>
 test("schema is additive, store-scoped and rollback is dependency-safe",()=>{const core=read("database/migrations/20260804_create_staff_workday_request_core.sql");for(const table of ["staff_workday_requests","staff_workday_request_days"]){const start=core.indexOf(`CREATE TABLE ${table}`),end=core.indexOf(") ENGINE",start);assert.match(core.slice(start,end),/store_id BIGINT UNSIGNED NOT NULL/);}const rollback=read("database/migrations/20260804_create_staff_workday_request_core_rollback.sql");assert.ok(rollback.indexOf("staff_workday_request_days")<rollback.indexOf("staff_workday_requests"));assert.match(rollback,/WARNING/);});
 test("existing assignment conflict and warning logic remains unchanged",()=>{const legacy=read("backend/src/services/staffSchedulingService.js");for(const token of ["APPROVED_TIME_OFF_CONFLICT","SHIFT_OVERLAP","MAX_WEEKLY_HOURS_EXCEEDED","CONTRACTED_WEEKLY_HOURS_EXCEEDED"])assert.match(legacy,new RegExp(token));});
 
+const schedulingRouter=require("../src/routes/staffScheduling");
+const findRoute=(method,path)=>schedulingRouter.stack.find(layer=>layer.route&&layer.route.path===path&&layer.route.methods[method])?.route;
+const runMiddleware=(middleware,req)=>new Promise((resolve,reject)=>{const res={status(code){this.code=code;return this;},json(body){resolve({code:this.code,body});}};middleware(req,res,(error)=>error?reject(error):resolve({code:200}));});
+
+test("staff scheduling router rejects unauthenticated requests before route dispatch",async()=>{
+ const result=await runMiddleware(schedulingRouter.stack[0].handle,{headers:{}});
+ assert.equal(result.code,401);
+});
+
+test("admin workday mutations enforce the actual manage middleware chain",async()=>{
+ const paths=["/admin/capacity/:date","/admin/score-tier-rules","/admin/staff/:staffUserId/weekly-limit"];
+ for(const path of paths){
+  const route=findRoute("put",path);
+  assert.ok(route,"missing PUT "+path);
+  assert.equal(route.stack.length,3,path+" must include feature, manage and handler middleware");
+  const manageMiddleware=route.stack[1].handle;
+  const staff=await runMiddleware(manageMiddleware,{user:{id:7,role:"STAFF",storeRole:"staff"},storeId:3,storeRole:"staff"});
+  const admin=await runMiddleware(manageMiddleware,{user:{id:8,role:"ADMIN",storeRole:"admin"},storeId:3,storeRole:"admin"});
+  assert.equal(staff.code,403,path+" must reject staff");
+  assert.equal(admin.code,200,path+" must allow admin");
+ }
+});
+
+test("staff draft and submit routes remain self-service while manager reads remain protected",async()=>{
+ for(const entry of [["put","/me/workday-selection"],["post","/me/workday-selection/submit"]]){
+  const method=entry[0],path=entry[1],route=findRoute(method,path);
+  assert.ok(route,"missing "+method.toUpperCase()+" "+path);
+  assert.equal(route.stack.length,2,path+" must retain feature plus self-service handler only");
+ }
+ for(const path of ["/admin/workday-calendar","/admin/workday-requests"]){
+  const route=findRoute("get",path);
+  assert.ok(route,"missing GET "+path);
+  assert.equal(route.stack.length,3,path+" must retain manager read protection");
+  const manager=await runMiddleware(route.stack[1].handle,{user:{id:9,role:"MANAGER",storeRole:"manager"},storeId:3,storeRole:"manager"});
+  assert.equal(manager.code,200);
+ }
+});
+
 test("bulk review source sorts ids and review rejects illegal status transitions",()=>{const serviceText=read("backend/src/services/staffWorkdayRequestService.js");assert.match(serviceText,/sort\(\(a,b\)=>Number\(a.id\)-Number\(b.id\)\)/);assert.match(serviceText,/INVALID_REQUEST_STATUS/);});
 test("score provider rejects invalid max days and detects overlapping neutral tiers",()=>{const provider=require("../src/services/schedulingScoreProvider");assert.throws(()=>provider.mapResult({status:"INSUFFICIENT_DATA",maxSelectableDays:null}),/每週上限不正確/);});
 
