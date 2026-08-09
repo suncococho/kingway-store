@@ -6,7 +6,7 @@ const path = require("path");
 const root = path.resolve(__dirname,"../..");
 const read = (file) => fs.readFileSync(path.join(root,file),"utf8");
 const route=read("backend/src/routes/staffScheduling.js"), service=read("backend/src/services/staffSchedulingService.js"), app=read("backend/src/app.js");
-const foundation=read("database/migrations/20260802_create_staff_scheduling_foundation.sql"), drafts=read("database/migrations/20260802_create_staff_schedule_drafts.sql");
+const foundation=read("database/migrations/20260802_01_create_staff_scheduling_foundation.sql"), drafts=read("database/migrations/20260802_02_create_staff_schedule_drafts.sql");
 const frontendPermissions=read("frontend/src/lib/menuPermissions.js"), mobileNavigation=read("frontend/src/lib/mobileNavigation.js"), schedulingPage=read("frontend/src/pages/StaffSchedulingPage.jsx"), menuPermissionService=read("backend/src/services/menuPermissionService.js");
 
 test("all scheduling APIs require auth, store scope and active staff feature",()=>{
@@ -137,6 +137,6 @@ test("exactly nine separate tables are created",()=>{
  tables.forEach((table)=>{const block=sql.slice(sql.indexOf(`CREATE TABLE ${table}`),sql.indexOf(") ENGINE",sql.indexOf(`CREATE TABLE ${table}`)));assert.match(block,/store_id BIGINT UNSIGNED NOT NULL/);});
 });
 test("rollbacks drop in dependency reverse order",()=>{
- assert.deepEqual([...read("database/migrations/20260802_create_staff_scheduling_foundation_rollback.sql").matchAll(/DROP TABLE IF EXISTS ([a-z_]+)/g)].map(m=>m[1]),["staff_time_off_requests","staff_availability_windows","staff_availability_submissions","store_business_calendars","staff_schedule_periods","staff_employment_profiles"]);
- assert.deepEqual([...read("database/migrations/20260802_create_staff_schedule_drafts_rollback.sql").matchAll(/DROP TABLE IF EXISTS ([a-z_]+)/g)].map(m=>m[1]),["work_shift_assignments","work_shifts","work_schedule_revisions"]);
+ assert.deepEqual([...read("database/migrations/20260802_01_create_staff_scheduling_foundation_rollback.sql").matchAll(/DROP TABLE IF EXISTS ([a-z_]+)/g)].map(m=>m[1]),["staff_time_off_requests","staff_availability_windows","staff_availability_submissions","store_business_calendars","staff_schedule_periods","staff_employment_profiles"]);
+ assert.deepEqual([...read("database/migrations/20260802_02_create_staff_schedule_drafts_rollback.sql").matchAll(/DROP TABLE IF EXISTS ([a-z_]+)/g)].map(m=>m[1]),["work_shift_assignments","work_shifts","work_schedule_revisions"]);
 });
