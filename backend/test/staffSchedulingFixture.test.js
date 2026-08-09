@@ -100,6 +100,40 @@ async function createManifest(db = fakeDb(), fsApi = memoryFs()) {
   return { db, fsApi };
 }
 
+test("fixture tier codes are bounded, unique, deterministic, and run-distinct", () => {
+  const runId = "run_20260810";
+  const first = fixture.fixtureTierCodes(runId);
+  const repeated = fixture.fixtureTierCodes(runId);
+  const different = fixture.fixtureTierCodes("run_20260811");
+  const values = Object.values(first);
+  assert.ok(values.every((value) => value.length <= fixture.TIER_CODE_MAX_LENGTH));
+  assert.equal(new Set(values).size, values.length);
+  assert.deepEqual(first, repeated);
+  assert.notDeepEqual(first, different);
+  assert.ok(values.every((value) => /^[A-Z0-9_]+$/.test(value)));
+});
+test("long run IDs still produce bounded tier codes without embedding the run ID", () => {
+  const runId = `r${"a".repeat(48)}`;
+  const codes = fixture.fixtureTierCodes(runId);
+  for (const value of Object.values(codes)) {
+    assert.ok(value.length <= 40);
+    assert.equal(value.includes(runId.toUpperCase()), false);
+  }
+});
+test("tier code collisions are rejected before a transaction or INSERT", async () => {
+  const db = fakeDb();
+  const fsApi = memoryFs();
+  await assert.rejects(fixture.createFixture(options({ db, fsApi, tierCodeFactory: () => ({ neutral: "KW_STG_DUP", extra: "KW_STG_DUP" }) })), /tier_code 重複/);
+  assert.equal(db.queries.length, 0);
+  assert.equal(db.state.inserted.length, 0);
+  assert.equal(fsApi.files.size, 0);
+});
+test("overlength tier codes are explicitly rejected before a transaction", async () => {
+  const db = fakeDb();
+  await assert.rejects(fixture.createFixture(options({ db, fsApi: memoryFs(), tierCodeFactory: () => ({ neutral: `KW_${"X".repeat(40)}` }) })), /超過 40/);
+  assert.equal(db.queries.length, 0);
+});
+
 test("rejects non-staging, unapproved DB, production-looking DB, and missing confirmation", () => {
   assert.throws(() => fixture.validateSafety({ ...goodEnv, APP_ENV: "production" }, true), /staging/);
   assert.throws(() => fixture.validateSafety({ ...goodEnv, DB_HOST: "other" }, true), /allowlist/);

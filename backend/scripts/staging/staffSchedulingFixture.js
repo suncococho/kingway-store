@@ -2,9 +2,11 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 const FIXTURE_PREFIX = "kw_stg_sched_";
 const MANIFEST_VERSION = 1;
+const TIER_CODE_MAX_LENGTH = 40;
 
 function fail(message) { throw new Error(message); }
 function csv(value) { return String(value || "").split(",").map((item) => item.trim()).filter(Boolean); }
@@ -25,10 +27,25 @@ function validateSafety(env, confirmed) {
   if (!allowedHosts.includes(host) || !allowedNames.includes(name)) fail("拒絕執行：DB host/name 不在 Staging allowlist");
   return { appEnv, host, name };
 }
+function validateTierCodes(tierCodes) {
+  const values = Object.values(tierCodes || {});
+  if (!values.length) fail("fixture tier_code 不可為空");
+  for (const value of values) {
+    if (typeof value !== "string" || !/^[A-Z0-9_]+$/.test(value)) fail("fixture tier_code 格式不正確");
+    if (value.length > TIER_CODE_MAX_LENGTH) fail(`fixture tier_code 超過 ${TIER_CODE_MAX_LENGTH} 碼`);
+  }
+  if (new Set(values).size !== values.length) fail("fixture tier_code 重複，拒絕建立");
+  return tierCodes;
+}
+function fixtureTierCodes(runId) {
+  const id = assertRunId(runId);
+  const suffix = crypto.createHash("sha256").update(id, "utf8").digest("hex").slice(0, 12).toUpperCase();
+  return validateTierCodes({ neutral: `KW_STG_${suffix}_NEUTRAL`, extra: `KW_STG_${suffix}_EXTRA` });
+}
 function names(runId) {
   const id = assertRunId(runId);
   const marker = `${FIXTURE_PREFIX}${id}`;
-  return { marker, storeCode: marker, adminUsername: `${marker}_admin`, staffUsername: `${marker}_staff` };
+  return { marker, storeCode: marker, adminUsername: `${marker}_admin`, staffUsername: `${marker}_staff`, tierCodes: fixtureTierCodes(id) };
 }
 function manifestPath(directory, runId) { return path.join(directory, `${FIXTURE_PREFIX}${assertRunId(runId)}.json`); }
 function safeManifest(manifest) {
@@ -77,10 +94,10 @@ async function assertNoIdentifierCollisions(connection, label) {
   }
 }
 
-async function createFixture({ db, env, confirmed, runId, password, hashPassword, directory, now = new Date(), fsApi = fs, failAfterStep }) {
+async function createFixture({ db, env, confirmed, runId, password, hashPassword, directory, now = new Date(), fsApi = fs, failAfterStep, tierCodeFactory = fixtureTierCodes }) {
   const target = validateSafety(env, confirmed);
   const id = assertRunId(runId);
-  const label = names(id);
+  const label = { ...names(id), tierCodes: validateTierCodes(tierCodeFactory(id)) };
   if (!password || String(password).length < 12) fail("fixture 密碼必須由環境變數提供且至少 12 碼");
   const file = manifestPath(directory, id);
   if (fsApi.existsSync(file)) fail("manifest 已存在，拒絕重複建立");
@@ -103,7 +120,7 @@ async function createFixture({ db, env, confirmed, runId, password, hashPassword
         calendarIds.push(await insert(connection, "INSERT INTO store_business_calendars(store_id,business_date,is_open,opens_at,closes_at,required_headcount,max_request_capacity,request_locked,request_deadline_at,pending_reserves_capacity,admin_assignment_counts_toward_limit,override_type,note,created_by,updated_by) VALUES (?,?,1,'10:00:00','19:00:00',1,2,0,?,0,1,'DEFAULT',?,?,?)", [storeId, date, `${dates.startsOn} 23:59:59`, label.marker, adminId, adminId]));
       }
       const profileId = await insert(connection, "INSERT INTO staff_employment_profiles(store_id,staff_user_id,employment_type,contracted_weekly_hours,max_weekly_hours,default_store_id,created_by,updated_by) VALUES (?,?,'PART_TIME',16,16,?,?,?)", [storeId, staffId, storeId, adminId, adminId]);
-      const tierRuleId = await insert(connection, "INSERT INTO scheduling_score_tier_rules(store_id,tier_code,tier_name,minimum_score,max_selectable_days,effective_from,effective_to,is_neutral_default,is_enabled,created_by,updated_by) VALUES (?,?,?,NULL,2,?,?,1,1,?,?)", [storeId, `${label.marker}_neutral`, "Fixture 一般", dates.startsOn, dates.endsOn, adminId, adminId]);
+      const tierRuleId = await insert(connection, "INSERT INTO scheduling_score_tier_rules(store_id,tier_code,tier_name,minimum_score,max_selectable_days,effective_from,effective_to,is_neutral_default,is_enabled,created_by,updated_by) VALUES (?,?,?,NULL,2,?,?,1,1,?,?)", [storeId, label.tierCodes.neutral, "Fixture 一般", dates.startsOn, dates.endsOn, adminId, adminId]);
       const timeOffId = await insert(connection, "INSERT INTO staff_time_off_requests(store_id,staff_user_id,leave_type,starts_at,ends_at,status,public_note,reviewed_by,reviewed_at,review_note) VALUES (?,?,'OTHER',?,?,'APPROVED',?,?,NOW(),?)", [storeId, staffId, `${dates.days[2]} 10:00:00`, `${dates.days[2]} 19:00:00`, label.marker, adminId, label.marker]);
       const manifest = {
         runId: id,
@@ -132,7 +149,7 @@ function readAndValidateManifest({ env, confirmed, runId, directory, fsApi = fs 
   const manifest = JSON.parse(fsApi.readFileSync(file, "utf8"));
   const expected = names(runId);
   if (manifest.manifestVersion !== MANIFEST_VERSION || manifest.fixturePrefix !== FIXTURE_PREFIX || manifest.runId !== assertRunId(runId)) fail("manifest 格式或 run ID 不符");
-  if (manifest.identifiers.storeCode !== expected.storeCode || manifest.identifiers.adminUsername !== expected.adminUsername || manifest.identifiers.staffUsername !== expected.staffUsername) fail("manifest fixture prefix 驗證失敗");
+  if (manifest.identifiers.storeCode !== expected.storeCode || manifest.identifiers.adminUsername !== expected.adminUsername || manifest.identifiers.staffUsername !== expected.staffUsername || JSON.stringify(manifest.identifiers.tierCodes) !== JSON.stringify(expected.tierCodes)) fail("manifest fixture prefix 驗證失敗");
   if (manifest.dbTarget.host !== target.host || manifest.dbTarget.name !== target.name) fail("manifest DB target 與目前 Staging 不符");
   return { file, manifest };
 }
@@ -204,4 +221,4 @@ async function cleanupFixture({ db, env, confirmed, deleteConfirmed = false, run
   return { dryRun: false, deleted: true, runId: manifest.runId };
 }
 
-module.exports = { FIXTURE_PREFIX, validateSafety, names, manifestPath, createFixture, cleanupFixture, readAndValidateManifest };
+module.exports = { FIXTURE_PREFIX, TIER_CODE_MAX_LENGTH, validateSafety, validateTierCodes, fixtureTierCodes, names, manifestPath, createFixture, cleanupFixture, readAndValidateManifest };
