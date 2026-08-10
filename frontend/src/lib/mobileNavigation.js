@@ -64,6 +64,7 @@ export const mobileMenuSections = [
       { to: "/staff-attendance", label: "出勤", description: "打卡與歷史紀錄", menuKey: "staff" },
       { to: "/staff-scheduling", label: "員工排班", description: "可排班時間、休假申請與排班草稿", menuKey: "staff_scheduling" },
       { to: "/staff-kpi", label: "KPI / 評價", description: "工作處理紀錄、分數與詳細事件", menuKey: "staff" },
+      { to: "/staff-incentives", label: "我的銷售服務績效", description: "查看銷售、配件、維修檢查與支付狀態" },
       { to: "/payroll", label: "薪資", description: "月度出勤彙整", menuKey: "staff" }
     ]
   },
