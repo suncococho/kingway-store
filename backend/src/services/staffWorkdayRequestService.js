@@ -12,7 +12,22 @@ const OWNER_ADMIN_ROLES = new Set(["owner", "admin"]);
 function httpError(message, statusCode = 400, code = "INVALID_REQUEST", details) {
   const error = new Error(message); error.statusCode = statusCode; error.code = code; if (details) error.details = details; return error;
 }
-function isoDate(value) { const date = String(value || "").slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw httpError("日期格式不正確"); return date; }
+function isoDate(value) {
+  let date;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) throw httpError("日期格式不正確");
+    date = `${String(value.getUTCFullYear()).padStart(4,"0")}-${String(value.getUTCMonth()+1).padStart(2,"0")}-${String(value.getUTCDate()).padStart(2,"0")}`;
+  } else {
+    date = typeof value === "string" ? value : "";
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) throw httpError("日期格式不正確");
+  const year=Number(match[1]),month=Number(match[2]),day=Number(match[3]);
+  const leap=year%4===0&&(year%100!==0||year%400===0);
+  const daysInMonth=[31,leap?29:28,31,30,31,30,31,31,30,31,30,31];
+  if (month<1||month>12||day<1||day>daysInMonth[month-1]) throw httpError("日期格式不正確");
+  return date;
+}
 function mondayOf(dateValue) { const date = new Date(`${isoDate(dateValue)}T00:00:00Z`); const weekday = date.getUTCDay(); date.setUTCDate(date.getUTCDate() - ((weekday + 6) % 7)); return date.toISOString().slice(0, 10); }
 function uniqueActiveDates(rows) { return [...new Set((rows || []).filter((row) => ACTIVE_DAY_STATUSES.has(row.status)).map((row) => isoDate(row.workDate || row.work_date)))].sort(); }
 function assertWeeklyLimit({ dates, attemptedDate, maxSelectableDays, tierName, scoreStatus }) {
@@ -64,4 +79,4 @@ async function listScoreTierRules(storeId,actorId){await requireOwnerAdmin(pool,
 async function saveScoreTierRules(storeId,actorId,input){return withTransaction(async(connection)=>{await requireOwnerAdmin(connection,storeId,actorId);if(!String(input.reason||"").trim())throw httpError("請填寫調整原因");const rules=input.rules||[];if(rules.filter(r=>r.isNeutralDefault&&r.isEnabled!==false).length!==1)throw httpError("每個生效區間必須恰有一個中性預設級距");for(const rule of rules){const max=Number(rule.maxSelectableDays);if(!Number.isInteger(max)||max<=0)throw httpError("每週可選天數必須大於 0");await connection.query(`INSERT INTO scheduling_score_tier_rules(store_id,tier_code,tier_name,minimum_score,max_selectable_days,effective_from,effective_to,is_neutral_default,is_enabled,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,[storeId,rule.tierCode,rule.tierName,rule.minimumScore??null,max,rule.effectiveFrom,rule.effectiveTo||null,rule.isNeutralDefault?1:0,rule.isEnabled===false?0:1,actorId,actorId]);}await createWorkdayAuditLog(connection,{storeId,actorStaffUserId:actorId,actionType:"SCORE_TIER_CHANGE",entityType:"scheduling_score_tier_rules",entityId:storeId,oldValue:null,newValue:rules,reason:input.reason});return{rulesSaved:rules.length};});}
 async function updateEmployeeWeeklyLimit(storeId,actorId,staffUserId,input){return withTransaction(async(connection)=>{await requireOwnerAdmin(connection,storeId,actorId);await requireActiveMembership(connection,storeId,staffUserId,true);if(!String(input.reason||"").trim())throw httpError("請填寫調整原因");const max=Number(input.maxSelectableDays);if(!Number.isInteger(max)||max<=0)throw httpError("每週可選天數必須大於 0");const [result]=await connection.query(`INSERT INTO staff_weekly_limit_overrides(store_id,staff_user_id,week_start,effective_from,effective_to,max_selectable_days,reason,created_by,updated_by,is_enabled) VALUES(?,?,?,?,?,?,?,?,?,1)`,[storeId,staffUserId,input.weekStart||null,input.effectiveFrom,input.effectiveTo,max,input.reason,actorId,actorId]);await createWorkdayAuditLog(connection,{storeId,actorStaffUserId:actorId,actionType:"WEEKLY_LIMIT_OVERRIDE",entityType:"staff_weekly_limit_override",entityId:result.insertId,oldValue:null,newValue:input,reason:input.reason});return{id:result.insertId};});}
 
-module.exports={ACTIVE_DAY_STATUSES,mondayOf,uniqueActiveDates,assertWeeklyLimit,capacityFor,publicEmployeeDay,getEmployeeWorkdayCalendar,getEmployeeWorkdaySummary,saveEmployeeWorkdayDraft,submitEmployeeWorkdayRequest,removeEmployeeWorkdayDate,listEmployeeWorkdayRequests,getAdminWorkdayCalendar,listAdminWorkdayRequests,reviewWorkdayRequest,bulkReviewWorkdayRequests,updateDateCapacity,listScoreTierRules,saveScoreTierRules,updateEmployeeWeeklyLimit,createWorkdayAuditLog};
+module.exports={ACTIVE_DAY_STATUSES,isoDate,mondayOf,uniqueActiveDates,assertWeeklyLimit,capacityFor,publicEmployeeDay,getEmployeeWorkdayCalendar,getEmployeeWorkdaySummary,saveEmployeeWorkdayDraft,submitEmployeeWorkdayRequest,removeEmployeeWorkdayDate,listEmployeeWorkdayRequests,getAdminWorkdayCalendar,listAdminWorkdayRequests,reviewWorkdayRequest,bulkReviewWorkdayRequests,updateDateCapacity,listScoreTierRules,saveScoreTierRules,updateEmployeeWeeklyLimit,createWorkdayAuditLog};
