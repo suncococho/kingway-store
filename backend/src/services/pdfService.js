@@ -58,6 +58,14 @@ function getVehicleTypeLabel(vehicleType, fallback = "") {
   return purchaseConfirmationContent.vehicleTypes?.[vehicleType]?.label || fallback || "-";
 }
 
+function getPhotoPublicationConsentLabel(photoPublicationConsent) {
+  return photoPublicationConsent ? "同意" : "不同意";
+}
+
+function getFacePublicationModeLabel(photoPublicationConsent, facePublicationMode) {
+  return photoPublicationConsent && facePublicationMode ? facePublicationMode : "未選擇";
+}
+
 function createPdfDocument() {
   const doc = new PDFDocument({
     size: "A4",
@@ -116,6 +124,8 @@ function writePurchaseConfirmationContent(doc, payload) {
     vehicleTypeLabel,
     deliveryChecks,
     staffExplanations,
+    photoPublicationConsent,
+    facePublicationMode,
     submittedAt,
     signatureData
   } = payload;
@@ -145,6 +155,12 @@ function writePurchaseConfirmationContent(doc, payload) {
   purchaseConfirmationContent.deliveryChecks.forEach((item) => {
     writeBodyText(doc, buildChecklistLine(deliveryChecks, item));
   });
+  doc.moveDown(0.2);
+  writeBodyText(doc, "購買紀念照片拍攝及官方社群刊登同意", { fontSize: 12 });
+  writeBodyText(doc, "本人同意 KINGWAY 於購買紀念時拍攝照片，並同意 KINGWAY 將照片刊登於官方 Facebook、Instagram 或其他官方社群平台。");
+  writeBodyText(doc, `購買紀念照片刊登同意：${getPhotoPublicationConsentLabel(photoPublicationConsent)}`);
+  writeBodyText(doc, `臉部公開方式：${getFacePublicationModeLabel(photoPublicationConsent, facePublicationMode)}`);
+  writeBodyText(doc, "本人了解，上述同意得於照片刊登前或刊登後，透過 LINE、電話或親洽門市方式向 KINGWAY 申請撤回或要求刪除。KINGWAY 收到申請後，將於合理期間內協助下架或刪除相關貼文。");
 
   writeSectionTitle(doc, "4. 購買使用條款");
   writeBodyText(doc, purchaseConfirmationContent.termsTitle, { fontSize: 13 });
@@ -292,6 +308,8 @@ async function writePurchaseConfirmationPdf({
   vehicleTypeLabel,
   deliveryChecks,
   staffExplanations,
+  photoPublicationConsent,
+  facePublicationMode,
   submittedAt,
   signatureData
 }) {
@@ -319,6 +337,8 @@ async function writePurchaseConfirmationPdf({
       vehicleTypeLabel,
       deliveryChecks,
       staffExplanations,
+      photoPublicationConsent,
+      facePublicationMode,
       submittedAt,
       signatureData
     });

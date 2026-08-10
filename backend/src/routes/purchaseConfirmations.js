@@ -42,6 +42,8 @@ const resolvePublicStoreContext = createPublicStoreContextMiddleware({
 });
 const storageRoot = path.join(__dirname, "..", "..", "storage");
 const PURCHASE_CONFIRMATION_DOWNLOAD_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7;
+const PHOTO_PUBLICATION_WITHDRAWAL_TEXT = "本人了解，上述同意得於照片刊登前或刊登後，透過 LINE、電話或親洽門市方式向 KINGWAY 申請撤回或要求刪除。KINGWAY 收到申請後，將於合理期間內協助下架或刪除相關貼文。";
+const FACE_PUBLICATION_OPTIONS = new Set(["公開臉部", "臉部遮蔽後刊登"]);
 
 function getRequestedPublicStoreCode(req) {
   return String(req.query?.store || req.query?.storeCode || req.query?.store_code || "").trim();
@@ -349,6 +351,17 @@ function addManualChecklistIfChecked(reqBody, fieldName, checklistValue, selecte
   }
 }
 
+function normalizePhotoPublicationConsent(body = {}) {
+  const photoPublicationConsent = isChecked(body.photoPublicationConsent) || isChecked(body["購買紀念照片刊登同意"]);
+  const rawMode = String(body.facePublicationMode || body.photoPublicationFaceMode || body["臉部公開方式"] || "").trim();
+  const facePublicationMode = photoPublicationConsent && FACE_PUBLICATION_OPTIONS.has(rawMode) ? rawMode : "";
+
+  return {
+    photoPublicationConsent,
+    facePublicationMode
+  };
+}
+
 function normalizeIdLast4(value) {
   const digits = String(value || "").replace(/\D/g, "");
   if (digits.length === 4) {
@@ -401,6 +414,7 @@ function normalizeManualPurchaseConfirmationPayload(body) {
   addManualChecklistIfChecked(body, "保養方法", "日常維護與保養方法", staffExplanations);
   addManualChecklistIfChecked(body, "法規說明", "臺灣電動自行車相關法規及速度限制", staffExplanations);
   addManualChecklistIfChecked(body, "安全事項", "騎乘安全注意事項", staffExplanations);
+  const photoPublication = normalizePhotoPublicationConsent(body);
 
   return {
     buyerName: String(body["姓名"] || body.buyerName || "").trim(),
@@ -410,6 +424,8 @@ function normalizeManualPurchaseConfirmationPayload(body) {
     vehicleTypeLabel: String(body.vehicleTypeLabel || body["車輛類型名稱"] || "").trim(),
     deliveryChecks,
     staffExplanations,
+    photoPublicationConsent: photoPublication.photoPublicationConsent,
+    facePublicationMode: photoPublication.facePublicationMode,
     termsAccepted: isChecked(body["條款同意"]),
     finalConfirmationAccepted: isChecked(body["最終確認"]),
     signatureData: body["簽名圖片"] || body.signatureData || ""
@@ -503,6 +519,8 @@ function buildPurchaseConfirmationSnapshot({
   vehicleTypeLabel,
   deliveryChecks,
   staffExplanations,
+  photoPublicationConsent,
+  facePublicationMode,
   submittedAt
 }) {
   return JSON.stringify({
@@ -530,6 +548,9 @@ function buildPurchaseConfirmationSnapshot({
     acceptanceFinal: true,
     deliveryChecks,
     staffExplanations,
+    photoPublicationConsent: Boolean(photoPublicationConsent),
+    facePublicationMode: photoPublicationConsent ? facePublicationMode || "未選擇" : "未選擇",
+    photoPublicationWithdrawalText: PHOTO_PUBLICATION_WITHDRAWAL_TEXT,
     termsTitle: purchaseConfirmationContent.termsTitle,
     termsIntroTitle: purchaseConfirmationContent.termsIntroTitle,
     termsIntro: purchaseConfirmationContent.termsIntro,
@@ -725,8 +746,14 @@ router.post("/public/:token", async (req, res, next) => {
       staffExplanations,
       termsAccepted,
       finalConfirmationAccepted,
+      photoPublicationConsent: rawPhotoPublicationConsent,
+      facePublicationMode: rawFacePublicationMode,
       signatureData
     } = req.body;
+    const photoPublication = normalizePhotoPublicationConsent({
+      photoPublicationConsent: rawPhotoPublicationConsent,
+      facePublicationMode: rawFacePublicationMode
+    });
 
     const tokenRow = await fetchPurchaseConfirmationToken(req.params.token);
     if (!tokenRow) {
@@ -798,6 +825,8 @@ router.post("/public/:token", async (req, res, next) => {
       vehicleTypeLabel: vehicleTypeLabelInput || vehicleTypeLabel,
       deliveryChecks: confirmedDeliveryChecks,
       staffExplanations: confirmedStaffExplanations,
+      photoPublicationConsent: photoPublication.photoPublicationConsent,
+      facePublicationMode: photoPublication.facePublicationMode,
       submittedAt
     });
 
@@ -922,6 +951,8 @@ router.post("/public/:token", async (req, res, next) => {
         vehicleTypeLabel: vehicleTypeLabelInput || vehicleTypeLabel,
         deliveryChecks: confirmedDeliveryChecks,
         staffExplanations: confirmedStaffExplanations,
+        photoPublicationConsent: photoPublication.photoPublicationConsent,
+        facePublicationMode: photoPublication.facePublicationMode,
         htmlSnapshot: snapshot
       };
     });
@@ -936,6 +967,8 @@ router.post("/public/:token", async (req, res, next) => {
       vehicleTypeLabel: vehicleTypeLabelInput || vehicleTypeLabel,
       deliveryChecks: confirmation.deliveryChecks,
       staffExplanations: confirmation.staffExplanations,
+      photoPublicationConsent: confirmation.photoPublicationConsent,
+      facePublicationMode: confirmation.facePublicationMode,
       submittedAt,
       signatureData
     });
@@ -1112,6 +1145,8 @@ router.post("/manual", optionalStaffStoreContext, resolvePublicStoreContext, asy
       vehicleTypeLabel: vehicleTypeLabelInput,
       deliveryChecks,
       staffExplanations,
+      photoPublicationConsent,
+      facePublicationMode,
       termsAccepted,
       finalConfirmationAccepted,
       signatureData
@@ -1166,6 +1201,8 @@ router.post("/manual", optionalStaffStoreContext, resolvePublicStoreContext, asy
       vehicleTypeLabel: vehicleTypeLabelInput || vehicleTypeLabel,
       deliveryChecks: confirmedDeliveryChecks,
       staffExplanations: confirmedStaffExplanations,
+      photoPublicationConsent,
+      facePublicationMode,
       submittedAt
     }));
 
@@ -1214,6 +1251,8 @@ router.post("/manual", optionalStaffStoreContext, resolvePublicStoreContext, asy
       vehicleTypeLabel: vehicleTypeLabelInput || vehicleTypeLabel,
       deliveryChecks: confirmedDeliveryChecks,
       staffExplanations: confirmedStaffExplanations,
+      photoPublicationConsent,
+      facePublicationMode,
       submittedAt,
       signatureData
     });
