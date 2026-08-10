@@ -39,7 +39,11 @@ function assertWeeklyLimit({ dates, attemptedDate, maxSelectableDays, tierName, 
   });
   return selectedDays;
 }
-function capacityFor(calendar) { return Number(calendar.maxRequestCapacity ?? calendar.requiredHeadcount ?? 0); }
+function capacityFor(calendar) {
+  const raw = calendar.max_request_capacity ?? calendar.maxRequestCapacity ?? calendar.required_headcount ?? calendar.requiredHeadcount ?? 0;
+  const capacity = Number(raw);
+  return Number.isInteger(capacity) && capacity >= 0 ? capacity : 0;
+}
 function deadlinePassed(calendar) { if (!calendar.requestDeadlineAt) return false; const raw=String(calendar.requestDeadlineAt).replace(" ","T"); return new Date(raw.endsWith("Z") || raw.includes("+") ? raw : raw + "+08:00") < new Date(); }
 function reservedCapacity(calendar) { return Number(calendar.approvedHeadcount || 0) + (calendar.pendingReservesCapacity ? Number(calendar.pendingRequestCount || 0) : 0); }
 function publicEmployeeDay(calendar, ownStatus = null) {
