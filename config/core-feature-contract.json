@@ -4925,7 +4925,8 @@
         "backend/src/services/telegramService.js",
         "backend/src/utils/line.js",
         "backend/src/services/staffLineNotify.js",
-        "backend/src/services/lineWorkflowService.js"
+        "backend/src/services/lineWorkflowService.js",
+        "shared/warrantyRepairAdditionalTerms.json"
       ],
       "testFiles": [
         "backend/test/backendValidationMode.test.js",
@@ -4950,7 +4951,8 @@
         ],
         "revisionLabel": "org.opencontainers.image.revision",
         "runtimeUser": "node",
-        "persistentDataPolicy": "storage, uploads and generated PDF files must be runtime volumes and never image content"
+        "persistentDataPolicy": "storage, uploads and generated PDF files must be runtime volumes and never image content",
+        "buildContext": "repository Git archive at the exact release commit"
       },
       "reason": "Allows immutable staging backend health and GET authorization validation without startup, database, scheduler, file, or outbound side effects."
     }

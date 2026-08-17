@@ -1,8 +1,12 @@
-.env
-.env.*
+**/.env
+**/.env.*
 node_modules
+backend/node_modules
 npm-debug.log*
 storage
+backend/storage
+uploads
+backend/uploads
 test
 scripts
 Dockerfile*

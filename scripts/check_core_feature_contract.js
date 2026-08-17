@@ -59,7 +59,7 @@ else{
  if(!middleware.includes("isAllowedValidationHttpMethod"))fail("backend validation HTTP method guard missing");
  for(const marker of ["ensureStorageDirectories","ensureV2Schema","ensureDefaultAdmin","ensureDefaultStaff","validateTelegramConfig"])if(!server.includes(marker))fail("backend startup guard marker missing "+marker);
  if(!database.includes("assertReadOnlySqlAllowed")||!database.includes("assertRuntimeWriteAllowed"))fail("database read-only guard missing");
- for(const marker of ["FROM node:20-alpine","npm ci --omit=dev --no-audit --no-fund","LABEL org.opencontainers.image.revision=$REVISION","USER node",'CMD ["node", "src/server.js"]'])if(!dockerfile.includes(marker))fail("backend Dockerfile marker missing "+marker);
+ for(const marker of ["FROM node:20-alpine","npm ci --omit=dev --no-audit --no-fund","LABEL org.opencontainers.image.revision=$REVISION","COPY backend/src ./src","COPY shared/warrantyRepairAdditionalTerms.json /app/shared/warrantyRepairAdditionalTerms.json","USER node",'CMD ["node", "src/server.js"]'])if(!dockerfile.includes(marker))fail("backend Dockerfile marker missing "+marker);
  for(const marker of [".env","node_modules","storage"])if(!dockerignore.includes(marker))fail("backend .dockerignore marker missing "+marker);
 }
 const requiredFields=array(manifest.requiredFeatureFields,"requiredFeatureFields");
