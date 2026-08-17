@@ -1,324 +1,5059 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "productionBaselineCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
-  "allowedStatuses": ["production", "staging-approved", "completed", "incomplete"],
+  "contractCommit": "b187df3febe28668fc109d5360230179c817d14d",
+  "allowedStatuses": [
+    "production",
+    "completed",
+    "conditional",
+    "infrastructure",
+    "intentional-disabled",
+    "legacy",
+    "incomplete"
+  ],
+  "routeClassifications": [
+    "feature",
+    "alias",
+    "detail",
+    "print",
+    "public-workflow",
+    "redirect-helper",
+    "helper",
+    "fallback",
+    "conditional"
+  ],
+  "mountClassifications": [
+    "feature",
+    "infrastructure",
+    "auth",
+    "health",
+    "public-workflow",
+    "file-workflow",
+    "debug-disabled",
+    "intentional-disabled",
+    "legacy-conditional"
+  ],
+  "requiredFeatureFields": [
+    "featureId",
+    "category",
+    "displayName",
+    "status",
+    "releaseRequired",
+    "sourceCommit",
+    "completionCommit",
+    "pageFiles",
+    "frontendRoutes",
+    "menuPaths",
+    "permissionKeys",
+    "requiredRoles",
+    "frontendApis",
+    "backendRouteFiles",
+    "backendMounts",
+    "directEndpoints",
+    "serviceFiles",
+    "scheduledJobs",
+    "webhooks",
+    "backgroundWorkflows",
+    "publicEndpoints",
+    "fileWorkflows",
+    "migrations",
+    "testFiles",
+    "testCommands",
+    "featureFlags",
+    "productionEvidence",
+    "notes",
+    "menuRoles",
+    "selfReadRoles",
+    "selfWriteRoles",
+    "managementReadRoles",
+    "managementWriteRoles",
+    "publicAccess",
+    "backendAuthorizationSource"
+  ],
+  "expectedCounts": {
+    "features": 53,
+    "frontendRoutes": 83,
+    "menuPaths": 35,
+    "permissionMenuMappings": 35,
+    "uniqueBackendMounts": 59,
+    "backendMountCalls": 62,
+    "directEndpoints": 10,
+    "workflows": 17,
+    "scheduledJobRegistrations": 4,
+    "lineWebhookHandlers": 3,
+    "telegramWebhookHandlers": 1
+  },
   "features": [
     {
-      "featureId": "orders",
-      "displayName": "訂單管理",
-      "pageFile": "frontend/src/pages/OrdersPage.jsx",
-      "frontendRoute": "/orders",
-      "menuPath": "/orders",
-      "permissionKey": "orders",
-      "requiredRoles": ["ADMIN", "MANAGER", "CASHIER", "REPAIR"],
-      "frontendApi": ["/orders/"],
-      "frontendApiFiles": ["frontend/src/pages/OrdersPage.jsx"],
-      "backendRouteFile": "backend/src/routes/orders.js",
-      "backendMount": "/api/orders",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature orders",
-      "assetMarkers": ["/orders", "訂單管理"],
+      "featureId": "authentication",
+      "category": "infrastructure",
+      "displayName": "Authentication and store signup",
       "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/LoginPage.jsx",
+        "frontend/src/pages/StoreSignupPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/login",
+          "classification": "public-workflow",
+          "access": "public"
+        },
+        {
+          "path": "/store-signup",
+          "classification": "public-workflow",
+          "access": "public"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [
+        "PUBLIC"
+      ],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/auth.js",
+        "backend/src/routes/storeSignup.js"
+      ],
+      "backendMounts": [
+        "/api",
+        "/api",
+        "/api/auth"
+      ],
+      "directEndpoints": [
+        "GET /health"
+      ],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/auth.js, backend/src/routes/storeSignup.js"
+    },
+    {
+      "featureId": "navigation-shell",
+      "category": "infrastructure",
+      "displayName": "Navigation helpers",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/MorePage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/",
+          "classification": "redirect-helper",
+          "access": "public",
+          "reason": "Token landing redirect"
+        },
+        {
+          "path": "/more",
+          "classification": "helper",
+          "access": "protected",
+          "reason": "Mobile menu shell"
+        },
+        {
+          "path": "*",
+          "classification": "fallback",
+          "access": "protected",
+          "reason": "Required fallback"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [],
+      "backendMounts": [],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "No feature-specific backend router."
+    },
+    {
+      "featureId": "platform-admin",
+      "category": "enterprise",
+      "displayName": "Platform admin and multitenancy",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/PlatformLoginPage.jsx",
+        "frontend/src/pages/PlatformOnboardingPage.jsx",
+        "frontend/src/pages/PlatformCompaniesPage.jsx",
+        "frontend/src/pages/SaasStoreFeaturesPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/platform-admin/login",
+          "classification": "public-workflow",
+          "access": "public"
+        },
+        {
+          "path": "/platform-admin",
+          "classification": "feature",
+          "access": "public"
+        },
+        {
+          "path": "/platform-admin/onboarding",
+          "classification": "feature",
+          "access": "public"
+        },
+        {
+          "path": "/platform-admin/companies",
+          "classification": "feature",
+          "access": "public"
+        },
+        {
+          "path": "/platform-admin/stores/:id/features",
+          "classification": "detail",
+          "access": "public"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/platformAuth.js",
+        "backend/src/routes/platformOnboarding.js",
+        "backend/src/routes/saasAdmin.js",
+        "backend/src/routes/storeAccess.js",
+        "backend/src/routes/storeFeatures.js",
+        "backend/src/routes/company.js"
+      ],
+      "backendMounts": [
+        "/api/platform-auth",
+        "/api/platform-admin/onboarding",
+        "/api/store-access",
+        "/api",
+        "/api/platform-admin",
+        "/api/company",
+        "/api/store-features"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/platformAuth.js, backend/src/routes/platformOnboarding.js, backend/src/routes/saasAdmin.js, backend/src/routes/storeAccess.js, backend/src/routes/storeFeatures.js, backend/src/routes/company.js"
+    },
+    {
+      "featureId": "saas-admin-legacy",
+      "category": "enterprise",
+      "displayName": "Legacy SaaS aliases",
+      "status": "conditional",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/SaasStoreFeaturesPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/saas-admin",
+          "classification": "redirect-helper",
+          "access": "public",
+          "reason": "Legacy alias"
+        },
+        {
+          "path": "/saas-admin/onboarding",
+          "classification": "redirect-helper",
+          "access": "public",
+          "reason": "Legacy alias"
+        },
+        {
+          "path": "/saas-admin/companies",
+          "classification": "redirect-helper",
+          "access": "public",
+          "reason": "Legacy alias"
+        },
+        {
+          "path": "/saas-admin/stores/:id/features",
+          "classification": "redirect-helper",
+          "access": "public",
+          "reason": "Legacy alias"
+        },
+        {
+          "path": "/saas-admin/*",
+          "classification": "redirect-helper",
+          "access": "public",
+          "reason": "Legacy wildcard"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/saasAdmin.js"
+      ],
+      "backendMounts": [
+        "/api/saas-admin"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [
+        "legacy compatibility"
+      ],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "Conditional but release-required.",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/saasAdmin.js"
+    },
+    {
+      "featureId": "dashboard",
+      "category": "operations",
+      "displayName": "Dashboard",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/DashboardPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/dashboard",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/dashboard",
+          "label": "首頁",
+          "permissionKey": "dashboard"
+        }
+      ],
+      "permissionKeys": [
+        "dashboard"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/dashboard.js"
+      ],
+      "backendMounts": [
+        "/api/dashboard"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [
+        {
+          "workflowId": "daily-report-cron",
+          "featureId": "dashboard",
+          "sourceFile": "backend/src/app.js",
+          "entryFunction": "sendDailyReport",
+          "sourceMarker": "const result = await sendDailyReport(config);",
+          "routeOrScheduler": "0 21 * * *",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": true,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/dashboard.js"
+    },
+    {
+      "featureId": "notifications",
+      "category": "operations",
+      "displayName": "Notifications",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/NotificationsPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/notifications",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/notifications",
+          "label": "通知中心",
+          "permissionKey": "dashboard"
+        }
+      ],
+      "permissionKeys": [
+        "dashboard"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/staffNotifications.js"
+      ],
+      "backendMounts": [
+        "/api/staff-notifications",
+        "/api/staff-dashboard"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/staffNotificationService.js",
+        "backend/src/services/notificationEventService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/staffNotifications.js"
+    },
+    {
+      "featureId": "internal-messages",
+      "category": "operations",
+      "displayName": "Internal messages",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/MessagesPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/messages",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/messages",
+          "label": "訊息中心",
+          "permissionKey": "dashboard"
+        }
+      ],
+      "permissionKeys": [
+        "dashboard"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/internalMessages.js"
+      ],
+      "backendMounts": [
+        "/api/internal-messages"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/internalMessageService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/internalMessages.js"
+    },
+    {
+      "featureId": "daily-staff-tasks",
+      "category": "operations",
+      "displayName": "Daily staff tasks",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/DailyTasksPage.jsx",
+        "frontend/src/pages/DailyTaskSettingsPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/daily-tasks",
+          "classification": "feature",
+          "access": "protected"
+        },
+        {
+          "path": "/settings/daily-tasks",
+          "classification": "detail",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/daily-tasks",
+          "label": "今日任務",
+          "permissionKey": "dashboard"
+        },
+        {
+          "path": "/settings/daily-tasks",
+          "label": "每日任務設定",
+          "permissionKey": "settings"
+        }
+      ],
+      "permissionKeys": [
+        "dashboard",
+        "settings"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/dailyStaffTasks.js"
+      ],
+      "backendMounts": [
+        "/api/daily-staff-tasks"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/dailyStaffTaskService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [
+        {
+          "workflowId": "daily-task-automation",
+          "featureId": "daily-staff-tasks",
+          "sourceFile": "backend/src/services/dailyStaffTaskService.js",
+          "entryFunction": "ensureTodayTaskInstances",
+          "sourceMarker": "async function ensureTodayTaskInstances",
+          "routeOrScheduler": "request",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": true,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/dailyStaffTasks.js"
+    },
+    {
+      "featureId": "store-cash-reports",
+      "category": "operations",
+      "displayName": "Cash daily reports",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/StoreCashReportsPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/store-cash-reports",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/store-cash-reports",
+          "label": "現金日報",
+          "permissionKey": "dashboard"
+        }
+      ],
+      "permissionKeys": [
+        "dashboard"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/storeCashReports.js"
+      ],
+      "backendMounts": [
+        "/api/store-cash-reports"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/storeCashReportService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [
+        {
+          "workflowId": "cash-daily-close",
+          "featureId": "store-cash-reports",
+          "sourceFile": "backend/src/services/storeCashReportService.js",
+          "entryFunction": "upsertCashReport",
+          "sourceMarker": "async function upsertCashReport",
+          "routeOrScheduler": "request",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": false,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/storeCashReports.js"
+    },
+    {
+      "featureId": "store-visits",
+      "category": "crm",
+      "displayName": "Store visits",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/StoreVisitRecordsPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/store-visit-records",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/store-visit-records",
+          "label": "來店紀錄",
+          "permissionKey": "dashboard"
+        }
+      ],
+      "permissionKeys": [
+        "dashboard"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/storeVisitRecords.js"
+      ],
+      "backendMounts": [
+        "/api/store-visit-records"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/storeVisitRecordService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [
+        {
+          "workflowId": "store-visit-follow-up",
+          "featureId": "store-visits",
+          "sourceFile": "backend/src/services/storeVisitRecordService.js",
+          "entryFunction": "createFollowUpNotification",
+          "sourceMarker": "async function createFollowUpNotification",
+          "routeOrScheduler": "event",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": true,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/storeVisitRecords.js"
+    },
+    {
+      "featureId": "customer-status",
+      "category": "crm",
+      "displayName": "Customer status",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/CustomerStatusPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/customer-status",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/customer-status",
+          "label": "客戶狀態",
+          "permissionKey": "dashboard"
+        }
+      ],
+      "permissionKeys": [
+        "dashboard"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [],
+      "backendMounts": [],
+      "directEndpoints": [
+        "GET /api/customer-status",
+        "POST /api/customer-status/orders/:id/payment",
+        "POST /api/customer-status/orders/:id/deliver",
+        "POST /api/customer-status/repairs/:id/payment",
+        "POST /api/customer-status/repairs/:id/pickup"
+      ],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "No feature-specific backend router."
+    },
+    {
+      "featureId": "customers",
+      "category": "crm",
+      "displayName": "Customers",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/CustomersPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/crm",
+          "classification": "redirect-helper",
+          "access": "public",
+          "reason": "CRM alias"
+        },
+        {
+          "path": "/customers",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/customers",
+          "label": "客戶管理",
+          "permissionKey": "customers"
+        }
+      ],
+      "permissionKeys": [
+        "customers"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/customers.js"
+      ],
+      "backendMounts": [
+        "/api/customers"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/customers.js"
+    },
+    {
+      "featureId": "orders",
+      "category": "operations",
+      "displayName": "Orders",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/OrdersPage.jsx",
+        "frontend/src/pages/OrderEditPage.jsx",
+        "frontend/src/pages/OrderInstallCheckPrintPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/orders/new",
+          "classification": "redirect-helper",
+          "access": "public",
+          "reason": "POS order alias"
+        },
+        {
+          "path": "/orders",
+          "classification": "feature",
+          "access": "protected"
+        },
+        {
+          "path": "/orders/:id/edit",
+          "classification": "detail",
+          "access": "protected"
+        },
+        {
+          "path": "/orders/:id/install-check-print",
+          "classification": "print",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/orders",
+          "label": "訂單管理",
+          "permissionKey": "orders"
+        }
+      ],
+      "permissionKeys": [
+        "orders"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/orders.js",
+        "backend/src/routes/orderItemsEdit.js"
+      ],
+      "backendMounts": [
+        "/api/orders",
+        "/api/orders"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/orders.js, backend/src/routes/orderItemsEdit.js"
+    },
+    {
+      "featureId": "pos",
+      "category": "operations",
+      "displayName": "POS",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/POSPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/pos",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/pos",
+          "label": "POS / 新訂單",
+          "permissionKey": "pos"
+        }
+      ],
+      "permissionKeys": [
+        "pos"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [],
+      "backendMounts": [],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/posService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "No feature-specific backend router."
     },
     {
       "featureId": "line-order",
-      "displayName": "LINE 訂單管理",
-      "pageFile": "frontend/src/pages/LineOrderPage.jsx",
-      "frontendRoute": "/line-order",
-      "menuPath": "/line-order",
-      "permissionKey": "line",
-      "requiredRoles": ["ADMIN", "MANAGER"],
-      "frontendApi": ["/line-order/customer", "/line-order/ebikes", "/api/line-order/create"],
-      "frontendApiFiles": ["frontend/src/pages/LineOrderPage.jsx"],
-      "backendRouteFile": "backend/src/routes/lineOrder.js",
-      "backendMount": "/api/line-order",
-      "migrationRequired": false,
-      "testCommand": "sh scripts/check_line_order_admin_menu.sh",
-      "assetMarkers": ["/line-order", "LINE 訂單管理"],
-      "publicRoute": true,
-      "status": "completed",
-      "completionCommit": "6d8ea78f81de62d7608930bf4e0b087a9c18886e"
+      "category": "line",
+      "displayName": "LINE order",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "6d8ea78f81de62d7608930bf4e0b087a9c18886e",
+      "pageFiles": [
+        "frontend/src/pages/LineOrderPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/line-order",
+          "classification": "public-workflow",
+          "access": "public"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/line-order",
+          "label": "LINE 訂單管理",
+          "permissionKey": "line"
+        }
+      ],
+      "permissionKeys": [
+        "line"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [
+        "/line-order/customer",
+        "/line-order/ebikes",
+        "/api/line-order/create"
+      ],
+      "backendRouteFiles": [
+        "backend/src/routes/lineOrder.js"
+      ],
+      "backendMounts": [
+        "/api/line-order"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "Approved restoration required.",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/lineOrder.js: resolvePublicStoreContext; public GET customer/ebikes and POST create are separate from management-menu visibility."
+    },
+    {
+      "featureId": "repairs",
+      "category": "repairs",
+      "displayName": "Repairs",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/RepairsPage.jsx",
+        "frontend/src/pages/RepairDetailPage.jsx",
+        "frontend/src/pages/RepairWorkOrderPrintPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/repairs/quote",
+          "classification": "redirect-helper",
+          "access": "public",
+          "reason": "Quote alias"
+        },
+        {
+          "path": "/baojia",
+          "classification": "redirect-helper",
+          "access": "public",
+          "reason": "Legacy quote alias"
+        },
+        {
+          "path": "/repairs",
+          "classification": "feature",
+          "access": "protected"
+        },
+        {
+          "path": "/repairs/:id",
+          "classification": "detail",
+          "access": "protected"
+        },
+        {
+          "path": "/repairs/:id/work-order-print",
+          "classification": "print",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/repairs",
+          "label": "維修管理",
+          "permissionKey": "repairs"
+        }
+      ],
+      "permissionKeys": [
+        "repairs"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/repairs.js"
+      ],
+      "backendMounts": [
+        "/api/repairs"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/repairService.js"
+      ],
+      "scheduledJobs": [
+        {
+          "workflowId": "repair-pickup-reminder-cron",
+          "featureId": "repairs",
+          "sourceFile": "backend/src/app.js",
+          "entryFunction": "sendRepairPickupReminders",
+          "sourceMarker": "const result = await sendRepairPickupReminders();",
+          "routeOrScheduler": "30 13 * * *",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": true,
+          "reason": "Production workflow source is required."
+        },
+        {
+          "workflowId": "repair-storage-fee-cron",
+          "featureId": "repairs",
+          "sourceFile": "backend/src/app.js",
+          "entryFunction": "updateRepairStorageFees",
+          "sourceMarker": "const result = await updateRepairStorageFees();",
+          "routeOrScheduler": "0 1 * * *",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": false,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "REPAIR_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/repairs.js"
+    },
+    {
+      "featureId": "repair-reservations",
+      "category": "repairs",
+      "displayName": "Repair reservations",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/LineRepairRequestPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/repair-reservation",
+          "classification": "public-workflow",
+          "access": "public"
+        },
+        {
+          "path": "/repair-request",
+          "classification": "alias",
+          "access": "public",
+          "reason": "Public alias"
+        },
+        {
+          "path": "/line-repair-request",
+          "classification": "alias",
+          "access": "public",
+          "reason": "LINE alias"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/lineRepair.js",
+        "backend/src/routes/repairReservationSettings.js"
+      ],
+      "backendMounts": [
+        "/api/line-repair",
+        "/api/repair-reservation-settings"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/repairReservationService.js",
+        "backend/src/services/repairReservationAvailabilityService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/lineRepair.js, backend/src/routes/repairReservationSettings.js"
+    },
+    {
+      "featureId": "repair-confirmations",
+      "category": "repairs",
+      "displayName": "Repair signing",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/RepairConfirmPublicPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/repair-confirm",
+          "classification": "public-workflow",
+          "access": "public"
+        },
+        {
+          "path": "/repair-confirm/:token",
+          "classification": "public-workflow",
+          "access": "public"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/repairConfirmations.js"
+      ],
+      "backendMounts": [
+        "/api/repair-confirmations"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/repairConfirmationService.js",
+        "backend/src/services/pdfService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [
+        {
+          "workflowId": "repair-signing-pdf",
+          "featureId": "repair-confirmations",
+          "sourceFile": "backend/src/services/pdfService.js",
+          "entryFunction": "writeRepairConfirmationPdf",
+          "sourceMarker": "async function writeRepairConfirmationPdf",
+          "routeOrScheduler": "sign/PDF",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": true,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/repairConfirmations.js"
+    },
+    {
+      "featureId": "surveys",
+      "category": "repairs",
+      "displayName": "Surveys",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/SurveyPublicPage.jsx",
+        "frontend/src/pages/SurveysPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/surveys/:token",
+          "classification": "public-workflow",
+          "access": "public"
+        },
+        {
+          "path": "/surveys",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/surveys",
+          "label": "問卷結果",
+          "permissionKey": "repairs"
+        }
+      ],
+      "permissionKeys": [
+        "repairs"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/surveys.js"
+      ],
+      "backendMounts": [
+        "/api/surveys"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "REPAIR_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/surveys.js"
+    },
+    {
+      "featureId": "products",
+      "category": "catalog",
+      "displayName": "Products",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/ProductsPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/products/new",
+          "classification": "redirect-helper",
+          "access": "public",
+          "reason": "Create alias"
+        },
+        {
+          "path": "/products",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/products",
+          "label": "商品管理",
+          "permissionKey": "products"
+        }
+      ],
+      "permissionKeys": [
+        "products"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/products.js"
+      ],
+      "backendMounts": [
+        "/api/products"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "INVENTORY_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/products.js"
+    },
+    {
+      "featureId": "product-categories",
+      "category": "catalog",
+      "displayName": "Product categories",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [],
+      "frontendRoutes": [],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/productCategories.js"
+      ],
+      "backendMounts": [
+        "/api/product-categories"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "Embedded in products.",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/productCategories.js"
+    },
+    {
+      "featureId": "inventory",
+      "category": "catalog",
+      "displayName": "Inventory",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/InventoryPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/inventory",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/inventory",
+          "label": "庫存管理",
+          "permissionKey": "inventory"
+        }
+      ],
+      "permissionKeys": [
+        "inventory"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/inventory.js"
+      ],
+      "backendMounts": [
+        "/api/inventory"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "INVENTORY_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/inventory.js"
+    },
+    {
+      "featureId": "sales",
+      "category": "operations",
+      "displayName": "Sales",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/SalesManagementPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/sales",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/sales",
+          "label": "銷售管理",
+          "permissionKey": "sales_management"
+        }
+      ],
+      "permissionKeys": [
+        "sales_management"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/sales.js"
+      ],
+      "backendMounts": [
+        "/api/sales"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/sales.js"
+    },
+    {
+      "featureId": "suppliers",
+      "category": "supply",
+      "displayName": "Suppliers",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/SuppliersPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/suppliers",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/suppliers",
+          "label": "供應商管理",
+          "permissionKey": "suppliers"
+        }
+      ],
+      "permissionKeys": [
+        "suppliers"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/suppliers.js"
+      ],
+      "backendMounts": [
+        "/api/suppliers"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "INVENTORY_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/suppliers.js"
+    },
+    {
+      "featureId": "supplier-procurement",
+      "category": "supply",
+      "displayName": "Supplier purchase and return",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [],
+      "frontendRoutes": [],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/supplierPurchases.js",
+        "backend/src/routes/supplierReturns.js"
+      ],
+      "backendMounts": [
+        "/api/supplier-purchases",
+        "/api/supplier-returns"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [
+        {
+          "workflowId": "supplier-monthly-xlsx-cron",
+          "featureId": "supplier-procurement",
+          "sourceFile": "backend/src/app.js",
+          "entryFunction": "generateAndSendMonthlySupplierReports",
+          "sourceMarker": "const result = await generateAndSendMonthlySupplierReports();",
+          "routeOrScheduler": "0 9 1 * *",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": true,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/supplierPurchases.js, backend/src/routes/supplierReturns.js"
+    },
+    {
+      "featureId": "coupons",
+      "category": "operations",
+      "displayName": "Coupons",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/CouponsPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/coupons",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/coupons",
+          "label": "優惠券",
+          "permissionKey": "coupons"
+        }
+      ],
+      "permissionKeys": [
+        "coupons"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/coupons.js"
+      ],
+      "backendMounts": [
+        "/api/coupons"
+      ],
+      "directEndpoints": [
+        "GET /api/coupons/by-phone/:phone"
+      ],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/coupons.js"
+    },
+    {
+      "featureId": "purchase-confirmations",
+      "category": "operations",
+      "displayName": "Purchase signing",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/PurchaseConfirmPublicPage.jsx",
+        "frontend/src/pages/PurchaseConfirmationsPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/purchase-confirm/manual",
+          "classification": "public-workflow",
+          "access": "public"
+        },
+        {
+          "path": "/purchase-confirm",
+          "classification": "public-workflow",
+          "access": "public"
+        },
+        {
+          "path": "/purchase-confirm/:token",
+          "classification": "public-workflow",
+          "access": "public"
+        },
+        {
+          "path": "/purchase-confirmations",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/purchase-confirmations",
+          "label": "購買確認書",
+          "permissionKey": "orders"
+        }
+      ],
+      "permissionKeys": [
+        "orders"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/purchaseConfirmations.js"
+      ],
+      "backendMounts": [
+        "/api/purchase-confirmations"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/pdfService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [
+        {
+          "workflowId": "purchase-signing-pdf",
+          "featureId": "purchase-confirmations",
+          "sourceFile": "backend/src/services/pdfService.js",
+          "entryFunction": "writePurchaseConfirmationPdf",
+          "sourceMarker": "async function writePurchaseConfirmationPdf",
+          "routeOrScheduler": "sign/PDF",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": true,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/purchaseConfirmations.js"
+    },
+    {
+      "featureId": "staff",
+      "category": "staff",
+      "displayName": "Staff",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/StaffPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/staff",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/staff",
+          "label": "員工管理",
+          "permissionKey": "staff"
+        }
+      ],
+      "permissionKeys": [
+        "staff"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/staff.js"
+      ],
+      "backendMounts": [
+        "/api/staff"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/staff.js"
+    },
+    {
+      "featureId": "staff-attendance",
+      "category": "staff",
+      "displayName": "Attendance",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/StaffAttendancePage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/staff-attendance",
+          "classification": "feature",
+          "access": "protected"
+        },
+        {
+          "path": "/attendance",
+          "classification": "redirect-helper",
+          "access": "protected",
+          "reason": "Legacy alias"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/staff-attendance",
+          "label": "出勤",
+          "permissionKey": "staff"
+        }
+      ],
+      "permissionKeys": [
+        "staff"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/attendance.js"
+      ],
+      "backendMounts": [
+        "/api/attendance"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [
+        {
+          "workflowId": "attendance-checklist",
+          "featureId": "staff-attendance",
+          "sourceFile": "backend/src/routes/attendance.js",
+          "entryFunction": "ensureTodayChecklist",
+          "sourceMarker": "async function ensureTodayChecklist",
+          "routeOrScheduler": "request",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": false,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/attendance.js"
+    },
+    {
+      "featureId": "staff-kpi",
+      "category": "staff",
+      "displayName": "KPI and evaluation",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/KPIPage.jsx",
+        "frontend/src/pages/StaffKpiPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/kpi",
+          "classification": "feature",
+          "access": "protected"
+        },
+        {
+          "path": "/staff-kpi",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/staff-kpi",
+          "label": "KPI / 評價",
+          "permissionKey": "staff"
+        }
+      ],
+      "permissionKeys": [
+        "staff"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/kpi.js",
+        "backend/src/routes/staffKpi.js",
+        "backend/src/routes/staffEvaluations.js"
+      ],
+      "backendMounts": [
+        "/api/kpi",
+        "/api/staff-kpi",
+        "/api/staff-evaluations"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/kpiService.js",
+        "backend/src/services/staffKpiService.js",
+        "backend/src/services/staffEvaluationService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [
+        {
+          "workflowId": "kpi-event-automation",
+          "featureId": "staff-kpi",
+          "sourceFile": "backend/src/services/kpiService.js",
+          "entryFunction": "logKpi",
+          "sourceMarker": "async function logKpi",
+          "routeOrScheduler": "event",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": false,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/kpi.js, backend/src/routes/staffKpi.js, backend/src/routes/staffEvaluations.js"
+    },
+    {
+      "featureId": "payroll",
+      "category": "staff",
+      "displayName": "Payroll",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/PayrollPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/payroll",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/payroll",
+          "label": "薪資",
+          "permissionKey": "staff"
+        }
+      ],
+      "permissionKeys": [
+        "staff"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/payroll.js"
+      ],
+      "backendMounts": [
+        "/api/payroll"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/payroll.js"
     },
     {
       "featureId": "staff-incentives",
-      "displayName": "我的銷售服務績效",
-      "pageFile": "frontend/src/pages/StaffIncentivesPage.jsx",
-      "frontendRoute": "/staff-incentives",
-      "menuPath": "/staff-incentives",
-      "permissionKey": "staff_incentives",
-      "requiredRoles": ["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"],
-      "frontendApi": ["/staff-incentives/me", "/staff-incentives/admin/overview"],
-      "frontendApiFiles": ["frontend/src/pages/StaffIncentivesPage.jsx"],
-      "backendRouteFile": "backend/src/routes/staffIncentives.js",
-      "backendMount": "/api/staff-incentives",
-      "migrationRequired": true,
+      "category": "staff",
+      "displayName": "Staff incentives",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "9a1c3c293bf14949e7fd65e427918e6af0866d0e",
+      "pageFiles": [
+        "frontend/src/pages/StaffIncentivesPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/staff-incentives",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/staff-incentives",
+          "label": "我的銷售服務績效",
+          "permissionKey": "staff_incentives"
+        }
+      ],
+      "permissionKeys": [
+        "staff_incentives"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/staffIncentives.js"
+      ],
+      "backendMounts": [
+        "/api/staff-incentives"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/staffIncentiveService.js",
+        "backend/src/services/staffIncentiveCalculator.js",
+        "backend/src/services/staffIncentiveAgreementService.js",
+        "backend/src/services/staffIncentiveDashboardService.js",
+        "backend/src/services/staffIncentiveEarningService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [
+        {
+          "workflowId": "incentive-agreement-pdf",
+          "featureId": "staff-incentives",
+          "sourceFile": "backend/src/services/staffIncentiveAgreementService.js",
+          "entryFunction": "signIncentiveAgreement",
+          "sourceMarker": "async function signIncentiveAgreement",
+          "routeOrScheduler": "sign/PDF",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": false,
+          "reason": "Production workflow source is required."
+        }
+      ],
       "migrations": [
         "database/migrations/20260724_activate_staff_incentive_sale600_v4_full_utf8.sql",
         "database/migrations/20260724_fix_staff_incentive_sale600_agreement_encoding.sql"
       ],
-      "testCommand": "sh scripts/check_staff_incentive_integration.sh && node backend/scripts/testStaffIncentiveRoutes.js",
-      "assetMarkers": ["/staff-incentives", "我的銷售服務績效"],
-      "status": "completed",
-      "completionCommit": "9a1c3c293bf14949e7fd65e427918e6af0866d0e"
+      "testFiles": [
+        "scripts/check_staff_incentive_integration.sh",
+        "backend/scripts/testStaffIncentiveRoutes.js"
+      ],
+      "testCommands": [
+        "sh scripts/check_staff_incentive_integration.sh",
+        "node backend/scripts/testStaffIncentiveRoutes.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "selfReadRoles": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "selfWriteRoles": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "managementReadRoles": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE"
+      ],
+      "managementWriteRoles": [
+        "ADMIN_ROLE"
+      ],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/staffIncentives.js: ALL_STAFF_ROLES for self-service; ADMIN/MANAGER management reads; ADMIN dispute status patch."
     },
     {
-      "featureId": "staff-work-schedule",
-      "displayName": "員工排班",
-      "pageFile": "frontend/src/pages/StaffSchedulingPage.jsx",
-      "frontendRoute": "/staff-scheduling",
-      "menuPath": "/staff-scheduling",
-      "permissionKey": "staff_scheduling",
-      "requiredRoles": ["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"],
-      "frontendApi": ["/staff-scheduling/periods", "/staff-scheduling/me/workday-calendar"],
-      "frontendApiFiles": ["frontend/src/lib/staffSchedulingApi.js"],
-      "backendRouteFile": "backend/src/routes/staffScheduling.js",
-      "backendMount": "/api/staff-scheduling",
-      "migrationRequired": true,
+      "featureId": "staff-scheduling",
+      "category": "staff",
+      "displayName": "Staff scheduling",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "eb22640176a50d1bb1f8783123f67235feffb66e",
+      "pageFiles": [
+        "frontend/src/pages/StaffSchedulingPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/staff-scheduling",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/staff-scheduling",
+          "label": "員工排班",
+          "permissionKey": "staff_scheduling"
+        }
+      ],
+      "permissionKeys": [
+        "staff_scheduling"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/staffScheduling.js"
+      ],
+      "backendMounts": [
+        "/api/staff-scheduling"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/staffSchedulingService.js",
+        "backend/src/services/staffWorkdayRequestService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
       "migrations": [
         "database/migrations/20260802_01_create_staff_scheduling_foundation.sql",
         "database/migrations/20260802_02_create_staff_schedule_drafts.sql",
         "database/migrations/20260804_create_staff_workday_request_core.sql"
       ],
-      "testCommand": "sh scripts/check_staff_work_schedule_integration.sh && node --test backend/test/staffScheduling.test.js backend/test/staffWorkdayRequests.test.js",
-      "assetMarkers": ["/staff-scheduling", "員工排班"],
-      "status": "production",
-      "completionCommit": "eb22640176a50d1bb1f8783123f67235feffb66e"
+      "testFiles": [
+        "scripts/check_staff_work_schedule_integration.sh",
+        "backend/test/staffScheduling.test.js",
+        "backend/test/staffWorkdayRequests.test.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "selfReadRoles": [
+        "AUTHENTICATED_STAFF"
+      ],
+      "selfWriteRoles": [
+        "AUTHENTICATED_STAFF"
+      ],
+      "managementReadRoles": [
+        "STORE_ROLE_OWNER",
+        "STORE_ROLE_ADMIN",
+        "STORE_ROLE_MANAGER"
+      ],
+      "managementWriteRoles": [
+        "STORE_ROLE_OWNER",
+        "STORE_ROLE_ADMIN",
+        "STORE_ROLE_MANAGER"
+      ],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/staffScheduling.js: authenticated store-scoped self-service; requireStoreRole(owner/admin/manager) for management."
     },
     {
-      "featureId": "repairs",
-      "displayName": "維修管理",
-      "pageFile": "frontend/src/pages/RepairsPage.jsx",
-      "frontendRoute": "/repairs",
-      "menuPath": "/repairs",
-      "permissionKey": "repairs",
-      "requiredRoles": ["ADMIN", "MANAGER", "REPAIR"],
-      "frontendApi": ["/repairs/"],
-      "frontendApiFiles": ["frontend/src/pages/RepairsPage.jsx"],
-      "backendRouteFile": "backend/src/routes/repairs.js",
-      "backendMount": "/api/repairs",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature repairs",
-      "assetMarkers": ["/repairs", "維修管理"],
+      "featureId": "line-customer",
+      "category": "line",
+      "displayName": "LINE customer",
       "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/LineCustomerPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/line-customer",
+          "classification": "public-workflow",
+          "access": "public"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [],
+      "backendMounts": [],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "No feature-specific backend router."
     },
     {
-      "featureId": "repair-reservations",
-      "displayName": "維修預約",
-      "pageFile": "frontend/src/pages/LineRepairRequestPage.jsx",
-      "frontendRoute": "/repair-reservation",
-      "menuPath": null,
-      "permissionKey": null,
-      "requiredRoles": ["PUBLIC"],
-      "frontendApi": ["/line-repair/reservation-availability", "/line-repair/create"],
-      "frontendApiFiles": ["frontend/src/pages/LineRepairRequestPage.jsx"],
-      "backendRouteFile": "backend/src/routes/lineRepair.js",
-      "backendMount": "/api/line-repair",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature repair-reservations",
-      "assetMarkers": ["/repair-reservation"],
-      "publicRoute": true,
+      "featureId": "line-coupon",
+      "category": "line",
+      "displayName": "LINE coupon",
       "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/LineCouponPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/coupon-center",
+          "classification": "public-workflow",
+          "access": "public"
+        },
+        {
+          "path": "/line-coupon",
+          "classification": "alias",
+          "access": "public",
+          "reason": "LINE alias"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [],
+      "backendMounts": [],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "No feature-specific backend router."
     },
     {
-      "featureId": "customers",
-      "displayName": "客戶管理",
-      "pageFile": "frontend/src/pages/CustomersPage.jsx",
-      "frontendRoute": "/customers",
-      "menuPath": "/customers",
-      "permissionKey": "customers",
-      "requiredRoles": ["ADMIN", "MANAGER", "CASHIER", "REPAIR"],
-      "frontendApi": ["/customers"],
-      "frontendApiFiles": ["frontend/src/pages/CustomersPage.jsx"],
-      "backendRouteFile": "backend/src/routes/customers.js",
-      "backendMount": "/api/customers",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature customers",
-      "assetMarkers": ["/customers", "客戶管理"],
+      "featureId": "line-google-review",
+      "category": "line",
+      "displayName": "LINE Google review",
       "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/LineGoogleReviewPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/google-review",
+          "classification": "public-workflow",
+          "access": "public"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/lineGoogleReview.js"
+      ],
+      "backendMounts": [
+        "/api/line-google-review"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/lineGoogleReview.js"
     },
     {
-      "featureId": "products",
-      "displayName": "商品管理",
-      "pageFile": "frontend/src/pages/ProductsPage.jsx",
-      "frontendRoute": "/products",
-      "menuPath": "/products",
-      "permissionKey": "products",
-      "requiredRoles": ["ADMIN", "MANAGER", "INVENTORY"],
-      "frontendApi": ["/products"],
-      "frontendApiFiles": ["frontend/src/pages/ProductsPage.jsx"],
-      "backendRouteFile": "backend/src/routes/products.js",
-      "backendMount": "/api/products",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature products",
-      "assetMarkers": ["/products", "商品管理"],
+      "featureId": "line-progress",
+      "category": "line",
+      "displayName": "LINE progress",
       "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/LineProgressPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/progress",
+          "classification": "public-workflow",
+          "access": "public"
+        },
+        {
+          "path": "/line-progress",
+          "classification": "alias",
+          "access": "public",
+          "reason": "LINE alias"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [],
+      "backendMounts": [],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "No feature-specific backend router."
     },
     {
-      "featureId": "inventory",
-      "displayName": "庫存管理",
-      "pageFile": "frontend/src/pages/InventoryPage.jsx",
-      "frontendRoute": "/inventory",
-      "menuPath": "/inventory",
-      "permissionKey": "inventory",
-      "requiredRoles": ["ADMIN", "MANAGER", "INVENTORY"],
-      "frontendApi": ["/inventory/movements"],
-      "frontendApiFiles": ["frontend/src/pages/InventoryPage.jsx"],
-      "backendRouteFile": "backend/src/routes/inventory.js",
-      "backendMount": "/api/inventory",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature inventory",
-      "assetMarkers": ["/inventory", "庫存管理"],
+      "featureId": "store-public-info",
+      "category": "line",
+      "displayName": "Store information and support",
       "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/LineEntryPage.jsx",
+        "frontend/src/pages/LineSupportPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/store-info",
+          "classification": "public-workflow",
+          "access": "public"
+        },
+        {
+          "path": "/support",
+          "classification": "public-workflow",
+          "access": "public"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/storefront.js"
+      ],
+      "backendMounts": [
+        "/api/storefront"
+      ],
+      "directEndpoints": [
+        "POST /api/line-support/create"
+      ],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/storefront.js"
     },
     {
-      "featureId": "sales",
-      "displayName": "銷售管理",
-      "pageFile": "frontend/src/pages/SalesManagementPage.jsx",
-      "frontendRoute": "/sales",
-      "menuPath": "/sales",
-      "permissionKey": "sales_management",
-      "requiredRoles": ["ADMIN", "MANAGER"],
-      "frontendApi": ["/sales/summary"],
-      "frontendApiFiles": ["frontend/src/pages/SalesManagementPage.jsx"],
-      "backendRouteFile": "backend/src/routes/sales.js",
-      "backendMount": "/api/sales",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature sales",
-      "assetMarkers": ["/sales", "銷售管理"],
+      "featureId": "line-bind-phone",
+      "category": "line",
+      "displayName": "LINE phone binding",
       "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [],
+      "frontendRoutes": [],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/lineBindPhone.js"
+      ],
+      "backendMounts": [
+        "/api/line-bind-phone"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/lineBindPhone.js"
     },
     {
-      "featureId": "suppliers",
-      "displayName": "供應商管理",
-      "pageFile": "frontend/src/pages/SuppliersPage.jsx",
-      "frontendRoute": "/suppliers",
-      "menuPath": "/suppliers",
-      "permissionKey": "suppliers",
-      "requiredRoles": ["ADMIN", "MANAGER", "INVENTORY"],
-      "frontendApi": ["/suppliers"],
-      "frontendApiFiles": ["frontend/src/pages/SuppliersPage.jsx"],
-      "backendRouteFile": "backend/src/routes/suppliers.js",
-      "backendMount": "/api/suppliers",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature suppliers",
-      "assetMarkers": ["/suppliers", "供應商管理"],
+      "featureId": "store-settings",
+      "category": "settings",
+      "displayName": "Store and system settings",
       "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
-    },
-    {
-      "featureId": "staff",
-      "displayName": "員工管理",
-      "pageFile": "frontend/src/pages/StaffPage.jsx",
-      "frontendRoute": "/staff",
-      "menuPath": "/staff",
-      "permissionKey": "staff",
-      "requiredRoles": ["ADMIN", "MANAGER"],
-      "frontendApi": ["/staff/permissions"],
-      "frontendApiFiles": ["frontend/src/pages/StaffPage.jsx"],
-      "backendRouteFile": "backend/src/routes/staff.js",
-      "backendMount": "/api/staff",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature staff",
-      "assetMarkers": ["/staff", "員工管理"],
-      "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
-    },
-    {
-      "featureId": "purchase-confirmations",
-      "displayName": "購買確認書",
-      "pageFile": "frontend/src/pages/PurchaseConfirmationsPage.jsx",
-      "frontendRoute": "/purchase-confirmations",
-      "menuPath": "/purchase-confirmations",
-      "permissionKey": "orders",
-      "requiredRoles": ["ADMIN", "MANAGER", "CASHIER", "REPAIR"],
-      "frontendApi": ["/purchase-confirmations/generate-link"],
-      "frontendApiFiles": ["frontend/src/pages/PurchaseConfirmationsPage.jsx"],
-      "backendRouteFile": "backend/src/routes/purchaseConfirmations.js",
-      "backendMount": "/api/purchase-confirmations",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature purchase-confirmations",
-      "assetMarkers": ["/purchase-confirmations", "購買確認書"],
-      "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
-    },
-    {
-      "featureId": "coupons",
-      "displayName": "優惠券",
-      "pageFile": "frontend/src/pages/CouponsPage.jsx",
-      "frontendRoute": "/coupons",
-      "menuPath": "/coupons",
-      "permissionKey": "coupons",
-      "requiredRoles": ["ADMIN", "MANAGER", "CASHIER"],
-      "frontendApi": ["/coupons"],
-      "frontendApiFiles": ["frontend/src/pages/CouponsPage.jsx"],
-      "backendRouteFile": "backend/src/routes/coupons.js",
-      "backendMount": "/api/coupons",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature coupons",
-      "assetMarkers": ["/coupons", "優惠券"],
-      "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/StoreSettingsPage.jsx",
+        "frontend/src/pages/SettingsPage.jsx",
+        "frontend/src/pages/SystemManualPage.jsx",
+        "frontend/src/pages/TrashPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/settings/store",
+          "classification": "feature",
+          "access": "protected"
+        },
+        {
+          "path": "/settings/manual",
+          "classification": "helper",
+          "access": "protected",
+          "reason": "Operator manual"
+        },
+        {
+          "path": "/settings",
+          "classification": "feature",
+          "access": "protected"
+        },
+        {
+          "path": "/trash",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/settings/store",
+          "label": "門市設定",
+          "permissionKey": "settings"
+        },
+        {
+          "path": "/settings/manual",
+          "label": "系統使用手冊",
+          "permissionKey": "dashboard"
+        },
+        {
+          "path": "/settings?section=system",
+          "label": "系統設定",
+          "permissionKey": "settings"
+        },
+        {
+          "path": "/trash",
+          "label": "已刪除資料",
+          "permissionKey": "settings"
+        }
+      ],
+      "permissionKeys": [
+        "settings",
+        "dashboard"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/storeSettings.js",
+        "backend/src/routes/settings.js",
+        "backend/src/routes/systemStatus.js"
+      ],
+      "backendMounts": [
+        "/api/store",
+        "/api/settings",
+        "/api/system"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE"
+      ],
+      "managementWriteRoles": [
+        "STORE_ROLE_OWNER",
+        "STORE_ROLE_ADMIN"
+      ],
+      "publicAccess": true,
+      "backendAuthorizationSource": "backend/src/routes/settings.js: public GET /public; authenticated GET for ADMIN/MANAGER; PATCH requires storeRole owner/admin."
     },
     {
       "featureId": "line-settings",
-      "displayName": "LINE 設定",
-      "pageFile": "frontend/src/pages/StoreLineSettingsPage.jsx",
-      "frontendRoute": "/settings/line",
-      "menuPath": "/settings/line",
-      "permissionKey": "line",
-      "requiredRoles": ["ADMIN", "MANAGER"],
-      "frontendApi": ["/store/settings/line"],
-      "frontendApiFiles": ["frontend/src/pages/StoreLineSettingsPage.jsx"],
-      "backendRouteFile": "backend/src/routes/storeSettings.js",
-      "backendMount": "/api/store",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature line-settings",
-      "assetMarkers": ["/settings/line", "LINE 設定"],
+      "category": "settings",
+      "displayName": "LINE settings",
       "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/StoreLineSettingsPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/settings/line",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/settings/line",
+          "label": "LINE 設定",
+          "permissionKey": "line"
+        }
+      ],
+      "permissionKeys": [
+        "line"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/storeSettings.js"
+      ],
+      "backendMounts": [],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/storeLineSettingsService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/storeSettings.js"
     },
     {
       "featureId": "line-channel-management",
-      "displayName": "LINE Channel 管理",
-      "pageFile": "frontend/src/pages/StoreLineChannelsPage.jsx",
-      "frontendRoute": "/settings/line-channels",
-      "menuPath": "/settings/line-channels",
-      "permissionKey": "settings",
-      "requiredRoles": ["ADMIN", "MANAGER"],
-      "frontendApi": ["/store-line-channels"],
-      "frontendApiFiles": ["frontend/src/lib/storeLineChannelsApi.js"],
-      "backendRouteFile": "backend/src/routes/storeLineChannels.js",
-      "backendMount": "/api/store-line-channels",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature line-channel-management",
-      "assetMarkers": ["/settings/line-channels", "LINE Channel 管理"],
+      "category": "settings",
+      "displayName": "LINE channels",
       "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/StoreLineChannelsPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/settings/line-channels",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/settings/line-channels",
+          "label": "LINE Channel 管理",
+          "permissionKey": "settings"
+        }
+      ],
+      "permissionKeys": [
+        "settings"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/storeLineChannels.js"
+      ],
+      "backendMounts": [
+        "/api/store-line-channels"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/storeLineChannelService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "managementWriteRoles": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/storeLineChannels.js: router-level authorize permits all listed staff roles for GET and write endpoints."
     },
     {
       "featureId": "line-notifications",
-      "displayName": "LINE 通知設定",
-      "pageFile": "frontend/src/pages/LineNotificationSettingsPage.jsx",
-      "frontendRoute": "/settings/line-notifications",
-      "menuPath": "/settings/line-notifications",
-      "permissionKey": "settings",
-      "requiredRoles": ["ADMIN", "MANAGER"],
-      "frontendApi": ["/line-notification-settings/store"],
-      "frontendApiFiles": ["frontend/src/lib/lineNotificationSettingsApi.js"],
-      "backendRouteFile": "backend/src/routes/lineNotificationSettings.js",
-      "backendMount": "/api/line-notification-settings",
-      "migrationRequired": false,
-      "testCommand": "node scripts/check_core_feature_contract.js --feature line-notifications",
-      "assetMarkers": ["/settings/line-notifications", "LINE 通知設定"],
+      "category": "settings",
+      "displayName": "LINE notifications",
       "status": "production",
-      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f"
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/LineNotificationSettingsPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/settings/line-notifications",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/settings/line-notifications",
+          "label": "LINE 通知設定",
+          "permissionKey": "settings"
+        }
+      ],
+      "permissionKeys": [
+        "settings"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/lineNotificationSettings.js"
+      ],
+      "backendMounts": [
+        "/api/line-notification-settings"
+      ],
+      "directEndpoints": [
+        "POST /api/line/push-test-welcome",
+        "POST /api/line/profile-name"
+      ],
+      "serviceFiles": [
+        "backend/src/services/lineNotificationSettingsService.js",
+        "backend/src/services/lineGroupNotificationService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [
+        {
+          "workflowId": "staff-group-notification",
+          "featureId": "line-notifications",
+          "sourceFile": "backend/src/services/lineGroupNotificationService.js",
+          "entryFunction": "sendStaffGroupNotification",
+          "sourceMarker": "async function sendStaffGroupNotification",
+          "routeOrScheduler": "event",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": true,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE"
+      ],
+      "managementWriteRoles": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE"
+      ],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/lineNotificationSettings.js: router-level authorize permits five staff roles for GET and write endpoints."
+    },
+    {
+      "featureId": "store-transfers",
+      "category": "enterprise",
+      "displayName": "Store transfers",
+      "status": "conditional",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/StoreTransfersPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/store-transfers",
+          "classification": "conditional",
+          "access": "protected",
+          "reason": "Feature/profile gated"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/storeTransfers.js"
+      ],
+      "backendMounts": [
+        "/api/store-transfers"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [
+        "store_transfers_enabled"
+      ],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/storeTransfers.js"
+    },
+    {
+      "featureId": "inbound-transfers",
+      "category": "enterprise",
+      "displayName": "Inbound transfers",
+      "status": "conditional",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/InboundTransfersPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/inbound-transfers",
+          "classification": "conditional",
+          "access": "protected",
+          "reason": "Profile gated"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/inbound-transfers",
+          "label": "門市入庫",
+          "permissionKey": "inbound_transfers"
+        }
+      ],
+      "permissionKeys": [
+        "inbound_transfers"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [],
+      "backendMounts": [],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [
+        "store_transfers_enabled",
+        "canUseInboundTransfers"
+      ],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "INVENTORY_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "No feature-specific backend router."
+    },
+    {
+      "featureId": "replenishment-requests",
+      "category": "enterprise",
+      "displayName": "Replenishment",
+      "status": "conditional",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/StoreReplenishmentRequestsPage.jsx",
+        "frontend/src/pages/HqReplenishmentRequestsPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/store-replenishment-requests",
+          "classification": "conditional",
+          "access": "protected",
+          "reason": "Prepared/flagged"
+        },
+        {
+          "path": "/hq-replenishment-requests",
+          "classification": "conditional",
+          "access": "protected",
+          "reason": "HQ gated"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/store-replenishment-requests",
+          "label": "門市請貨",
+          "permissionKey": "store_replenishment_requests"
+        }
+      ],
+      "permissionKeys": [
+        "store_replenishment_requests"
+      ],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/storeReplenishmentRequests.js"
+      ],
+      "backendMounts": [
+        "/api/store-replenishment-requests"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/storeReplenishmentNotificationService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [
+        "store_transfers_enabled",
+        "preparedOnly"
+      ],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "INVENTORY_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/storeReplenishmentRequests.js"
+    },
+    {
+      "featureId": "company-settlements",
+      "category": "enterprise",
+      "displayName": "Company settlements",
+      "status": "conditional",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/CompanyStoreSettlementsPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/company-store-settlements",
+          "classification": "conditional",
+          "access": "protected",
+          "reason": "Company gated"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/companyStoreSettlements.js"
+      ],
+      "backendMounts": [
+        "/api/company-store-settlements"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [
+        "company_store_settlements_enabled"
+      ],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/companyStoreSettlements.js"
+    },
+    {
+      "featureId": "headquarters",
+      "category": "enterprise",
+      "displayName": "Headquarters",
+      "status": "conditional",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [
+        "frontend/src/pages/HeadquartersPage.jsx",
+        "frontend/src/pages/HqTransferReportPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/headquarters",
+          "classification": "conditional",
+          "access": "protected",
+          "reason": "HQ gated"
+        },
+        {
+          "path": "/hq-transfer-report",
+          "classification": "conditional",
+          "access": "protected",
+          "reason": "HQ gated"
+        }
+      ],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [],
+      "backendMounts": [],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [
+        "headquarters_enabled",
+        "canUseHqFeatures"
+      ],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "No feature-specific backend router."
+    },
+    {
+      "featureId": "permissions",
+      "category": "infrastructure",
+      "displayName": "Permissions",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [],
+      "frontendRoutes": [],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/permissions.js"
+      ],
+      "backendMounts": [
+        "/api/permissions"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/menuPermissionService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/permissions.js"
+    },
+    {
+      "featureId": "telegram-integration",
+      "category": "integration",
+      "displayName": "Telegram integration",
+      "status": "conditional",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [],
+      "frontendRoutes": [],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/telegramWebhook.js"
+      ],
+      "backendMounts": [
+        "/api/telegram"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [
+        {
+          "workflowId": "telegram-webhook-command",
+          "featureId": "telegram-integration",
+          "sourceFile": "backend/src/routes/telegramWebhook.js",
+          "entryFunction": "handleSupplierCommand",
+          "sourceMarker": "router.post(\"/webhook\"",
+          "routeOrScheduler": "/api/telegram/webhook",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "TELEGRAM_NOTIFICATIONS_ENABLED",
+          "externalNotification": true,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [
+        "TELEGRAM_NOTIFICATIONS_ENABLED"
+      ],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "telegram.js is unmounted legacy.",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/telegramWebhook.js"
+    },
+    {
+      "featureId": "line-webhook-commands",
+      "category": "integration",
+      "displayName": "LINE webhook and commands",
+      "status": "production",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [],
+      "frontendRoutes": [],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/line.js"
+      ],
+      "backendMounts": [
+        "/api/line"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/lineWorkflowService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [
+        {
+          "workflowId": "line-webhook",
+          "featureId": "line-webhook-commands",
+          "sourceFile": "backend/src/routes/line.js",
+          "entryFunction": "handleLineWebhookEvents",
+          "sourceMarker": "router.post(\"/webhook/channel/:webhookPath\"",
+          "routeOrScheduler": "/api/line/webhook*",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "WEBHOOKS_ENABLED",
+          "externalNotification": true,
+          "reason": "Production workflow source is required."
+        },
+        {
+          "workflowId": "line-staff-command",
+          "featureId": "line-webhook-commands",
+          "sourceFile": "backend/src/services/lineWorkflowService.js",
+          "entryFunction": "parseStaffCommand",
+          "sourceMarker": "const command = parseStaffCommand(messageText);",
+          "routeOrScheduler": "LINE command",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "WEBHOOKS_ENABLED",
+          "externalNotification": true,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [
+        "WEBHOOKS_ENABLED",
+        "LINE_WEBHOOK_ENABLED"
+      ],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/line.js"
+    },
+    {
+      "featureId": "file-delivery",
+      "category": "infrastructure",
+      "displayName": "File workflows",
+      "status": "conditional",
+      "releaseRequired": true,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [],
+      "frontendRoutes": [],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [],
+      "backendMounts": [
+        "/files/pdfs",
+        "/files/products",
+        "/files"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/repairAttachmentService.js",
+        "backend/src/services/pdfService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [
+        {
+          "workflowId": "upload-download-static",
+          "featureId": "file-delivery",
+          "sourceFile": "backend/src/app.js",
+          "entryFunction": "express.static",
+          "sourceMarker": "app.use(\"/files/products\"",
+          "routeOrScheduler": "/files/*",
+          "productionEvidence": "production source baseline a5fc850",
+          "testFiles": [
+            "scripts/check_core_feature_contract.js"
+          ],
+          "featureFlag": "none",
+          "externalNotification": false,
+          "reason": "Production workflow source is required."
+        }
+      ],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "Includes intentional PDF 404.",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "No feature-specific backend router."
+    },
+    {
+      "featureId": "debug-endpoints",
+      "category": "infrastructure",
+      "displayName": "Debug endpoints",
+      "status": "conditional",
+      "releaseRequired": false,
+      "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "completionCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+      "pageFiles": [],
+      "frontendRoutes": [],
+      "menuPaths": [],
+      "permissionKeys": [],
+      "requiredRoles": [],
+      "frontendApis": [],
+      "backendRouteFiles": [
+        "backend/src/routes/debug.js"
+      ],
+      "backendMounts": [
+        "/api/debug"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [],
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "testCommands": [
+        "node scripts/check_core_feature_contract.js"
+      ],
+      "featureFlags": [
+        "debug-disabled"
+      ],
+      "productionEvidence": [
+        "production source baseline a5fc850",
+        "production asset index-C1tPgXxm.js"
+      ],
+      "notes": "Not production-required.",
+      "menuRoles": [],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [],
+      "managementWriteRoles": [],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/debug.js"
+    }
+  ],
+  "mountBindings": [
+    {
+      "path": "/api/line-order",
+      "routerId": "lineOrderRoutes",
+      "featureId": "line-order",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/line-repair",
+      "routerId": "lineRepairRoutes",
+      "featureId": "repair-reservations",
+      "classification": "public-workflow",
+      "reason": ""
+    },
+    {
+      "path": "/api/line-google-review",
+      "routerId": "lineGoogleReviewRoutes",
+      "featureId": "line-google-review",
+      "classification": "public-workflow",
+      "reason": ""
+    },
+    {
+      "path": "/api/line-bind-phone",
+      "routerId": "lineBindPhoneRoutes",
+      "featureId": "line-bind-phone",
+      "classification": "public-workflow",
+      "reason": ""
+    },
+    {
+      "path": "/api/store",
+      "routerId": "storeSettingsRoutes",
+      "featureId": "store-settings",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/storefront",
+      "routerId": "storefrontRoutes",
+      "featureId": "store-public-info",
+      "classification": "public-workflow",
+      "reason": ""
+    },
+    {
+      "path": "/api/settings",
+      "routerId": "settingsRoutes",
+      "featureId": "store-settings",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/repair-reservation-settings",
+      "routerId": "repairReservationSettingsRoutes",
+      "featureId": "repair-reservations",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/system",
+      "routerId": "systemStatusRoutes",
+      "featureId": "store-settings",
+      "classification": "infrastructure",
+      "reason": ""
+    },
+    {
+      "path": "/api",
+      "routerId": "storeSignupRoutes",
+      "featureId": "authentication",
+      "classification": "public-workflow",
+      "reason": ""
+    },
+    {
+      "path": "/api/platform-auth",
+      "routerId": "platformAuthRoutes",
+      "featureId": "platform-admin",
+      "classification": "auth",
+      "reason": ""
+    },
+    {
+      "path": "/api/platform-admin/onboarding",
+      "routerId": "platformOnboardingRoutes",
+      "featureId": "platform-admin",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/store-access",
+      "routerId": "storeAccessRoutes",
+      "featureId": "platform-admin",
+      "classification": "infrastructure",
+      "reason": ""
+    },
+    {
+      "path": "/api",
+      "routerId": "storeAccessRoutes",
+      "featureId": "platform-admin",
+      "classification": "infrastructure",
+      "reason": ""
+    },
+    {
+      "path": "/api/saas-admin",
+      "routerId": "saasAdminRoutes",
+      "featureId": "saas-admin-legacy",
+      "classification": "legacy-conditional",
+      "reason": "Explicit conditional/disabled classification."
+    },
+    {
+      "path": "/api/platform-admin",
+      "routerId": "saasAdminRoutes",
+      "featureId": "platform-admin",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/company",
+      "routerId": "companyRoutes",
+      "featureId": "platform-admin",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/store-transfers",
+      "routerId": "storeTransferRoutes",
+      "featureId": "store-transfers",
+      "classification": "legacy-conditional",
+      "reason": "Explicit conditional/disabled classification."
+    },
+    {
+      "path": "/api/store-replenishment-requests",
+      "routerId": "storeReplenishmentRequestRoutes",
+      "featureId": "replenishment-requests",
+      "classification": "legacy-conditional",
+      "reason": "Explicit conditional/disabled classification."
+    },
+    {
+      "path": "/api/company-store-settlements",
+      "routerId": "companyStoreSettlementRoutes",
+      "featureId": "company-settlements",
+      "classification": "legacy-conditional",
+      "reason": "Explicit conditional/disabled classification."
+    },
+    {
+      "path": "/api/store-features",
+      "routerId": "storeFeatureRoutes",
+      "featureId": "platform-admin",
+      "classification": "infrastructure",
+      "reason": ""
+    },
+    {
+      "path": "/api/permissions",
+      "routerId": "permissionRoutes",
+      "featureId": "permissions",
+      "classification": "infrastructure",
+      "reason": ""
+    },
+    {
+      "path": "/api/product-categories",
+      "routerId": "productCategoryRoutes",
+      "featureId": "product-categories",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/products",
+      "routerId": "productRoutes",
+      "featureId": "products",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/sales",
+      "routerId": "salesRoutes",
+      "featureId": "sales",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api",
+      "routerId": "authRoutes",
+      "featureId": "authentication",
+      "classification": "auth",
+      "reason": ""
+    },
+    {
+      "path": "/api/auth",
+      "routerId": "authRoutes",
+      "featureId": "authentication",
+      "classification": "auth",
+      "reason": ""
+    },
+    {
+      "path": "/api/dashboard",
+      "routerId": "dashboardRoutes",
+      "featureId": "dashboard",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/staff-notifications",
+      "routerId": "staffNotificationsRouter",
+      "featureId": "notifications",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/staff-dashboard",
+      "routerId": "staffDashboardRouter",
+      "featureId": "notifications",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/internal-messages",
+      "routerId": "internalMessageRoutes",
+      "featureId": "internal-messages",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/daily-staff-tasks",
+      "routerId": "dailyStaffTaskRoutes",
+      "featureId": "daily-staff-tasks",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/store-cash-reports",
+      "routerId": "storeCashReportRoutes",
+      "featureId": "store-cash-reports",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/store-visit-records",
+      "routerId": "storeVisitRecordRoutes",
+      "featureId": "store-visits",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/store-line-channels",
+      "routerId": "storeLineChannelRoutes",
+      "featureId": "line-channel-management",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/line-notification-settings",
+      "routerId": "lineNotificationSettingsRoutes",
+      "featureId": "line-notifications",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/staff",
+      "routerId": "staffRoutes",
+      "featureId": "staff",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/staff-scheduling",
+      "routerId": "staffSchedulingRoutes",
+      "featureId": "staff-scheduling",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/staff-incentives",
+      "routerId": "staffIncentiveRoutes",
+      "featureId": "staff-incentives",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/customers",
+      "routerId": "customerRoutes",
+      "featureId": "customers",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/inventory",
+      "routerId": "inventoryRoutes",
+      "featureId": "inventory",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/orders",
+      "routerId": "orderItemsEditRoutes",
+      "featureId": "orders",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/orders",
+      "routerId": "orderRoutes",
+      "featureId": "orders",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/purchase-confirmations",
+      "routerId": "purchaseConfirmationRoutes",
+      "featureId": "purchase-confirmations",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/repair-confirmations",
+      "routerId": "repairConfirmationRoutes",
+      "featureId": "repair-confirmations",
+      "classification": "public-workflow",
+      "reason": ""
+    },
+    {
+      "path": "/api/repairs",
+      "routerId": "repairRoutes",
+      "featureId": "repairs",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/coupons",
+      "routerId": "couponRoutes",
+      "featureId": "coupons",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/surveys",
+      "routerId": "surveyRoutes",
+      "featureId": "surveys",
+      "classification": "public-workflow",
+      "reason": ""
+    },
+    {
+      "path": "/api/suppliers",
+      "routerId": "supplierRoutes",
+      "featureId": "suppliers",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/supplier-purchases",
+      "routerId": "supplierPurchaseRoutes",
+      "featureId": "supplier-procurement",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/supplier-returns",
+      "routerId": "supplierReturnRoutes",
+      "featureId": "supplier-procurement",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/attendance",
+      "routerId": "attendanceRoutes",
+      "featureId": "staff-attendance",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/kpi",
+      "routerId": "kpiRoutes",
+      "featureId": "staff-kpi",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/staff-kpi",
+      "routerId": "staffKpiRoutes",
+      "featureId": "staff-kpi",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/staff-evaluations",
+      "routerId": "staffEvaluationRoutes",
+      "featureId": "staff-kpi",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/payroll",
+      "routerId": "payrollRoutes",
+      "featureId": "payroll",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/telegram",
+      "routerId": "telegramWebhookRoutes",
+      "featureId": "telegram-integration",
+      "classification": "legacy-conditional",
+      "reason": "Explicit conditional/disabled classification."
+    },
+    {
+      "path": "/api/line",
+      "routerId": "lineRoutes",
+      "featureId": "line-webhook-commands",
+      "classification": "public-workflow",
+      "reason": ""
+    },
+    {
+      "path": "/api/debug",
+      "routerId": "debugRoutes",
+      "featureId": "debug-endpoints",
+      "classification": "debug-disabled",
+      "reason": "Explicit conditional/disabled classification."
+    },
+    {
+      "path": "/files/pdfs",
+      "routerId": "intentional404",
+      "featureId": "file-delivery",
+      "classification": "intentional-disabled",
+      "reason": "Explicit conditional/disabled classification."
+    },
+    {
+      "path": "/files/products",
+      "routerId": "productStatic",
+      "featureId": "file-delivery",
+      "classification": "file-workflow",
+      "reason": ""
+    },
+    {
+      "path": "/files",
+      "routerId": "generalStatic",
+      "featureId": "file-delivery",
+      "classification": "file-workflow",
+      "reason": ""
+    }
+  ],
+  "directEndpointCatalog": [
+    {
+      "method": "GET",
+      "path": "/api/coupons/by-phone/:phone",
+      "featureId": "coupons",
+      "classification": "public-workflow",
+      "reason": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/line-support/create",
+      "featureId": "store-public-info",
+      "classification": "public-workflow",
+      "reason": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/customer-status",
+      "featureId": "customer-status",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/customer-status/orders/:id/payment",
+      "featureId": "customer-status",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/customer-status/orders/:id/deliver",
+      "featureId": "customer-status",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/customer-status/repairs/:id/payment",
+      "featureId": "customer-status",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/customer-status/repairs/:id/pickup",
+      "featureId": "customer-status",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/line/push-test-welcome",
+      "featureId": "line-notifications",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/line/profile-name",
+      "featureId": "line-notifications",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "featureId": "authentication",
+      "classification": "health",
+      "reason": "Required health endpoint."
+    }
+  ],
+  "workflowCatalog": [
+    {
+      "workflowId": "daily-report-cron",
+      "featureId": "dashboard",
+      "sourceFile": "backend/src/app.js",
+      "entryFunction": "sendDailyReport",
+      "sourceMarker": "const result = await sendDailyReport(config);",
+      "routeOrScheduler": "0 21 * * *",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": true,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "repair-pickup-reminder-cron",
+      "featureId": "repairs",
+      "sourceFile": "backend/src/app.js",
+      "entryFunction": "sendRepairPickupReminders",
+      "sourceMarker": "const result = await sendRepairPickupReminders();",
+      "routeOrScheduler": "30 13 * * *",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": true,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "repair-storage-fee-cron",
+      "featureId": "repairs",
+      "sourceFile": "backend/src/app.js",
+      "entryFunction": "updateRepairStorageFees",
+      "sourceMarker": "const result = await updateRepairStorageFees();",
+      "routeOrScheduler": "0 1 * * *",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": false,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "supplier-monthly-xlsx-cron",
+      "featureId": "supplier-procurement",
+      "sourceFile": "backend/src/app.js",
+      "entryFunction": "generateAndSendMonthlySupplierReports",
+      "sourceMarker": "const result = await generateAndSendMonthlySupplierReports();",
+      "routeOrScheduler": "0 9 1 * *",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": true,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "line-webhook",
+      "featureId": "line-webhook-commands",
+      "sourceFile": "backend/src/routes/line.js",
+      "entryFunction": "handleLineWebhookEvents",
+      "sourceMarker": "router.post(\"/webhook/channel/:webhookPath\"",
+      "routeOrScheduler": "/api/line/webhook*",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "WEBHOOKS_ENABLED",
+      "externalNotification": true,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "line-staff-command",
+      "featureId": "line-webhook-commands",
+      "sourceFile": "backend/src/services/lineWorkflowService.js",
+      "entryFunction": "parseStaffCommand",
+      "sourceMarker": "const command = parseStaffCommand(messageText);",
+      "routeOrScheduler": "LINE command",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "WEBHOOKS_ENABLED",
+      "externalNotification": true,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "telegram-webhook-command",
+      "featureId": "telegram-integration",
+      "sourceFile": "backend/src/routes/telegramWebhook.js",
+      "entryFunction": "handleSupplierCommand",
+      "sourceMarker": "router.post(\"/webhook\"",
+      "routeOrScheduler": "/api/telegram/webhook",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "TELEGRAM_NOTIFICATIONS_ENABLED",
+      "externalNotification": true,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "staff-group-notification",
+      "featureId": "line-notifications",
+      "sourceFile": "backend/src/services/lineGroupNotificationService.js",
+      "entryFunction": "sendStaffGroupNotification",
+      "sourceMarker": "async function sendStaffGroupNotification",
+      "routeOrScheduler": "event",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": true,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "daily-task-automation",
+      "featureId": "daily-staff-tasks",
+      "sourceFile": "backend/src/services/dailyStaffTaskService.js",
+      "entryFunction": "ensureTodayTaskInstances",
+      "sourceMarker": "async function ensureTodayTaskInstances",
+      "routeOrScheduler": "request",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": true,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "store-visit-follow-up",
+      "featureId": "store-visits",
+      "sourceFile": "backend/src/services/storeVisitRecordService.js",
+      "entryFunction": "createFollowUpNotification",
+      "sourceMarker": "async function createFollowUpNotification",
+      "routeOrScheduler": "event",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": true,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "kpi-event-automation",
+      "featureId": "staff-kpi",
+      "sourceFile": "backend/src/services/kpiService.js",
+      "entryFunction": "logKpi",
+      "sourceMarker": "async function logKpi",
+      "routeOrScheduler": "event",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": false,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "attendance-checklist",
+      "featureId": "staff-attendance",
+      "sourceFile": "backend/src/routes/attendance.js",
+      "entryFunction": "ensureTodayChecklist",
+      "sourceMarker": "async function ensureTodayChecklist",
+      "routeOrScheduler": "request",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": false,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "cash-daily-close",
+      "featureId": "store-cash-reports",
+      "sourceFile": "backend/src/services/storeCashReportService.js",
+      "entryFunction": "upsertCashReport",
+      "sourceMarker": "async function upsertCashReport",
+      "routeOrScheduler": "request",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": false,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "purchase-signing-pdf",
+      "featureId": "purchase-confirmations",
+      "sourceFile": "backend/src/services/pdfService.js",
+      "entryFunction": "writePurchaseConfirmationPdf",
+      "sourceMarker": "async function writePurchaseConfirmationPdf",
+      "routeOrScheduler": "sign/PDF",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": true,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "repair-signing-pdf",
+      "featureId": "repair-confirmations",
+      "sourceFile": "backend/src/services/pdfService.js",
+      "entryFunction": "writeRepairConfirmationPdf",
+      "sourceMarker": "async function writeRepairConfirmationPdf",
+      "routeOrScheduler": "sign/PDF",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": true,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "incentive-agreement-pdf",
+      "featureId": "staff-incentives",
+      "sourceFile": "backend/src/services/staffIncentiveAgreementService.js",
+      "entryFunction": "signIncentiveAgreement",
+      "sourceMarker": "async function signIncentiveAgreement",
+      "routeOrScheduler": "sign/PDF",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": false,
+      "reason": "Production workflow source is required."
+    },
+    {
+      "workflowId": "upload-download-static",
+      "featureId": "file-delivery",
+      "sourceFile": "backend/src/app.js",
+      "entryFunction": "express.static",
+      "sourceMarker": "app.use(\"/files/products\"",
+      "routeOrScheduler": "/files/*",
+      "productionEvidence": "production source baseline a5fc850",
+      "testFiles": [
+        "scripts/check_core_feature_contract.js"
+      ],
+      "featureFlag": "none",
+      "externalNotification": false,
+      "reason": "Production workflow source is required."
+    }
+  ],
+  "unmountedRoutes": [
+    {
+      "file": "backend/src/routes/telegram.js",
+      "classification": "legacy",
+      "reason": "Not mounted; active route is telegramWebhook.js."
+    }
+  ],
+  "unmountedPages": [
+    {
+      "file": "frontend/src/pages/SaasAdminPage.jsx",
+      "classification": "legacy",
+      "reason": "Not imported by App.jsx; legacy routes use Navigate and LegacyStoreFeaturesRedirect."
+    }
+  ],
+  "authorizationPrincipals": [
+    "ADMIN_ROLE",
+    "MANAGER_ROLE",
+    "CASHIER_ROLE",
+    "REPAIR_ROLE",
+    "INVENTORY_ROLE",
+    "STAFF_ROLE",
+    "STORE_ROLE_OWNER",
+    "STORE_ROLE_ADMIN",
+    "STORE_ROLE_MANAGER",
+    "AUTHENTICATED_STAFF"
+  ],
+  "knownAuthorizationGaps": [
+    {
+      "gapId": "repair-customer-menu-api",
+      "featureId": "customers",
+      "menuSubjects": [
+        "REPAIR_ROLE"
+      ],
+      "backendSubjects": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE"
+      ],
+      "sourceFiles": [
+        "frontend/src/lib/menuPermissions.js",
+        "backend/src/routes/customers.js"
+      ],
+      "reason": "REPAIR sees the customer menu while customer API role authorization excludes REPAIR."
+    },
+    {
+      "gapId": "inventory-supplier-menu-api",
+      "featureId": "suppliers",
+      "menuSubjects": [
+        "INVENTORY_ROLE"
+      ],
+      "backendSubjects": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE"
+      ],
+      "sourceFiles": [
+        "frontend/src/lib/menuPermissions.js",
+        "backend/src/routes/suppliers.js"
+      ],
+      "reason": "INVENTORY sees the supplier menu while supplier API role authorization excludes INVENTORY."
+    },
+    {
+      "gapId": "cashier-supplier-api-menu",
+      "featureId": "suppliers",
+      "menuSubjects": [],
+      "backendSubjects": [
+        "CASHIER_ROLE"
+      ],
+      "sourceFiles": [
+        "frontend/src/lib/menuPermissions.js",
+        "backend/src/routes/suppliers.js"
+      ],
+      "reason": "CASHIER is accepted by supplier API role authorization while the supplier menu is denied."
+    },
+    {
+      "gapId": "repair-survey-menu-api",
+      "featureId": "surveys",
+      "menuSubjects": [
+        "REPAIR_ROLE"
+      ],
+      "backendSubjects": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE"
+      ],
+      "sourceFiles": [
+        "frontend/src/lib/menuPermissions.js",
+        "backend/src/routes/surveys.js"
+      ],
+      "reason": "REPAIR sees the surveys menu while the protected surveys API excludes REPAIR."
+    },
+    {
+      "gapId": "line-channel-menu-api",
+      "featureId": "line-channel-management",
+      "menuSubjects": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE"
+      ],
+      "backendSubjects": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "sourceFiles": [
+        "frontend/src/lib/menuPermissions.js",
+        "backend/src/routes/storeLineChannels.js"
+      ],
+      "reason": "LINE Channel API read/write roles are broader than menu visibility."
+    },
+    {
+      "gapId": "line-notification-menu-api",
+      "featureId": "line-notifications",
+      "menuSubjects": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE"
+      ],
+      "backendSubjects": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE"
+      ],
+      "sourceFiles": [
+        "frontend/src/lib/menuPermissions.js",
+        "backend/src/routes/lineNotificationSettings.js"
+      ],
+      "reason": "LINE notification API read/write roles are broader than menu visibility."
+    },
+    {
+      "gapId": "staff-scheduling-self-service-management",
+      "featureId": "staff-scheduling",
+      "menuSubjects": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "backendSubjects": [
+        "AUTHENTICATED_STAFF",
+        "STORE_ROLE_OWNER",
+        "STORE_ROLE_ADMIN",
+        "STORE_ROLE_MANAGER"
+      ],
+      "sourceFiles": [
+        "frontend/src/lib/menuPermissions.js",
+        "backend/src/routes/staffScheduling.js"
+      ],
+      "reason": "One menu opens both employee self-service and separately authorized management operations."
+    },
+    {
+      "gapId": "staff-incentive-self-service-management",
+      "featureId": "staff-incentives",
+      "menuSubjects": [
+        "ADMIN_ROLE",
+        "STORE_ROLE_OWNER",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "backendSubjects": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE",
+        "CASHIER_ROLE",
+        "REPAIR_ROLE",
+        "INVENTORY_ROLE",
+        "STAFF_ROLE"
+      ],
+      "sourceFiles": [
+        "frontend/src/lib/menuPermissions.js",
+        "backend/src/routes/staffIncentives.js"
+      ],
+      "reason": "One menu opens self-service for all staff while management reads and dispute writes have narrower backend roles."
     }
   ]
 }

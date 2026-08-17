@@ -105,3 +105,26 @@ Both preflight scripts run the core contract and the feature-specific checks. A 
 Staging and production must use the same commit and the same build artifact. Immediately before an approved production deploy, create a timestamped snapshot under `/volume1/backup/kingway/releases/YYYYMMDD-HHMMSS/` containing the release commit, image IDs, asset filename/hash, compose hash, core file hashes, route/menu/API and role snapshots, health results, previous release ID, and rollback image IDs.
 
 Production deploys must use `./scripts/with_deploy_lock.sh`. Do not use `docker compose down`, recreate or restart MySQL, or run a production DB write/migration without explicit approval. A frontend-only change must not restart backend or MySQL.
+
+
+## Bidirectional Production Coverage
+
+The version 3 contract is a bidirectional inventory, not only a list of selected features. It accounts for every registered frontend route, navigation menu, permission mapping, backend mount, direct endpoint, and protected background workflow. The reviewed inventory currently contains 53 feature families, 83 frontend routes, 35 menus, 35 menu permission mappings, 59 unique backend mounts, 10 direct endpoints, and 17 workflows.
+
+Release checks enforce both directions:
+
+- Every contract entry must still exist in source and, where applicable, in the generated frontend asset.
+- Every source route, menu, backend mount, direct endpoint, and workflow must belong to a feature or an explicitly documented classification.
+- Alias, detail, print, public workflow, redirect/helper, fallback, and conditional routes remain protected; `*` is an explicit fallback classification.
+- Conditional, disabled, legacy, and unmounted entries require a reason. `/api/debug`, the intentional `/files/pdfs` 404, and the unmounted Telegram router are not silently treated as production features.
+- Role snapshots cover the complete menu set. Both reductions and unreviewed expansions fail for protected roles.
+- The manifest, production baseline, and role snapshot must be reviewed together whenever coverage or permissions change.
+
+Adding a source route, menu, mount, endpoint, or workflow without contract classification is a preflight failure. Removing a production baseline entry or required asset marker is also a failure. Feature deletion or permission change therefore requires a separately approved contract and baseline review before build or deploy.
+
+
+## Approved Store Menu Policy and API Separation
+
+The reviewed subjects are `ADMIN_ROLE`, `STORE_ROLE_OWNER`, `MANAGER_ROLE`, `CASHIER_ROLE`, `REPAIR_ROLE`, `INVENTORY_ROLE`, and `STAFF_ROLE`. `STORE_ROLE_OWNER` means the actual `storeRole=owner` identity and must never be implemented as a virtual staff role. ADMIN, store owner, and MANAGER require all 35 store-operation menus; CASHIER, REPAIR, and INVENTORY require their exact 15-menu fallbacks; STAFF requires the common eight menus plus `/staff-scheduling` and `/staff-incentives`. Platform and SaaS authorization remains separate.
+
+Menu visibility is not backend read or write authorization. The feature contract records `menuRoles`, self-service read/write roles, management read/write roles, public access, and the source middleware independently. Known mismatches are retained in `knownAuthorizationGaps` until a separately approved backend security change resolves them. A menu grant must not be interpreted as permission to call a write endpoint.

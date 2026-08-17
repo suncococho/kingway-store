@@ -329,3 +329,15 @@ When beginning work in this repo, assume:
 - Keep each feature in an atomic commit with its tests. Commit, push, staging deploy, production deploy, and DB migration are separate approval scopes.
 - Stage and production must use the same commit and artifact. Production requires a timestamped release snapshot, deploy lock, rollback image IDs, and a separate approval.
 - Never reduce an existing route, menu, API mount, or role permission without naming the exact removal and receiving separate approval.
+
+
+### Full production coverage contract
+
+- Keep the version 3 contract bidirectional: manifest entries must exist in source/build, and every source route, menu, permission mapping, backend mount, direct endpoint, and protected workflow must be classified in the contract.
+- Preserve alias, detail, print, public, helper/redirect, fallback, conditional, disabled, and legacy entries. Conditional or excluded entries require a documented reason and must not be promoted to completed status by inference.
+- Treat new unclassified source entries, missing production baseline entries, missing required asset markers, and role snapshot expansion or reduction as release blockers.
+- Review `config/core-feature-contract.json`, `config/core-feature-production-baseline.json`, and `config/core-feature-role-snapshot.json` together. Do not weaken or bypass `scripts/check_core_feature_contract.js` in either preflight.
+
+- Treat role snapshot subjects as explicit identities: staff roles and `storeRole=owner` are different. Never create a virtual `STORE_OWNER` staff role.
+- Keep store-menu visibility separate from backend self-service, management read, and management write authorization. Preserve reviewed `knownAuthorizationGaps` until a dedicated security change is approved.
+- STAFF menu access is exactly the common eight paths plus employee self-service scheduling and incentives; those menus do not grant management operations.
