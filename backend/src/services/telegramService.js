@@ -6,6 +6,7 @@ const { logKpi } = require("./kpiService");
 const { sendLineMessage } = require("../utils/line");
 const { getTableColumns, hasColumn } = require("../utils/schema");
 const { applyRepairReservationDecision, notifyRepairCustomerSafely } = require("./repairReservationService");
+const { isReadOnlyValidationMode, validationSkipResult } = require("../runtime/validationMode");
 
 const BOT_NOTIFY = "notify";
 const BOT_STOCK = "stock";
@@ -80,6 +81,9 @@ function validateTelegramConfig() {
 }
 
 function telegramRequest(bot, method, payload) {
+  if (isReadOnlyValidationMode()) {
+    return Promise.resolve(validationSkipResult());
+  }
   const token = getTelegramBotToken(bot);
   if (!token) {
     return Promise.resolve({ ok: false, skipped: true, reason: "missing_bot_token" });
@@ -3043,6 +3047,9 @@ async function handleStockCommand(message) {
 }
 
 async function sendDocumentToTelegramGroups(registrationTypes, filePath, caption = "") {
+  if (isReadOnlyValidationMode()) {
+    return validationSkipResult();
+  }
   const route = resolveInternalRoute(registrationTypes, []);
   if (!route.chatId) {
     return { ok: false, skipped: true, reason: "missing_chat_id" };

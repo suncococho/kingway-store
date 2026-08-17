@@ -4885,6 +4885,76 @@
       "reason": "Not imported by App.jsx; legacy routes use Navigate and LegacyStoreFeaturesRedirect."
     }
   ],
+  "infrastructureContracts": [
+    {
+      "contractId": "backend-read-only-validation",
+      "environmentVariable": "BACKEND_VALIDATION_MODE",
+      "enabledValue": "read-only",
+      "defaultValue": "off",
+      "allowedHttpMethods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "blockedHttpMethods": [
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
+      ],
+      "blockedSideEffects": [
+        "schema-bootstrap",
+        "default-admin-write",
+        "default-staff-write",
+        "storage-initialization",
+        "cron-registration",
+        "database-non-select",
+        "database-transaction",
+        "line-outbound",
+        "telegram-outbound",
+        "automatic-follow-up",
+        "pdf-file-write"
+      ],
+      "healthField": "validationMode",
+      "sourceFiles": [
+        "backend/src/runtime/validationMode.js",
+        "backend/src/middleware/readOnlyValidation.js",
+        "backend/src/db.js",
+        "backend/src/server.js",
+        "backend/src/app.js",
+        "backend/src/services/telegramService.js",
+        "backend/src/utils/line.js",
+        "backend/src/services/staffLineNotify.js",
+        "backend/src/services/lineWorkflowService.js"
+      ],
+      "testFiles": [
+        "backend/test/backendValidationMode.test.js",
+        "backend/scripts/validateReadOnlyRoleGets.js"
+      ],
+      "roleGetValidation": {
+        "actorSource": "SELECT id, role, store_id, store_role from existing staging staff only",
+        "tokenHandling": "sign inside runtime and never return or log token values",
+        "requestMethods": [
+          "GET"
+        ],
+        "fixtureOnlyByDefault": true
+      },
+      "immutableImage": {
+        "dockerfile": "backend/Dockerfile",
+        "dockerignore": "backend/.dockerignore",
+        "baseImage": "node:20-alpine",
+        "installCommand": "npm ci --omit=dev --no-audit --no-fund",
+        "command": [
+          "node",
+          "src/server.js"
+        ],
+        "revisionLabel": "org.opencontainers.image.revision",
+        "runtimeUser": "node",
+        "persistentDataPolicy": "storage, uploads and generated PDF files must be runtime volumes and never image content"
+      },
+      "reason": "Allows immutable staging backend health and GET authorization validation without startup, database, scheduler, file, or outbound side effects."
+    }
+  ],
   "authorizationPrincipals": [
     "ADMIN_ROLE",
     "MANAGER_ROLE",

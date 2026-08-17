@@ -128,3 +128,12 @@ Adding a source route, menu, mount, endpoint, or workflow without contract class
 The reviewed subjects are `ADMIN_ROLE`, `STORE_ROLE_OWNER`, `MANAGER_ROLE`, `CASHIER_ROLE`, `REPAIR_ROLE`, `INVENTORY_ROLE`, and `STAFF_ROLE`. `STORE_ROLE_OWNER` means the actual `storeRole=owner` identity and must never be implemented as a virtual staff role. ADMIN, store owner, and MANAGER require all 35 store-operation menus; CASHIER, REPAIR, and INVENTORY require their exact 15-menu fallbacks; STAFF requires the common eight menus plus `/staff-scheduling` and `/staff-incentives`. Platform and SaaS authorization remains separate.
 
 Menu visibility is not backend read or write authorization. The feature contract records `menuRoles`, self-service read/write roles, management read/write roles, public access, and the source middleware independently. Known mismatches are retained in `knownAuthorizationGaps` until a separately approved backend security change resolves them. A menu grant must not be interpreted as permission to call a write endpoint.
+
+
+## Read-only Backend Validation
+
+Set `BACKEND_VALIDATION_MODE=read-only` only on an isolated or approved staging backend. The default is `off`, preserving normal production startup. Read-only validation runs the SELECT-only schema guard but skips schema bootstrap, default ADMIN/staff reconciliation, storage initialization, scheduler registration, and outbound LINE/Telegram delivery. HTTP `GET`, `HEAD`, and `OPTIONS` remain available; `POST`, `PUT`, `PATCH`, and `DELETE` return a non-sensitive 503 response. The database wrapper also rejects transactions and non-SELECT SQL so a side-effecting GET cannot write.
+
+Role validation must select only existing actor IDs and roles, create JWTs inside the validation runtime, and never print or return token values. `backend/scripts/validateReadOnlyRoleGets.js --fixture` verifies that runner structure without connecting to a database or creating a real token.
+
+Immutable backend staging images use `backend/Dockerfile`, a commit-based `kingway-staging-backend:<commit>` tag, and the full commit in `org.opencontainers.image.revision`. The image uses `npm ci --omit=dev --no-audit --no-fund`, runs `node src/server.js` as `node`, and excludes env files, dependencies, uploads, storage, and generated PDF data from the build context.

@@ -11,6 +11,7 @@ const {
 } = require("./staffLineNotificationService");
 
 const LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push";
+const { isReadOnlyValidationMode, validationSkipResult } = require("../runtime/validationMode");
 const STAFF_GROUP_TYPES = ["repair", "staff", "admin"];
 
 function maskLineGroupId(value) {
@@ -353,6 +354,9 @@ async function pushTextToLineGroup(lineGroupId, text, accessToken) {
 }
 
 async function pushMessagesToLineGroup(lineGroupId, messages, accessToken) {
+  if (isReadOnlyValidationMode()) {
+    return validationSkipResult();
+  }
   if (!accessToken) {
     return { delivered: 0, skipped: true, reason: "missing_line_channel_access_token" };
   }

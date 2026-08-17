@@ -66,6 +66,11 @@ const { authenticate, authorize, requireStoreScope } = require("./middleware/aut
 const { logWorkflowEvent } = require("./services/lineWorkflowService");
 const { buildOrderDetailLink, notifyPaymentInquiryCreated } = require("./services/staffLineNotify");
 const { sanitizeLogObject } = require("./utils/logSanitizer");
+const { readOnlyValidationMiddleware } = require("./middleware/readOnlyValidation");
+const {
+  READ_ONLY_VALIDATION_MODE,
+  isReadOnlyValidationMode
+} = require("./runtime/validationMode");
 
 const app = express();
 const JSON_BODY_LIMIT = "5mb";
@@ -77,6 +82,7 @@ const customerStatusStaffAuth = [
 const telegramWebhookRoutes = require("./routes/telegramWebhook");
 
 app.use(cors());
+app.use(readOnlyValidationMiddleware);
 app.use(
   express.json({
     limit: JSON_BODY_LIMIT,
@@ -513,8 +519,17 @@ app.use("/api/line-bind-phone", lineBindPhoneRoutes);
 app.get("/health", async (req, res, next) => {
   try {
     await pool.query("SELECT 1");
-    return res.json({ ok: true });
+    const response = { ok: true };
+    if (isReadOnlyValidationMode()) response.validationMode = READ_ONLY_VALIDATION_MODE;
+    return res.json(response);
   } catch (error) {
+    if (isReadOnlyValidationMode()) {
+      return res.status(503).json({
+        ok: false,
+        validationMode: READ_ONLY_VALIDATION_MODE,
+        database: "unavailable"
+      });
+    }
     return next(error);
   }
 });
@@ -578,6 +593,9 @@ app.use("/files/pdfs", (req, res) => res.status(404).json({ message: "Not found"
 app.use("/files/products", express.static(path.join(__dirname, "..", "storage", "products")));
 app.use("/files", express.static(path.join(__dirname, "..", "storage")));
 
+if (isReadOnlyValidationMode()) {
+  console.log("[ValidationMode] read-only runtime: cron and scheduler registration skipped.");
+} else {
 cron.schedule(
   "0 21 * * *",
   async () => {
@@ -641,6 +659,7 @@ cron.schedule(
   { timezone: TAIPEI_TZ }
 );
 
+}
 
 app.use((req, res, next) => {
   const error = new Error("Not Found");

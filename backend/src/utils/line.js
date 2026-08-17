@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { isReadOnlyValidationMode, validationSkipResult } = require("../runtime/validationMode");
 
 function verifyLineSignature(rawBody, channelSecret, signature) {
   if (!channelSecret || !signature) {
@@ -69,6 +70,9 @@ function buildSafeLineApiError(responseStatus, details) {
 }
 
 async function sendLineReply(config, replyToken, messages, options = {}) {
+  if (isReadOnlyValidationMode()) {
+    return validationSkipResult();
+  }
   const normalizedOptions = normalizeLineSendOptions(options);
   const channelAccessToken = resolveLineAccessToken(config, normalizedOptions);
 
@@ -100,6 +104,9 @@ async function sendLineReply(config, replyToken, messages, options = {}) {
 }
 
 async function sendLineMessage(config, to, messages, options = {}) {
+  if (isReadOnlyValidationMode()) {
+    return validationSkipResult();
+  }
   const normalizedOptions = normalizeLineSendOptions(options);
   const channelAccessToken = resolveLineAccessToken(config, normalizedOptions);
 

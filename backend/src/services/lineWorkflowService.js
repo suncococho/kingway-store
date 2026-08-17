@@ -17,6 +17,7 @@ const {
 const { getPublicStoreSettings } = require("./settingsService");
 const { assertRepairReservationDateAvailable } = require("./repairReservationAvailabilityService");
 const { sendInternalTelegram } = require("./telegramService");
+const { isReadOnlyValidationMode, validationSkipResult } = require("../runtime/validationMode");
 const { applyRepairReservationDecision, notifyRepairCustomerSafely } = require("./repairReservationService");
 const { getTableColumns, hasColumn } = require("../utils/schema");
 const {
@@ -3907,6 +3908,9 @@ async function handleStaffRepairEstimateWizard(event) {
 }
 
 async function replyToLine(replyToken, messages, options = {}) {
+  if (isReadOnlyValidationMode()) {
+    return validationSkipResult();
+  }
   try {
     const resolvedOptions = getScopedLineAccessTokenOptions(options);
     const channelAccessToken = resolveLineAccessToken(config, resolvedOptions);
