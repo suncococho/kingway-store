@@ -60,6 +60,7 @@ export const PATH_MENU_KEY_MAP = [
   { path: "/staff-kpi", key: "staff" },
   { path: "/payroll", key: "staff" },
   { path: "/coupons", key: "coupons" },
+  { path: "/line-order", key: "line" },
   { path: "/settings/line", key: "line" },
   { path: "/settings/line-channels", key: "settings" },
   { path: "/settings/manual", key: "dashboard" },
