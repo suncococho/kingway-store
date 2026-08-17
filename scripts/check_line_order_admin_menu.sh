@@ -58,4 +58,6 @@ grep -Fq 'router.get("/ebikes"' backend/src/routes/lineOrder.js \
 grep -Fq 'router.post("/create"' backend/src/routes/lineOrder.js \
   || fail "create POST API missing"
 
+node scripts/check_core_feature_contract.js --feature line-order
+
 echo "OK: LINE order management navigation checks passed"

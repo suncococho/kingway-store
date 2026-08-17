@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "releaseCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+  "features": [
+    {"featureId":"orders","frontendRoute":"/orders","backendMount":"/api/orders"},
+    {"featureId":"line-order","frontendRoute":"/line-order","backendMount":"/api/line-order","productionMenuMissing":true},
+    {"featureId":"staff-incentives","frontendRoute":"/staff-incentives","backendMount":"/api/staff-incentives","productionPermissionMappingMissing":true},
+    {"featureId":"staff-work-schedule","frontendRoute":"/staff-scheduling","backendMount":"/api/staff-scheduling"},
+    {"featureId":"repairs","frontendRoute":"/repairs","backendMount":"/api/repairs"},
+    {"featureId":"repair-reservations","frontendRoute":"/repair-reservation","backendMount":"/api/line-repair"},
+    {"featureId":"customers","frontendRoute":"/customers","backendMount":"/api/customers"},
+    {"featureId":"products","frontendRoute":"/products","backendMount":"/api/products"},
+    {"featureId":"inventory","frontendRoute":"/inventory","backendMount":"/api/inventory"},
+    {"featureId":"sales","frontendRoute":"/sales","backendMount":"/api/sales"},
+    {"featureId":"suppliers","frontendRoute":"/suppliers","backendMount":"/api/suppliers"},
+    {"featureId":"staff","frontendRoute":"/staff","backendMount":"/api/staff"},
+    {"featureId":"purchase-confirmations","frontendRoute":"/purchase-confirmations","backendMount":"/api/purchase-confirmations"},
+    {"featureId":"coupons","frontendRoute":"/coupons","backendMount":"/api/coupons"},
+    {"featureId":"line-settings","frontendRoute":"/settings/line","backendMount":"/api/store"},
+    {"featureId":"line-channel-management","frontendRoute":"/settings/line-channels","backendMount":"/api/store-line-channels"},
+    {"featureId":"line-notifications","frontendRoute":"/settings/line-notifications","backendMount":"/api/line-notification-settings"}
+  ]
+}

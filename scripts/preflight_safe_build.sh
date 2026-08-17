@@ -10,6 +10,11 @@ fail() {
 
 cd "$REPO_DIR"
 
+node "$REPO_DIR/scripts/check_core_feature_contract.js"
+sh "$REPO_DIR/scripts/check_staff_incentive_integration.sh"
+sh "$REPO_DIR/scripts/check_staff_work_schedule_integration.sh"
+sh "$REPO_DIR/scripts/check_line_order_admin_menu.sh"
+
 if [ -n "$(git status --short)" ]; then
   git status --short >&2
   fail "working tree is not clean. Commit or stash changes before a safe build."

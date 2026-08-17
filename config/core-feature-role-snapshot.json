@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "6d8ea78f81de62d7608930bf4e0b087a9c18886e",
+  "roles": {
+    "ADMIN": [
+      "orders",
+      "line-order",
+      "staff-incentives",
+      "staff-work-schedule",
+      "repairs",
+      "customers",
+      "products",
+      "inventory",
+      "sales",
+      "suppliers",
+      "staff",
+      "purchase-confirmations",
+      "coupons",
+      "line-settings",
+      "line-channel-management",
+      "line-notifications"
+    ],
+    "MANAGER": [
+      "orders",
+      "line-order",
+      "staff-incentives",
+      "staff-work-schedule",
+      "repairs",
+      "customers",
+      "products",
+      "inventory",
+      "sales",
+      "suppliers",
+      "staff",
+      "purchase-confirmations",
+      "coupons",
+      "line-settings",
+      "line-channel-management",
+      "line-notifications"
+    ],
+    "CASHIER": [
+      "orders",
+      "staff-incentives",
+      "staff-work-schedule",
+      "customers",
+      "purchase-confirmations",
+      "coupons"
+    ],
+    "REPAIR": [
+      "orders",
+      "staff-incentives",
+      "staff-work-schedule",
+      "repairs",
+      "customers",
+      "purchase-confirmations"
+    ],
+    "INVENTORY": [
+      "staff-incentives",
+      "staff-work-schedule",
+      "products",
+      "inventory",
+      "suppliers"
+    ]
+  }
+}

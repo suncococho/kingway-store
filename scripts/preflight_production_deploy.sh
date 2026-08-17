@@ -28,6 +28,11 @@ info() {
 
 cd "$REPO_DIR"
 
+node "$REPO_DIR/scripts/check_core_feature_contract.js"
+sh "$REPO_DIR/scripts/check_staff_incentive_integration.sh"
+sh "$REPO_DIR/scripts/check_staff_work_schedule_integration.sh"
+sh "$REPO_DIR/scripts/check_line_order_admin_menu.sh"
+
 set +e
 synopkg status ContainerManager >"$CONTAINER_MANAGER_STATUS_JSON" 2>"$CONTAINER_MANAGER_STATUS_ERR"
 CONTAINER_MANAGER_STATUS_EXIT="$?"

@@ -318,3 +318,14 @@ When beginning work in this repo, assume:
 - Do not add Telegram code
 - Keep visible UX in Taiwan Traditional Chinese
 - Preserve LINE-first operations
+
+---
+
+## Core Feature Release Rules
+
+- Treat `config/core-feature-contract.json`, `config/core-feature-production-baseline.json`, and `config/core-feature-role-snapshot.json` as reviewed release contracts.
+- Run `node scripts/check_core_feature_contract.js` before build or deploy. Missing production features, exact routes, menu paths, permission mappings, API mounts, or role entries are release blockers.
+- Use a clean release worktree based on the verified current production commit. Never build from the dirty main worktree or copy whole shared files from an older worktree.
+- Keep each feature in an atomic commit with its tests. Commit, push, staging deploy, production deploy, and DB migration are separate approval scopes.
+- Stage and production must use the same commit and artifact. Production requires a timestamped release snapshot, deploy lock, rollback image IDs, and a separate approval.
+- Never reduce an existing route, menu, API mount, or role permission without naming the exact removal and receiving separate approval.
