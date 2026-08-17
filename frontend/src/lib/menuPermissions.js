@@ -11,6 +11,7 @@ export const MENU_CATALOG = [
   { key: "suppliers", label: "供應商管理" },
   { key: "staff", label: "員工管理" },
   { key: "staff_scheduling", label: "員工排班" },
+  { key: "staff_incentives", label: "員工績效獎金" },
   { key: "coupons", label: "優惠券" },
   { key: "line", label: "LINE 管理" },
   { key: "settings", label: "系統設定" },
@@ -53,6 +54,7 @@ export const PATH_MENU_KEY_MAP = [
   { path: "/staff", key: "staff" },
   { path: "/staff-attendance", key: "staff" },
   { path: "/staff-scheduling", key: "staff_scheduling" },
+  { path: "/staff-incentives", key: "staff_incentives" },
   { path: "/attendance", key: "staff" },
   { path: "/kpi", key: "staff" },
   { path: "/staff-kpi", key: "staff" },
@@ -106,10 +108,10 @@ export function getFallbackMenuPermissions(user) {
   const map = allPermissions(false);
   const role = normalizeRole(user?.role);
   const enabledByRole = {
-    MANAGER: ["dashboard", "pos", "orders", "repairs", "customers", "products", "inventory", "sales_management", "suppliers", "staff", "staff_scheduling", "coupons", "line", "settings", "store_replenishment_requests", "store_transfers", "inbound_transfers"],
-    CASHIER: ["dashboard", "pos", "orders", "customers", "staff_scheduling", "coupons"],
-    REPAIR: ["dashboard", "orders", "repairs", "customers", "staff_scheduling"],
-    INVENTORY: ["dashboard", "products", "inventory", "suppliers", "staff_scheduling", "store_replenishment_requests", "store_transfers", "inbound_transfers"]
+    MANAGER: ["dashboard", "pos", "orders", "repairs", "customers", "products", "inventory", "sales_management", "suppliers", "staff", "staff_scheduling", "staff_incentives", "coupons", "line", "settings", "store_replenishment_requests", "store_transfers", "inbound_transfers"],
+    CASHIER: ["dashboard", "pos", "orders", "customers", "staff_scheduling", "staff_incentives", "coupons"],
+    REPAIR: ["dashboard", "orders", "repairs", "customers", "staff_scheduling", "staff_incentives"],
+    INVENTORY: ["dashboard", "products", "inventory", "suppliers", "staff_scheduling", "staff_incentives", "store_replenishment_requests", "store_transfers", "inbound_transfers"]
   };
 
   for (const key of enabledByRole[role] || ["dashboard"]) {

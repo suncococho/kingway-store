@@ -39,8 +39,23 @@ require_once \
 
 require_once \
   frontend/src/lib/mobileNavigation.js \
-  'to: "/staff-incentives"' \
-  "mobile menu"
+  '{ to: "/staff-incentives", label: "我的銷售服務績效", description: "查看銷售、配件、維修檢查與支付狀態", menuKey: "staff_incentives" }' \
+  "permission-bound mobile menu"
+
+require_once \
+  frontend/src/lib/menuPermissions.js \
+  '{ path: "/staff-incentives", key: "staff_incentives" }' \
+  "frontend path permission mapping"
+
+require_once \
+  backend/src/services/menuPermissionService.js \
+  '{ key: "staff_incentives", label: "員工績效獎金" }' \
+  "backend menu permission catalog"
+
+for role in MANAGER CASHIER REPAIR INVENTORY; do
+  grep -E "${role}:.*staff_incentives" frontend/src/lib/menuPermissions.js >/dev/null \
+    || fail "$role fallback no longer exposes staff incentives"
+done
 
 require_once \
   backend/src/app.js \

@@ -12,6 +12,7 @@ const MENU_CATALOG = [
   { key: "suppliers", label: "供應商管理" },
   { key: "staff", label: "員工管理" },
   { key: "staff_scheduling", label: "員工排班" },
+  { key: "staff_incentives", label: "員工績效獎金" },
   { key: "coupons", label: "優惠券" },
   { key: "line", label: "LINE 管理" },
   { key: "settings", label: "系統設定" },
@@ -37,6 +38,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     suppliers: allow(),
     staff: allow(),
     staff_scheduling: allow(),
+    staff_incentives: allow(),
     coupons: allow(),
     line: allow(),
     settings: allow(),
@@ -51,6 +53,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     orders: allow(),
     customers: allow(),
     staff_scheduling: allow(),
+    staff_incentives: allow(),
     coupons: allow(),
   },
   REPAIR: {
@@ -59,7 +62,8 @@ const DEFAULT_ROLE_PERMISSIONS = {
     orders: allow(),
     repairs: allow(),
     customers: allow(),
-    staff_scheduling: allow()
+    staff_scheduling: allow(),
+    staff_incentives: allow()
   },
   INVENTORY: {
     ...allPermissions(false),
@@ -68,6 +72,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     inventory: allow(),
     suppliers: allow(),
     staff_scheduling: allow(),
+    staff_incentives: allow(),
     store_replenishment_requests: allow(),
     store_transfers: allow(),
     inbound_transfers: allow()
