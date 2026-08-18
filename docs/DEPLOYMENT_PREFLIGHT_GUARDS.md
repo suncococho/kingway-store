@@ -92,7 +92,7 @@ Both preflight scripts run the core contract and the feature-specific checks. A 
 4. Keep feature tests with the corresponding feature commit.
 5. Never overwrite whole shared route, menu, permission, compose, or app-mount files from an older worktree.
 6. Never build from a dirty main worktree.
-7. Build staging and production artifacts only from a clean release branch based on the verified current production release.
+7. Build staging and production artifacts only from a clean release branch created from the newest KINGWAY Production release tag, or its later baseline-only successor commit. Never build or deploy from an old `main`, a dirty worktree, or a historical release worktree.
 8. The core feature manifest, production baseline, and role snapshot checks must pass.
 9. A failed preflight prohibits build and deploy.
 10. Validate the exact release commit and artifact in staging before requesting separate production approval.
@@ -101,6 +101,10 @@ Both preflight scripts run the core contract and the feature-specific checks. A 
 13. Commit approval and deploy approval are separate.
 14. Git push requires separate approval.
 15. Integrate approved feature diffs, not files grouped by modification time.
+16. Never copy a whole feature file from an older release; integrate only the required reviewed hunks into the latest source.
+17. Staging and Production promotion must use the same commit and immutable frontend/backend images.
+18. After every Production deploy, update the Production baseline and create its immutable release tag before branching later work.
+19. Preserve all 54 classified feature families, including the separation of `/line-order`, `/orders`, and `/admin/line-order-options`, plus staff incentives and staff scheduling.
 
 Staging and production must use the same commit and the same build artifact. Immediately before an approved production deploy, create a timestamped snapshot under `/volume1/backup/kingway/releases/YYYYMMDD-HHMMSS/` containing the release commit, image IDs, asset filename/hash, compose hash, core file hashes, route/menu/API and role snapshots, health results, previous release ID, and rollback image IDs.
 
@@ -109,7 +113,7 @@ Production deploys must use `./scripts/with_deploy_lock.sh`. Do not use `docker 
 
 ## Bidirectional Production Coverage
 
-The version 3 contract is a bidirectional inventory, not only a list of selected features. It accounts for every registered frontend route, navigation menu, permission mapping, backend mount, direct endpoint, and protected background workflow. The reviewed inventory currently contains 53 feature families, 83 frontend routes, 35 menus, 35 menu permission mappings, 59 unique backend mounts, 10 direct endpoints, and 17 workflows.
+The version 3 contract is a bidirectional inventory, not only a list of selected features. It accounts for every registered frontend route, navigation menu, permission mapping, backend mount, direct endpoint, and protected background workflow. The reviewed inventory currently contains 54 feature families, 84 frontend routes, 35 menus, 35 menu permission mappings, 63 backend mount calls across 60 unique mounts, 10 direct endpoints, and 17 workflows.
 
 Release checks enforce both directions:
 

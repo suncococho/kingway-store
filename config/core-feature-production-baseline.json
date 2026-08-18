@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "releaseCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
+  "releaseCommit": "1421a3996bb929a52ddee14a1312e931b76b8a99",
   "approvedContractCommit": "b187df3febe28668fc109d5360230179c817d14d",
   "roleSnapshots": {
     "ADMIN_ROLE": {
@@ -1173,14 +1173,14 @@
   ],
   "roleSnapshotFile": "config/core-feature-role-snapshot.json",
   "productionAsset": {
-    "filename": "index-C1tPgXxm.js",
-    "sha256": "32f89f5a9b10e6390ab250aa6e8b0449069e5e05bf7f03a748f16d231b6ca953",
+    "filename": "index-CYOvgajY.js",
+    "sha256": "5a83eade41655c0fc957b53f9a56b3d71bf142c9805de7ebb8f93f58c26e1872",
     "approvedRestorationAsset": "index-BMn1cqQ1.js",
     "approvedRestorationSha256": "279d46185f9ff0faccf851154243d0b5d1ccf10c9e90a3cc27f73cff76937f2b"
   },
   "productionImages": {
-    "frontend": "sha256:4d454a0bcc1c4e6855b36c0f76a1fc0fa812e7e3a2acd86631d5c255ad51a9cd",
-    "backend": "sha256:ccfb9f0dc7ac7e788325fd0b8eb985ed6a16db60914c61245ddee06acb16e029"
+    "frontend": "sha256:852e635c1f1218acd06841df8fec92743007126715c421abe8331f8af4c1c6e3",
+    "backend": "sha256:c516863b8f4e358899f65f7fd8b4c20cb1c5f51d4a2045f2dbf1b6ccd0fdd254"
   },
   "requiredAssetMarkers": [
     "/login",
@@ -1304,5 +1304,5 @@
     "搜尋商品",
     "LINE訂購價"
   ],
-  "notes": "Exact production/release source inventory plus approved 2026-08-18 store-menu policy. Restored LINE order and employee self-service menus are required even when absent from the older production asset."
+  "notes": "Production runtime 1421a3996bb929a52ddee14a1312e931b76b8a99 deployed on 2026-08-19. The complete contract protects 54 feature families, 84 routes, 35 menus, 35 permission mappings, 63 mount calls, and 60 unique mounts. LINE public ordering, /orders management, LINE option management, staff incentives, and staff scheduling are required."
 }

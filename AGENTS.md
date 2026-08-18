@@ -324,11 +324,15 @@ When beginning work in this repo, assume:
 ## Core Feature Release Rules
 
 - Treat `config/core-feature-contract.json`, `config/core-feature-production-baseline.json`, and `config/core-feature-role-snapshot.json` as reviewed release contracts.
+- Start every new feature or fix branch from the newest KINGWAY Production release tag, or from its later baseline-only successor commit. Do not build or deploy from an old `main`, a dirty worktree, or a historical release worktree.
 - Run `node scripts/check_core_feature_contract.js` before build or deploy. Missing production features, exact routes, menu paths, permission mappings, API mounts, or role entries are release blockers.
 - Use a clean release worktree based on the verified current production commit. Never build from the dirty main worktree or copy whole shared files from an older worktree.
+- Never copy an entire historical feature file into the current release. Integrate only the required reviewed hunks into the latest file.
 - Keep each feature in an atomic commit with its tests. Commit, push, staging deploy, production deploy, and DB migration are separate approval scopes.
-- Stage and production must use the same commit and artifact. Production requires a timestamped release snapshot, deploy lock, rollback image IDs, and a separate approval.
+- Staging and Production promotion must use the same commit and immutable frontend/backend images. Production requires a timestamped release snapshot, deploy lock, rollback image IDs, and a separate approval.
+- After every approved Production deployment, update the Production baseline and create the immutable Production release tag before starting later feature work.
 - Never reduce an existing route, menu, API mount, or role permission without naming the exact removal and receiving separate approval.
+- Preserve all 54 classified feature families. In particular, keep `/line-order`, `/orders`, and `/admin/line-order-options` separate, and preserve staff incentives and staff scheduling.
 
 
 ### Full production coverage contract
