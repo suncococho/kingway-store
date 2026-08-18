@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS products (
   stock INT NOT NULL DEFAULT 0,
   reorder_level INT NOT NULL DEFAULT 0,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
+  deleted_at TIMESTAMP NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
@@ -66,9 +67,71 @@ CREATE TABLE IF NOT EXISTS order_items (
   quantity INT NOT NULL,
   unit_price DECIMAL(12,2) NOT NULL,
   line_total DECIMAL(12,2) NOT NULL,
+  line_option_group_id BIGINT UNSIGNED NULL COMMENT 'LINE訂單選配群組ID快照',
+  line_option_group_code VARCHAR(40) NULL COMMENT 'LINE訂單選配群組代碼快照',
+  line_option_group_label VARCHAR(120) NULL COMMENT 'LINE訂單選配群組名稱快照',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_order_items_order FOREIGN KEY (order_id) REFERENCES orders(id),
   CONSTRAINT fk_order_items_product FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+CREATE TABLE IF NOT EXISTS line_order_option_settings (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  store_id BIGINT UNSIGNED NOT NULL,
+  is_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  page_title VARCHAR(150) NOT NULL DEFAULT '選擇您需要的配件',
+  page_description VARCHAR(500) NOT NULL DEFAULT '可依照需求選擇配件，也可以略過此步驟',
+  allow_skip TINYINT(1) NOT NULL DEFAULT 1,
+  show_out_of_stock TINYINT(1) NOT NULL DEFAULT 1,
+  show_prices TINYINT(1) NOT NULL DEFAULT 1,
+  created_by_staff_id BIGINT UNSIGNED NULL,
+  updated_by_staff_id BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_line_order_option_settings_store (store_id),
+  INDEX idx_line_order_option_settings_enabled (store_id, is_enabled),
+  CONSTRAINT fk_line_order_option_settings_created_by FOREIGN KEY (created_by_staff_id) REFERENCES staff_users(id),
+  CONSTRAINT fk_line_order_option_settings_updated_by FOREIGN KEY (updated_by_staff_id) REFERENCES staff_users(id)
+);
+
+CREATE TABLE IF NOT EXISTS line_order_option_groups (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  store_id BIGINT UNSIGNED NOT NULL,
+  code VARCHAR(40) NOT NULL,
+  label VARCHAR(120) NOT NULL,
+  description VARCHAR(500) NULL,
+  is_required TINYINT(1) NOT NULL DEFAULT 0,
+  min_select INT UNSIGNED NOT NULL DEFAULT 0,
+  max_select INT UNSIGNED NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by_staff_id BIGINT UNSIGNED NULL,
+  updated_by_staff_id BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMP NULL,
+  UNIQUE KEY uk_line_order_option_groups_store_code_active (store_id, code, deleted_at),
+  INDEX idx_line_order_option_groups_store_sort (store_id, deleted_at, is_active, sort_order, id),
+  CONSTRAINT fk_line_order_option_groups_created_by FOREIGN KEY (created_by_staff_id) REFERENCES staff_users(id),
+  CONSTRAINT fk_line_order_option_groups_updated_by FOREIGN KEY (updated_by_staff_id) REFERENCES staff_users(id)
+);
+
+CREATE TABLE IF NOT EXISTS line_order_option_group_products (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  store_id BIGINT UNSIGNED NOT NULL,
+  option_group_id BIGINT UNSIGNED NOT NULL,
+  product_id BIGINT UNSIGNED NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  custom_display_name VARCHAR(150) NULL,
+  custom_price DECIMAL(12,2) NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_line_order_option_group_products_group_product (option_group_id, product_id),
+  INDEX idx_line_order_option_group_products_store_group_sort (store_id, option_group_id, is_active, sort_order, id),
+  INDEX idx_line_order_option_group_products_product (store_id, product_id),
+  CONSTRAINT fk_line_order_option_group_products_group FOREIGN KEY (option_group_id) REFERENCES line_order_option_groups(id),
+  CONSTRAINT fk_line_order_option_group_products_product FOREIGN KEY (product_id) REFERENCES products(id)
 );
 
 CREATE TABLE IF NOT EXISTS inventory_movements (

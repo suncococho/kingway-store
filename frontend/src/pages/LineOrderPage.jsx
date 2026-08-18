@@ -15,6 +15,23 @@ const LEGACY_STORE_CONTEXT = {
   isExplicitStore: false
 };
 
+function money(value) {
+  return "NT$ " + Number(value || 0).toLocaleString();
+}
+
+function hasLineOrderPrice(product) {
+  return product?.customPrice !== null && product?.customPrice !== undefined;
+}
+
+function optionUnitPrice(product) {
+  return hasLineOrderPrice(product) ? Number(product.customPrice || 0) : Number(product?.basePrice ?? product?.price ?? 0);
+}
+
+function shouldShowLinePrice(product) {
+  if (!hasLineOrderPrice(product)) return false;
+  return Number(product.customPrice || 0) !== Number(product?.basePrice ?? 0);
+}
+
 function buildCustomerOaName(response, fallbackStoreName) {
   const configured = String(response?.lineSettings?.customerOaName || "").trim();
   if (configured) {
@@ -39,7 +56,10 @@ function LineOrderPage() {
   const [binding, setBinding] = useState(false);
 
   const [products, setProducts] = useState([]);
+  const [optionConfig, setOptionConfig] = useState({ settings: null, groups: [] });
   const [selected, setSelected] = useState("");
+  const [optionSelections, setOptionSelections] = useState({});
+  const [orderStep, setOrderStep] = useState("bike");
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
@@ -134,8 +154,15 @@ function LineOrderPage() {
           });
         }
 
-        const productData = await apiRequest(`/line-order/ebikes?store=${encodeURIComponent(resolvedStoreCode)}`);
+        const [productData, optionData] = await Promise.all([
+          apiRequest(`/line-order/ebikes?store=${encodeURIComponent(resolvedStoreCode)}`),
+          apiRequest(`/line-order/options?store=${encodeURIComponent(resolvedStoreCode)}`).catch(() => ({ settings: null, groups: [] }))
+        ]);
         setProducts(Array.isArray(productData) ? productData : []);
+        setOptionConfig({
+          settings: optionData?.settings || null,
+          groups: Array.isArray(optionData?.groups) ? optionData.groups : []
+        });
       } catch (e) {
         console.error(e);
         setError(e.message || "頁面載入失敗");
@@ -206,6 +233,79 @@ function LineOrderPage() {
     }
   }
 
+  const selectedProduct = products.find((product) => String(product.id) === String(selected));
+  const optionSettings = optionConfig.settings || {};
+  const optionGroups = Array.isArray(optionConfig.groups) ? optionConfig.groups : [];
+  const optionsEnabled = Boolean(optionSettings.isEnabled && optionGroups.length > 0);
+  const selectedOptionItems = optionGroups.flatMap((group) => {
+    const ids = optionSelections[group.id] || [];
+    return ids.map((productId) => {
+      const product = (group.products || []).find((item) => Number(item.productId) === Number(productId));
+      return product ? { ...product, groupId: group.id, groupCode: group.code, groupLabel: group.label } : null;
+    }).filter(Boolean);
+  });
+  const selectedOptionTotal = selectedOptionItems.reduce((sum, item) => sum + optionUnitPrice(item), 0);
+  const selectedBikePrice = Number(selectedProduct?.price || 0);
+  const orderTotal = selectedBikePrice + selectedOptionTotal;
+
+  function goNextFromBike() {
+    setError("");
+    if (!selected) return setError("請選擇車款");
+    setOrderStep(optionsEnabled ? "options" : "confirm");
+  }
+
+  function getGroupSelectedIds(groupId) {
+    return optionSelections[groupId] || [];
+  }
+
+  function toggleOptionProduct(group, product) {
+    if (Number(product.stock || 0) <= 0) return;
+    setError("");
+    setOptionSelections((current) => {
+      const ids = current[group.id] || [];
+      const productId = Number(product.productId);
+      if (ids.includes(productId)) {
+        return { ...current, [group.id]: ids.filter((id) => id !== productId) };
+      }
+      const maxSelect = Number(group.maxSelect || 0);
+      const nextIds = maxSelect === 1 ? [productId] : [...ids, productId];
+      if (maxSelect > 0 && nextIds.length > maxSelect) {
+        return current;
+      }
+      return { ...current, [group.id]: nextIds };
+    });
+  }
+
+  function validateOptionsBeforeConfirm() {
+    for (const group of optionGroups) {
+      const count = getGroupSelectedIds(group.id).length;
+      const minSelect = group.isRequired ? Math.max(1, Number(group.minSelect || 0)) : Number(group.minSelect || 0);
+      const maxSelect = Number(group.maxSelect || 0);
+      if (count < minSelect) {
+        setError(group.label + " 至少需選擇 " + minSelect + " 項");
+        return false;
+      }
+      if (maxSelect > 0 && count > maxSelect) {
+        setError(group.label + " 最多只能選擇 " + maxSelect + " 項");
+        return false;
+      }
+    }
+    setError("");
+    return true;
+  }
+
+  function goConfirmFromOptions(skip = false) {
+    if (skip) {
+      setOptionSelections({});
+      setError("");
+      setOrderStep("confirm");
+      return;
+    }
+    if (validateOptionsBeforeConfirm()) {
+      setOrderStep("confirm");
+    }
+  }
+
   async function submitOrder() {
     if (submitLockRef.current || result) {
       return;
@@ -237,6 +337,10 @@ function LineOrderPage() {
           name: name || "LINE 客戶",
           phone,
           productId: Number(selected),
+          optionSelections: optionGroups.map((group) => ({
+            groupId: group.id,
+            productIds: getGroupSelectedIds(group.id)
+          })),
           storeCode: storeContext.isExplicitStore ? storeContext.storeCode : undefined
         })
       });
@@ -246,6 +350,8 @@ function LineOrderPage() {
 
       setResult(data);
       setSelected("");
+      setOptionSelections({});
+      setOrderStep("bike");
     } catch (e) {
       setError(e.message || "建立訂單失敗");
       submitLockRef.current = false;
@@ -332,55 +438,134 @@ function LineOrderPage() {
               </div>
             </div>
 
-            <div className="line-product-list">
-              {products.map((p) => {
-                const active = selected === String(p.id);
+            {orderStep === "bike" ? (
+              <>
+                <div className="line-step-indicator">步驟 1：選擇車款</div>
+                <div className="line-product-list">
+                  {products.map((p) => {
+                    const active = selected === String(p.id);
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          if (!submitting && !result) setSelected(String(p.id));
+                        }}
+                        className={"line-product-card " + (active ? "active" : "")}
+                        disabled={submitting || Boolean(result)}
+                      >
+                        <div className="line-product-thumb">
+                          {p.imageUrl ? <img src={p.imageUrl} alt={p.name} /> : <div style={{ fontWeight: 900, color: "#999" }}>KINGWAY</div>}
+                        </div>
+                        <div className="line-product-name">
+                          {p.name}
+                          <div className="line-product-sub">
+                            {Number(p.stock || 0) > 0 ? "現貨 " + p.stock + " 台" : "缺貨可預約"}
+                            {optionSettings.showPrices !== false ? " / NT$ " + Number(p.price || 0).toLocaleString() : ""}
+                          </div>
+                        </div>
+                        <div className="line-product-check">{active ? "✓" : "＋"}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="line-order-form">
+                  <button type="button" onClick={goNextFromBike} className="line-order-submit" disabled={submitting || Boolean(result)}>下一步</button>
+                  {error ? <div className="line-order-alert error">{error}</div> : null}
+                </div>
+              </>
+            ) : null}
 
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => {
-                      if (!submitting && !result) {
-                        setSelected(String(p.id));
-                      }
-                    }}
-                    className={`line-product-card ${active ? "active" : ""}`}
-                    disabled={submitting || Boolean(result)}
-                  >
-                    <div className="line-product-thumb">
-                      {p.imageUrl ? (
-                        <img src={p.imageUrl} alt={p.name} />
-                      ) : (
-                        <div style={{ fontWeight: 900, color: "#999" }}>KINGWAY</div>
-                      )}
-                    </div>
-
-                    <div className="line-product-name">
-                      {p.name}
-                      <div className="line-product-sub">
-                        {Number(p.stock || 0) > 0 ? `現貨 ${p.stock} 台` : "缺貨可預約"}
+            {orderStep === "options" ? (
+              <>
+                <div className="line-step-indicator">步驟 2：選擇配件</div>
+                <div className="line-order-form">
+                  <h2 style={{ marginTop: 0 }}>{optionSettings.pageTitle || "選擇您需要的配件"}</h2>
+                  <p style={{ lineHeight: 1.7, marginTop: 8 }}>{optionSettings.pageDescription || "可依照需求選擇配件，也可以略過此步驟"}</p>
+                </div>
+                {optionGroups.map((group) => (
+                  <section key={group.id} className="line-option-group">
+                    <div className="line-option-group-head">
+                      <div>
+                        <strong>{(group.code ? group.code + " / " : "") + group.label}</strong>
+                        <span>{group.isRequired ? "必填" : "選填"}，{group.minSelect} 到 {group.maxSelect || "不限"} 項</span>
                       </div>
                     </div>
+                    {group.description ? <p className="line-option-desc">{group.description}</p> : null}
+                    <div className="line-option-product-list">
+                      {(group.products || []).map((product) => {
+                        const active = getGroupSelectedIds(group.id).includes(Number(product.productId));
+                        const outOfStock = Number(product.stock || 0) <= 0;
+                        return (
+                          <button
+                            key={product.productId}
+                            type="button"
+                            className={"line-product-card line-option-product " + (active ? "active" : "")}
+                            disabled={outOfStock}
+                            onClick={() => toggleOptionProduct(group, product)}
+                          >
+                            <div className="line-product-thumb">
+                              {product.imageUrl ? <img src={product.imageUrl} alt={product.displayName} /> : <div style={{ fontWeight: 900, color: "#999" }}>KINGWAY</div>}
+                            </div>
+                            <div className="line-product-name">
+                              {product.displayName}
+                              <div className="line-product-sub">
+                                {outOfStock ? "缺貨" : "庫存 " + product.stock}
+                                {optionSettings.showPrices !== false && !shouldShowLinePrice(product) ? " / " + money(optionUnitPrice(product)) : ""}
+                              </div>
+                              {optionSettings.showPrices !== false && shouldShowLinePrice(product) ? (
+                                <div className="line-option-price-stack">
+                                  <span className="line-option-original-price">原價 {money(product.basePrice)}</span>
+                                  <strong>LINE價 {money(optionUnitPrice(product))}</strong>
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="line-product-check">{active ? "✓" : outOfStock ? "缺" : "＋"}</div>
+                          </button>
+                        );
+                      })}
+                      {!(group.products || []).length ? <div className="line-order-alert">此群組目前沒有可選商品</div> : null}
+                    </div>
+                  </section>
+                ))}
+                <div className="line-order-form line-order-actions-row">
+                  <button type="button" className="line-order-secondary" onClick={() => setOrderStep("bike")}>返回車款</button>
+                  {optionSettings.allowSkip ? <button type="button" className="line-order-secondary" onClick={() => goConfirmFromOptions(true)}>略過選配</button> : null}
+                  <button type="button" className="line-order-submit" onClick={() => goConfirmFromOptions(false)}>確認選配</button>
+                  {error ? <div className="line-order-alert error">{error}</div> : null}
+                </div>
+              </>
+            ) : null}
 
-                    <div className="line-product-check">{active ? "✓" : "＋"}</div>
+            {orderStep === "confirm" ? (
+              <div className="line-order-form">
+                <div className="line-step-indicator">最後確認</div>
+                <h2 style={{ marginTop: 0 }}>確認訂單內容</h2>
+                <div className="line-confirm-row"><span>車款</span><strong>{selectedProduct?.name || "-"}</strong></div>
+                {selectedOptionItems.length ? selectedOptionItems.map((item) => {
+                  const unitPrice = optionUnitPrice(item);
+                  return (
+                    <div className="line-confirm-row line-confirm-option-row" key={item.groupId + "-" + item.productId}>
+                      <span>{item.groupLabel}</span>
+                      <strong>
+                        {item.displayName}
+                        {optionSettings.showPrices !== false ? <small>單價 {money(unitPrice)} × 1，小計 {money(unitPrice)}</small> : null}
+                      </strong>
+                    </div>
+                  );
+                }) : <div className="line-confirm-row"><span>選配</span><strong>未選擇</strong></div>}
+                {optionSettings.showPrices !== false ? <div className="line-confirm-row"><span>車款小計</span><strong>{money(selectedBikePrice)}</strong></div> : null}
+                {optionSettings.showPrices !== false && selectedOptionItems.length ? <div className="line-confirm-row"><span>選配小計</span><strong>{money(selectedOptionTotal)}</strong></div> : null}
+                {optionSettings.showPrices !== false ? <div className="line-confirm-row total"><span>預估金額</span><strong>{money(orderTotal)}</strong></div> : null}
+                <div className="line-order-actions-row">
+                  <button type="button" className="line-order-secondary" onClick={() => setOrderStep(optionsEnabled ? "options" : "bike")}>返回修改</button>
+                  <button type="button" onClick={submitOrder} className="line-order-submit" disabled={submitting || Boolean(result)}>
+                    {submitting ? "送出中，請稍候..." : "送出預約訂單"}
                   </button>
-                );
-              })}
-            </div>
-
-            <div className="line-order-form">
-              <button
-                type="button"
-                onClick={submitOrder}
-                className="line-order-submit"
-                disabled={submitting || Boolean(result)}
-              >
-                {submitting ? "送出中，請稍候..." : "送出預約訂單"}
-              </button>
-
-              {error ? <div className="line-order-alert error">{error}</div> : null}
-            </div>
+                </div>
+                {error ? <div className="line-order-alert error">{error}</div> : null}
+              </div>
+            ) : null}
           </>
         )}
 

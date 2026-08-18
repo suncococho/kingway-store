@@ -1,6 +1,7 @@
 const path = require("path");
 const express = require("express");
 const lineOrderRoutes = require("./routes/lineOrder");
+const lineOrderOptionRoutes = require("./routes/lineOrderOptions");
 const lineRepairRoutes = require("./routes/lineRepair");
 const lineGoogleReviewRoutes = require("./routes/lineGoogleReview");
 const lineBindPhoneRoutes = require("./routes/lineBindPhone");
@@ -512,6 +513,7 @@ app.post("/api/line/profile-name", async (req, res, next) => {
 });
 
 app.use("/api/line-order", lineOrderRoutes);
+app.use("/api/line-order-options", lineOrderOptionRoutes);
 app.use("/api/line-repair", lineRepairRoutes);
 app.use("/api/line-google-review", lineGoogleReviewRoutes);
 app.use("/api/line-bind-phone", lineBindPhoneRoutes);
