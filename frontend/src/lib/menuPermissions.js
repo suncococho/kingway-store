@@ -14,6 +14,7 @@ export const MENU_CATALOG = [
   { key: "staff_incentives", label: "員工績效獎金" },
   { key: "coupons", label: "優惠券" },
   { key: "line", label: "LINE 管理" },
+  { key: "line_order_options", label: "LINE訂單選配管理" },
   { key: "settings", label: "系統設定" },
   { key: "store_replenishment_requests", label: "門市請貨", description: "向本部申請補貨，不需要選擇供應商", preparedOnly: true },
   { key: "store_transfers", label: "門市調撥", preparedOnly: true },
@@ -60,7 +61,7 @@ export const PATH_MENU_KEY_MAP = [
   { path: "/staff-kpi", key: "staff" },
   { path: "/payroll", key: "staff" },
   { path: "/coupons", key: "coupons" },
-  { path: "/line-order", key: "line" },
+  { path: "/admin/line-order-options", key: "line_order_options" },
   { path: "/settings/line", key: "line" },
   { path: "/settings/line-channels", key: "settings" },
   { path: "/settings/manual", key: "dashboard" },
@@ -109,7 +110,7 @@ export function getFallbackMenuPermissions(user) {
   const map = allPermissions(false);
   const role = normalizeRole(user?.role);
   const enabledByRole = {
-    MANAGER: ["dashboard", "pos", "orders", "repairs", "customers", "products", "inventory", "sales_management", "suppliers", "staff", "staff_scheduling", "staff_incentives", "coupons", "line", "settings", "store_replenishment_requests", "store_transfers", "inbound_transfers"],
+    MANAGER: ["dashboard", "pos", "orders", "repairs", "customers", "products", "inventory", "sales_management", "suppliers", "staff", "staff_scheduling", "staff_incentives", "coupons", "line", "line_order_options", "settings", "store_replenishment_requests", "store_transfers", "inbound_transfers"],
     CASHIER: ["dashboard", "pos", "orders", "customers", "staff_scheduling", "staff_incentives", "coupons"],
     REPAIR: ["dashboard", "orders", "repairs", "customers", "staff_scheduling", "staff_incentives"],
     INVENTORY: ["dashboard", "products", "inventory", "suppliers", "staff_scheduling", "staff_incentives", "store_replenishment_requests", "store_transfers", "inbound_transfers"],
@@ -140,6 +141,9 @@ export function normalizeMenuPermissions(rawPermissions, user) {
 export function getMenuPermission(permissions, menuKey, user) {
   if (!menuKey) {
     return allow();
+  }
+  if (menuKey === "line_order_options" && !["ADMIN", "MANAGER"].includes(normalizeRole(user?.role))) {
+    return deny();
   }
   if (menuKey === "sales_management" && !canViewSalesManagement(user)) {
     return deny();
