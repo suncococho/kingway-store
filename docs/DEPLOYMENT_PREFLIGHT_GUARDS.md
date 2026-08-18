@@ -132,6 +132,8 @@ Menu visibility is not backend read or write authorization. The feature contract
 
 ## Read-only Backend Validation
 
+Default ADMIN/staff account creation and reconciliation is a bootstrap operation. It is disabled on ordinary backend startup and runs only when `RUN_DEFAULT_ACCOUNT_RECONCILIATION=true` is explicitly set. Use that opt-in only for a new installation or an administrator-approved recovery. Production rollout must leave the variable unset; adding it to the Production environment or rollout command is a preflight failure. Existing login, staff management, and password-change behavior is independent of this bootstrap gate.
+
 Set `BACKEND_VALIDATION_MODE=read-only` only on an isolated or approved staging backend. The default is `off`, preserving normal production startup. Read-only validation runs the SELECT-only schema guard but skips schema bootstrap, default ADMIN/staff reconciliation, storage initialization, scheduler registration, and outbound LINE/Telegram delivery. HTTP `GET`, `HEAD`, and `OPTIONS` remain available; `POST`, `PUT`, `PATCH`, and `DELETE` return a non-sensitive 503 response. The database wrapper also rejects transactions and non-SELECT SQL so a side-effecting GET cannot write.
 
 Role validation must select only existing actor IDs and roles, create JWTs inside the validation runtime, and never print or return token values. `backend/scripts/validateReadOnlyRoleGets.js --fixture` verifies that runner structure without connecting to a database or creating a real token.

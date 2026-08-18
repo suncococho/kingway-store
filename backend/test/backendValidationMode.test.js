@@ -14,6 +14,7 @@ const {
 } = require("../src/runtime/validationMode");
 const { readOnlyValidationMiddleware } = require("../src/middleware/readOnlyValidation");
 const { prepareRuntime } = require("../src/server");
+const config = require("../src/config");
 const { runRoleGetValidation } = require("../scripts/validateReadOnlyRoleGets");
 
 const repo = path.resolve(__dirname, "../..");
@@ -73,10 +74,16 @@ async function main() {
   assert.doesNotThrow(() => assertRuntimeWriteAllowed("fixture", {}));
   assert.throws(() => assertRuntimeWriteAllowed("fixture", { BACKEND_VALIDATION_MODE: "read-only" }));
 
+  for (const value of [undefined, "", "false", "0", "no", "1", "yes", "on"]) {
+    const env = value === undefined ? {} : { RUN_DEFAULT_ACCOUNT_RECONCILIATION: value };
+    assert.equal(config.isDefaultAccountReconciliationEnabled(env), false);
+  }
+  assert.equal(config.isDefaultAccountReconciliationEnabled({ RUN_DEFAULT_ACCOUNT_RECONCILIATION: "true" }), true);
+
   const readOnlyCalls = [];
   const logger = { log() {}, warn() {} };
   const readOnlyResult = await prepareRuntime({
-    env: { BACKEND_VALIDATION_MODE: "read-only" },
+    env: { BACKEND_VALIDATION_MODE: "read-only", RUN_DEFAULT_ACCOUNT_RECONCILIATION: "true" },
     config: { runSchemaBootstrap: true },
     logger,
     runSchemaGuard: async () => readOnlyCalls.push("schema-select"),
@@ -92,7 +99,7 @@ async function main() {
 
   const defaultCalls = [];
   const defaultResult = await prepareRuntime({
-    env: {},
+    env: { RUN_DEFAULT_ACCOUNT_RECONCILIATION: "true" },
     config: { runSchemaBootstrap: true },
     logger,
     runSchemaGuard: async () => defaultCalls.push("schema-select"),
@@ -104,6 +111,39 @@ async function main() {
   });
   assert.deepEqual(defaultCalls, ["schema-select", "storage", "bootstrap", "telegram-init", "admin-write", "staff-write"]);
   assert.equal(defaultResult.validationMode, "off");
+
+  for (const value of [undefined, "false", "0"]) {
+    const env = value === undefined ? {} : { RUN_DEFAULT_ACCOUNT_RECONCILIATION: value };
+    const calls = [];
+    await prepareRuntime({
+      env,
+      config: { runSchemaBootstrap: false },
+      logger,
+      runSchemaGuard: async () => calls.push("schema-select"),
+      ensureStorageDirectories: () => calls.push("storage"),
+      ensureV2Schema: async () => calls.push("bootstrap"),
+      validateTelegramConfig: () => calls.push("telegram-init"),
+      ensureDefaultAdmin: async () => calls.push("admin-write"),
+      ensureDefaultStaff: async () => calls.push("staff-write")
+    });
+    assert.deepEqual(calls, ["schema-select", "storage", "telegram-init"]);
+  }
+
+  let sanitizedStaffUpdates = 0;
+  await prepareRuntime({
+    env: {},
+    config: { runSchemaBootstrap: false },
+    logger,
+    runSchemaGuard: async () => {},
+    ensureStorageDirectories: () => {},
+    validateTelegramConfig: () => {},
+    ensureDefaultAdmin: async () => false,
+    ensureDefaultStaff: async () => {
+      sanitizedStaffUpdates += 1;
+      return { created: false, updated: true, skipped: false };
+    }
+  });
+  assert.equal(sanitizedStaffUpdates, 0);
 
   const previousMode = process.env.BACKEND_VALIDATION_MODE;
   const previousFetch = global.fetch;

@@ -54,10 +54,16 @@ function parseBoolean(value, fallback = false) {
   return ["1", "true", "yes", "on"].includes(normalized);
 }
 
+function isDefaultAccountReconciliationEnabled(env = process.env) {
+  const value = String(env.RUN_DEFAULT_ACCOUNT_RECONCILIATION ?? "").trim().toLowerCase();
+  return value === "true" && parseBoolean(value, false);
+}
+
 module.exports = {
   nodeEnv: process.env.NODE_ENV || "development",
   appEnv: process.env.APP_ENV || "",
   runSchemaBootstrap: parseBoolean(process.env.RUN_SCHEMA_BOOTSTRAP, false),
+  isDefaultAccountReconciliationEnabled,
   productImportApplyEnabled: parseBoolean(process.env.PRODUCT_IMPORT_APPLY_ENABLED, false),
   productImportAdminOverrideEnabled: parseBoolean(process.env.PRODUCT_IMPORT_ADMIN_OVERRIDE_ENABLED, false),
   productImportApplyAllowedStoreIds: parseIntegerSet(process.env.PRODUCT_IMPORT_APPLY_ALLOWED_STORE_IDS),

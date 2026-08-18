@@ -58,9 +58,18 @@ else{
  for(const marker of ["BACKEND_VALIDATION_MODE","read-only","assertRuntimeWriteAllowed","assertReadOnlySqlAllowed"])if(!runtime.includes(marker))fail("backend validation helper marker missing "+marker);
  if(!middleware.includes("isAllowedValidationHttpMethod"))fail("backend validation HTTP method guard missing");
  for(const marker of ["ensureStorageDirectories","ensureV2Schema","ensureDefaultAdmin","ensureDefaultStaff","validateTelegramConfig"])if(!server.includes(marker))fail("backend startup guard marker missing "+marker);
+ const defaultAccounts=backendValidation.defaultAccountReconciliation||{};
+ if(defaultAccounts.environmentVariable!=="RUN_DEFAULT_ACCOUNT_RECONCILIATION"||defaultAccounts.enabledValue!=="true"||defaultAccounts.defaultValue!=="false"||defaultAccounts.productionPolicy!=="unset")fail("default account reconciliation contract mismatch");
+ const configSource=read("backend/src/config.js");
+ for(const marker of ["RUN_DEFAULT_ACCOUNT_RECONCILIATION","isDefaultAccountReconciliationEnabled"])if(!configSource.includes(marker))fail("default account reconciliation config marker missing "+marker);
+ if(!server.includes("Default account reconciliation skipped."))fail("default account reconciliation startup gate missing");
+ const productionPreflight=read("scripts/preflight_production_deploy.sh");
+ if(!productionPreflight.includes("RUN_DEFAULT_ACCOUNT_RECONCILIATION must be unset for Production rollout."))fail("Production default account reconciliation guard missing");
  if(!database.includes("assertReadOnlySqlAllowed")||!database.includes("assertRuntimeWriteAllowed"))fail("database read-only guard missing");
  for(const marker of ["FROM node:20-alpine","npm ci --omit=dev --no-audit --no-fund","LABEL org.opencontainers.image.revision=$REVISION","COPY backend/src ./src","COPY shared/warrantyRepairAdditionalTerms.json /app/shared/warrantyRepairAdditionalTerms.json","USER node",'CMD ["node", "src/server.js"]'])if(!dockerfile.includes(marker))fail("backend Dockerfile marker missing "+marker);
  for(const marker of [".env","node_modules","storage"])if(!dockerignore.includes(marker))fail("backend .dockerignore marker missing "+marker);
+ const frontendDockerfile=read("frontend/Dockerfile");
+ for(const marker of ["ARG REVISION","LABEL org.opencontainers.image.revision=$REVISION"])if(!frontendDockerfile.includes(marker))fail("frontend Dockerfile revision marker missing "+marker);
 }
 const requiredFields=array(manifest.requiredFeatureFields,"requiredFeatureFields");
 const allowedStatuses=new Set(array(manifest.allowedStatuses,"allowedStatuses"));

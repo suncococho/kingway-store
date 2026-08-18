@@ -5008,6 +5008,13 @@
         "pdf-file-write"
       ],
       "healthField": "validationMode",
+      "defaultAccountReconciliation": {
+        "environmentVariable": "RUN_DEFAULT_ACCOUNT_RECONCILIATION",
+        "enabledValue": "true",
+        "defaultValue": "false",
+        "productionPolicy": "unset",
+        "purpose": "explicitly approved new-install or recovery bootstrap only"
+      },
       "sourceFiles": [
         "backend/src/runtime/validationMode.js",
         "backend/src/middleware/readOnlyValidation.js",

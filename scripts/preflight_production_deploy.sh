@@ -28,6 +28,16 @@ info() {
 
 cd "$REPO_DIR"
 
+if [ "${RUN_DEFAULT_ACCOUNT_RECONCILIATION+x}" = "x" ]; then
+  fail "RUN_DEFAULT_ACCOUNT_RECONCILIATION must be unset for Production rollout."
+fi
+for ENV_FILE in "$REPO_DIR/.env" "$REPO_DIR/.env.production"; do
+  if [ -f "$ENV_FILE" ] && grep -Eq '^[[:space:]]*RUN_DEFAULT_ACCOUNT_RECONCILIATION[[:space:]]*=' "$ENV_FILE"; then
+    fail "RUN_DEFAULT_ACCOUNT_RECONCILIATION must not be present in the Production environment file."
+  fi
+done
+info "default account reconciliation is disabled for Production startup."
+
 node "$REPO_DIR/scripts/check_core_feature_contract.js"
 sh "$REPO_DIR/scripts/check_staff_incentive_integration.sh"
 sh "$REPO_DIR/scripts/check_staff_work_schedule_integration.sh"

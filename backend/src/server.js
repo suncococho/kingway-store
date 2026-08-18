@@ -14,6 +14,8 @@ async function prepareRuntime(dependencies = {}) {
   const checkTelegramConfig = dependencies.validateTelegramConfig || validateTelegramConfig;
   const createDefaultAdmin = dependencies.ensureDefaultAdmin || ensureDefaultAdmin;
   const createDefaultStaff = dependencies.ensureDefaultStaff || ensureDefaultStaff;
+  const shouldReconcileDefaultAccounts =
+    dependencies.isDefaultAccountReconciliationEnabled || config.isDefaultAccountReconciliationEnabled;
   const readOnlyValidation = isReadOnlyValidationMode(runtimeEnv);
 
   await schemaGuard();
@@ -34,17 +36,21 @@ async function prepareRuntime(dependencies = {}) {
     logger.log("[SchemaBootstrap] Schema bootstrap skipped. Set RUN_SCHEMA_BOOTSTRAP=true to run explicit schema bootstrap.");
   }
   checkTelegramConfig();
-  const created = await createDefaultAdmin();
-  if (created) {
-    logger.log("Default admin account created.");
-  }
-  const staffResult = await createDefaultStaff();
-  if (staffResult.created) {
-    logger.log("Default staff account created.");
-  } else if (staffResult.updated) {
-    logger.log("Default staff account updated.");
-  } else if (staffResult.skipped) {
-    logger.warn(`Default staff account skipped: ${staffResult.reason}.`);
+  if (shouldReconcileDefaultAccounts(runtimeEnv)) {
+    const created = await createDefaultAdmin();
+    if (created) {
+      logger.log("Default admin account created.");
+    }
+    const staffResult = await createDefaultStaff();
+    if (staffResult.created) {
+      logger.log("Default staff account created.");
+    } else if (staffResult.updated) {
+      logger.log("Default staff account updated.");
+    } else if (staffResult.skipped) {
+      logger.warn(`Default staff account skipped: ${staffResult.reason}.`);
+    }
+  } else {
+    logger.log("Default account reconciliation skipped.");
   }
 
   return { validationMode: "off", skipped: [] };
