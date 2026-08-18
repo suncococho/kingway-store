@@ -71,12 +71,12 @@
     "backendAuthorizationSource"
   ],
   "expectedCounts": {
-    "features": 53,
-    "frontendRoutes": 83,
+    "features": 54,
+    "frontendRoutes": 84,
     "menuPaths": 35,
     "permissionMenuMappings": 35,
-    "uniqueBackendMounts": 59,
-    "backendMountCalls": 62,
+    "uniqueBackendMounts": 60,
+    "backendMountCalls": 63,
     "directEndpoints": 10,
     "workflows": 17,
     "scheduledJobRegistrations": 4,
@@ -1062,9 +1062,9 @@
       "backendAuthorizationSource": "backend/src/routes/customers.js"
     },
     {
-      "featureId": "orders",
+      "featureId": "orders-management",
       "category": "operations",
-      "displayName": "Orders",
+      "displayName": "Orders management",
       "status": "production",
       "releaseRequired": true,
       "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
@@ -1136,7 +1136,7 @@
         "production source baseline a5fc850",
         "production asset index-C1tPgXxm.js"
       ],
-      "notes": "",
+      "notes": "Protected /orders preserves LINE reservation and POS order list, search, detail, status, payment, and edit workflows.",
       "menuRoles": [
         "ADMIN_ROLE",
         "STORE_ROLE_OWNER",
@@ -1219,13 +1219,13 @@
       "backendAuthorizationSource": "No feature-specific backend router."
     },
     {
-      "featureId": "line-order",
+      "featureId": "line-order-public",
       "category": "line",
-      "displayName": "LINE order",
+      "displayName": "LINE public booking",
       "status": "production",
       "releaseRequired": true,
       "sourceCommit": "a5fc8502bcb7eb15dff84b2d047df01d2f28171f",
-      "completionCommit": "6d8ea78f81de62d7608930bf4e0b087a9c18886e",
+      "completionCommit": "d36aaafe226e8d210c269dcfe3d991d71ae61a1c",
       "pageFiles": [
         "frontend/src/pages/LineOrderPage.jsx"
       ],
@@ -1236,20 +1236,13 @@
           "access": "public"
         }
       ],
-      "menuPaths": [
-        {
-          "path": "/line-order",
-          "label": "LINE 訂單管理",
-          "permissionKey": "line"
-        }
-      ],
-      "permissionKeys": [
-        "line"
-      ],
+      "menuPaths": [],
+      "permissionKeys": [],
       "requiredRoles": [],
       "frontendApis": [
         "/line-order/customer",
         "/line-order/ebikes",
+        "/line-order/options",
         "/api/line-order/create"
       ],
       "backendRouteFiles": [
@@ -1259,7 +1252,9 @@
         "/api/line-order"
       ],
       "directEndpoints": [],
-      "serviceFiles": [],
+      "serviceFiles": [
+        "backend/src/services/lineOrderOptionService.js"
+      ],
       "scheduledJobs": [],
       "webhooks": [],
       "backgroundWorkflows": [],
@@ -1267,28 +1262,118 @@
       "fileWorkflows": [],
       "migrations": [],
       "testFiles": [
-        "scripts/check_core_feature_contract.js"
+        "scripts/check_core_feature_contract.js",
+        "scripts/check_line_order_admin_menu.sh",
+        "backend/scripts/testLineOrderOptions.js"
       ],
       "testCommands": [
-        "node scripts/check_core_feature_contract.js"
+        "node scripts/check_core_feature_contract.js --feature line-order-public",
+        "sh scripts/check_line_order_admin_menu.sh",
+        "node backend/scripts/testLineOrderOptions.js"
       ],
       "featureFlags": [],
       "productionEvidence": [
         "production source baseline a5fc850",
         "production asset index-C1tPgXxm.js"
       ],
-      "notes": "Approved restoration required.",
-      "menuRoles": [
-        "ADMIN_ROLE",
-        "STORE_ROLE_OWNER",
-        "MANAGER_ROLE"
-      ],
+      "notes": "Public customer booking only; it must not be registered as an administrator menu.",
+      "menuRoles": [],
       "selfReadRoles": [],
       "selfWriteRoles": [],
       "managementReadRoles": [],
       "managementWriteRoles": [],
       "publicAccess": true,
-      "backendAuthorizationSource": "backend/src/routes/lineOrder.js: resolvePublicStoreContext; public GET customer/ebikes and POST create are separate from management-menu visibility."
+      "backendAuthorizationSource": "backend/src/routes/lineOrder.js: public store resolver; customer/ebikes/options GET and create POST remain public customer workflows."
+    },
+    {
+      "featureId": "line-order-options-management",
+      "category": "line",
+      "displayName": "LINE order option management",
+      "status": "completed",
+      "releaseRequired": true,
+      "sourceCommit": "88f60f9d73051746c24d18d3c2096bc3ad6f2af0",
+      "completionCommit": "d36aaafe226e8d210c269dcfe3d991d71ae61a1c",
+      "pageFiles": [
+        "frontend/src/pages/LineOrderOptionsPage.jsx"
+      ],
+      "frontendRoutes": [
+        {
+          "path": "/admin/line-order-options",
+          "classification": "feature",
+          "access": "protected"
+        }
+      ],
+      "menuPaths": [
+        {
+          "path": "/admin/line-order-options",
+          "label": "LINE訂單選配管理",
+          "permissionKey": "line_order_options"
+        }
+      ],
+      "permissionKeys": [
+        "line_order_options"
+      ],
+      "requiredRoles": [
+        "ADMIN",
+        "MANAGER"
+      ],
+      "frontendApis": [
+        "/line-order-options",
+        "/line-order-options/products",
+        "/line-order-options/settings",
+        "/line-order-options/groups"
+      ],
+      "backendRouteFiles": [
+        "backend/src/routes/lineOrderOptions.js"
+      ],
+      "backendMounts": [
+        "/api/line-order-options"
+      ],
+      "directEndpoints": [],
+      "serviceFiles": [
+        "backend/src/services/lineOrderOptionService.js"
+      ],
+      "scheduledJobs": [],
+      "webhooks": [],
+      "backgroundWorkflows": [],
+      "publicEndpoints": [],
+      "fileWorkflows": [],
+      "migrations": [
+        "database/migrations/20260818_fix_line_order_option_defaults_utf8.sql"
+      ],
+      "testFiles": [
+        "backend/scripts/testLineOrderOptions.js",
+        "scripts/check_line_order_admin_menu.sh",
+        "scripts/check_core_feature_contract.js",
+        "scripts/check_line_order_defaults_migration.js"
+      ],
+      "testCommands": [
+        "node backend/scripts/testLineOrderOptions.js",
+        "sh scripts/check_line_order_admin_menu.sh",
+        "node scripts/check_core_feature_contract.js --feature line-order-options-management",
+        "node scripts/check_line_order_defaults_migration.js"
+      ],
+      "featureFlags": [],
+      "productionEvidence": [
+        "canonical option-management lineage 88f60f9 -> 4d4ebe6 -> 498240b -> d36aaaf; pending separately approved staging deployment"
+      ],
+      "notes": "Protected option settings/group/product/custom-price workflow. ADMIN and MANAGER only; storeRole owner alone is not sufficient.",
+      "menuRoles": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE"
+      ],
+      "selfReadRoles": [],
+      "selfWriteRoles": [],
+      "managementReadRoles": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE"
+      ],
+      "managementWriteRoles": [
+        "ADMIN_ROLE",
+        "MANAGER_ROLE"
+      ],
+      "publicAccess": false,
+      "backendAuthorizationSource": "backend/src/routes/lineOrderOptions.js: router.use(authenticate, requireStoreScope(), authorize([\"ADMIN\", \"MANAGER\"]));"
     },
     {
       "featureId": "repairs",
@@ -4110,7 +4195,14 @@
     {
       "path": "/api/line-order",
       "routerId": "lineOrderRoutes",
-      "featureId": "line-order",
+      "featureId": "line-order-public",
+      "classification": "feature",
+      "reason": ""
+    },
+    {
+      "path": "/api/line-order-options",
+      "routerId": "lineOrderOptionRoutes",
+      "featureId": "line-order-options-management",
       "classification": "feature",
       "reason": ""
     },
@@ -4397,14 +4489,14 @@
     {
       "path": "/api/orders",
       "routerId": "orderItemsEditRoutes",
-      "featureId": "orders",
+      "featureId": "orders-management",
       "classification": "feature",
       "reason": ""
     },
     {
       "path": "/api/orders",
       "routerId": "orderRoutes",
-      "featureId": "orders",
+      "featureId": "orders-management",
       "classification": "feature",
       "reason": ""
     },

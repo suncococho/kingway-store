@@ -19,7 +19,7 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/products",
@@ -56,7 +56,7 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/products",
@@ -146,7 +146,6 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
         "/repairs",
         "/surveys",
         "/products",
@@ -183,7 +182,6 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
         "/repairs",
         "/surveys",
         "/products",
@@ -208,7 +206,9 @@
         "/inbound-transfers",
         "/store-replenishment-requests"
       ],
-      "menuDenied": [],
+      "menuDenied": [
+        "/admin/line-order-options"
+      ],
       "publicRoutes": [
         "/login",
         "/store-signup",
@@ -255,7 +255,7 @@
         "/staff-scheduling",
         "/staff-incentives"
       ],
-      "notes": "Actual storeRole=owner identity, not a virtual STORE_OWNER staff role. All store-operation menus are allowed."
+      "notes": "Store-role owner without ADMIN or MANAGER staff role is intentionally denied LINE option management."
     },
     "MANAGER_ROLE": {
       "identity": {
@@ -273,7 +273,7 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/products",
@@ -310,7 +310,7 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/products",
@@ -424,7 +424,7 @@
       ],
       "menuDenied": [
         "/settings/daily-tasks",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/products",
@@ -530,7 +530,7 @@
       "menuDenied": [
         "/settings/daily-tasks",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/products",
         "/inventory",
         "/sales",
@@ -637,7 +637,7 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/sales",
@@ -732,7 +732,7 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/products",
@@ -813,9 +813,10 @@
     "store-visits",
     "customer-status",
     "customers",
-    "orders",
+    "orders-management",
     "pos",
-    "line-order",
+    "line-order-public",
+    "line-order-options-management",
     "repairs",
     "repair-reservations",
     "repair-confirmations",
@@ -937,7 +938,8 @@
     "/hq-replenishment-requests",
     "/company-store-settlements",
     "/headquarters",
-    "/hq-transfer-report"
+    "/hq-transfer-report",
+    "/admin/line-order-options"
   ],
   "productionMenus": [
     "/dashboard",
@@ -951,7 +953,7 @@
     "/customers",
     "/orders",
     "/pos",
-    "/line-order",
+    "/admin/line-order-options",
     "/repairs",
     "/surveys",
     "/products",
@@ -1035,7 +1037,8 @@
     "/api/debug",
     "/files/pdfs",
     "/files/products",
-    "/files"
+    "/files",
+    "/api/line-order-options"
   ],
   "productionBackendMountBindings": [
     "/api/line-order|lineOrderRoutes",
@@ -1099,7 +1102,8 @@
     "/api/debug|debugRoutes",
     "/files/pdfs|intentional404",
     "/files/products|productStatic",
-    "/files|generalStatic"
+    "/files|generalStatic",
+    "/api/line-order-options|lineOrderOptionRoutes"
   ],
   "directEndpoints": [
     "GET /api/coupons/by-phone/:phone",
@@ -1273,7 +1277,7 @@
     "客戶管理",
     "訂單管理",
     "POS / 新訂單",
-    "LINE 訂單管理",
+    "LINE訂單選配管理",
     "維修管理",
     "問卷結果",
     "商品管理",
@@ -1296,7 +1300,9 @@
     "LINE Channel 管理",
     "LINE 通知設定",
     "門市入庫",
-    "門市請貨"
+    "門市請貨",
+    "搜尋商品",
+    "LINE訂購價"
   ],
   "notes": "Exact production/release source inventory plus approved 2026-08-18 store-menu policy. Restored LINE order and employee self-service menus are required even when absent from the older production asset."
 }

@@ -143,7 +143,36 @@ for(const menu of sourceMenus){
  if(mapping.get(normalized)!==menu.permissionKey)fail(menu.path+": permission mapping mismatch");
  else mappedMenus++;
 }
+
 if(mappedMenus!==expectedCounts.permissionMenuMappings)fail("permission mapping expected "+expectedCounts.permissionMenuMappings+" got "+mappedMenus);
+const publicLineFeature=featureById.get("line-order-public");
+const ordersFeature=featureById.get("orders-management");
+const optionManagementFeature=featureById.get("line-order-options-management");
+if(!publicLineFeature||!ordersFeature||!optionManagementFeature)fail("LINE public/orders/options feature separation missing");
+else{
+ if(publicLineFeature.menuPaths.length)fail("public /line-order must not have a menuPath");
+ if(!publicLineFeature.publicAccess)fail("line-order-public must remain public");
+ if(optionManagementFeature.publicAccess)fail("line-order-options-management must be protected");
+ sameSet(optionManagementFeature.menuRoles,["ADMIN_ROLE","MANAGER_ROLE"],"LINE option management menu roles");
+ const publicRoute=app.indexOf('<Route path="/line-order" element={<LineOrderPage />} />');
+ const protectedLayout=app.indexOf("<Route element={<ProtectedLayout />}>");
+ const adminRoute=app.indexOf('<Route path="/admin/line-order-options" element={<LineOrderOptionsPage />} />');
+ if(publicRoute<0||protectedLayout<0||publicRoute>protectedLayout)fail("public /line-order route must be outside ProtectedLayout");
+ if(adminRoute<protectedLayout)fail("LINE option management route must be inside ProtectedLayout");
+ if(nav.includes('to: "/line-order"'))fail("public /line-order must not be an administrator menu");
+ if(mapping.has("/line-order"))fail("public /line-order must not have a permission mapping");
+ if(mapping.get("/admin/line-order-options")!=="line_order_options")fail("LINE option management permission mapping missing");
+ const optionRoute=read("backend/src/routes/lineOrderOptions.js");
+ const optionService=read("backend/src/services/lineOrderOptionService.js");
+ const publicPage=read("frontend/src/pages/LineOrderPage.jsx");
+ const ordersPage=read("frontend/src/pages/OrdersPage.jsx");
+ if(!optionRoute.includes('router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER"]))'))fail("LINE option management auth/store/role middleware missing");
+ const readFunctions=["getOptionSettings","listOptionGroups","getLineOrderOptionConfig"].map((name)=>{ const start=optionService.indexOf("async function "+name); const rest=optionService.slice(start+1); const offsets=[rest.indexOf("\nasync function "),rest.indexOf("\nfunction ")].filter((value)=>value>=0); const end=offsets.length?start+1+Math.min(...offsets):optionService.length; return optionService.slice(start,end); });
+ if(readFunctions.some((body)=>/\b(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(body)))fail("LINE option GET path contains a DB write");
+ for(const marker of ["/line-order/customer","/line-order/ebikes","/line-order/options","/api/line-order/create","optionSelections"])if(!publicPage.includes(marker))fail("public LINE booking marker missing "+marker);
+ for(const marker of ['item.source === "line_order" ? "LINE 預約單"',"statusFilter","paymentModal"])if(!ordersPage.includes(marker))fail("OrdersPage LINE management marker missing "+marker);
+}
+
 const bindings=array(manifest.mountBindings,"mountBindings");
 unique(bindings.map(x=>x.path+"|"+x.routerId),"mount binding");
 for(const binding of bindings){
@@ -216,7 +245,7 @@ if(!baseline.productionAsset||!baseline.productionAsset.filename||!/^[0-9a-f]{64
 if(!baseline.productionImages||!/^sha256:[0-9a-f]{64}$/.test(baseline.productionImages.frontend||"")||!/^sha256:[0-9a-f]{64}$/.test(baseline.productionImages.backend||""))fail("production image IDs required");
 const expectedPolicy={
  ADMIN_ROLE:{sourceRole:null,count:35,identity:{staffRole:"ADMIN"}},
- STORE_ROLE_OWNER:{sourceRole:null,count:35,identity:{storeRole:"owner"}},
+ STORE_ROLE_OWNER:{sourceRole:null,count:34,identity:{storeRole:"owner"}},
  MANAGER_ROLE:{sourceRole:"MANAGER",count:35,identity:{staffRole:"MANAGER"}},
  CASHIER_ROLE:{sourceRole:"CASHIER",count:15,identity:{staffRole:"CASHIER"}},
  REPAIR_ROLE:{sourceRole:"REPAIR",count:15,identity:{staffRole:"REPAIR"}},
@@ -246,7 +275,9 @@ for(const [subject,policy] of Object.entries(expectedPolicy)){
  if(!snap){fail("role snapshot missing "+subject);continue;}
  if(JSON.stringify(snap.identity)!==JSON.stringify(policy.identity))fail(subject+": identity mismatch");
  const keys=policy.sourceRole===null?null:sourceFallback[policy.sourceRole];
- const actualAllowed=menuEntries.filter(m=>keys===null||keys.includes(m.permissionKey)).map(m=>m.path);
+ let allowedEntries=menuEntries.filter(m=>keys===null||keys.includes(m.permissionKey));
+ if(subject==="STORE_ROLE_OWNER")allowedEntries=allowedEntries.filter(m=>m.permissionKey!=="line_order_options");
+ const actualAllowed=allowedEntries.map(m=>m.path);
  const actualDenied=manifestMenus.filter(m=>!actualAllowed.includes(m));
  sameSet(actualAllowed,array(snap.menuAllowed,subject+".menuAllowed"),subject+" source menus vs approved policy");
  sameSet(actualDenied,array(snap.menuDenied,subject+".menuDenied"),subject+" denied menus");

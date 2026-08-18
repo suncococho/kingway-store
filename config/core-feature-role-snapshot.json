@@ -20,7 +20,7 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/products",
@@ -57,7 +57,7 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/products",
@@ -147,7 +147,6 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
         "/repairs",
         "/surveys",
         "/products",
@@ -184,7 +183,6 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
         "/repairs",
         "/surveys",
         "/products",
@@ -209,7 +207,9 @@
         "/inbound-transfers",
         "/store-replenishment-requests"
       ],
-      "menuDenied": [],
+      "menuDenied": [
+        "/admin/line-order-options"
+      ],
       "publicRoutes": [
         "/login",
         "/store-signup",
@@ -256,7 +256,7 @@
         "/staff-scheduling",
         "/staff-incentives"
       ],
-      "notes": "Actual storeRole=owner identity, not a virtual STORE_OWNER staff role. All store-operation menus are allowed."
+      "notes": "Store-role owner without ADMIN or MANAGER staff role is intentionally denied LINE option management."
     },
     "MANAGER_ROLE": {
       "identity": {
@@ -274,7 +274,7 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/products",
@@ -311,7 +311,7 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/products",
@@ -425,7 +425,7 @@
       ],
       "menuDenied": [
         "/settings/daily-tasks",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/products",
@@ -531,7 +531,7 @@
       "menuDenied": [
         "/settings/daily-tasks",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/products",
         "/inventory",
         "/sales",
@@ -638,7 +638,7 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/sales",
@@ -733,7 +733,7 @@
         "/customers",
         "/orders",
         "/pos",
-        "/line-order",
+        "/admin/line-order-options",
         "/repairs",
         "/surveys",
         "/products",

@@ -37,7 +37,7 @@ if (permissions.includes("STORE_OWNER:")) fail("virtual STORE_OWNER staff role m
 if (/platform|saas/i.test(permissions)) fail("store menu permissions must not grant platform/SaaS privileges");
 
 const approvedKeys = {
-  MANAGER: ["dashboard", "pos", "orders", "repairs", "customers", "products", "inventory", "sales_management", "suppliers", "staff", "staff_scheduling", "staff_incentives", "coupons", "line", "settings", "store_replenishment_requests", "store_transfers", "inbound_transfers"],
+  MANAGER: ["dashboard", "pos", "orders", "repairs", "customers", "products", "inventory", "sales_management", "suppliers", "staff", "staff_scheduling", "staff_incentives", "coupons", "line", "line_order_options", "settings", "store_replenishment_requests", "store_transfers", "inbound_transfers"],
   CASHIER: ["dashboard", "pos", "orders", "customers", "staff_scheduling", "staff_incentives", "coupons"],
   REPAIR: ["dashboard", "orders", "repairs", "customers", "staff_scheduling", "staff_incentives"],
   INVENTORY: ["dashboard", "products", "inventory", "suppliers", "staff_scheduling", "staff_incentives", "store_replenishment_requests", "store_transfers", "inbound_transfers"],
@@ -50,7 +50,10 @@ for (const [role, count] of Object.entries(expectedCounts)) {
   const actual = pathsFor(keysFor(role));
   if (actual.length !== count) fail(role + " menu count expected " + count + " got " + actual.length);
 }
-if (pathsFor(null).length !== 35) fail("ADMIN/storeRole owner menu count must be 35");
+if (pathsFor(null).length !== 35) fail("ADMIN menu count must be 35");
+const ownerPaths = menus.filter((menu) => menu.key !== "line_order_options").map((menu) => menu.path);
+if (ownerPaths.length !== 34) fail("storeRole owner menu count must be 34");
+if (!permissions.includes('menuKey === "line_order_options" && !["ADMIN", "MANAGER"].includes')) fail("line_order_options explicit ADMIN/MANAGER guard missing");
 
 const staffPaths = pathsFor(keysFor("STAFF"));
 sameSet(staffPaths, [
@@ -67,8 +70,11 @@ sameSet(staffPaths, [
 ], "STAFF self-service menus");
 
 const lineRoute = app.indexOf('<Route path="/line-order" element={<LineOrderPage />} />');
+const adminRoute = app.indexOf('<Route path="/admin/line-order-options" element={<LineOrderOptionsPage />} />');
 const protectedLayout = app.indexOf("<Route element={<ProtectedLayout />}>");
 if (lineRoute < 0 || protectedLayout < 0 || lineRoute > protectedLayout) fail("/line-order must remain public");
+if (adminRoute < protectedLayout) fail("/admin/line-order-options must remain protected");
+if (navigation.includes('to: "/line-order"')) fail("public /line-order must not be an administrator menu");
 
 console.log("OK: approved role menu policy passed.");
-console.log("ADMIN=35 STORE_ROLE_OWNER=35 MANAGER=35 CASHIER=15 REPAIR=15 INVENTORY=15 STAFF=10");
+console.log("ADMIN=35 STORE_ROLE_OWNER=34 MANAGER=35 CASHIER=15 REPAIR=15 INVENTORY=15 STAFF=10");
