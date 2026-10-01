@@ -71,7 +71,7 @@ function ProductsPage() {
   const canViewCost = canViewSensitiveCost(currentUser);
   const canEditCost = canEditSensitiveCost(currentUser);
   const canDeleteProduct = isManagerOrAboveUser(currentUser);
-  const { items, loading, error, refetch } = useFetchList("/products");
+  const { items, loading, error, refetch } = useFetchList("/products?status=ALL");
   const categories = useFetchList("/product-categories");
   const [form, setForm] = useState({
     name: "",

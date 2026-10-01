@@ -1054,6 +1054,12 @@ async function assertSkuAvailableInStore(connection, sku, storeId, excludeProduc
 
 router.get("/", async (req, res, next) => {
   try {
+    const productStatus = String(req.query.status || "ACTIVE").trim().toUpperCase();
+    if (!["ACTIVE", "INACTIVE", "ALL"].includes(productStatus)) {
+      return res.status(400).json({
+        message: "商品狀態篩選僅支援 ACTIVE、INACTIVE 或 ALL"
+      });
+    }
     const search = req.query.search ? `%${req.query.search}%` : null;
     const productColumns = await getTableColumns(pool, "products");
     const hasStoreId = await hasProductsStoreIdColumn(pool);
@@ -1095,7 +1101,18 @@ router.get("/", async (req, res, next) => {
 
     whereClauses.push("products.store_id = ?");
     params.push(storeId);
-    whereClauses.push(getActiveProductWhereClause(productColumns));
+
+    if (hasColumn(productColumns, "deleted_at")) {
+      whereClauses.push("products.deleted_at IS NULL");
+    }
+
+    if (productStatus === "ACTIVE") {
+      whereClauses.push(getActiveProductWhereClause(productColumns));
+    } else if (productStatus === "INACTIVE") {
+      whereClauses.push(
+        hasColumn(productColumns, "is_active") ? "products.is_active = 0" : "1 = 0"
+      );
+    }
 
     if (search) {
       const searchFields = ["sku", "name"].filter((column) => hasColumn(productColumns, column));
@@ -1144,7 +1161,7 @@ router.get("/trash/list", requireStoreManagerRole, async (req, res, next) => {
           updated_at AS updatedAt
         FROM products
         WHERE store_id = ?
-          AND is_active = 0
+          AND deleted_at IS NOT NULL
         ORDER BY id DESC
       `,
       [storeId]
@@ -1655,15 +1672,20 @@ router.delete("/:id", requireStoreManagerRole, async (req, res, next) => {
     }
 
     const storeId = getRequestStoreId(req);
+    const actorId = Number(req.user?.id);
+    const deletedBy = Number.isSafeInteger(actorId) && actorId > 0 ? actorId : null;
     const [result] = await pool.query(
       `
         UPDATE products
-        SET is_active = 0
+        SET
+          is_active = 0,
+          deleted_at = CURRENT_TIMESTAMP,
+          deleted_by = ?
         WHERE id = ?
           AND store_id = ?
-          AND is_active = 1
+          AND deleted_at IS NULL
       `,
-      [id, storeId]
+      [deletedBy, id, storeId]
     );
 
     if (result.affectedRows === 0) {
@@ -1687,10 +1709,13 @@ router.post("/:id/restore", requireStoreManagerRole, async (req, res, next) => {
     const [result] = await pool.query(
       `
         UPDATE products
-        SET is_active = 1
+        SET
+          is_active = 1,
+          deleted_at = NULL,
+          deleted_by = NULL
         WHERE id = ?
           AND store_id = ?
-          AND is_active = 0
+          AND deleted_at IS NOT NULL
       `,
       [id, storeId]
     );
@@ -1779,6 +1804,7 @@ async function updateProduct(req, res, next) {
           source = COALESCE(?, source)
         WHERE id = ?
           AND store_id = ?
+          AND deleted_at IS NULL
       `,
       [
         normalizedSku,
@@ -1830,6 +1856,7 @@ async function updateProduct(req, res, next) {
         ${categoryJoin}
         WHERE products.id = ?
           AND products.store_id = ?
+          AND products.deleted_at IS NULL
       `,
       [id, storeId]
     );
