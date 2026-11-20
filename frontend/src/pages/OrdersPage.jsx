@@ -264,11 +264,16 @@ function buildAccessoryUpdatePayload(item, overrides = {}) {
 }
 
 function OrdersPage() {
-  const { items, loading, error, refetch } = useFetchList("/orders");
+  const [keyword, setKeyword] = useState("");
+  const [serverKeyword, setServerKeyword] = useState("");
+  useEffect(() => {
+    const timer = window.setTimeout(() => setServerKeyword(keyword.trim()), 400);
+    return () => window.clearTimeout(timer);
+  }, [keyword]);
+  const { items, loading, error, refetch } = useFetchList(serverKeyword ? `/orders?keyword=${encodeURIComponent(serverKeyword)}` : "/orders");
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(searchParams.get("tab") || "ALL");
-  const [keyword, setKeyword] = useState("");
   const [typeFilter, setTypeFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [depositFilter, setDepositFilter] = useState("ALL");
