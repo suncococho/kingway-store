@@ -28,7 +28,8 @@ const FEATURE_KEYS = [
   "telegram_enabled",
   "sales_dashboard_enabled",
   "staff_management_enabled",
-  "staff_workday_selection_enabled"
+  "staff_workday_selection_enabled",
+  "product_import_apply_enabled"
 ];
 const PLAN_PRESET_KEYS = ["FREE", "TRIAL", "PREMIUM"];
 const FEATURE_PRESETS = {

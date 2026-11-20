@@ -438,7 +438,8 @@ const FEATURE_CONFIG = [
   { key: "telegram_enabled", label: "Telegram 通知", description: "舊通知相容開關；不修改 token 設定。" },
   { key: "sales_dashboard_enabled", label: "銷售儀表板", description: "銷售統計、營運數據與管理報表。" },
   { key: "staff_management_enabled", label: "員工管理", description: "出勤、KPI、薪資與營運檢查事項。" },
-  { key: "staff_workday_selection_enabled", label: "員工工作日申請", description: "員工月曆選日與管理員審核；預設停用。" }
+  { key: "staff_workday_selection_enabled", label: "員工工作日申請", description: "員工月曆選日與管理員審核；預設停用。" },
+  { key: "product_import_apply_enabled", label: "商品正式匯入", description: "允許此門市用 Excel 正式匯入商品（預覽不受影響）；預設關閉，匯入完成後建議關閉。" }
 ];
 
 function rowToFeatures(row) {

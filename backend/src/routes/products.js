@@ -940,6 +940,22 @@ function isProductImportApplyAllowedForStore(storeId) {
   return config.productImportApplyAllowedStoreIds.has(normalizedStoreId);
 }
 
+async function isProductImportEnabledByStoreFeature(storeId) {
+  const normalizedStoreId = Number(storeId);
+  if (!Number.isSafeInteger(normalizedStoreId) || normalizedStoreId <= 0) {
+    return false;
+  }
+  try {
+    const [rows] = await pool.query(
+      "SELECT product_import_apply_enabled AS enabled FROM store_features WHERE store_id = ? LIMIT 1",
+      [normalizedStoreId]
+    );
+    return Boolean(rows[0]?.enabled);
+  } catch (error) {
+    return false;
+  }
+}
+
 function getCategoryFromSku(sku, fallbackCategory = "OT") {
   const parsedCategory = deriveProductCategoryFromSku(sku);
   return PRODUCT_CATEGORY_LABELS[parsedCategory] ? parsedCategory : normalizeProductCategory(fallbackCategory);
@@ -1442,9 +1458,9 @@ router.post(
       }
 
       const storeId = getRequestStoreId(req);
-      if (isApply) {
+      if (isApply && !(await isProductImportEnabledByStoreFeature(storeId))) {
         if (!isProductImportApplyAllowedForStore(storeId)) {
-          return res.status(403).json({ message: "目前門市尚未開放正式商品匯入" });
+          return res.status(403).json({ message: "目前門市尚未開放正式商品匯入，請聯絡平台管理員開啟「商品正式匯入」" });
         }
 
         if (
