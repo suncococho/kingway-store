@@ -495,6 +495,7 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
     await backfillApprovedRepairOrders();
+    const searchKeyword = String(req.query?.keyword || "").trim().slice(0, 100);
     const orderColumns = await getTableColumns(pool, "orders");
     const repairOrderColumns = await getTableColumns(pool, "repair_orders");
     const customerColumns = await getTableColumns(pool, "customers");
@@ -581,6 +582,24 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
           )
         `
       : "NULL";
+    // Search the whole store when a keyword is given (the plain list only returns the latest rows).
+    const escapedKeyword = searchKeyword.replace(/[\\%_]/g, "\\$&");
+    const keywordLike = `%${escapedKeyword}%`;
+    const keywordConditions = [];
+    const keywordParams = [];
+    if (searchKeyword) {
+      if (hasColumn(orderColumns, "order_no")) {
+        keywordConditions.push("o.order_no LIKE ?");
+        keywordParams.push(keywordLike);
+      }
+      keywordConditions.push(`COALESCE(o.customer_name, ${hasColumn(customerColumns, "name") ? "c.name" : "NULL"}) LIKE ?`);
+      keywordParams.push(keywordLike);
+      keywordConditions.push(`COALESCE(o.customer_phone, ${hasColumn(customerColumns, "phone") ? "c.phone" : "NULL"}) LIKE ?`);
+      keywordParams.push(keywordLike);
+    }
+    const keywordWhereSql = keywordConditions.length > 0 ? `AND (${keywordConditions.join(" OR ")})` : "";
+    const listRowLimit = searchKeyword ? 300 : 100;
+
     const [rows] = await pool.query(
       `
         SELECT
@@ -650,10 +669,11 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
         LEFT JOIN staff_users paid_staff ON paid_staff.id = o.final_payment_completed_by_staff_user_id
         WHERE o.store_id = ?
           AND o.deleted_at IS NULL
+          ${keywordWhereSql}
         ORDER BY o.id DESC
-        LIMIT 100
+        LIMIT ${listRowLimit}
       `,
-      [storeId]
+      [storeId, ...keywordParams]
     );
 
     return res.json(
