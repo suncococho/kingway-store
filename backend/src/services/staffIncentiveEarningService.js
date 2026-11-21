@@ -21,7 +21,7 @@ let orderSalesFollowupTableExistsCache = null;
 //   其餘更換零件 → 實際成交金額 × 10%
 // - 只計算生效時間之後完款／交車的訂單（不回溯）
 const INCENTIVE_RULE_VERSION = "KW-2026-11-R1";
-const INCENTIVE_EFFECTIVE_FROM = new Date("2026-11-21T00:00:00+08:00");
+const INCENTIVE_EFFECTIVE_FROM = new Date("2026-11-01T00:00:00+08:00");
 const REPAIR_PART_RATE = 0.1;
 
 function normalizePositiveId(value) {
