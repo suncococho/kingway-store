@@ -254,7 +254,11 @@ function StaffIncentivesPage() {
       : [])
   ];
 
-  const selfEvents = selfData?.events || [];
+  // 員工畫面不顯示已作廢紀錄（管理員畫面仍可查看）
+  const selfEvents = useMemo(
+    () => (selfData?.events || []).filter((item) => item.status !== "VOID"),
+    [selfData]
+  );
   const visibleSelfEvents = useMemo(() => {
     if (tab === "BIKE") return selfEvents.filter((item) => item.incentiveType === "BIKE");
     if (tab === "ACCESSORY") return selfEvents.filter((item) => item.incentiveType === "ACCESSORY");

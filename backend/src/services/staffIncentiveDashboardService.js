@@ -228,6 +228,12 @@ async function loadStaffProfile(connection, storeId, staffUserId) {
   };
 }
 
+const EVENT_MONTH_DATE_SQL = `COALESCE(
+      CASE WHEN src_order.id IS NOT NULL THEN COALESCE(src_order.business_date, DATE(src_order.created_at)) END,
+      e.earned_at,
+      e.created_at
+    )`;
+
 async function loadIncentiveEvents(
   connection,
   { storeId, month, staffUserId = null, status = null, type = null, limit = 500 }
@@ -236,8 +242,9 @@ async function loadIncentiveEvents(
   const range = getMonthRange(month);
   const where = [
     "e.store_id = ?",
-    "COALESCE(e.earned_at, e.created_at) >= ?",
-    "COALESCE(e.earned_at, e.created_at) < ?"
+    // 月份以訂單日期為準（訂單來源）；其他來源依取得時間
+    `${EVENT_MONTH_DATE_SQL} >= ?`,
+    `${EVENT_MONTH_DATE_SQL} < ?`
   ];
   const params = [normalizedStoreId, range.start, range.end];
 
