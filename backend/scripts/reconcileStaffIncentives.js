@@ -24,7 +24,11 @@ const {
   INCENTIVE_EFFECTIVE_FROM,
   buildOrderSaleIncentiveCandidates,
   loadOrderSaleIncentiveSnapshot,
-  reconcileOrderSaleIncentives
+  reconcileOrderSaleIncentives,
+  isVehicleItem,
+  isPurchaseConfirmationComplete,
+  isOrderHandoverComplete,
+  isRepairLinkedOrder
 } = require("../src/services/staffIncentiveEarningService");
 
 const TRIGGER_SOURCE = "BACKFILL_KW_2026_11_R1";
@@ -135,6 +139,35 @@ function formatDate(value) {
   return date.toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hourCycle: "h23" });
 }
 
+// 已交車但沒有產生車輛績效時，說明原因
+function explainMissingBike(snapshot, evaluation) {
+  const order = snapshot?.order || {};
+  const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
+  if (!isOrderHandoverComplete(order)) return [];
+  if (evaluation.candidates.some((c) => c.incentiveType === "BIKE")) return [];
+  const notes = [];
+  if (isRepairLinkedOrder(snapshot)) {
+    notes.push("維修訂單，不計車輛績效");
+    return notes;
+  }
+  const vehicles = items.filter(isVehicleItem);
+  if (!vehicles.length) {
+    notes.push("找不到電動自行車品項（EB 分類或 B-EB- SKU）。品項：");
+    for (const item of items) {
+      notes.push(`    - ${item.productNameSnapshot || "-"}｜分類快照 ${item.productCategorySnapshot || "-"}｜商品分類 ${item.masterCategory || "-"}｜SKU ${item.skuSnapshot || "-"}`);
+    }
+  }
+  const pc = snapshot?.purchaseConfirmation || null;
+  if (!isPurchaseConfirmationComplete(pc)) {
+    notes.push(
+      pc
+        ? `購車確認書未完成（狀態 ${pc.status || "-"}、送出 ${pc.submittedAt ? formatDate(pc.submittedAt) : "未送出"}、最終確認 ${Number(pc.finalConfirmationAccepted) === 1 ? "是" : "否"}）`
+        : "沒有購車確認書"
+    );
+  }
+  return notes;
+}
+
 function money(value) {
   return `NT$${Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 }
@@ -160,6 +193,27 @@ async function main() {
     [range.start, range.end, ...(args.storeId ? [args.storeId] : [])]
   );
   console.log(`符合條件的訂單：${orders.length} 筆（已完款且已指定銷售人員）`);
+
+  const [unassigned] = await pool.query(
+    `
+      SELECT id, order_no AS orderNo, handover_confirmed_at AS handoverConfirmedAt
+      FROM orders
+      WHERE deleted_at IS NULL
+        AND final_payment_status = 'PAID'
+        AND sales_staff_id IS NULL
+        AND COALESCE(business_date, DATE(created_at)) >= ?
+        AND COALESCE(business_date, DATE(created_at)) < ?
+        ${storeSql}
+      ORDER BY id ASC
+    `,
+    [range.start, range.end, ...(args.storeId ? [args.storeId] : [])]
+  );
+  if (unassigned.length) {
+    console.log(`⚠ 已完款但未指定銷售人員（不計算，請在訂單管理指定後再執行）：${unassigned.length} 筆`);
+    for (const row of unassigned) {
+      console.log(`  訂單 #${row.id} ${row.orderNo || ""}${row.handoverConfirmedAt ? "（已交車）" : ""}`);
+    }
+  }
 
   const planCache = new Map();
   const staffTotals = new Map();
@@ -219,6 +273,10 @@ async function main() {
         : existing.filter((row) => OPEN_STATUSES.has(row.status) && !matchedIds.has(Number(row.id)));
       for (const row of legacy) {
         lines.push(`  作廢 #${row.id} 員工#${row.staffUserId} ${row.incentiveType}/${row.earningStage} ${row.productNameSnapshot || "-"} ${money(row.finalAmount)}`);
+      }
+
+      for (const note of explainMissingBike(snapshot, evaluation)) {
+        lines.push(note.startsWith("    -") ? `  ${note}` : `  ⚠ 未計車輛：${note}`);
       }
 
       if (lines.length) {
