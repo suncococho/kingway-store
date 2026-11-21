@@ -61,6 +61,16 @@ function formatWarrantyDisplay(form) {
   return endDate ? `保固至：${endDate} 或 ${mileageText}，以先屆至者為準` : `保固期間：${months || "未設定"} 個月 / ${mileageText}`;
 }
 
+function buildItemsKey(list) {
+  return JSON.stringify(
+    (Array.isArray(list) ? list : []).map((item) => [
+      Number(item.productId || 0),
+      Number(item.quantity || 0),
+      Number(item.unitPrice || 0)
+    ])
+  );
+}
+
 function OrderEditPage() {
   const currentUser = getStoredUser();
   const canEditPricing =
@@ -75,6 +85,7 @@ function OrderEditPage() {
   const [items, setItems] = useState([]);
   const [error, setError] = useState("");
   const initialSalesStaffRef = useRef({ primary: "", support: "" });
+  const initialItemsKeyRef = useRef("");
 
   useEffect(() => {
     apiRequest(`/orders/${id}`)
@@ -104,13 +115,15 @@ function OrderEditPage() {
           ...buildWarrantyFormValues(o)
         });
 
-        setItems((o.items || []).map((x) => ({
+        const loadedItems = (o.items || []).map((x) => ({
           productId: Number(x.productId),
           sku: x.sku || x.skuSnapshot || "",
           productName: x.productName,
           quantity: Number(x.quantity || 1),
           unitPrice: Number(x.unitPrice || 0)
-        })));
+        }));
+        initialItemsKeyRef.current = buildItemsKey(loadedItems);
+        setItems(loadedItems);
       })
       .catch((e) => setError(e.message || "讀取失敗"));
 
@@ -221,10 +234,13 @@ async function requestGoogleReviewCoupon() {
         ? items
         : items.map(({ unitPrice, ...item }) => item);
 
-      await apiRequest(`/orders/${id}/items`, {
-        method: "PUT",
-        body: JSON.stringify({ items: itemsPayload })
-      });
+      // 品項沒有變更時不重存品項，避免已下架商品讓整張訂單無法儲存（例如只改銷售人員）
+      if (buildItemsKey(items) !== initialItemsKeyRef.current) {
+        await apiRequest(`/orders/${id}/items`, {
+          method: "PUT",
+          body: JSON.stringify({ items: itemsPayload })
+        });
+      }
 
       const payload = {
         ...form,
