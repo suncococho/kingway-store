@@ -13,12 +13,13 @@ const {
   loadRolePermissionsForManagement,
   loadUserOverridesForManagement
 } = require("../services/menuPermissionService");
+const { listStaffSelectOptions } = require("../services/staffAssignmentService");
 
 const router = express.Router();
 const STAFF_ROLE_SET = new Set(["ADMIN", "MANAGER", "CASHIER", "REPAIR", "INVENTORY"]);
 const MANAGED_STORE_ROLES = new Set(["admin", "staff"]);
 
-router.use(authenticate, requireStoreScope(), requireStoreFeature("staff_management_enabled"));
+router.use(authenticate, requireStoreScope());
 
 const requireStaffManagementStoreRole = requireStoreRole(["owner", "admin"]);
 
@@ -26,6 +27,18 @@ function getRequestStoreId(req) {
   const storeId = Number(req.storeId || req.user?.storeId || req.user?.store_id || 0);
   return Number.isFinite(storeId) && storeId > 0 ? storeId : 0;
 }
+
+// 訂單銷售人員下拉選單：不需開啟員工管理功能也可讀取同門市啟用中員工
+router.get("/select-options", async (req, res, next) => {
+  try {
+    const storeId = getRequestStoreId(req);
+    return res.json(await listStaffSelectOptions(pool, storeId));
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.use(requireStoreFeature("staff_management_enabled"));
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : value === undefined || value === null ? "" : String(value).trim();
