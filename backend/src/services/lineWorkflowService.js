@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const { AsyncLocalStorage } = require("async_hooks");
 const dayjs = require("dayjs");
 const { pool, withTransaction } = require("../db");
+const { reconcileOrderSaleIncentivesSafely } = require("./staffIncentiveEarningService");
 const config = require("../config");
 const {
   normalizeLineSendOptions,
@@ -5771,6 +5772,13 @@ async function handleLinePostback(event) {
       }
       return true;
     }
+
+    await reconcileOrderSaleIncentivesSafely({
+      connection: pool,
+      storeId: handoverStoreId,
+      orderId: Number(id),
+      triggerSource: "LINE_HANDOVER_CONFIRMED"
+    });
 
     await sendToGroups(["admin", "staff"], [{ type: "text", text: `訂單 #${id} 已於內部群組確認交車。` }]);
     if (event.replyToken) {

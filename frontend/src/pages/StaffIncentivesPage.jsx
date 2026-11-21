@@ -12,16 +12,20 @@ import { getStoredUser } from "../lib/auth";
 const TYPE_LABELS = {
   BIKE: "車輛",
   ACCESSORY: "配件",
-  REPAIR_INSPECTION: "維修檢查"
+  REPAIR_INSPECTION: "維修"
 };
 const STAGE_LABELS = {
   SALE: "成交",
   HANDOVER: "交車",
   FOLLOWUP: "售後追蹤",
-  ALL_STAGES: "三階段全部完成",
+  ALL_STAGES: "購車確認＋交車完成",
   ITEM: "配件",
-  INSPECTION: "初步檢查"
+  INSPECTION: "維修工資"
 };
+function getStageLabel(row) {
+  if (row?.incentiveType === "REPAIR_INSPECTION" && row?.earningStage === "ITEM") return "更換零件";
+  return STAGE_LABELS[row?.earningStage] || row?.earningStage || "-";
+}
 const AGREEMENT_CHECKS = [
   ["completionStandards", "我已閱讀並了解車輛銷售、交車、配件、維修檢查及售後追蹤之完成標準。"],
   ["caseOwnership", "我了解接受案件或被指定為負責人後，應持續處理至本人負責階段完成，或完成明確交接。"],
@@ -98,7 +102,7 @@ function EventTable({ events, emptyText = "目前沒有績效紀錄。", showSta
     ...(showStaff ? [{ key: "staffDisplayName", label: "員工" }] : []),
     { key: "date", label: "日期", render: (row) => dateTime(row.earnedAt || row.createdAt) },
     { key: "incentiveType", label: "類型", render: (row) => TYPE_LABELS[row.incentiveType] || row.incentiveType },
-    { key: "earningStage", label: "階段", render: (row) => STAGE_LABELS[row.earningStage] || row.earningStage },
+    { key: "earningStage", label: "階段", render: (row) => getStageLabel(row) },
     {
       key: "source",
       label: "商品／來源",
@@ -210,7 +214,7 @@ function StaffIncentivesPage() {
     { key: "SUMMARY", label: "本月績效" },
     { key: "BIKE", label: "車輛銷售" },
     { key: "ACCESSORY", label: "配件績效" },
-    { key: "REPAIR", label: "維修檢查" },
+    { key: "REPAIR", label: "維修績效" },
     { key: "PENDING", label: "待確認" },
     { key: "APPROVED", label: "已核准" },
     { key: "PAID", label: "已支付" },
@@ -380,7 +384,7 @@ function StaffIncentivesPage() {
     <div>
       <PageHeader
         title="我的銷售服務績效"
-        description="查看車輛、配件、維修檢查、核准與支付狀態；員工只會看到自己的資料。"
+        description="查看車輛、配件、維修、核准與支付狀態；員工只會看到自己的資料。"
       />
       <FilterBar>
         <label className="form-field">
@@ -404,7 +408,7 @@ function StaffIncentivesPage() {
               <div className="metric-list">
                 <div className="metric-row"><span>車輛</span><strong>{money(selfData?.summary?.bikeAmount)}</strong></div>
                 <div className="metric-row"><span>配件</span><strong>{money(selfData?.summary?.accessoryAmount)}</strong></div>
-                <div className="metric-row"><span>維修檢查</span><strong>{money(selfData?.summary?.repairInspectionAmount)}</strong></div>
+                <div className="metric-row"><span>維修</span><strong>{money(selfData?.summary?.repairInspectionAmount)}</strong></div>
                 <div className="metric-row"><span>成交 / 交車 / 售後</span><strong>{money(Number(selfData?.summary?.saleAmount || 0) + Number(selfData?.summary?.handoverAmount || 0) + Number(selfData?.summary?.followupAmount || 0))}</strong></div>
               </div>
             </section>
@@ -432,14 +436,12 @@ function StaffIncentivesPage() {
           <section className="admin-panel">
             <AdminSectionHeader eyebrow="績效辦法" title={plan ? `案件完成責任版本 ${plan.version}` : "目前沒有生效中的績效辦法"} description={plan ? `生效日：${dateTime(plan.effectiveFrom)}` : "請洽管理員確認。"} />
             <div className="metric-list">
-              <div className="metric-row"><span>車輛銷售</span><strong>完成條件</strong></div>
-              <div className="metric-row"><span>完成交車</span><strong>完成條件</strong></div>
-              <div className="metric-row"><span>售後追蹤</span><strong>完成條件</strong></div>
-              <div className="metric-row"><span>三階段全部完成後一次給付</span><strong>{money(plan?.bikeTotalAmount ?? 600)}</strong></div>
+              <div className="metric-row"><span>電動自行車（每台）</span><strong>{money(plan?.bikeTotalAmount ?? 600)}</strong></div>
               <div className="metric-row"><span>配件</span><strong>{Math.round(Number(plan?.accessoryRate ?? 0.1) * 100)}%</strong></div>
-              <div className="metric-row"><span>維修初步檢查</span><strong>{money(plan?.repairInspectionAmount ?? 100)}</strong></div>
+              <div className="metric-row"><span>維修工資（每張維修訂單）</span><strong>{money(plan?.repairInspectionAmount ?? 100)}</strong></div>
+              <div className="metric-row"><span>維修更換零件</span><strong>10%</strong></div>
             </div>
-            <p className="muted-text">車輛銷售、完成交車、售後追蹤三階段全部完成後，每台一次給付 NT$600；任一階段未完成皆不產生車輛績效金額事件。共同銷售依預先指定 70% / 30%。配件依個別品項實際成交價 10%。一般自行車零件、維修零件、工資、安裝費、運費等不列入配件績效。</p>
+            <p className="muted-text">電動自行車依車款（EB）每台計算，訂單完款、購車確認書完成並確認交車後成立。一般訂單配件依個別品項實際成交價計算。維修訂單含維修工資品項時每張訂單計一次，更換零件依實際成交價 10%。績效歸屬訂單指定的銷售人員；共同銷售依主要 70% / 支援 30% 分配。</p>
             {plan?.agreementText ? <div className="content-card"><pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit" }}>{plan.agreementText}</pre></div> : null}
           </section>
           <section className="admin-panel">
@@ -565,7 +567,7 @@ function StaffIncentivesPage() {
             <AdminSectionHeader eyebrow="管理用" title="異議處理" description="選擇紀錄後在右側更新；不會自動修改績效金額。" />
             <DataTable columns={[
               { key: "staffDisplayName", label: "員工" },
-              { key: "type", label: "績效", render: (row) => `${TYPE_LABELS[row.incentiveType]} / ${STAGE_LABELS[row.earningStage]}` },
+              { key: "type", label: "績效", render: (row) => `${TYPE_LABELS[row.incentiveType]} / ${getStageLabel(row)}` },
               { key: "finalAmount", label: "金額", render: (row) => money(row.finalAmount) },
               { key: "reason", label: "原因" },
               { key: "status", label: "狀態", render: (row) => <Status value={row.status} /> },

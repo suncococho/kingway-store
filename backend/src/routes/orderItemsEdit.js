@@ -3,6 +3,7 @@ const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { requireStoreFeature } = require("../middleware/storeFeature");
 const { createError } = require("../utils/errors");
+const { reconcileOrderSaleIncentivesSafely } = require("../services/staffIncentiveEarningService");
 
 const router = express.Router();
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]));
@@ -138,6 +139,12 @@ router.put("/:id/items", requireStoreFeature("orders_enabled"), async (req, res,
       return { ok: true, orderId, subtotal, discount: keepDiscount, totalAmount, unpaidBalance, finalPaymentStatus, items: normalized };
     });
 
+    await reconcileOrderSaleIncentivesSafely({
+      connection: pool,
+      storeId,
+      orderId,
+      triggerSource: "ORDER_ITEMS_UPDATED"
+    });
     res.json(result);
   } catch (error) {
     next(error);

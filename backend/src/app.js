@@ -11,6 +11,7 @@ const { updateRepairStorageFees } = require("./services/repairStorageFeeService"
 const { sendRepairPickupReminders } = require("./services/repairReminderService");
 const config = require("./config");
 const { pool } = require("./db");
+const { reconcileOrderSaleIncentivesSafely } = require("./services/staffIncentiveEarningService");
 const authRoutes = require("./routes/auth");
 const storeSignupRoutes = require("./routes/storeSignup");
 const platformAuthRoutes = require("./routes/platformAuth");
@@ -351,6 +352,13 @@ app.post("/api/customer-status/orders/:id/payment", ...customerStatusStaffAuth, 
       return res.status(404).json({ message: "找不到訂單" });
     }
 
+    await reconcileOrderSaleIncentivesSafely({
+      connection: pool,
+      storeId: req.storeId,
+      orderId: Number(req.params.id),
+      triggerSource: "CUSTOMER_STATUS_PAYMENT"
+    });
+
     return res.json({ ok: true });
   } catch (error) {
     return next(error);
@@ -371,6 +379,13 @@ app.post("/api/customer-status/orders/:id/deliver", ...customerStatusStaffAuth, 
     if (!result.affectedRows) {
       return res.status(404).json({ message: "找不到訂單" });
     }
+
+    await reconcileOrderSaleIncentivesSafely({
+      connection: pool,
+      storeId: req.storeId,
+      orderId: Number(req.params.id),
+      triggerSource: "CUSTOMER_STATUS_DELIVER"
+    });
 
     return res.json({ ok: true });
   } catch (error) {

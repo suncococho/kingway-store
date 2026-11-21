@@ -14,6 +14,16 @@ const {
 
 let orderSalesFollowupTableExistsCache = null;
 
+// 2026-11 門市績效規則（KW-2026-11-R1）
+// - 車輛：EB 車款每台一筆（plan.bikeTotalAmount），完款 + 購車確認書完成 + 交車確認後成立
+// - 一般訂單配件：實際成交金額 × plan.accessoryRate
+// - 維修訂單：含維修(RP)工資品項 → 每張訂單 plan.repairInspectionAmount；
+//   其餘更換零件 → 實際成交金額 × 10%
+// - 只計算生效時間之後完款／交車的訂單（不回溯）
+const INCENTIVE_RULE_VERSION = "KW-2026-11-R1";
+const INCENTIVE_EFFECTIVE_FROM = new Date("2026-11-21T00:00:00+08:00");
+const REPAIR_PART_RATE = 0.1;
+
 function normalizePositiveId(value) {
   const id = Number(value);
   return Number.isSafeInteger(id) && id > 0 ? id : null;
@@ -290,6 +300,43 @@ function isPurchaseConfirmationComplete(confirmation = {}) {
   return status === "COMPLETED" || Boolean(submittedAt && finalAccepted);
 }
 
+function toValidDate(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function isOnOrAfterEffectiveFrom(value) {
+  const date = toValidDate(value);
+  return Boolean(date && date.getTime() >= INCENTIVE_EFFECTIVE_FROM.getTime());
+}
+
+function isOrderPaidInEffectiveWindow(order = {}) {
+  const paidAt =
+    order.finalPaidAt ??
+    order.final_paid_at ??
+    order.businessDate ??
+    order.business_date ??
+    null;
+  return isOnOrAfterEffectiveFrom(paidAt);
+}
+
+function isOrderHandoverInEffectiveWindow(order = {}) {
+  return isOnOrAfterEffectiveFrom(
+    order.handoverConfirmedAt ?? order.handover_confirmed_at ?? null
+  );
+}
+
+function withRuleMetadata(candidate) {
+  return {
+    ...candidate,
+    metadata: {
+      ...(candidate.metadata || {}),
+      ruleVersion: INCENTIVE_RULE_VERSION
+    }
+  };
+}
+
 function isExcludedOrder(order = {}) {
   if (order.deletedAt || order.deleted_at) return true;
 
@@ -449,6 +496,89 @@ function buildRepairInspectionCandidate({
         repairStaffName:
           repairOrder.repairStaffName ?? repairOrder.repair_staff_name ?? null
       }
+    }
+  };
+}
+
+function buildRepairLaborCandidate({ order, laborItems, plan, triggerSource }) {
+  if (!laborItems.length) return null;
+
+  const amount = normalizeMoney(plan.repairInspectionAmount ?? 100);
+  if (amount <= 0) return null;
+
+  const laborNames = laborItems
+    .map((item) => item.productNameSnapshot || item.name || "")
+    .filter(Boolean)
+    .join("、");
+
+  return {
+    storeId: normalizePositiveId(order.storeId),
+    staffUserId: normalizePositiveId(order.salesStaffId),
+    planVersionId: normalizePositiveId(plan.id),
+    incentiveType: "REPAIR_INSPECTION",
+    earningStage: "INSPECTION",
+    sourceType: "ORDER",
+    sourceId: normalizePositiveId(order.id),
+    sourceLineId: 0,
+    sourceUnitKey: "",
+    productId: null,
+    productNameSnapshot: (laborNames || "維修工資").slice(0, 200),
+    quantity: 1,
+    actualSaleAmount: normalizeMoney(
+      laborItems.reduce((sum, item) => sum + normalizeMoney(item.lineTotal), 0)
+    ),
+    rate: 0,
+    calculatedAmount: amount,
+    assignedRatio: 1,
+    finalAmount: amount,
+    status: "EARNED",
+    metadata: {
+      triggerSource,
+      incentiveKind: "REPAIR_LABOR",
+      orderId: Number(order.id),
+      repairOrderId: normalizePositiveId(order.repairOrderId),
+      laborOrderItemIds: laborItems.map((item) => Number(item.id))
+    }
+  };
+}
+
+function buildRepairPartCandidate({ order, item, plan, triggerSource, actualSaleAmount }) {
+  const saleAmount = normalizeMoney(actualSaleAmount);
+  if (saleAmount <= 0) return null;
+
+  const calculatedAmount = centsToMoney(
+    Math.round(moneyToCents(saleAmount) * REPAIR_PART_RATE)
+  );
+  if (calculatedAmount <= 0) return null;
+
+  return {
+    storeId: normalizePositiveId(order.storeId),
+    staffUserId: normalizePositiveId(order.salesStaffId),
+    planVersionId: normalizePositiveId(plan.id),
+    incentiveType: "REPAIR_INSPECTION",
+    earningStage: "ITEM",
+    sourceType: "ORDER_ITEM",
+    sourceId: normalizePositiveId(order.id),
+    sourceLineId: normalizePositiveId(item.id),
+    sourceUnitKey: "",
+    productId: normalizePositiveId(item.productId),
+    productNameSnapshot: item.productNameSnapshot || item.name || null,
+    quantity: normalizeQuantity(item.quantity),
+    actualSaleAmount: saleAmount,
+    rate: REPAIR_PART_RATE,
+    calculatedAmount,
+    assignedRatio: 1,
+    finalAmount: calculatedAmount,
+    status: "EARNED",
+    metadata: {
+      triggerSource,
+      incentiveKind: "REPAIR_PART",
+      orderId: Number(order.id),
+      orderItemId: Number(item.id),
+      repairOrderId: normalizePositiveId(order.repairOrderId),
+      categorySnapshot: item.productCategorySnapshot || item.category || null,
+      masterCategory: item.masterCategory || null,
+      sku: item.skuSnapshot || item.sku || null
     }
   };
 }
@@ -724,28 +854,20 @@ function buildOrderSaleIncentiveCandidates({
   const candidates = [];
   const repairLinked = isRepairLinkedOrder(snapshot);
 
-  if (repairLinked) {
-    const repairEvaluation = buildRepairInspectionCandidate({
-      order,
-      repairOrder: snapshot.repairOrder || null,
-      plan,
-      triggerSource
-    });
-    if (repairEvaluation.candidate) {
-      candidates.push(repairEvaluation.candidate);
-    }
-  }
-
-  if (!normalizePositiveId(order.salesStaffId) || order.salesStaffValid === 0) {
+  if (!normalizePositiveId(order.salesStaffId) || Number(order.salesStaffValid) === 0) {
     return {
-      eligible: candidates.length > 0,
-      reason:
-        candidates.length > 0
-          ? null
-          : "SALES_STAFF_NOT_ASSIGNED",
+      eligible: false,
+      reason: "SALES_STAFF_NOT_ASSIGNED",
       candidates
     };
   }
+
+  const pushSplit = (candidate) => {
+    if (!candidate) return;
+    candidates.push(
+      ...splitCandidateBySalesAssignments(withRuleMetadata(candidate), order)
+    );
+  };
 
   const actualSaleAmounts =
     allocateOrderActualSaleAmounts(
@@ -753,60 +875,74 @@ function buildOrderSaleIncentiveCandidates({
       order.totalAmount ??
       order.total_amount
     );
+  const saleAmountOf = (item) =>
+    actualSaleAmounts.get(item) ?? normalizeMoney(item.lineTotal);
 
-  for (const item of items.filter(isAccessoryItem)) {
-    const candidate = buildAccessoryCandidate({
-      order,
-      item,
-      plan,
-      triggerSource,
-      actualSaleAmount:
-        actualSaleAmounts.get(item) ??
-        normalizeMoney(item.lineTotal)
-    });
-    if (candidate) {
-      candidates.push(
-        ...splitCandidateBySalesAssignments(
-          candidate,
-          order
-        )
-      );
-    }
-  }
+  const paidInWindow = isOrderPaidInEffectiveWindow(order);
 
   if (repairLinked) {
+    if (!paidInWindow) {
+      return { eligible: false, reason: "BEFORE_EFFECTIVE_FROM", candidates };
+    }
+
+    // 維修訂單：維修(RP)品項＝工資，每張訂單一筆；其餘（車輛除外）＝更換零件 10%
+    const laborItems = items.filter(isRepairItem);
+    pushSplit(buildRepairLaborCandidate({ order, laborItems, plan, triggerSource }));
+
+    for (const item of items) {
+      if (isRepairItem(item) || isVehicleItem(item)) continue;
+      pushSplit(
+        buildRepairPartCandidate({
+          order,
+          item,
+          plan,
+          triggerSource,
+          actualSaleAmount: saleAmountOf(item)
+        })
+      );
+    }
+
     return {
       eligible: candidates.length > 0,
-      reason: candidates.length > 0 ? null : "REPAIR_ORDER_EXCLUDED",
+      reason: candidates.length > 0 ? null : "NO_ELIGIBLE_REPAIR_ITEMS",
       candidates
     };
   }
 
-  const salesFollowup = snapshot.orderSalesFollowup || snapshot.salesFollowup || null;
+  if (paidInWindow) {
+    for (const item of items.filter(isAccessoryItem)) {
+      pushSplit(
+        buildAccessoryCandidate({
+          order,
+          item,
+          plan,
+          triggerSource,
+          actualSaleAmount: saleAmountOf(item)
+        })
+      );
+    }
+  }
 
+  // 車輛：EB 車款每台一筆，需完款 + 購車確認書完成 + 交車確認（不需售後追蹤）
   if (
     isPurchaseConfirmationComplete(confirmation) &&
     isOrderHandoverComplete(order) &&
-    isOrderSalesFollowupEligible(salesFollowup)
+    isOrderHandoverInEffectiveWindow(order)
   ) {
     for (const item of items.filter(isVehicleItem)) {
       for (let unitIndex = 1; unitIndex <= normalizeQuantity(item.quantity); unitIndex += 1) {
-        const candidate = buildBikeAllStagesCandidate({
-          order, item, unitIndex, plan, triggerSource, confirmation, followup: salesFollowup
-        });
-        candidates.push(...splitCandidateBySalesAssignments(candidate, order));
+        pushSplit(
+          buildBikeAllStagesCandidate({
+            order, item, unitIndex, plan, triggerSource, confirmation, followup: null
+          })
+        );
       }
     }
   }
 
   return {
     eligible: candidates.length > 0,
-    reason:
-      candidates.length > 0
-        ? null
-        : repairLinked
-          ? "REPAIR_ORDER_EXCLUDED"
-          : "NO_ELIGIBLE_ITEMS",
+    reason: candidates.length > 0 ? null : "NO_ELIGIBLE_ITEMS",
     candidates
   };
 }
@@ -852,9 +988,13 @@ async function loadOrderSaleIncentiveSnapshot(connection, storeId, orderId) {
         sales_staff_id AS salesStaffId,
         sales_staff_name AS salesStaffName,
         EXISTS(
-          SELECT 1 FROM staff_users assigned_sales_staff
+          SELECT 1
+          FROM staff_users assigned_sales_staff
+          INNER JOIN store_memberships assigned_sales_membership
+            ON assigned_sales_membership.staff_user_id = assigned_sales_staff.id
+           AND assigned_sales_membership.store_id = orders.store_id
+           AND assigned_sales_membership.status = 'active'
           WHERE assigned_sales_staff.id = orders.sales_staff_id
-            AND assigned_sales_staff.store_id = orders.store_id
             AND assigned_sales_staff.is_active = 1
         ) AS salesStaffValid,
         sales_support_staff_id AS salesSupportStaffId,
@@ -866,6 +1006,7 @@ async function loadOrderSaleIncentiveSnapshot(connection, storeId, orderId) {
         repair_order_id AS repairOrderId,
         final_payment_status AS finalPaymentStatus,
         unpaid_balance AS unpaidBalance,
+        final_paid_at AS finalPaidAt,
         business_date AS businessDate,
         handover_confirmed_at AS handoverConfirmedAt,
         deleted_at AS deletedAt
@@ -930,86 +1071,12 @@ async function loadOrderSaleIncentiveSnapshot(connection, storeId, orderId) {
     [normalizedOrderId, normalizedStoreId]
   );
 
-  let repairOrder = null;
-  if (isRepairLinkedOrder({ order, items: itemRows })) {
-    const repairOrderId = normalizePositiveId(order.repairOrderId);
-    const [repairRows] = await connection.query(
-      `
-        SELECT
-          id,
-          order_id AS orderId,
-          bike_model AS bikeModel,
-          inspection_fee AS inspectionFee,
-          inspection_notes AS inspectionNotes,
-          repair_staff_id AS repairStaffId,
-          repair_staff_name AS repairStaffName,
-          status,
-          deleted_at AS deletedAt
-        FROM repair_orders
-        WHERE store_id = ?
-          AND deleted_at IS NULL
-          AND (
-            order_id = ?
-            OR (? IS NOT NULL AND id = ?)
-          )
-        ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, id DESC
-        LIMIT 1
-      `,
-      [
-        normalizedStoreId,
-        normalizedOrderId,
-        repairOrderId,
-        repairOrderId,
-        repairOrderId
-      ]
-    );
-    repairOrder = repairRows[0] || null;
-  }
-
-  let orderSalesFollowup = null;
-
-  if (
-    await orderSalesFollowupTableExists(connection)
-  ) {
-    const [followupRows] = await connection.query(
-      `
-        SELECT
-          id,
-          status,
-          contact_method AS contactMethod,
-          customer_result AS customerResult,
-          employee_caused_issue AS employeeCausedIssue,
-          unresolved_employee_issue
-            AS unresolvedEmployeeIssue,
-          note,
-          completed_by_staff_id
-            AS completedByStaffId,
-          completed_by_staff_name
-            AS completedByStaffName,
-          completed_at AS completedAt,
-          no_response_approved_by AS noResponseApprovedBy,
-          no_response_approved_at AS noResponseApprovedAt,
-          no_response_approval_reason AS noResponseApprovalReason,
-          created_at AS createdAt,
-          updated_at AS updatedAt
-        FROM order_sales_followups
-        WHERE order_id = ?
-          AND store_id = ?
-        LIMIT 1
-      `,
-      [normalizedOrderId, normalizedStoreId]
-    );
-
-    orderSalesFollowup =
-      followupRows[0] || null;
-  }
-
   return {
     order,
     purchaseConfirmation:
       confirmationRows[0] || null,
-    orderSalesFollowup,
-    repairOrder,
+    orderSalesFollowup: null,
+    repairOrder: null,
     items: itemRows
   };
 }
@@ -1056,14 +1123,16 @@ async function reconcileOrderSaleIncentives({
            void_reason = 'ORDER_CANCELED_OR_FULLY_REFUNDED',
            updated_at = CURRENT_TIMESTAMP
        WHERE store_id = ? AND source_id = ?
-         AND incentive_type IN ('BIKE', 'ACCESSORY')
+         AND source_type IN ('ORDER', 'ORDER_ITEM')
+         AND incentive_type IN ('BIKE', 'ACCESSORY', 'REPAIR_INSPECTION')
          AND status IN ('PENDING', 'EARNED')`,
       [storeId, orderId]
     );
     const [lockedRows] = await connection.query(
       `SELECT id, status FROM staff_incentive_events
        WHERE store_id = ? AND source_id = ?
-         AND incentive_type IN ('BIKE', 'ACCESSORY')
+         AND source_type IN ('ORDER', 'ORDER_ITEM')
+         AND incentive_type IN ('BIKE', 'ACCESSORY', 'REPAIR_INSPECTION')
          AND status IN ('APPROVED', 'PAID')`,
       [storeId, orderId]
     );
@@ -1075,16 +1144,49 @@ async function reconcileOrderSaleIncentives({
     };
   }
 
-  if (!evaluation.eligible) {
-    return { ...evaluation, results: [] };
-  }
-
   const results = [];
   for (const candidate of evaluation.candidates) {
     results.push(await saveEvent(connection, candidate));
   }
 
-  return { ...evaluation, results };
+  // 本規則建立、但已不再符合（例如銷售人員變更、品項刪除）的未核准績效 → 作廢
+  // 找不到績效辦法時不作廢，避免設定暫時缺漏而誤刪
+  if (evaluation.reason === "ACTIVE_PLAN_NOT_FOUND") {
+    return { ...evaluation, results, voidedCount: 0 };
+  }
+  const keptIds = results
+    .map((result) => Number(result?.event?.id || 0))
+    .filter((id) => id > 0);
+  const voidStale = dependencies.voidStaleRuleEvents || voidStaleRuleEvents;
+  const voidedCount = await voidStale(connection, {
+    storeId,
+    orderId,
+    keptIds
+  });
+
+  return { ...evaluation, results, voidedCount };
+}
+
+async function voidStaleRuleEvents(connection, { storeId, orderId, keptIds = [] }) {
+  const params = [storeId, orderId, `%"ruleVersion":"${INCENTIVE_RULE_VERSION}"%`];
+  let keepSql = "";
+  if (keptIds.length) {
+    keepSql = `AND id NOT IN (${keptIds.map(() => "?").join(", ")})`;
+    params.push(...keptIds);
+  }
+  const [result] = await connection.query(
+    `UPDATE staff_incentive_events
+     SET status = 'VOID',
+         void_reason = 'RECALCULATED_NOT_ELIGIBLE',
+         updated_at = CURRENT_TIMESTAMP
+     WHERE store_id = ? AND source_id = ?
+       AND source_type IN ('ORDER', 'ORDER_ITEM')
+       AND status IN ('PENDING', 'EARNED')
+       AND metadata_json LIKE ?
+       ${keepSql}`,
+    params
+  );
+  return Number(result?.affectedRows || 0);
 }
 
 async function reconcileOrderSaleIncentivesSafely(input = {}) {
@@ -1109,6 +1211,12 @@ async function reconcileOrderSaleIncentivesSafely(input = {}) {
 }
 
 module.exports = {
+  INCENTIVE_RULE_VERSION,
+  INCENTIVE_EFFECTIVE_FROM,
+  REPAIR_PART_RATE,
+  buildRepairLaborCandidate,
+  buildRepairPartCandidate,
+  voidStaleRuleEvents,
   normalizePositiveId,
   buildSalesAssignmentShares,
   splitCandidateBySalesAssignments,

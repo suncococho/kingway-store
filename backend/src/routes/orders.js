@@ -54,6 +54,9 @@ const {
   resolveStaffAssignment,
   resolveSharedSalesAssignments
 } = require("../services/staffAssignmentService");
+const {
+  reconcileOrderSaleIncentivesSafely
+} = require("../services/staffIncentiveEarningService");
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -335,6 +338,16 @@ async function resolveOrderSharedSalesUpdateAssignments(
     primary: primaryProvided ? resolved.primary : undefined,
     support: supportProvided ? resolved.support : undefined
   };
+}
+
+// 員工績效重新計算（失敗只記錄 log，不影響訂單操作）
+async function reconcileOrderIncentives(storeId, orderId, triggerSource) {
+  return reconcileOrderSaleIncentivesSafely({
+    connection: pool,
+    storeId,
+    orderId: Number(orderId),
+    triggerSource
+  });
 }
 
 function getRequestStaffName(req) {
@@ -1334,6 +1347,7 @@ router.patch("/:id/sales-staff", requireOrderManagementFeature, async (req, res,
       },
       changedAt: new Date().toISOString()
     }, req.user?.id || null);
+    await reconcileOrderIncentives(storeId, orderId, "ORDER_SALES_STAFF_CHANGED");
     return res.json({
       ok: true,
       salesStaffId: assignment.id,
@@ -1455,6 +1469,7 @@ router.patch("/:id/sales-support-staff", requireOrderManagementFeature, async (r
       req.user?.id || null
     );
 
+    await reconcileOrderIncentives(storeId, orderId, "ORDER_SALES_SUPPORT_STAFF_CHANGED");
     return res.json({
       ok: true,
       salesSupportStaffId: assignment.id,
@@ -2220,6 +2235,7 @@ router.patch("/:id", requireOrderManagementFeature, async (req, res, next) => {
       [orderId, storeId]
     );
 
+    await reconcileOrderIncentives(storeId, orderId, "ORDER_UPDATED");
     return res.json({
       ...updated[0],
       paymentMethodLabel: mapPaymentMethodLabel(updated[0]?.paymentMethod),
@@ -2364,6 +2380,7 @@ router.put("/:id/items", requireOrderManagementFeature, async (req, res, next) =
       return { orderId, totalAmount: payableAmount, unpaidBalance, finalPaymentStatus, items: normalized };
     });
 
+    await reconcileOrderIncentives(storeId, orderId, "ORDER_ITEMS_UPDATED");
     return res.json(result);
   } catch (error) {
     return next(error);
@@ -2812,6 +2829,7 @@ router.post("/:id/collect-balance", requireOrderManagementFeature, async (req, r
       }
     }
 
+    await reconcileOrderIncentives(storeId, orderId, "ORDER_BALANCE_COLLECTED");
     return res.json({
       ...result,
       repairConfirmation,
@@ -3118,6 +3136,7 @@ router.post("/:id/confirm-handover", authorize(["ADMIN", "MANAGER"]), requireOrd
       }
     }
 
+    await reconcileOrderIncentives(storeId, req.params.id, "ORDER_HANDOVER_CONFIRMED");
     await logWorkflowEvent("order_handover_confirmed", "ORDER", req.params.id, { autoKingwayPurchaseOrderId: autoPoId }, req.user.id);
     await logKpi(req.user.id, "ORDER_HANDOVER_CONFIRMED", "ORDER", req.params.id, 3);
     return res.json({ message: autoPoId ? "已確認交車，並已建立 KINGWAY 自動發注" : "已確認交車" });
