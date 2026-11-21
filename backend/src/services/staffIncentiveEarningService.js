@@ -19,7 +19,7 @@ let orderSalesFollowupTableExistsCache = null;
 // - 一般訂單配件：實際成交金額 × plan.accessoryRate
 // - 維修訂單：含維修(RP)工資品項 → 每張訂單 plan.repairInspectionAmount；
 //   其餘更換零件 → 實際成交金額 × 10%
-// - 只計算生效時間之後完款／交車的訂單（不回溯）
+// - 只計算訂單日期（營業日）在生效日之後的訂單；生效日前的訂單完全不處理
 const INCENTIVE_RULE_VERSION = "KW-2026-11-R1";
 const INCENTIVE_EFFECTIVE_FROM = new Date("2026-11-01T00:00:00+08:00");
 const REPAIR_PART_RATE = 0.1;
@@ -311,20 +311,15 @@ function isOnOrAfterEffectiveFrom(value) {
   return Boolean(date && date.getTime() >= INCENTIVE_EFFECTIVE_FROM.getTime());
 }
 
-function isOrderPaidInEffectiveWindow(order = {}) {
-  const paidAt =
-    order.finalPaidAt ??
-    order.final_paid_at ??
+// 以訂單日期（營業日，無則建立時間）判斷是否在生效日之後
+function isOrderInEffectiveWindow(order = {}) {
+  const orderDate =
     order.businessDate ??
     order.business_date ??
+    order.createdAt ??
+    order.created_at ??
     null;
-  return isOnOrAfterEffectiveFrom(paidAt);
-}
-
-function isOrderHandoverInEffectiveWindow(order = {}) {
-  return isOnOrAfterEffectiveFrom(
-    order.handoverConfirmedAt ?? order.handover_confirmed_at ?? null
-  );
+  return isOnOrAfterEffectiveFrom(orderDate);
 }
 
 function withRuleMetadata(candidate) {
@@ -854,6 +849,10 @@ function buildOrderSaleIncentiveCandidates({
   const candidates = [];
   const repairLinked = isRepairLinkedOrder(snapshot);
 
+  if (!isOrderInEffectiveWindow(order)) {
+    return { eligible: false, reason: "BEFORE_EFFECTIVE_FROM", candidates };
+  }
+
   if (!normalizePositiveId(order.salesStaffId) || Number(order.salesStaffValid) === 0) {
     return {
       eligible: false,
@@ -878,13 +877,7 @@ function buildOrderSaleIncentiveCandidates({
   const saleAmountOf = (item) =>
     actualSaleAmounts.get(item) ?? normalizeMoney(item.lineTotal);
 
-  const paidInWindow = isOrderPaidInEffectiveWindow(order);
-
   if (repairLinked) {
-    if (!paidInWindow) {
-      return { eligible: false, reason: "BEFORE_EFFECTIVE_FROM", candidates };
-    }
-
     // 維修訂單：維修(RP)品項＝工資，每張訂單一筆；其餘（車輛除外）＝更換零件 10%
     const laborItems = items.filter(isRepairItem);
     pushSplit(buildRepairLaborCandidate({ order, laborItems, plan, triggerSource }));
@@ -909,25 +902,22 @@ function buildOrderSaleIncentiveCandidates({
     };
   }
 
-  if (paidInWindow) {
-    for (const item of items.filter(isAccessoryItem)) {
-      pushSplit(
-        buildAccessoryCandidate({
-          order,
-          item,
-          plan,
-          triggerSource,
-          actualSaleAmount: saleAmountOf(item)
-        })
-      );
-    }
+  for (const item of items.filter(isAccessoryItem)) {
+    pushSplit(
+      buildAccessoryCandidate({
+        order,
+        item,
+        plan,
+        triggerSource,
+        actualSaleAmount: saleAmountOf(item)
+      })
+    );
   }
 
   // 車輛：EB 車款每台一筆，需完款 + 購車確認書完成 + 交車確認（不需售後追蹤）
   if (
     isPurchaseConfirmationComplete(confirmation) &&
-    isOrderHandoverComplete(order) &&
-    isOrderHandoverInEffectiveWindow(order)
+    isOrderHandoverComplete(order)
   ) {
     for (const item of items.filter(isVehicleItem)) {
       for (let unitIndex = 1; unitIndex <= normalizeQuantity(item.quantity); unitIndex += 1) {
@@ -1008,6 +998,7 @@ async function loadOrderSaleIncentiveSnapshot(connection, storeId, orderId) {
         unpaid_balance AS unpaidBalance,
         final_paid_at AS finalPaidAt,
         business_date AS businessDate,
+        created_at AS createdAt,
         handover_confirmed_at AS handoverConfirmedAt,
         deleted_at AS deletedAt
       FROM orders
@@ -1150,8 +1141,11 @@ async function reconcileOrderSaleIncentives({
   }
 
   // 本規則建立、但已不再符合（例如銷售人員變更、品項刪除）的未核准績效 → 作廢
-  // 找不到績效辦法時不作廢，避免設定暫時缺漏而誤刪
-  if (evaluation.reason === "ACTIVE_PLAN_NOT_FOUND") {
+  // 找不到績效辦法、或生效日前的訂單：不作廢任何紀錄
+  if (
+    evaluation.reason === "ACTIVE_PLAN_NOT_FOUND" ||
+    evaluation.reason === "BEFORE_EFFECTIVE_FROM"
+  ) {
     return { ...evaluation, results, voidedCount: 0 };
   }
   const keptIds = results
@@ -1211,6 +1205,7 @@ async function reconcileOrderSaleIncentivesSafely(input = {}) {
 }
 
 module.exports = {
+  isOrderInEffectiveWindow,
   INCENTIVE_RULE_VERSION,
   INCENTIVE_EFFECTIVE_FROM,
   REPAIR_PART_RATE,

@@ -8,7 +8,7 @@
  *   docker exec kingway-backend node scripts/reconcileStaffIncentives.js --month 2026-11 --apply
  *
  * 選項：
- *   --month YYYY-MM   補算月份（依完款日或交車日，台北時間），預設 2026-11
+ *   --month YYYY-MM   補算月份（依訂單日期／營業日），預設 2026-11
  *   --store <id>      只處理指定門市
  *   --apply           實際寫入
  *
@@ -50,10 +50,12 @@ function monthRange(month) {
   const [year, mon] = month.split("-").map(Number);
   const nextYear = mon === 12 ? year + 1 : year;
   const nextMon = mon === 12 ? 1 : mon + 1;
-  const start = new Date(`${month}-01T00:00:00+08:00`);
-  const end = new Date(`${nextYear}-${String(nextMon).padStart(2, "0")}-01T00:00:00+08:00`);
-  const effectiveStart = start < INCENTIVE_EFFECTIVE_FROM ? INCENTIVE_EFFECTIVE_FROM : start;
-  return { start: effectiveStart, end };
+  const start = `${month}-01`;
+  const end = `${nextYear}-${String(nextMon).padStart(2, "0")}-01`;
+  if (new Date(`${end}T00:00:00+08:00`) <= INCENTIVE_EFFECTIVE_FROM) {
+    throw new Error(`${month} 在規則生效日之前，不處理`);
+  }
+  return { start, end };
 }
 
 function eventKey(event) {
@@ -132,7 +134,7 @@ function money(value) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const range = monthRange(args.month);
-  console.log(`[${args.apply ? "APPLY" : "DRY-RUN"}] 規則 ${INCENTIVE_RULE_VERSION}，月份 ${args.month}，範圍 ${range.start.toISOString()} ~ ${range.end.toISOString()}`);
+  console.log(`[${args.apply ? "APPLY" : "DRY-RUN"}] 規則 ${INCENTIVE_RULE_VERSION}，訂單日期 ${range.start} ~ ${range.end}（不含）`);
 
   const storeSql = args.storeId ? "AND store_id = ?" : "";
   const [orders] = await pool.query(
@@ -142,14 +144,12 @@ async function main() {
       WHERE deleted_at IS NULL
         AND final_payment_status = 'PAID'
         AND sales_staff_id IS NOT NULL
-        AND (
-          (final_paid_at >= ? AND final_paid_at < ?)
-          OR (handover_confirmed_at >= ? AND handover_confirmed_at < ?)
-        )
+        AND COALESCE(business_date, DATE(created_at)) >= ?
+        AND COALESCE(business_date, DATE(created_at)) < ?
         ${storeSql}
       ORDER BY store_id ASC, id ASC
     `,
-    [range.start, range.end, range.start, range.end, ...(args.storeId ? [args.storeId] : [])]
+    [range.start, range.end, ...(args.storeId ? [args.storeId] : [])]
   );
   console.log(`符合條件的訂單：${orders.length} 筆（已完款且已指定銷售人員）`);
 
@@ -196,7 +196,13 @@ async function main() {
         lines.push(`  ${action} 員工#${candidate.staffUserId} ${candidate.incentiveType}/${candidate.earningStage} ${candidate.productNameSnapshot || "-"} ${money(candidate.finalAmount)}`);
       }
 
-      const legacy = existing.filter((row) => OPEN_STATUSES.has(row.status) && !matchedIds.has(Number(row.id)));
+      const outOfScope =
+        evaluation.reason === "BEFORE_EFFECTIVE_FROM" ||
+        evaluation.reason === "ACTIVE_PLAN_NOT_FOUND" ||
+        evaluation.reason === "SALES_STAFF_NOT_ASSIGNED";
+      const legacy = outOfScope
+        ? []
+        : existing.filter((row) => OPEN_STATUSES.has(row.status) && !matchedIds.has(Number(row.id)));
       for (const row of legacy) {
         lines.push(`  作廢 #${row.id} 員工#${row.staffUserId} ${row.incentiveType}/${row.earningStage} ${row.productNameSnapshot || "-"} ${money(row.finalAmount)}`);
       }
@@ -214,7 +220,7 @@ async function main() {
             orderId: order.id,
             triggerSource: TRIGGER_SOURCE
           });
-          if (result.reason === "ACTIVE_PLAN_NOT_FOUND") return 0;
+          if (["ACTIVE_PLAN_NOT_FOUND", "BEFORE_EFFECTIVE_FROM", "SALES_STAFF_NOT_ASSIGNED"].includes(result.reason)) return 0;
           const keptIds = (result.results || [])
             .map((item) => Number(item?.event?.id || 0))
             .filter((id) => id > 0);
