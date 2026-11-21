@@ -132,7 +132,7 @@ function formatDate(value) {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hour12: false });
+  return date.toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hourCycle: "h23" });
 }
 
 function money(value) {
