@@ -15,6 +15,13 @@ const EXPLANATION_CHECK_ITEMS = [
   { id: "explain-delivery", label: "說明確認", value: "說明確認", description: "已聽取店員關於使用方法、保固範圍（1年）、保養及安全注意事項之說明。", required: true }
 ];
 
+const PHOTO_PUBLICATION_CONSENT_TEXT = "本人同意 KINGWAY 於購買紀念時拍攝照片，並同意 KINGWAY 將照片刊登於官方 Facebook、Instagram 或其他官方社群平台。";
+const PHOTO_PUBLICATION_WITHDRAWAL_TEXT = "本人了解，上述同意得於照片刊登前或刊登後，透過 LINE、電話或親洽門市方式向 KINGWAY 申請撤回或要求刪除。KINGWAY 收到申請後，將於合理期間內協助下架或刪除相關貼文。";
+const FACE_PUBLICATION_OPTIONS = [
+  { value: "公開臉部", label: "本人同意公開臉部。" },
+  { value: "臉部遮蔽後刊登", label: "本人僅同意於臉部遮蔽或打碼後刊登。" }
+];
+
 const DEFAULT_CONTENT = {
   pageTitle: "KINGWAY 自行車\n交付確認",
   pageSubtitle: "購買後自行車確認簽名表單",
@@ -113,6 +120,8 @@ const EMPTY_FORM = {
   vehicleType: "offroad",
   deliveryChecks: [],
   staffExplanations: [],
+  photoPublicationConsent: false,
+  facePublicationMode: "",
   termsAccepted: false,
   finalConfirmationAccepted: false,
   signatureData: ""
@@ -168,6 +177,23 @@ const TERMS_SCROLL_STYLE = {
 const AGREEMENT_CHECK_STYLE = {
   borderColor: "rgba(22, 163, 74, 0.45)",
   background: "#ecfdf5"
+};
+const OPTIONAL_CONSENT_DETAIL_STYLE = {
+  marginTop: -6,
+  padding: "14px 16px",
+  border: "1px solid rgba(214, 168, 79, 0.45)",
+  borderRadius: 12,
+  background: "#fffaf0"
+};
+const RADIO_GROUP_STYLE = {
+  display: "grid",
+  gap: 8,
+  marginTop: 10
+};
+const CONSENT_NOTE_STYLE = {
+  marginTop: 10,
+  fontSize: 13,
+  lineHeight: 1.6
 };
 
 function buildResolvedStoreContext(response, requestedStoreCode) {
@@ -555,6 +581,8 @@ function PurchaseConfirmPublicPage() {
     setSubmitting(true);
     try {
       const compressedSignatureData = await compressSignatureDataUrl(form.signatureData);
+      const photoPublicationConsent = Boolean(form.photoPublicationConsent);
+      const facePublicationMode = photoPublicationConsent ? form.facePublicationMode : "";
       const zhPayload = {
         姓名: form.buyerName.trim(),
         身份證後四碼: form.buyerIdNumber.trim(),
@@ -572,6 +600,8 @@ function PurchaseConfirmPublicPage() {
         法規說明: form.staffExplanations.includes("臺灣電動自行車相關法規及速度限制") ? "✓" : "✗",
         安全事項: form.staffExplanations.includes("騎乘安全注意事項") ? "✓" : "✗",
         最終確認: form.finalConfirmationAccepted ? "✓" : "✗",
+        購買紀念照片刊登同意: photoPublicationConsent ? "✓" : "✗",
+        臉部公開方式: facePublicationMode || "未選擇",
         簽名圖片: compressedSignatureData
       };
 
@@ -586,6 +616,8 @@ function PurchaseConfirmPublicPage() {
             staffExplanations: form.staffExplanations,
             termsAccepted: form.termsAccepted,
             finalConfirmationAccepted: form.finalConfirmationAccepted,
+            photoPublicationConsent,
+            facePublicationMode,
             signatureData: compressedSignatureData,
             idLast4: form.buyerIdNumber.trim(),
             vehicleTypeLabel: content.vehicleTypes?.[form.vehicleType]?.label || ""
@@ -652,6 +684,22 @@ function PurchaseConfirmPublicPage() {
         [name]: exists ? current[name].filter((value) => value !== item) : [...current[name], item]
       };
     });
+  }
+
+  function handlePhotoPublicationConsentChange(event) {
+    const checked = event.target.checked;
+    setForm((current) => ({
+      ...current,
+      photoPublicationConsent: checked,
+      facePublicationMode: checked ? current.facePublicationMode : ""
+    }));
+  }
+
+  function handleFacePublicationModeChange(event) {
+    setForm((current) => ({
+      ...current,
+      facePublicationMode: event.target.value
+    }));
   }
 
   if (loading) {
@@ -806,6 +854,35 @@ function PurchaseConfirmPublicPage() {
                 <span><strong>{item.label}</strong>{item.description ? ` - ${item.description}` : ""}</span>
               </label>
             ))}
+            <div style={OPTIONAL_CONSENT_DETAIL_STYLE}>
+              <label className="checklist-item" htmlFor="photo-publication-consent">
+                <input
+                  id="photo-publication-consent"
+                  type="checkbox"
+                  name="photoPublicationConsent"
+                  checked={form.photoPublicationConsent}
+                  onChange={handlePhotoPublicationConsentChange}
+                />
+                <span><strong>{"購買紀念照片拍攝及官方社群刊登同意（選填）"}</strong>{` - ${PHOTO_PUBLICATION_CONSENT_TEXT}`}</span>
+              </label>
+              <div style={RADIO_GROUP_STYLE}>
+                {FACE_PUBLICATION_OPTIONS.map((option) => (
+                  <label key={option.value} className="checklist-item" htmlFor={`face-publication-${option.value}`}>
+                    <input
+                      id={`face-publication-${option.value}`}
+                      type="radio"
+                      name="facePublicationMode"
+                      value={option.value}
+                      checked={form.facePublicationMode === option.value}
+                      disabled={!form.photoPublicationConsent}
+                      onChange={handleFacePublicationModeChange}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="muted-text" style={CONSENT_NOTE_STYLE}>{PHOTO_PUBLICATION_WITHDRAWAL_TEXT}</p>
+            </div>
             {explanationItems.map((item) => (
               <label key={item.value} className="checklist-item" htmlFor={`explanation-${item.value}`}>
                 <input

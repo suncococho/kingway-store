@@ -1,0 +1,10 @@
+services:
+  backend:
+    volumes:
+      - /volume1/docker/kingway-store-releases/line-order-options-production-backend-fixed-20260730_185604/backend:/app
+      - /volume1/docker/kingway-store/backend/storage:/app/storage
+      - /volume1/docker/kingway-store/backend/uploads:/app/uploads
+      - /volume1/docker/kingway-store/shared:/shared:ro
+
+  frontend:
+    image: kingway-store-frontend:line-order-options-20260730-fixed

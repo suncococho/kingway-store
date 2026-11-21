@@ -256,3 +256,37 @@ async function executeApiUploadImage(path, file, releaseWriteProcessing) {
     releaseWriteProcessing();
   }
 }
+
+export async function apiOpenFile(path) {
+  const token = getStoredToken();
+  const popup = typeof window !== "undefined" ? window.open("", "_blank") : null;
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "GET",
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+    if (!response.ok) {
+      if (response.status === 401) clearAuth();
+      const data = await parseJson(response);
+      throw new Error(data.message || "檔案開啟失敗");
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    if (popup) {
+      popup.location.href = url;
+    } else if (typeof document !== "undefined") {
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+    window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    return true;
+  } catch (error) {
+    popup?.close?.();
+    throw error;
+  }
+}

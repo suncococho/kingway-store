@@ -1,0 +1,15 @@
+services:
+  backend:
+    environment:
+      STAGING_MODE: null
+    volumes:
+      - /volume1/docker/kingway-store-releases/staff-scheduling-3ca63c2/backend:/app
+      - /volume1/docker/kingway-store/backend/storage:/app/storage
+      - /volume1/docker/kingway-store/backend/uploads:/app/uploads
+      - /volume1/docker/kingway-store/shared:/shared:ro
+
+  frontend:
+    image: kingway-production-frontend:3ca63c2
+    build:
+      context: /volume1/docker/kingway-store-releases/staff-scheduling-3ca63c2/frontend
+      dockerfile: Dockerfile

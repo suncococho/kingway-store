@@ -22,6 +22,9 @@ services:
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=256M
+      - --innodb-buffer-pool-instances=1
+      - --performance-schema=OFF
 
   backend:
     image: node:20-alpine
@@ -42,14 +45,14 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./backend:/app
-      - ./shared:/shared:ro
+      - /volume1/docker/kingway-store-releases/kw-kw-20261121/backend:/app
+      - /volume1/docker/kingway-store/backend/storage:/app/storage
+      - /volume1/docker/kingway-store/backend/uploads:/app/uploads
+      - /volume1/docker/kingway-store/shared:/shared:ro
     command: sh -c "npm install && npm start"
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: kingway-frontend:kw-20261121
     container_name: kingway-frontend
     restart: unless-stopped
     logging:

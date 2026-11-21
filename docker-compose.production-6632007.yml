@@ -1,0 +1,8 @@
+services:
+  backend:
+    volumes:
+      - /volume1/docker/kingway-store-work-baseline-v2-warranty-recovery/backend:/app
+
+  frontend:
+    image: kingway-production-frontend:6632007
+    build: !reset null

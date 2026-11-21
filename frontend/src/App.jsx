@@ -30,6 +30,7 @@ import StaffAttendancePage from "./pages/StaffAttendancePage";
 import StaffPage from "./pages/StaffPage";
 import KPIPage from "./pages/KPIPage";
 import StaffKpiPage from "./pages/StaffKpiPage";
+import StaffIncentivesPage from "./pages/StaffIncentivesPage";
 import PayrollPage from "./pages/PayrollPage";
 import MorePage from "./pages/MorePage";
 import SettingsPage from "./pages/SettingsPage";
@@ -142,6 +143,7 @@ function App() {
         <Route path="/attendance" element={<Navigate to="/staff-attendance" replace />} />
         <Route path="/kpi" element={<KPIPage />} />
         <Route path="/staff-kpi" element={<StaffKpiPage />} />
+        <Route path="/staff-incentives" element={<StaffIncentivesPage />} />
         <Route path="/payroll" element={<PayrollPage />} />
         <Route path="/settings/store" element={<StoreSettingsPage />} />
         <Route path="/settings/line" element={<StoreLineSettingsPage />} />

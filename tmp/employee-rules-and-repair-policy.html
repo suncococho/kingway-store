@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>員工基本工作規範暨門市維修作業指令書</title>
+  <style>
+    :root{--navy:#17385f;--blue:#2674ba;--pale:#edf7fc;--line:#cad7e4;--ink:#26384a;--warn:#a92d2d;--paper:#fff}
+    *{box-sizing:border-box} body{margin:0;background:#eef2f6;color:var(--ink);font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif;line-height:1.7}
+    .toolbar{position:sticky;top:0;z-index:20;display:flex;justify-content:center;gap:12px;padding:12px;background:#14273d;color:#fff;box-shadow:0 2px 12px #0002}
+    button{border:0;border-radius:7px;padding:11px 22px;font-size:15px;font-weight:700;cursor:pointer}.primary{background:#2d83cc;color:#fff}.secondary{background:#fff;color:#213e61}button:disabled{opacity:.55;cursor:not-allowed}
+    .status{max-width:210mm;margin:14px auto 0;padding:10px 14px;border-radius:7px;background:#fff;border-left:4px solid var(--blue);display:none}.status.error{display:block;border-color:#c93b3b;color:#9b2424}.status.ok{display:block;border-color:#248657;color:#17613f}
+    .page{width:210mm;min-height:297mm;margin:16px auto;padding:17mm 18mm;background:var(--paper);box-shadow:0 4px 24px #26384a1f;position:relative}
+    .kicker{font:700 12px/1.2 Arial,sans-serif;letter-spacing:1.6px;color:var(--blue)} h1{margin:8px 0 2px;color:var(--navy);font-size:27px;line-height:1.3} .meta{color:#71849a;font-size:12px;border-bottom:3px solid var(--navy);padding-bottom:12px;margin-bottom:16px}
+    .purpose{background:var(--pale);border-left:4px solid #2f91dc;border-radius:0 6px 6px 0;padding:12px 15px;margin:14px 0}.purpose h2{border:0;margin:0 0 4px;font-size:16px}.purpose p{margin:0;font-size:12.5px}
+    h2{color:#23598e;font-size:17px;margin:18px 0 9px;padding-bottom:5px;border-bottom:1px solid var(--line)}
+    table{width:100%;border-collapse:collapse;font-size:11.5px;line-height:1.5}th{background:#2c73b5;color:#fff;padding:8px 6px}td{border:1px solid var(--line);padding:8px 7px;vertical-align:middle}td:first-child{font-weight:700;text-align:center;white-space:nowrap}tbody tr:nth-child(even){background:#f7fafc}
+    ol{margin:4px 0;padding-left:22px;font-size:12.5px}li{margin:7px 0}.value{background:#f4f7fa;border-left:4px solid #516b86;padding:9px 14px;font-size:12.5px}
+    .warning{background:#fff5f5;border:1px solid #f2b2b2;border-radius:6px;padding:10px 14px;font-size:12px}.warning strong{color:var(--warn)}
+    .page-no{position:absolute;right:18mm;bottom:10mm;color:#71849a;font-size:11px}
+    .ack{text-align:center;margin-top:7mm}.ack h2{font-size:21px;border:0;color:#273c54}.ack p{font-size:14px}
+    .legal{font-size:12px;text-align:left;background:#f5f8fb;border:1px solid var(--line);padding:12px;border-radius:6px}
+    .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px;text-align:left;margin-top:18px}.field label{display:block;font-size:12px;font-weight:700;color:#52677d;margin-bottom:3px}.field input{width:100%;border:1px solid #aebdcb;border-radius:5px;padding:10px;font-size:14px}
+    .signature{margin-top:15px;text-align:left}.signature label{display:block;font-size:12px;font-weight:700}.canvas-wrap{border:1px dashed #8da3b7;border-radius:6px;background:#fff;position:relative}.canvas-wrap span{position:absolute;color:#a5b2bf;font-size:13px;left:12px;top:8px;pointer-events:none}.canvas-wrap canvas{width:100%;height:150px;display:block;touch-action:none}.sig-actions{text-align:right;margin-top:5px}.sig-actions button{padding:5px 12px;font-size:12px;border:1px solid #aebdcb;background:#fff;color:#40566e}
+    .consent{display:flex;gap:9px;text-align:left;align-items:flex-start;margin-top:16px;font-size:12.5px}.consent input{margin-top:6px;transform:scale(1.2)}.signed-time{text-align:left;font-size:12px;margin-top:10px;color:#60758b}
+    .server-result{margin-top:18px;background:#edf8f2;border:1px solid #a9d7bd;border-radius:6px;padding:12px;text-align:left;display:none;font-size:12px;word-break:break-all}
+    @media(max-width:850px){.page{width:100%;min-height:auto;margin:0;padding:22px 16px;box-shadow:none}.toolbar{flex-wrap:wrap}.form-grid{grid-template-columns:1fr}table{font-size:10px}.page-no{display:none}}
+    @media print{body{background:#fff}.toolbar,.status,.sig-actions{display:none!important}.page{margin:0;box-shadow:none;page-break-after:always}.page:last-of-type{page-break-after:auto}}
+  </style>
+</head>
+<body>
+  <div class="toolbar"><button class="secondary" type="button" onclick="window.print()">列印預覽</button><button id="submitBtn" class="primary" type="button">簽署並儲存 PDF</button></div>
+  <div id="status" class="status" role="alert"></div>
+
+  <main id="document">
+    <section class="page">
+      <div class="kicker">STORE OPERATIONAL POLICY &amp; DIRECTIVE</div>
+      <h1>員工基本工作規範暨門市維修作業指令書</h1>
+      <div class="meta">生效日期：2026 年 8 月 13 日｜文件版本：2026-08-13-rev2｜適用對象：門市全體員工</div>
+      <div class="purpose"><h2>本規範訂定目的</h2><p>為使新進及在職員工清楚瞭解工作義務、服務標準、公司資產與資訊保護、職務成果歸屬、職場行為及維修作業流程，特訂定本規範。公司與員工均應遵守勞動法令、勞動契約及依法生效之工作規則；本文件如與強制法令牴觸，以法令為準。</p></div>
+      <h2>一、基本工作義務與服務紀律</h2>
+      <ol>
+        <li><strong>誠信與職務執行：</strong>依排班、職務說明、合理工作指示及標準流程勤勉執行工作，不得虛報、隱匿、偽造紀錄或利用職務為自己或第三人取得不當利益。</li>
+        <li><strong>出勤與交接：</strong>準時出勤、依規定打卡及請假；不得代打卡。下班或離開崗位前，應完成現金、訂單、維修車輛、鑰匙、工具、庫存及未結案件之交接。</li>
+        <li><strong>顧客服務：</strong>以禮貌、誠實及一致標準回應顧客，不誇大、不隱瞞重要商品資訊，不對顧客作未經授權之價格、保固、交期或賠償承諾。</li>
+        <li><strong>專業言行：</strong>不得在顧客面前以明知不實、侮辱、貶損或足以誤導之言論攻擊公司、同事、商品或服務，亦不得故意勸阻交易、破壞客戶關係或妨害正常營業。但員工基於善意反映商品安全、法令風險、品質瑕疵、勞動條件或其他真實問題，不在此限。</li>
+        <li><strong>問題回報：</strong>發現安全風險、客訴、商品瑕疵、帳務差異、資料外洩或違法疑慮時，應立即停止可能擴大損害之行為並向店長或負責人回報，不得隱匿或擅自對外承諾。</li>
+      </ol>
+      <h2>二、顧客、同事與職場尊重</h2>
+      <ol>
+        <li>不得歧視、侮辱、威脅、騷擾、霸凌、暴力或性騷擾顧客、同事、供應商及其他工作接觸者。</li>
+        <li>不得散布明知不實之訊息、惡意挑撥或以公開羞辱方式處理工作爭議；意見不同時應依內部回報或申訴管道處理。</li>
+        <li>員工得依法提出申訴、檢舉、作證、尋求主管機關或法律協助；公司不得因依法行使權利而報復或給予不利待遇。</li>
+      </ol>
+      <h2>三、公司資產、現金、庫存與系統</h2>
+      <ol>
+        <li>公司設備、工具、零件、車輛、鑰匙、帳號、印章、現金、刷卡機及文件僅限公務使用；未經核准不得攜出、借用、轉售、占有或交由他人使用。</li>
+        <li>每筆銷售、收款、退款、折扣、贈品、庫存異動及維修均須即時、如實登錄指定系統；不得私下收款、使用私人帳戶收取公司款項、跳單或截留交易。</li>
+        <li>員工應妥善保管個人帳號與密碼，不得共用、代登入或規避權限；發現帳號或設備異常應立即回報。</li>
+      </ol>
+      <div class="page-no">1 / 4</div>
+    </section>
+
+    <section class="page">
+      <div class="kicker">EMPLOYEE DUTIES, CONFIDENTIALITY &amp; WORK PRODUCT</div>
+      <h1>資訊保護、職務成果與利益衝突</h1>
+      <div class="meta">員工基本工作規範暨門市維修作業指令書</div>
+      <h2>四、機密資訊與個人資料保護</h2>
+      <ol>
+        <li><strong>保密範圍：</strong>包括未公開之客戶與供應商資料、價格與成本、進貨來源、庫存、銷售與財務資料、維修技術、產品設定、圖面、程式、帳號權限、行銷計畫、人事資料及其他經公司標示或依性質應合理認為需保密之資訊。</li>
+        <li>僅得於職務必要範圍內存取及使用；不得以私人通訊軟體、私人雲端、私人裝置或外接儲存媒體擅自複製、下載、拍攝、傳送或保留。</li>
+        <li>不得向無權知悉之同事、顧客、競爭者或第三人揭露，亦不得於離職後使用或洩漏。已公開資訊、員工本身一般知識技能、依法應揭露或向主管機關合法檢舉之內容，不受本款不當限制。</li>
+        <li>離職或公司要求時，應返還公司文件、設備、鑰匙與資料，並刪除未經允許留存之副本；不得妨礙公司依法保存必要紀錄。</li>
+      </ol>
+      <h2>五、職務上完成之著作、設計與工作成果</h2>
+      <ol>
+        <li>員工在職務範圍內、依公司指示或使用公司時間、設備、資料及費用所完成之文案、照片、影片、圖像、設計、表單、教材、維修文件、程式碼、資料庫、流程、報告及其他成果，依法律及勞動契約認定其權利歸屬。</li>
+        <li>除另有書面約定外，職務上完成之著作以公司為著作人，著作財產權歸公司享有；依法不得移轉之權利，仍依法律規定處理。員工同意在必要範圍內提供署名、交付原始檔及權利登記之合理協助。</li>
+        <li>員工原有且在到職前已完成之作品、工具、模板或一般技術，不因本文件當然移轉；如需納入公司成果，應事先說明並另行約定授權。</li>
+        <li>職務上研究或開發之營業秘密，依《營業秘密法》及契約約定處理。員工不得將第三人之機密、未授權素材或侵權內容帶入公司成果。</li>
+      </ol>
+      <h2>六、利益衝突與禁止行為</h2>
+      <ol>
+        <li>不得利用公司客源、名義、設備、庫存、供應商、工作時間或內部資訊私接交易、介紹回扣、轉單、競業銷售或為自己及第三人謀取未經授權之利益。</li>
+        <li>與本人或親友利益有關之採購、交易、折扣、退款或供應關係，應主動揭露並迴避核准；不得收受可能影響公正履職之回扣、佣金或不當利益。</li>
+        <li>不得冒用公司名義對外發言、發布社群內容、簽約、採購或作法律承諾；經授權者應遵守核准範圍。</li>
+        <li>本規範不禁止員工下班後合法活動，但不得使用公司機密、侵害公司資產、造成具體利益衝突或妨害約定工作之正常履行。</li>
+      </ol>
+      <h2>七、安全、整潔與事故處理</h2>
+      <ol>
+        <li>依設備操作、電池充電、試騎、消防及職業安全規範工作；不得酒後、受毒品影響或在明顯不適任狀態下操作車輛及危險設備。</li>
+        <li>保持通道、工作台與展示區整潔；工具使用後歸位，危險品及電池依規定存放。事故、受傷、失竊、火災或設備異常須立即回報並保存現場資料。</li>
+      </ol>
+      <div class="page-no">2 / 4</div>
+    </section>
+
+    <section class="page">
+      <div class="kicker">STORE REPAIR SERVICE SOP</div>
+      <h1>門市維修服務標準作業規範</h1>
+      <div class="meta">員工基本工作規範暨門市維修作業指令書</div>
+      <h2>八、維修服務標準四階段流程（強制遵守）</h2>
+      <table><thead><tr><th>階段</th><th>流程名稱</th><th>主要執行事項</th><th>必要紀錄／表單</th></tr></thead><tbody>
+        <tr><td>第一階段</td><td>預約確認與登記</td><td>經由 POS／系統確認客戶預約，並建立正式維修單據。</td><td>POS／系統維修單</td></tr>
+        <tr><td>第二階段</td><td>檢測與事前報價</td><td>依據價目表進行檢測，出具工資與零件報價，並取得客戶簽名同意。</td><td>事前報價同意書</td></tr>
+        <tr><td>第三階段</td><td>維修執行與登記</td><td>僅針對報價同意項目施工；更換之零件須經系統扣庫及入帳。</td><td>維修作業日誌</td></tr>
+        <tr><td>第四階段</td><td>完工驗收與結帳</td><td>至 POS 櫃檯正式收款結帳，完成付款後始得交付商品及發票／收據。</td><td>POS 銷售發票／收據</td></tr>
+      </tbody></table>
+      <h2>九、嚴禁私自免費、任意折扣及漏登系統</h2>
+      <ol>
+        <li><strong>禁止未經授權免費處理：</strong>凡涉及檢測、拆裝、工資或零件之維修，均須依標準價目表登入系統並收取費用，包括更換螺絲等微小零件；經公司核准之善意服務或保固案件除外。</li>
+        <li><strong>禁止漏登系統紀錄：</strong>不得未建立系統維修單即私自維修，亦不得完工後未完成系統紀錄即直接放行商品。發現漏登或資料錯誤時，應立即向店長回報並補正。</li>
+        <li><strong>折扣及免收權限：</strong>費用減免、折扣或免費保固處理，須取得負責人／店長審核同意，或符合公司公告之保固及二次維修規範。技術人員不得自行決定免收或優惠。</li>
+      </ol>
+      <h2>十、技術費與服務價值認定基準</h2>
+      <div class="value">維修費用不僅是零件成本，亦包含專業診斷、施工時間、設備及門市營運成本，以及完工後之保固責任。員工應依公司核定標準執行，不得擅自免收應收費用。</div>
+      <div class="page-no">3 / 4</div>
+    </section>
+
+    <section class="page">
+      <div class="kicker">STORE OPERATIONAL POLICY &amp; DIRECTIVE</div>
+      <h1>違規處理與簽收確認</h1>
+      <div class="meta">員工基本工作規範暨門市維修作業指令書</div>
+      <h2>十一、違規處理機制</h2>
+      <div class="warning"><strong>處理原則：</strong>違反本規範者，公司應依具體事實、違規情節、故意或過失程度、所生損害及改善情形進行調查，並給予當事人說明之機會。經查證屬實後，依公司依法制定之工作規則、勞動契約及相關法令，採取書面警告、教育訓練、記過或其他適當處置。</div>
+      <ol>
+        <li>涉及公司實際損害者，應另行確認責任歸屬及損害金額，依法處理，不得逕自從工資中扣除。</li>
+        <li>屢次違規者，公司得將先前警告、教育訓練及改善情形納入後續處置之考量，但不以違規次數作為自動解僱之唯一依據。</li>
+        <li>情節重大且符合法定終止勞動契約要件者，公司得依法辦理；如有具體事證顯示涉嫌違法，另依法處理。</li>
+      </ol>
+      <div class="ack">
+        <h2>員工工作規範暨職務指令電子簽收確認書</h2>
+        <p>本人已充分閱讀並瞭解本規範全部內容，包括基本工作義務、顧客服務、公司資產、資訊保密、職務成果、利益衝突、職場尊重、安全及維修作業流程，並承諾依規定履行職務。</p>
+        <div class="legal">本人同意以本頁手寫電子簽名作為簽收確認。本人確認該電子簽名為本人親自簽署，並同意公司將本文件、簽署時間及驗證紀錄以電子方式保存，作為已收受及知悉本職務指令之證明。此簽收僅證明本人已閱讀並知悉規範，不表示放棄勞動法令所保障之權利。</div>
+        <div class="form-grid">
+          <div class="field"><label for="signerTitle">部門／職稱（必填）</label><input id="signerTitle" maxlength="60" autocomplete="organization-title"></div>
+          <div class="field"><label for="signerName">簽署人姓名（必填）</label><input id="signerName" maxlength="60" autocomplete="name"></div>
+        </div>
+        <div class="signature"><label>簽署人手寫簽名（必填）</label><div class="canvas-wrap"><span id="hint1">請在此簽名</span><canvas id="employeeSignature"></canvas></div><div class="sig-actions"><button type="button" data-clear="employeeSignature">清除重簽</button></div></div>
+        <div class="signature"><label>門市負責人簽名（選填）</label><div class="canvas-wrap"><span id="hint2">請在此簽名</span><canvas id="managerSignature"></canvas></div><div class="sig-actions"><button type="button" data-clear="managerSignature">清除重簽</button></div></div>
+        <label class="consent"><input id="consent" type="checkbox"><span>我確認以上資料正確，已完整閱讀本文件，並同意使用電子簽名及電子方式保存簽署完成之 PDF。</span></label>
+        <div id="signedTime" class="signed-time">簽署時間：尚未簽署</div>
+        <div id="serverResult" class="server-result"></div>
+      </div>
+      <div class="page-no">4 / 4</div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" crossorigin="anonymous"></script>
+  <script>
+    const VERSION = "2026-08-13-rev2";
+    const signatures = new Map();
+    const statusEl = document.getElementById("status");
+    function message(text, kind){statusEl.textContent=text;statusEl.className=`status ${kind}`;window.scrollTo({top:0,behavior:"smooth"});}
+
+    function setupSignature(canvas, hint){
+      const ctx=canvas.getContext("2d"); let drawing=false; let signed=false;
+      function resize(){const rect=canvas.getBoundingClientRect();const ratio=Math.max(window.devicePixelRatio||1,1);const old=signed?canvas.toDataURL():null;canvas.width=rect.width*ratio;canvas.height=rect.height*ratio;ctx.setTransform(ratio,0,0,ratio,0,0);ctx.lineWidth=2.2;ctx.lineCap="round";ctx.strokeStyle="#142b43";if(old){const img=new Image();img.onload=()=>ctx.drawImage(img,0,0,rect.width,rect.height);img.src=old;}}
+      function point(e){const r=canvas.getBoundingClientRect();const p=e.touches?e.touches[0]:e;return{x:p.clientX-r.left,y:p.clientY-r.top};}
+      function start(e){e.preventDefault();drawing=true;const p=point(e);ctx.beginPath();ctx.moveTo(p.x,p.y);}
+      function move(e){if(!drawing)return;e.preventDefault();const p=point(e);ctx.lineTo(p.x,p.y);ctx.stroke();signed=true;hint.style.display="none";}
+      function stop(){drawing=false;}
+      ["pointerdown"].forEach(n=>canvas.addEventListener(n,start));["pointermove"].forEach(n=>canvas.addEventListener(n,move));["pointerup","pointercancel","pointerleave"].forEach(n=>canvas.addEventListener(n,stop));
+      resize(); signatures.set(canvas.id,{get signed(){return signed},clear(){ctx.clearRect(0,0,canvas.width,canvas.height);signed=false;hint.style.display="block";}}); window.addEventListener("resize",resize);
+    }
+    setupSignature(document.getElementById("employeeSignature"),document.getElementById("hint1"));
+    setupSignature(document.getElementById("managerSignature"),document.getElementById("hint2"));
+    document.querySelectorAll("[data-clear]").forEach(b=>b.addEventListener("click",()=>signatures.get(b.dataset.clear).clear()));
+
+    async function createPdf(){
+      if(!window.html2canvas||!window.jspdf)throw new Error("PDF 元件載入失敗，請檢查網路後重試。");
+      const pages=[...document.querySelectorAll(".page")]; const {jsPDF}=window.jspdf; const pdf=new jsPDF({orientation:"portrait",unit:"mm",format:"a4",compress:true});
+      for(let i=0;i<pages.length;i++){if(i)pdf.addPage();const canvas=await html2canvas(pages[i],{scale:2,useCORS:true,backgroundColor:"#ffffff",windowWidth:pages[i].scrollWidth});const ratio=Math.min(210/canvas.width,297/canvas.height);const w=canvas.width*ratio,h=canvas.height*ratio;pdf.addImage(canvas.toDataURL("image/jpeg",0.94),"JPEG",(210-w)/2,0,w,h,undefined,"FAST");}
+      return pdf.output("datauristring");
+    }
+
+    document.getElementById("submitBtn").addEventListener("click",async()=>{
+      const btn=document.getElementById("submitBtn");const signerName=document.getElementById("signerName").value.trim();const signerTitle=document.getElementById("signerTitle").value.trim();
+      if(!signerTitle||!signerName)return message("請填寫部門／職稱及簽署人姓名。","error");
+      if(!signatures.get("employeeSignature").signed)return message("請完成簽署人手寫簽名。","error");
+      if(!document.getElementById("consent").checked)return message("請勾選電子簽署及保存同意。","error");
+      btn.disabled=true;btn.textContent="PDF 產生與儲存中…";
+      try{
+        const signedAt=new Date().toISOString();document.getElementById("signedTime").textContent=`簽署時間：${new Date(signedAt).toLocaleString("zh-TW",{hour12:false})}`;
+        const dataUri=await createPdf();const response=await fetch("/api/policies/store-repair/sign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pdfBase64:dataUri,signerName,signerTitle,documentVersion:VERSION,signedAt})});
+        const result=await response.json();if(!response.ok||!result.ok)throw new Error(result.message||"伺服器儲存失敗。");
+        const box=document.getElementById("serverResult");box.style.display="block";box.textContent=`儲存完成｜文件編號：${result.documentId}｜檔名：${result.filename}｜SHA-256：${result.sha256}`;
+        document.querySelectorAll("input,button[data-clear]").forEach(el=>el.disabled=true);message("簽署完成，PDF 已安全儲存至伺服器。","ok");btn.textContent="已完成簽署";
+      }catch(error){message(error.message||"處理失敗，請稍後再試。","error");btn.disabled=false;btn.textContent="簽署並儲存 PDF";}
+    });
+  </script>
+</body>
+</html>
