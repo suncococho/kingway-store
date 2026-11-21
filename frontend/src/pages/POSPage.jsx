@@ -11,8 +11,15 @@ import StatusBadge from "../components/StatusBadge";
 import { useProcessingGuard } from "../hooks/useProcessingGuard";
 import { useStoreFeatures } from "../hooks/useStoreFeatures";
 import { apiRequest } from "../lib/api";
+import { getStoredUser } from "../lib/auth";
 import { getCategoryLabel } from "../lib/display";
 import { PRODUCT_CATEGORY_OPTIONS } from "../lib/productCategories";
+
+const STAFF_ROLE_LABELS = { ADMIN: "管理員", MANAGER: "店長", CASHIER: "門市人員", REPAIR: "維修", INVENTORY: "庫存" };
+
+function getStaffOptionLabel(staff) {
+  return `${staff.displayName}（${STAFF_ROLE_LABELS[staff.role] || staff.role || "-"}）`;
+}
 
 function getStockTone(stock, reorderLevel) {
   if (Number(stock) <= 0) {
@@ -188,6 +195,13 @@ function POSPage() {
   const notesRef = useRef(null);
   const checkoutRef = useRef(null);
   const orderCreateRequestIdRef = useRef("");
+  const [staffOptions, setStaffOptions] = useState([]);
+
+  useEffect(() => {
+    apiRequest("/staff/select-options")
+      .then((rows) => setStaffOptions(Array.isArray(rows) ? rows : []))
+      .catch(() => setStaffOptions([]));
+  }, []);
 
   useEffect(() => {
     async function loadProducts() {
@@ -356,6 +370,27 @@ function POSPage() {
           updatedAt: now
         };
       })
+    }));
+  }
+
+  // 銷售人員：預設為目前登入的員工（可改選或清除）
+  const currentStaffId = String(getStoredUser()?.id || "");
+  const defaultSalesStaffId = staffOptions.some((staff) => String(staff.id) === currentStaffId) ? currentStaffId : "";
+  const effectiveSalesStaffId = activeCart?.salesStaffId ?? defaultSalesStaffId;
+  const effectiveSalesSupportStaffId =
+    effectiveSalesStaffId && String(activeCart?.salesSupportStaffId || "") !== String(effectiveSalesStaffId)
+      ? String(activeCart?.salesSupportStaffId || "")
+      : "";
+  const staffNameById = (id) => staffOptions.find((staff) => String(staff.id) === String(id))?.displayName || "";
+
+  function setSalesStaff(nextPrimaryId) {
+    updateActiveCart((cart) => ({
+      ...cart,
+      salesStaffId: nextPrimaryId,
+      salesSupportStaffId:
+        !nextPrimaryId || String(cart.salesSupportStaffId || "") === String(nextPrimaryId)
+          ? ""
+          : cart.salesSupportStaffId || ""
     }));
   }
 
@@ -568,6 +603,8 @@ function POSPage() {
             couponCode: activeCart.couponCode || "",
             couponAmount: Number(activeCart.couponAmount || 0),
             notes: activeCart.notes,
+            salesStaffId: effectiveSalesStaffId ? Number(effectiveSalesStaffId) : undefined,
+            salesSupportStaffId: effectiveSalesSupportStaffId ? Number(effectiveSalesSupportStaffId) : undefined,
             items: activeCart.items.map((item) => ({
               product_id: item.id,
               qty: item.qty
@@ -591,7 +628,9 @@ function POSPage() {
           isReservationOrder: false,
           depositAmount: "",
           unpaidBalance: "",
-          finalPaymentStatus: "PAID"
+          finalPaymentStatus: "PAID",
+          salesStaffId: undefined,
+          salesSupportStaffId: ""
         }));
         orderCreateRequestIdRef.current = "";
         setSuccessModal(data);
@@ -1007,6 +1046,32 @@ function POSPage() {
                 <option value="UNPAID">未付款</option>
               </select>
             </label>
+
+            <label className="form-field">
+              <span>主要銷售人員</span>
+              <select value={effectiveSalesStaffId} onChange={(event) => setSalesStaff(event.target.value)}>
+                <option value="">未指定（之後可在訂單編輯指定）</option>
+                {staffOptions.map((staff) => (
+                  <option key={staff.id} value={staff.id}>{getStaffOptionLabel(staff)}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="form-field">
+              <span>支援銷售人員（選填）</span>
+              <select
+                value={effectiveSalesSupportStaffId}
+                disabled={!effectiveSalesStaffId}
+                onChange={(event) => setActiveCartField("salesSupportStaffId", event.target.value)}
+              >
+                <option value="">不指定支援銷售人員</option>
+                {staffOptions
+                  .filter((staff) => String(staff.id) !== String(effectiveSalesStaffId))
+                  .map((staff) => (
+                    <option key={staff.id} value={staff.id}>{getStaffOptionLabel(staff)}</option>
+                  ))}
+              </select>
+            </label>
           </div>
           <div className="wizard-actions">
             <button type="button" className="secondary-button" onClick={() => setPosStep(2)}>上一步</button>
@@ -1024,6 +1089,7 @@ function POSPage() {
             <div><strong>商品</strong><span>{activeCart?.items.length || 0} 項 / {cartQty} 件</span></div>
             <div><strong>金額</strong><span>{formatCurrency(totalPrice)}</span></div>
             <div><strong>付款狀態</strong><span>{activeCart?.finalPaymentStatus === "PAID" ? "已完款" : activeCart?.finalPaymentStatus === "PARTIAL" ? "部分付款" : "未付款"}</span></div>
+            <div><strong>銷售人員</strong><span>{effectiveSalesStaffId ? `${staffNameById(effectiveSalesStaffId) || "-"}${effectiveSalesSupportStaffId ? ` / 支援：${staffNameById(effectiveSalesSupportStaffId) || "-"}` : ""}` : "未指定"}</span></div>
             <div><strong>購買確認書</strong><span>{hasEbikeInCart ? (isOfflineCustomerType(activeCart?.customerType) ? "一般客戶不自動發送 LINE" : "購買確認書將於完成付款後發送") : "不需要"}</span></div>
           </div>
           <button type="button" className="secondary-button inline-submit" onClick={() => setDetailsOpen(true)}>

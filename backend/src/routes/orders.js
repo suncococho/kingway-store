@@ -1625,6 +1625,8 @@ router.post("/", requirePosFeature, async (req, res, next) => {
       couponCode,
       couponAmount,
       notes,
+      salesStaffId,
+      salesSupportStaffId,
       items
     } = req.body;
 
@@ -1793,48 +1795,42 @@ router.post("/", requirePosFeature, async (req, res, next) => {
 
       const businessDate = dayjs().tz(TAIPEI_TZ).format("YYYY-MM-DD");
       const orderNo = `POS-${dayjs().tz(TAIPEI_TZ).format("YYYYMMDD-HHmmss-SSS")}`;
+      const orderColumns = await getTableColumns(connection, "orders");
+      const salesAssignments = await resolveOrderSharedSalesAssignments(
+        connection,
+        storeId,
+        salesStaffId,
+        salesSupportStaffId,
+        orderColumns
+      );
+      const salesStaffAssignment = salesAssignments.primary;
+      const salesSupportStaffAssignment = salesAssignments.support;
+      const orderInsertColumns = [
+        "store_id", "order_no", "customer_id", "customer_name", "customer_phone", "customer_type",
+        "order_type", "total_amount", "payment_method", "status", "is_reservation_order", "deposit_amount",
+        "unpaid_balance", "final_payment_status", "final_paid_at", "notes", "created_by", "business_date"
+      ];
+      const orderInsertValues = [
+        storeId, orderNo, resolvedCustomerId || null, resolvedCustomerName,
+        resolvedCustomerType === "OFFLINE_NO_PHONE" ? null : resolvedCustomerPhone, resolvedCustomerType,
+        "GENERAL", totalAmount, paymentMethod || "CASH", "COMPLETED", normalizedIsReservation ? 1 : 0,
+        normalizedDeposit, requestedUnpaidBalance, normalizedFinalPaymentStatus,
+        normalizedFinalPaymentStatus === "PAID" ? new Date() : null, notes || null, req.user.id, businessDate
+      ];
+      if (salesStaffAssignment !== undefined) {
+        orderInsertColumns.push("sales_staff_id", "sales_staff_name");
+        orderInsertValues.push(salesStaffAssignment.id, salesStaffAssignment.name);
+      }
+      if (salesSupportStaffAssignment !== undefined) {
+        orderInsertColumns.push("sales_support_staff_id", "sales_support_staff_name");
+        orderInsertValues.push(salesSupportStaffAssignment.id, salesSupportStaffAssignment.name);
+      }
       const [orderResult] = await connection.query(
         `
-          INSERT INTO orders (
-            store_id,
-            order_no,
-            customer_id,
-            customer_name,
-            customer_phone,
-            customer_type,
-            order_type,
-            total_amount,
-            payment_method,
-            status,
-            is_reservation_order,
-            deposit_amount,
-            unpaid_balance,
-            final_payment_status,
-            final_paid_at,
-            notes,
-            created_by,
-            business_date
-          )
-          VALUES (?, ?, ?, ?, ?, ?, 'GENERAL', ?, ?, 'COMPLETED', ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO orders (${orderInsertColumns.join(", ")})
+          VALUES (${orderInsertColumns.map(() => "?").join(", ")})
         `,
-        [
-          storeId,
-          orderNo,
-          resolvedCustomerId || null,
-          resolvedCustomerName,
-          resolvedCustomerType === "OFFLINE_NO_PHONE" ? null : resolvedCustomerPhone,
-          resolvedCustomerType,
-          totalAmount,
-          paymentMethod || "CASH",
-          normalizedIsReservation ? 1 : 0,
-          normalizedDeposit,
-          requestedUnpaidBalance,
-          normalizedFinalPaymentStatus,
-          normalizedFinalPaymentStatus === "PAID" ? new Date() : null,
-          notes || null,
-          req.user.id,
-          businessDate
-        ]
+        orderInsertValues
       );
 
       const couponCodes = String(couponCode || "")
@@ -1921,10 +1917,16 @@ router.post("/", requirePosFeature, async (req, res, next) => {
         depositAmount: normalizedDeposit,
         unpaidBalance: requestedUnpaidBalance,
         finalPaymentStatus: normalizedFinalPaymentStatus,
+        salesStaffId: salesStaffAssignment?.id || null,
+        salesStaffName: salesStaffAssignment?.name || null,
+        salesSupportStaffId: salesSupportStaffAssignment?.id || null,
+        salesSupportStaffName: salesSupportStaffAssignment?.name || null,
         items: normalizedItems
       };
     });
     completeOrderCreateGuard(orderCreateGuard, order);
+
+    await reconcileOrderIncentives(storeId, order.id, "ORDER_CREATED");
 
     await logKpi(req.user.id, "ORDER_CREATED", "ORDER", order.id, 2);
     await logWorkflowEvent("order_created", "ORDER", order.id, {

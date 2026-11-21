@@ -274,6 +274,16 @@ function buildAccessoryUpdatePayload(item, overrides = {}) {
   };
 }
 
+// 員工績效從 2026-11-01 起依訂單銷售人員計算；已完款但未指定銷售人員的訂單需要補指定
+const SALES_STAFF_REQUIRED_FROM = new Date("2026-10-31T16:00:00Z");
+
+function isMissingSalesStaff(row) {
+  if (!row || row.salesStaffId) return false;
+  if (String(row.finalPaymentStatus || "").toUpperCase() !== "PAID") return false;
+  const orderDate = new Date(row.businessDate || row.createdAt || 0);
+  return !Number.isNaN(orderDate.getTime()) && orderDate >= SALES_STAFF_REQUIRED_FROM;
+}
+
 function OrdersPage() {
   const [keyword, setKeyword] = useState("");
   const [serverKeyword, setServerKeyword] = useState("");
@@ -289,6 +299,7 @@ function OrdersPage() {
   const [typeFilter, setTypeFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [depositFilter, setDepositFilter] = useState("ALL");
+  const [salesStaffFilter, setSalesStaffFilter] = useState("ALL");
   const [detail, setDetail] = useState(null);
   const [detailForm, setDetailForm] = useState({
     customerName: "",
@@ -401,6 +412,9 @@ function OrdersPage() {
         if (depositFilter !== "ALL" && ((depositFilter === "YES" && Number(row.unpaidBalance || 0) <= 0) || (depositFilter === "NO" && Number(row.unpaidBalance || 0) > 0))) {
           return false;
         }
+        if (salesStaffFilter === "MISSING" && !isMissingSalesStaff(row)) {
+          return false;
+        }
         if (tab === "GENERAL") {
           return !row.isReservationOrder && !isRepairRelatedOrder(row);
         }
@@ -418,8 +432,9 @@ function OrdersPage() {
         }
         return true;
       }),
-    [depositFilter, keyword, rows, statusFilter, tab, typeFilter]
+    [depositFilter, keyword, rows, salesStaffFilter, statusFilter, tab, typeFilter]
   );
+  const missingSalesStaffCount = useMemo(() => rows.filter(isMissingSalesStaff).length, [rows]);
 
   const groupedRows = useMemo(() => {
     const map = new Map();
@@ -1590,6 +1605,20 @@ if (!window.confirm(
                 </select>
               </label>
             </FilterBar>
+            {!loading && missingSalesStaffCount > 0 ? (
+              <div className="warning-banner">
+                <span>
+                  ⚠ 已完款但未指定銷售人員：<strong>{missingSalesStaffCount}</strong> 筆（不會計入員工績效，請點「編輯」指定主要銷售人員）
+                </span>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setSalesStaffFilter((current) => (current === "MISSING" ? "ALL" : "MISSING"))}
+                >
+                  {salesStaffFilter === "MISSING" ? "顯示全部訂單" : "只看這些訂單"}
+                </button>
+              </div>
+            ) : null}
             {loading ? <div className="loading-state">載入訂單資料中...</div> : null}
             {error ? <div className="error-banner">{error}</div> : null}
             {!loading && !error ? (
