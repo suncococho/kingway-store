@@ -86,6 +86,7 @@ async function loadExistingEvents(connection, order) {
         source_unit_key AS sourceUnitKey,
         product_name_snapshot AS productNameSnapshot,
         final_amount AS finalAmount,
+        earned_at AS earnedAt,
         status
       FROM staff_incentive_events
       WHERE store_id = ?
@@ -125,6 +126,13 @@ async function voidLegacyEvents(connection, order, keptIds) {
     params
   );
   return Number(result?.affectedRows || 0);
+}
+
+function formatDate(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hour12: false });
 }
 
 function money(value) {
@@ -183,6 +191,12 @@ async function main() {
             totals.planReview += 1;
           } else if (Number(found.finalAmount) !== Number(candidate.finalAmount)) {
             action = `更新(${money(found.finalAmount)}→)`;
+            totals.update += 1;
+          } else if (
+            candidate.earnedAt &&
+            (!found.earnedAt || Math.abs(new Date(found.earnedAt).getTime() - new Date(candidate.earnedAt).getTime()) > 60000)
+          ) {
+            action = `更新日期(${formatDate(found.earnedAt)}→${formatDate(candidate.earnedAt)})`;
             totals.update += 1;
           } else {
             action = "相同";

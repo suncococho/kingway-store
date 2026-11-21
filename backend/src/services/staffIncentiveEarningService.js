@@ -861,10 +861,21 @@ function buildOrderSaleIncentiveCandidates({
     };
   }
 
-  const pushSplit = (candidate) => {
+  // 績效日期＝實際發生時間：配件／維修＝完款時間，車輛＝交車確認時間
+  const paidAt =
+    toValidDate(order.finalPaidAt ?? order.final_paid_at) ||
+    toValidDate(order.businessDate ?? order.business_date) ||
+    new Date();
+  const handoverAt =
+    toValidDate(order.handoverConfirmedAt ?? order.handover_confirmed_at) ||
+    paidAt;
+  const pushSplit = (candidate, earnedAt = paidAt) => {
     if (!candidate) return;
     candidates.push(
-      ...splitCandidateBySalesAssignments(withRuleMetadata(candidate), order)
+      ...splitCandidateBySalesAssignments(
+        withRuleMetadata({ ...candidate, earnedAt }),
+        order
+      )
     );
   };
 
@@ -924,7 +935,8 @@ function buildOrderSaleIncentiveCandidates({
         pushSplit(
           buildBikeAllStagesCandidate({
             order, item, unitIndex, plan, triggerSource, confirmation, followup: null
-          })
+          }),
+          handoverAt
         );
       }
     }

@@ -22,6 +22,23 @@ const STAGE_LABELS = {
   ITEM: "配件",
   INSPECTION: "維修工資"
 };
+const REASON_LABELS = {
+  ORDER_RECALCULATED_OR_REASSIGNED: "訂單重新計算或改派",
+  RECALCULATED_NOT_ELIGIBLE: "重新計算後不符合條件",
+  "REPLACED_BY_KW-2026-11-R1": "已由新版規則取代",
+  ORDER_CANCELED_OR_FULLY_REFUNDED: "訂單取消或全額退款"
+};
+function getReasonLabel(row) {
+  const reason = row?.pendingReason || row?.voidReason || "";
+  if (!reason) return "-";
+  if (REASON_LABELS[reason]) return REASON_LABELS[reason];
+  return /^[A-Z0-9_-]+$/.test(reason) ? (row?.status === "VOID" ? "已作廢" : "待確認") : reason;
+}
+function getSourceLabel(row) {
+  if (row?.sourceOrderNo) return `訂單 ${row.sourceOrderNo}`;
+  if (row?.sourceType === "REPAIR") return `維修單 #${row.sourceId}`;
+  return row?.sourceId ? `訂單 #${row.sourceId}` : "";
+}
 function getStageLabel(row) {
   if (row?.incentiveType === "REPAIR_INSPECTION" && row?.earningStage === "ITEM") return "更換零件";
   return STAGE_LABELS[row?.earningStage] || row?.earningStage || "-";
@@ -106,13 +123,18 @@ function EventTable({ events, emptyText = "目前沒有績效紀錄。", showSta
     {
       key: "source",
       label: "商品／來源",
-      render: (row) => row.productNameSnapshot || `${row.sourceType || "來源"} #${row.sourceId}`
+      render: (row) => (
+        <div>
+          <div>{row.productNameSnapshot || "-"}</div>
+          {getSourceLabel(row) ? <div className="muted-text">{getSourceLabel(row)}</div> : null}
+        </div>
+      )
     },
     { key: "actualSaleAmount", label: "實際交易金額", render: (row) => money(row.actualSaleAmount) },
     { key: "assignedRatio", label: "分配比例", render: (row) => `${Math.round(Number(row.assignedRatio || 0) * 100)}%` },
     { key: "finalAmount", label: "績效金額", render: (row) => money(row.finalAmount) },
     { key: "status", label: "狀態", render: (row) => <Status value={row.status} /> },
-    { key: "pendingReason", label: "待確認原因", render: (row) => row.pendingReason || row.voidReason || "-" },
+    { key: "pendingReason", label: "待確認原因", render: (row) => getReasonLabel(row) },
     ...(action ? [{ key: "action", label: "操作", render: action }] : [])
   ];
   return (
@@ -121,7 +143,7 @@ function EventTable({ events, emptyText = "目前沒有績效紀錄。", showSta
       rows={events}
       emptyText={emptyText}
       cardTitle={(row) => `${TYPE_LABELS[row.incentiveType] || row.incentiveType} / ${money(row.finalAmount)}`}
-      cardDescription={(row) => `${showStaff ? `${row.staffDisplayName || "-"} / ` : ""}${dateTime(row.earnedAt || row.createdAt)}`}
+      cardDescription={(row) => `${showStaff ? `${row.staffDisplayName || "-"} / ` : ""}${dateTime(row.earnedAt || row.createdAt)}${row.productNameSnapshot ? ` / ${row.productNameSnapshot}` : ""}${getSourceLabel(row) ? ` / ${getSourceLabel(row)}` : ""}`}
       cardBadges={(row) => <Status value={row.status} />}
       cardFooter={action ? (row) => action(row) : undefined}
     />

@@ -108,6 +108,7 @@ function mapEventRow(row) {
     sourceType: row.sourceType,
     sourceId: Number(row.sourceId),
     sourceLineId: Number(row.sourceLineId || 0),
+    sourceOrderNo: row.sourceOrderNo || null,
     productId: row.productId == null ? null : Number(row.productId),
     productNameSnapshot: row.productNameSnapshot || null,
     quantity: Number(row.quantity || 0),
@@ -269,6 +270,7 @@ async function loadIncentiveEvents(
         e.source_type AS sourceType,
         e.source_id AS sourceId,
         e.source_line_id AS sourceLineId,
+        src_order.order_no AS sourceOrderNo,
         e.product_id AS productId,
         e.product_name_snapshot AS productNameSnapshot,
         e.quantity,
@@ -288,6 +290,10 @@ async function loadIncentiveEvents(
         e.updated_at AS updatedAt
       FROM staff_incentive_events e
       LEFT JOIN staff_users su ON su.id = e.staff_user_id
+      LEFT JOIN orders src_order
+        ON src_order.id = e.source_id
+       AND src_order.store_id = e.store_id
+       AND e.source_type IN ('ORDER', 'ORDER_ITEM')
       WHERE ${where.join(" AND ")}
       ORDER BY COALESCE(e.earned_at, e.created_at) DESC, e.id DESC
       LIMIT ?
