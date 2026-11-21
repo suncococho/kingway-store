@@ -907,6 +907,7 @@ router.delete("/:id", requireOrderManagementFeature, async (req, res, next) => {
     if (!result.affectedRows) {
       return res.status(404).json({ message: "找不到訂單或已刪除" });
     }
+    await reconcileOrderIncentives(storeId, req.params.id, "ORDER_DELETED");
     return res.json({ message: "訂單已移至已刪除資料" });
   } catch (error) {
     return next(error);
@@ -925,6 +926,7 @@ router.post("/:id/restore", requireOrderManagementFeature, async (req, res, next
     if (!result.affectedRows) {
       return res.status(404).json({ message: "找不到已刪除訂單" });
     }
+    await reconcileOrderIncentives(storeId, req.params.id, "ORDER_RESTORED");
     return res.json({ message: "訂單已復原" });
   } catch (error) {
     return next(error);

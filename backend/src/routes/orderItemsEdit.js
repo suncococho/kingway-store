@@ -65,10 +65,15 @@ router.put("/:id/items", requireStoreFeature("orders_enabled"), async (req, res,
       const oldTotal = Number(order.totalAmount || 0);
       const keepDiscount = Math.max(oldSubtotal - oldTotal, 0);
       const [oldItemRows] = await tx.query(
-        `SELECT product_id AS productId, unit_price AS unitPrice
+        `SELECT product_id AS productId, unit_price AS unitPrice,
+                sku_snapshot AS sku, product_name_snapshot AS name,
+                product_category_snapshot AS category
          FROM order_items
          WHERE order_id = ? AND store_id = ?`,
         [orderId, storeId]
+      );
+      const oldItemsByProduct = new Map(
+        oldItemRows.map((item) => [Number(item.productId), item])
       );
       const oldUnitPrices = new Map(
         oldItemRows.map((item) => [Number(item.productId), Number(item.unitPrice || 0)])
@@ -81,11 +86,19 @@ router.put("/:id/items", requireStoreFeature("orders_enabled"), async (req, res,
         if (!productId) throw createError("商品資料錯誤", 400);
 
         const [products] = await tx.query(
-          `SELECT id, sku, name, category, price FROM products WHERE id = ? AND store_id = ? AND is_active = 1 LIMIT 1`,
+          `SELECT id, sku, name, category, price, is_active AS isActive FROM products WHERE id = ? AND store_id = ? LIMIT 1`,
           [productId, storeId]
         );
 
-        const product = products[0];
+        // 新加入的商品必須是上架中；訂單原本就有的商品即使已下架也可保留
+        const oldItem = oldItemsByProduct.get(productId) || null;
+        let product = products[0] || null;
+        if (product && Number(product.isActive) !== 1 && !oldItem) {
+          throw createError(`商品「${product.name || productId}」已下架，無法新增到訂單`, 400);
+        }
+        if (!product && oldItem) {
+          product = { id: productId, sku: oldItem.sku, name: oldItem.name, category: null, price: oldItem.unitPrice, snapshotCategory: oldItem.category };
+        }
         if (!product) throw createError(`找不到商品 ID ${productId}`, 404);
 
         const unitPrice = item.unitPrice !== undefined
@@ -97,7 +110,7 @@ router.put("/:id/items", requireStoreFeature("orders_enabled"), async (req, res,
           productId,
           sku: product.sku,
           name: product.name,
-          category: mapCategory(product.category),
+          category: product.category ? mapCategory(product.category) : product.snapshotCategory,
           quantity,
           unitPrice,
           lineTotal

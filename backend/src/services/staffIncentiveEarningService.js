@@ -1084,6 +1084,122 @@ async function loadOrderSaleIncentiveSnapshot(connection, storeId, orderId) {
   };
 }
 
+// 系統自動作廢、訂單恢復後可重新使用的原因
+const REVIVABLE_VOID_REASONS = new Set([
+  "ORDER_CANCELED_OR_FULLY_REFUNDED",
+  "RECALCULATED_NOT_ELIGIBLE"
+]);
+
+async function loadExistingOrderEvents(connection, { storeId, orderId }) {
+  const [rows] = await connection.query(
+    `
+      SELECT
+        id,
+        staff_user_id AS staffUserId,
+        incentive_type AS incentiveType,
+        earning_stage AS earningStage,
+        source_type AS sourceType,
+        source_id AS sourceId,
+        source_line_id AS sourceLineId,
+        source_unit_key AS sourceUnitKey,
+        product_id AS productId,
+        status,
+        void_reason AS voidReason,
+        CASE WHEN metadata_json LIKE ? THEN 1 ELSE 0 END AS isRuleEvent
+      FROM staff_incentive_events
+      WHERE store_id = ?
+        AND source_id = ?
+        AND source_type IN ('ORDER', 'ORDER_ITEM')
+      ORDER BY id ASC
+    `,
+    [`%"ruleVersion":"${INCENTIVE_RULE_VERSION}"%`, storeId, orderId]
+  );
+  return rows;
+}
+
+function incentiveEventKey(event) {
+  return [
+    Number(event.staffUserId),
+    event.incentiveType,
+    event.earningStage,
+    event.sourceType,
+    Number(event.sourceLineId || 0),
+    String(event.sourceUnitKey || "")
+  ].join("|");
+}
+
+function isRevivableEvent(event) {
+  return (
+    event.status === "VOID" &&
+    Number(event.isRuleEvent) === 1 &&
+    REVIVABLE_VOID_REASONS.has(event.voidReason)
+  );
+}
+
+// 訂單品項重存後明細 ID 會改變：同員工、同類型、同商品的既有績效沿用原本的來源鍵，
+// 避免已核准／已支付的績效因明細 ID 改變而重複產生。
+function remapCandidatesToExistingEvents(candidates = [], existingEvents = []) {
+  const usable = existingEvents.filter((event) => event.status !== "VOID" || isRevivableEvent(event));
+  const usedIds = new Set();
+  const reviveIds = [];
+  const matched = new Set();
+
+  const take = (candidate, event) => {
+    usedIds.add(Number(event.id));
+    matched.add(candidate);
+    candidate.sourceLineId = Number(event.sourceLineId || 0);
+    candidate.sourceUnitKey = String(event.sourceUnitKey || "");
+    if (isRevivableEvent(event)) reviveIds.push(Number(event.id));
+  };
+
+  // 1) 來源鍵完全相同
+  const byKey = new Map();
+  for (const event of usable) {
+    const key = incentiveEventKey(event);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(event);
+  }
+  for (const candidate of candidates) {
+    const event = (byKey.get(incentiveEventKey(candidate)) || []).find((row) => !usedIds.has(Number(row.id)));
+    if (event) take(candidate, event);
+  }
+
+  // 2) 同員工、同類型、同階段、同商品（優先使用未作廢的紀錄）
+  for (const candidate of candidates) {
+    if (matched.has(candidate) || candidate.sourceType !== "ORDER_ITEM") continue;
+    const productId = Number(candidate.productId || 0);
+    if (!productId) continue;
+    const sameProduct = usable
+      .filter((event) =>
+        !usedIds.has(Number(event.id)) &&
+        Number(event.staffUserId) === Number(candidate.staffUserId) &&
+        event.incentiveType === candidate.incentiveType &&
+        event.earningStage === candidate.earningStage &&
+        event.sourceType === candidate.sourceType &&
+        Number(event.productId || 0) === productId
+      )
+      .sort((a, b) => Number(a.status === "VOID") - Number(b.status === "VOID") || Number(a.id) - Number(b.id));
+    if (sameProduct[0]) take(candidate, sameProduct[0]);
+  }
+
+  return { reviveIds };
+}
+
+async function reviveVoidedEvents(connection, { storeId, ids = [] }) {
+  if (!ids.length) return 0;
+  const [result] = await connection.query(
+    `UPDATE staff_incentive_events
+     SET status = 'PENDING',
+         void_reason = NULL,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE store_id = ?
+       AND status = 'VOID'
+       AND id IN (${ids.map(() => "?").join(", ")})`,
+    [storeId, ...ids]
+  );
+  return Number(result?.affectedRows || 0);
+}
+
 async function reconcileOrderSaleIncentives({
   connection,
   storeId,
@@ -1147,19 +1263,26 @@ async function reconcileOrderSaleIncentives({
     };
   }
 
+  // 找不到績效辦法、或生效日前的訂單：不新增、不作廢任何紀錄
+  if (
+    evaluation.reason === "ACTIVE_PLAN_NOT_FOUND" ||
+    evaluation.reason === "BEFORE_EFFECTIVE_FROM"
+  ) {
+    return { ...evaluation, results: [], voidedCount: 0 };
+  }
+
+  const loadExisting = dependencies.loadExistingOrderEvents || loadExistingOrderEvents;
+  const existingEvents = await loadExisting(connection, { storeId, orderId });
+  const { reviveIds } = remapCandidatesToExistingEvents(evaluation.candidates, existingEvents);
+  const revive = dependencies.reviveVoidedEvents || reviveVoidedEvents;
+  await revive(connection, { storeId, ids: reviveIds });
+
   const results = [];
   for (const candidate of evaluation.candidates) {
     results.push(await saveEvent(connection, candidate));
   }
 
   // 本規則建立、但已不再符合（例如銷售人員變更、品項刪除）的未核准績效 → 作廢
-  // 找不到績效辦法、或生效日前的訂單：不作廢任何紀錄
-  if (
-    evaluation.reason === "ACTIVE_PLAN_NOT_FOUND" ||
-    evaluation.reason === "BEFORE_EFFECTIVE_FROM"
-  ) {
-    return { ...evaluation, results, voidedCount: 0 };
-  }
   const keptIds = results
     .map((result) => Number(result?.event?.id || 0))
     .filter((id) => id > 0);
@@ -1217,6 +1340,8 @@ async function reconcileOrderSaleIncentivesSafely(input = {}) {
 }
 
 module.exports = {
+  loadExistingOrderEvents,
+  remapCandidatesToExistingEvents,
   isOrderInEffectiveWindow,
   INCENTIVE_RULE_VERSION,
   INCENTIVE_EFFECTIVE_FROM,

@@ -25,6 +25,8 @@ const {
   buildOrderSaleIncentiveCandidates,
   loadOrderSaleIncentiveSnapshot,
   reconcileOrderSaleIncentives,
+  loadExistingOrderEvents,
+  remapCandidatesToExistingEvents,
   isVehicleItem,
   isPurchaseConfirmationComplete,
   isOrderHandoverComplete,
@@ -227,6 +229,12 @@ async function main() {
       const plan = planCache.get(order.storeId);
       const snapshot = await loadOrderSaleIncentiveSnapshot(pool, order.storeId, order.id);
       const evaluation = buildOrderSaleIncentiveCandidates({ snapshot, plan, triggerSource: TRIGGER_SOURCE });
+      if (!["BEFORE_EFFECTIVE_FROM", "ACTIVE_PLAN_NOT_FOUND"].includes(evaluation.reason)) {
+        remapCandidatesToExistingEvents(
+          evaluation.candidates,
+          await loadExistingOrderEvents(pool, { storeId: order.storeId, orderId: order.id })
+        );
+      }
       const existing = await loadExistingEvents(pool, order);
       const existingByKey = new Map(existing.map((row) => [eventKey(row), row]));
       const matchedIds = new Set();
