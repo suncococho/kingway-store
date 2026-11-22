@@ -402,6 +402,14 @@ function parseOptionalImportBooleanAsNumber(value) {
   return { ok: false, value: 0 };
 }
 
+function normalizeProductSpecText(value, maxLength) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const text = String(value).trim();
+  return text ? text.slice(0, maxLength) : null;
+}
+
 function parseRequestBooleanAsNumber(value, defaultValue = 0) {
   if (value === undefined || value === null || value === "") {
     return defaultValue;
@@ -1097,6 +1105,8 @@ router.get("/", async (req, res, next) => {
         ${hasCategorySchema ? "pc.name AS categoryName," : "NULL AS categoryName,"}
         ${hasCategorySchema ? "pc.is_active AS categoryIsActive," : "NULL AS categoryIsActive,"}
         ${selectColumn(productColumns, "products", "description", "description")},
+        ${selectColumn(productColumns, "products", "color", "color")},
+        ${selectColumn(productColumns, "products", "specs", "specs")},
         ${selectColumn(productColumns, "products", "image_url", "imageUrl")},
         ${selectColumn(productColumns, "products", "cost_price", "costPrice", "0")},
         ${selectColumn(productColumns, "products", "location", "location")},
@@ -1596,7 +1606,7 @@ router.post("/", async (req, res, next) => {
     }
     assertCanEditSensitiveCost(req);
 
-    const { sku, name, category, categoryId, price, stock, reorderLevel, isActive, requiresPurchaseConfirmation, requires_purchase_confirmation, description, imageUrl, costPrice, location, inputterName, source } = req.body;
+    const { sku, name, category, categoryId, price, stock, reorderLevel, isActive, requiresPurchaseConfirmation, requires_purchase_confirmation, description, color, specs, imageUrl, costPrice, location, inputterName, source } = req.body;
 
     if (!sku || !name || price === undefined || stock === undefined) {
       return res.status(400).json({ message: "SKU、商品名稱、售價與庫存為必填欄位" });
@@ -1623,6 +1633,16 @@ router.post("/", async (req, res, next) => {
     if (hasRequiresPurchaseConfirmation) {
       insertColumns.push("requires_purchase_confirmation");
       insertValues.push(parseRequestBooleanAsNumber(requiresPurchaseConfirmation ?? requires_purchase_confirmation, 0));
+    }
+    const normalizedColor = normalizeProductSpecText(color, 80);
+    const normalizedSpecs = normalizeProductSpecText(specs, 2000);
+    if (hasColumn(productColumns, "color")) {
+      insertColumns.push("color");
+      insertValues.push(normalizedColor);
+    }
+    if (hasColumn(productColumns, "specs")) {
+      insertColumns.push("specs");
+      insertValues.push(normalizedSpecs);
     }
     insertColumns.push("price", "stock", "reorder_level", "is_active", "description", "image_url", "cost_price", "location", "inputter_name", "source", "store_id");
     insertValues.push(
@@ -1661,6 +1681,8 @@ router.post("/", async (req, res, next) => {
       isActive: isActive === undefined ? true : Boolean(isActive),
       requiresPurchaseConfirmation: Boolean(parseRequestBooleanAsNumber(requiresPurchaseConfirmation ?? requires_purchase_confirmation, 0)),
       description: description || null,
+      color: normalizedColor,
+      specs: normalizedSpecs,
       imagePath: normalizeEditableImagePath(imageUrl),
       imageUrl: normalizeImageUrl(imageUrl, result.insertId),
       location: location || null,
@@ -1761,7 +1783,7 @@ async function updateProduct(req, res, next) {
   try {
     assertCanEditSensitiveCost(req);
     const id = Number(req.params.id);
-    const { sku, name, category, categoryId, price, stock, reorderLevel, isActive, requiresPurchaseConfirmation, requires_purchase_confirmation, description, imageUrl, costPrice, location, inputterName, source } = req.body;
+    const { sku, name, category, categoryId, price, stock, reorderLevel, isActive, requiresPurchaseConfirmation, requires_purchase_confirmation, description, color, specs, imageUrl, costPrice, location, inputterName, source } = req.body;
     const normalizedSku = sku !== undefined && sku !== null && sku !== "" ? normalizeProductSku(sku) : null;
 
     const storeId = getRequestStoreId(req);
@@ -1799,6 +1821,11 @@ async function updateProduct(req, res, next) {
     const requiresPurchaseConfirmationValue = hasRequiresPurchaseConfirmationInput
       ? parseRequestBooleanAsNumber(requiresPurchaseConfirmation ?? requires_purchase_confirmation, 0)
       : null;
+    const hasColorColumn = hasColumn(productColumns, "color");
+    const hasSpecsColumn = hasColumn(productColumns, "specs");
+    // 空字串代表清除；未傳入（undefined）則保留原值
+    const colorAssignment = hasColorColumn && color !== undefined ? "color = ?," : "";
+    const specsAssignment = hasSpecsColumn && specs !== undefined ? "specs = ?," : "";
     await pool.query(
       `
         UPDATE products
@@ -1813,6 +1840,8 @@ async function updateProduct(req, res, next) {
           is_active = COALESCE(?, is_active),
           ${requiresPurchaseConfirmationAssignment}
           description = COALESCE(?, description),
+          ${colorAssignment}
+          ${specsAssignment}
           image_url = COALESCE(?, image_url),
           cost_price = COALESCE(?, cost_price),
           location = COALESCE(?, location),
@@ -1833,6 +1862,8 @@ async function updateProduct(req, res, next) {
         isActive === undefined ? null : Number(Boolean(isActive)),
         ...(hasRequiresPurchaseConfirmation ? [requiresPurchaseConfirmationValue] : []),
         description === undefined ? null : description,
+        ...(colorAssignment ? [normalizeProductSpecText(color, 80)] : []),
+        ...(specsAssignment ? [normalizeProductSpecText(specs, 2000)] : []),
         imageUrl === undefined ? null : imageUrl,
         costPrice === undefined ? null : Number(costPrice || 0),
         location === undefined ? null : location,
@@ -1858,6 +1889,8 @@ async function updateProduct(req, res, next) {
           ${hasCategorySchema ? "pc.name AS categoryName," : "NULL AS categoryName,"}
           ${hasCategorySchema ? "pc.is_active AS categoryIsActive," : "NULL AS categoryIsActive,"}
           products.description,
+          ${hasColorColumn ? "products.color," : "NULL AS color,"}
+          ${hasSpecsColumn ? "products.specs," : "NULL AS specs,"}
           products.image_url AS imageUrl,
           products.cost_price AS costPrice,
           products.location,

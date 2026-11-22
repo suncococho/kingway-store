@@ -85,6 +85,8 @@ function ProductsPage() {
     costPrice: "",
     location: "",
     requiresPurchaseConfirmation: false,
+    color: "",
+    specs: "",
     description: ""
   });
   const [submitting, setSubmitting] = useState(false);
@@ -110,6 +112,8 @@ function ProductsPage() {
     imageUrl: "",
     costPrice: "",
     location: "",
+    color: "",
+    specs: "",
     description: "",
     requiresPurchaseConfirmation: false,
     isActive: true
@@ -261,12 +265,18 @@ function ProductsPage() {
         return true;
       }
 
-      const haystack = `${item.name} ${item.sku} ${item.categoryLabel}`.toLowerCase();
+      const haystack = `${item.name} ${item.sku} ${item.categoryLabel} ${item.color || ""} ${item.specs || ""}`.toLowerCase();
       return haystack.includes(keyword);
     });
   }, [productRows, searchTerm, categoryFilter, statusFilter, stockFilter]);
 
   const detailProduct = productRows.find((item) => item.id === detailProductId) || null;
+
+  const colorSuggestions = useMemo(() => {
+    const defaults = ["黑色", "消光黑", "白色", "灰色", "銀色", "紅色", "藍色", "綠色", "黃色", "橘色", "粉色", "卡其色"];
+    const used = productRows.map((item) => String(item.color || "").trim()).filter(Boolean);
+    return Array.from(new Set([...used, ...defaults]));
+  }, [productRows]);
 
   function getSelectedCategoryValue(categoryId, categoryCode) {
     if (categoryId) {
@@ -318,6 +328,8 @@ function ProductsPage() {
       imageUrl: detailProduct.imagePath || "",
       costPrice: canViewCost ? String(detailProduct.costPrice ?? "") : "",
       location: detailProduct.location || "",
+      color: detailProduct.color || "",
+      specs: detailProduct.specs || "",
       description: detailProduct.description || "",
       requiresPurchaseConfirmation: Boolean(detailProduct.requiresPurchaseConfirmation),
       isActive: Boolean(detailProduct.isActive)
@@ -472,6 +484,8 @@ function ProductsPage() {
         imageUrl: form.imageUrl,
         location: form.location,
         requiresPurchaseConfirmation: Boolean(form.requiresPurchaseConfirmation),
+        color: form.color,
+        specs: form.specs,
         description: form.description
       };
       if (canEditCost) {
@@ -494,6 +508,8 @@ function ProductsPage() {
         costPrice: "",
         location: "",
         requiresPurchaseConfirmation: false,
+        color: "",
+        specs: "",
         description: ""
       });
       setImagePreviewUrl((current) => {
@@ -542,6 +558,8 @@ function ProductsPage() {
         reorderLevel: Number(detailForm.reorderLevel || 0),
         imageUrl: detailForm.imageUrl,
         location: detailForm.location,
+        color: detailForm.color,
+        specs: detailForm.specs,
         description: detailForm.description,
         requiresPurchaseConfirmation: Boolean(detailForm.requiresPurchaseConfirmation),
         isActive: detailForm.isActive
@@ -1002,7 +1020,7 @@ function ProductsPage() {
           <ProductImage src={row.imageUrl} alt={row.name} />
           <div className="identity-copy">
             <div className="identity-title">{row.name}</div>
-            <div className="identity-subtitle">{row.categoryLabel}</div>
+            <div className="identity-subtitle">{row.categoryLabel}{row.color ? ` / ${row.color}` : ""}</div>
           </div>
         </div>
       )
@@ -1097,7 +1115,7 @@ function ProductsPage() {
   ];
 
   const productSteps = [
-    { number: 1, title: "商品名稱與分類", tone: form.name && form.category ? "green" : "blue" },
+    { number: 1, title: "名稱、分類與規格", tone: form.name && form.category ? "green" : "blue" },
     { number: 2, title: "SKU 與庫存", tone: form.sku && form.stock !== "" ? "green" : productStep === 2 ? "blue" : "yellow" },
     { number: 3, title: "價格", tone: form.price !== "" ? "green" : productStep === 3 ? "blue" : "yellow" },
     { number: 4, title: "商品圖片", tone: form.imageUrl ? "green" : productStep === 4 ? "blue" : "yellow" },
@@ -1168,6 +1186,11 @@ function ProductsPage() {
         description="系統正在處理，請勿重複點擊。"
       />
       <PageHeader title="商品管理" description="商品列表、設定與圖片管理統一使用 POS 同一套資訊架構與元件語言。" />
+      <datalist id="product-color-options">
+        {colorSuggestions.map((color) => (
+          <option key={color} value={color} />
+        ))}
+      </datalist>
       <SectionTabs items={sectionItems} value={section} onChange={setSection} label="商品子功能" />
       {searchMode && section === "LIST" ? (
         <section className="admin-panel product-search-screen">
@@ -1236,7 +1259,7 @@ function ProductsPage() {
                 <ProductImage src={row.imageUrl} alt={row.name} />
                 <div className="identity-copy">
                   <div className="identity-title">{row.name}</div>
-                  <div className="identity-subtitle">{row.categoryLabel}</div>
+                  <div className="identity-subtitle">{row.categoryLabel}{row.color ? ` / ${row.color}` : ""}</div>
                 </div>
               </div>
             )}
@@ -1518,7 +1541,7 @@ function ProductsPage() {
             <form className="admin-form-stack" onSubmit={handleSubmit}>
               {productStep === 1 ? (
               <div className="admin-subpanel wizard-panel wizard-panel-blue">
-                <div className="section-title">商品名稱與分類</div>
+                <div className="section-title">商品名稱、分類與規格</div>
                 <div className="grid-form">
                   <label className="form-field">
                     <span>商品名稱</span>
@@ -1545,6 +1568,14 @@ function ProductsPage() {
                       />
                       <span>電動自行車或需簽署交付確認書的商品請勾選</span>
                     </label>
+                  </label>
+                  <label className="form-field">
+                    <span>顏色</span>
+                    <input name="color" type="text" value={form.color} onChange={handleChange} list="product-color-options" placeholder="例：消光黑" maxLength={80} />
+                  </label>
+                  <label className="form-field form-field-wide">
+                    <span>規格</span>
+                    <textarea name="specs" value={form.specs} onChange={handleChange} rows="3" placeholder={"例：馬達 1000W\n電池 13Ah\n輪徑 20 吋"} />
                   </label>
                 </div>
                 <div className="sop-summary-box">
@@ -1650,6 +1681,8 @@ function ProductsPage() {
                   <div><strong>售價</strong><span>{formatCurrency(form.price)}</span></div>
                   <div><strong>圖片</strong><span>{form.imageUrl ? "已設定" : "未設定"}</span></div>
                   <div><strong>購買確認書</strong><span>{form.requiresPurchaseConfirmation ? "需要確認書" : "不需要"}</span></div>
+                  <div><strong>顏色</strong><span>{form.color || "未設定"}</span></div>
+                  <div><strong>規格</strong><span style={{ whiteSpace: "pre-line" }}>{form.specs || "未設定"}</span></div>
                 </div>
                 <label className="form-field form-field-wide">
                   <span>商品說明</span>
@@ -1821,7 +1854,7 @@ function ProductsPage() {
       <DetailModal
         open={Boolean(detailProduct)}
         title={detailProduct?.name || "商品詳情"}
-        subtitle={detailProduct ? `${detailProduct.categoryLabel} / SKU：${detailProduct.sku}` : ""}
+        subtitle={detailProduct ? `${detailProduct.categoryLabel}${detailProduct.color ? ` / ${detailProduct.color}` : ""} / SKU：${detailProduct.sku}` : ""}
         onClose={() => setDetailProductId(null)}
       >
         {detailProduct ? (
@@ -1951,6 +1984,14 @@ function ProductsPage() {
                     <span>電動自行車或需簽署交付確認書的商品請勾選</span>
                   </label>
                 </label>
+                <label className="form-field">
+                  <span>顏色</span>
+                  <input value={detailForm.color} onChange={(event) => setDetailForm((current) => ({ ...current, color: event.target.value }))} list="product-color-options" placeholder="例：消光黑" maxLength={80} />
+                </label>
+                <label className="form-field form-field-wide">
+                  <span>規格</span>
+                  <textarea value={detailForm.specs} onChange={(event) => setDetailForm((current) => ({ ...current, specs: event.target.value }))} rows="3" placeholder={"例：馬達 1000W\n電池 13Ah\n輪徑 20 吋"} />
+                </label>
                 <label className="form-field form-field-wide">
                   <span>商品說明</span>
                   <textarea value={detailForm.description} onChange={(event) => setDetailForm((current) => ({ ...current, description: event.target.value }))} rows="3" />
@@ -1997,6 +2038,19 @@ function ProductsPage() {
                   <div className="field-item">
                     <div className="field-label">品牌 / 標籤</div>
                     <div className="field-value">{detailProduct.brand || detailProduct.tags || "-"}</div>
+                  </div>
+                </div>
+              </section>
+              <section className="stack-card">
+                <div className="section-title">顏色與規格</div>
+                <div className="field-grid">
+                  <div className="field-item">
+                    <div className="field-label">顏色</div>
+                    <div className="field-value">{detailProduct.color || "-"}</div>
+                  </div>
+                  <div className="field-item field-item-full">
+                    <div className="field-label">規格</div>
+                    <div className="field-value" style={{ whiteSpace: "pre-line" }}>{detailProduct.specs || "目前沒有規格資料。"}</div>
                   </div>
                 </div>
               </section>
