@@ -553,9 +553,6 @@ async function ensureV2Schema() {
 
   await addColumnIfMissing("products", "description", "TEXT NULL");
   await addColumnIfMissing("products", "image_url", "TEXT NULL");
-  await addColumnIfMissing("products", "color", "VARCHAR(80) NULL");
-  await addColumnIfMissing("products", "specs", "TEXT NULL");
-  await addColumnIfMissing("order_items", "color", "VARCHAR(80) NULL");
   await addColumnIfMissing("products", "cost_price", "DECIMAL(12,2) NOT NULL DEFAULT 0");
   await addColumnIfMissing("products", "location", "VARCHAR(120) NULL");
   await addColumnIfMissing("products", "inputter_name", "VARCHAR(120) NULL");
