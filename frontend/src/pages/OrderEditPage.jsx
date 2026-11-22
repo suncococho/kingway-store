@@ -61,6 +61,31 @@ function formatWarrantyDisplay(form) {
   return endDate ? `保固至：${endDate} 或 ${mileageText}，以先屆至者為準` : `保固期間：${months || "未設定"} 個月 / ${mileageText}`;
 }
 
+function parseColorOptions(value) {
+  return Array.from(
+    new Set(
+      String(value || "")
+        .split(/[,，、\/／\n]+/)
+        .map((text) => text.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function isEbikeOrderItem(item = {}) {
+  const category = String(item.productCategory || "").trim().toUpperCase();
+  if (category === "EB" || category === "EBIKE" || category.includes("電動自行車")) {
+    return true;
+  }
+  return /(^|-)EB-/.test(String(item.sku || "").trim().toUpperCase());
+}
+
+function buildItemColorsKey(list) {
+  return JSON.stringify(
+    (Array.isArray(list) ? list : []).map((item) => [Number(item.id || 0), String(item.color || "").trim()])
+  );
+}
+
 function buildItemsKey(list) {
   return JSON.stringify(
     (Array.isArray(list) ? list : []).map((item) => [
@@ -86,6 +111,7 @@ function OrderEditPage() {
   const [error, setError] = useState("");
   const initialSalesStaffRef = useRef({ primary: "", support: "" });
   const initialItemsKeyRef = useRef("");
+  const initialItemColorsKeyRef = useRef("");
 
   useEffect(() => {
     apiRequest(`/orders/${id}`)
@@ -116,13 +142,18 @@ function OrderEditPage() {
         });
 
         const loadedItems = (o.items || []).map((x) => ({
+          id: x.id ? Number(x.id) : null,
           productId: Number(x.productId),
           sku: x.sku || x.skuSnapshot || "",
           productName: x.productName,
+          productCategory: x.productCategory || "",
+          colorOptions: x.productColorOptions || "",
+          color: x.color || "",
           quantity: Number(x.quantity || 1),
           unitPrice: Number(x.unitPrice || 0)
         }));
         initialItemsKeyRef.current = buildItemsKey(loadedItems);
+        initialItemColorsKeyRef.current = buildItemColorsKey(loadedItems);
         setItems(loadedItems);
       })
       .catch((e) => setError(e.message || "讀取失敗"));
@@ -154,6 +185,9 @@ function OrderEditPage() {
       productId: Number(p.id),
       sku: p.sku || "",
       productName: p.name,
+      productCategory: p.category || p.categoryCode || "",
+      colorOptions: p.color || "",
+      color: "",
       quantity: 1,
       unitPrice: Number(p.price || 0)
     }]);
@@ -230,15 +264,25 @@ async function requestGoogleReviewCoupon() {
     }
 
     try {
-      const itemsPayload = canEditPricing
-        ? items
-        : items.map(({ unitPrice, ...item }) => item);
+      const itemsPayload = items.map(({ colorOptions, ...item }) => {
+        if (canEditPricing) return item;
+        const { unitPrice, ...rest } = item;
+        return rest;
+      });
 
       // 品項沒有變更時不重存品項，避免已下架商品讓整張訂單無法儲存（例如只改銷售人員）
       if (buildItemsKey(items) !== initialItemsKeyRef.current) {
         await apiRequest(`/orders/${id}/items`, {
           method: "PUT",
           body: JSON.stringify({ items: itemsPayload })
+        });
+      } else if (buildItemColorsKey(items) !== initialItemColorsKeyRef.current) {
+        // 只改車身顏色：單獨更新顏色，不重存品項
+        await apiRequest(`/orders/${id}/item-colors`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            items: items.filter((item) => item.id).map((item) => ({ id: item.id, color: item.color || "" }))
+          })
         });
       }
 
@@ -849,7 +893,7 @@ async function requestGoogleReviewCoupon() {
                     <div>
                       <div className="kw-product-name">{item.productName || "商品"}</div>
                       <div className="kw-product-meta">
-                        SKU：{item.sku || "-"} / 小計：{money(Number(item.quantity || 0) * Number(item.unitPrice || 0))}
+                        SKU：{item.sku || "-"}{item.color ? ` / 車身顏色：${item.color}` : ""} / 小計：{money(Number(item.quantity || 0) * Number(item.unitPrice || 0))}
                       </div>
                       <span className="kw-readonly-chip">商品名稱不可在此搜尋變更</span>
                     </div>
@@ -872,6 +916,37 @@ async function requestGoogleReviewCoupon() {
                         <strong>{money(item.unitPrice)}</strong>
                       )}
                     </div>
+                    {isEbikeOrderItem(item) ? (
+                      <div className="kw-edit-field" style={{ gridColumn: "1 / -1" }}>
+                        <span>車身顏色</span>
+                        <input
+                          list={`order-item-color-options-${index}`}
+                          value={item.color || ""}
+                          maxLength={80}
+                          placeholder="選擇或輸入顏色"
+                          onChange={(e) => updateItem(index, "color", e.target.value)}
+                        />
+                        <datalist id={`order-item-color-options-${index}`}>
+                          {parseColorOptions(item.colorOptions).map((color) => (
+                            <option key={color} value={color} />
+                          ))}
+                        </datalist>
+                        {parseColorOptions(item.colorOptions).length ? (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                            {parseColorOptions(item.colorOptions).map((color) => (
+                              <button
+                                key={color}
+                                type="button"
+                                className={item.color === color ? "kw-btn primary" : "kw-btn"}
+                                onClick={() => updateItem(index, "color", color)}
+                              >
+                                {color}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ))}

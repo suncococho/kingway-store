@@ -272,12 +272,6 @@ function ProductsPage() {
 
   const detailProduct = productRows.find((item) => item.id === detailProductId) || null;
 
-  const colorSuggestions = useMemo(() => {
-    const defaults = ["黑色", "消光黑", "白色", "灰色", "銀色", "紅色", "藍色", "綠色", "黃色", "橘色", "粉色", "卡其色"];
-    const used = productRows.map((item) => String(item.color || "").trim()).filter(Boolean);
-    return Array.from(new Set([...used, ...defaults]));
-  }, [productRows]);
-
   function getSelectedCategoryValue(categoryId, categoryCode) {
     if (categoryId) {
       return String(categoryId);
@@ -1020,7 +1014,7 @@ function ProductsPage() {
           <ProductImage src={row.imageUrl} alt={row.name} />
           <div className="identity-copy">
             <div className="identity-title">{row.name}</div>
-            <div className="identity-subtitle">{row.categoryLabel}{row.color ? ` / ${row.color}` : ""}</div>
+            <div className="identity-subtitle">{row.categoryLabel}</div>
           </div>
         </div>
       )
@@ -1186,11 +1180,6 @@ function ProductsPage() {
         description="系統正在處理，請勿重複點擊。"
       />
       <PageHeader title="商品管理" description="商品列表、設定與圖片管理統一使用 POS 同一套資訊架構與元件語言。" />
-      <datalist id="product-color-options">
-        {colorSuggestions.map((color) => (
-          <option key={color} value={color} />
-        ))}
-      </datalist>
       <SectionTabs items={sectionItems} value={section} onChange={setSection} label="商品子功能" />
       {searchMode && section === "LIST" ? (
         <section className="admin-panel product-search-screen">
@@ -1259,7 +1248,7 @@ function ProductsPage() {
                 <ProductImage src={row.imageUrl} alt={row.name} />
                 <div className="identity-copy">
                   <div className="identity-title">{row.name}</div>
-                  <div className="identity-subtitle">{row.categoryLabel}{row.color ? ` / ${row.color}` : ""}</div>
+                  <div className="identity-subtitle">{row.categoryLabel}</div>
                 </div>
               </div>
             )}
@@ -1570,8 +1559,9 @@ function ProductsPage() {
                     </label>
                   </label>
                   <label className="form-field">
-                    <span>顏色</span>
-                    <input name="color" type="text" value={form.color} onChange={handleChange} list="product-color-options" placeholder="例：消光黑" maxLength={80} />
+                    <span>可選顏色</span>
+                    <input name="color" type="text" value={form.color} onChange={handleChange} placeholder="例：黑、白、灰" maxLength={80} />
+                    <small className="muted-text">顏色不分商品編號，訂單編輯時再選擇車身顏色。</small>
                   </label>
                   <label className="form-field form-field-wide">
                     <span>規格</span>
@@ -1681,7 +1671,7 @@ function ProductsPage() {
                   <div><strong>售價</strong><span>{formatCurrency(form.price)}</span></div>
                   <div><strong>圖片</strong><span>{form.imageUrl ? "已設定" : "未設定"}</span></div>
                   <div><strong>購買確認書</strong><span>{form.requiresPurchaseConfirmation ? "需要確認書" : "不需要"}</span></div>
-                  <div><strong>顏色</strong><span>{form.color || "未設定"}</span></div>
+                  <div><strong>可選顏色</strong><span>{form.color || "未設定"}</span></div>
                   <div><strong>規格</strong><span style={{ whiteSpace: "pre-line" }}>{form.specs || "未設定"}</span></div>
                 </div>
                 <label className="form-field form-field-wide">
@@ -1854,7 +1844,7 @@ function ProductsPage() {
       <DetailModal
         open={Boolean(detailProduct)}
         title={detailProduct?.name || "商品詳情"}
-        subtitle={detailProduct ? `${detailProduct.categoryLabel}${detailProduct.color ? ` / ${detailProduct.color}` : ""} / SKU：${detailProduct.sku}` : ""}
+        subtitle={detailProduct ? `${detailProduct.categoryLabel} / SKU：${detailProduct.sku}` : ""}
         onClose={() => setDetailProductId(null)}
       >
         {detailProduct ? (
@@ -1985,8 +1975,9 @@ function ProductsPage() {
                   </label>
                 </label>
                 <label className="form-field">
-                  <span>顏色</span>
-                  <input value={detailForm.color} onChange={(event) => setDetailForm((current) => ({ ...current, color: event.target.value }))} list="product-color-options" placeholder="例：消光黑" maxLength={80} />
+                  <span>可選顏色</span>
+                  <input value={detailForm.color} onChange={(event) => setDetailForm((current) => ({ ...current, color: event.target.value }))} placeholder="例：黑、白、灰" maxLength={80} />
+                  <small className="muted-text">顏色不分商品編號，訂單編輯時再選擇車身顏色。</small>
                 </label>
                 <label className="form-field form-field-wide">
                   <span>規格</span>
@@ -2042,10 +2033,10 @@ function ProductsPage() {
                 </div>
               </section>
               <section className="stack-card">
-                <div className="section-title">顏色與規格</div>
+                <div className="section-title">可選顏色與規格</div>
                 <div className="field-grid">
                   <div className="field-item">
-                    <div className="field-label">顏色</div>
+                    <div className="field-label">可選顏色</div>
                     <div className="field-value">{detailProduct.color || "-"}</div>
                   </div>
                   <div className="field-item field-item-full">

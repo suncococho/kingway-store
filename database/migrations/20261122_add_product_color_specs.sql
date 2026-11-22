@@ -8,7 +8,7 @@ SET @column_exists := (
 
 SET @migration_sql := IF(
   @column_exists = 0,
-  'ALTER TABLE products ADD COLUMN color VARCHAR(80) NULL COMMENT ''商品顏色''',
+  'ALTER TABLE products ADD COLUMN color VARCHAR(80) NULL COMMENT ''可選顏色（不分 SKU，如：黑、白、灰）''',
   'SELECT ''color already exists'' AS message'
 );
 

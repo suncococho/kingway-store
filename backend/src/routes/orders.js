@@ -661,6 +661,14 @@ function buildPickupItemSummary(items = []) {
   return names.length > 3 ? `${summary} 等 ${names.length} 項` : summary;
 }
 
+function normalizeOrderItemColor(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const text = String(value).trim().slice(0, 80);
+  return text || null;
+}
+
 router.get("/", requireOrderManagementFeature, async (req, res, next) => {
   try {
     const storeId = req.storeId;
@@ -766,7 +774,30 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
       keywordParams.push(keywordLike);
       keywordConditions.push(`COALESCE(o.customer_phone, ${hasColumn(customerColumns, "phone") ? "c.phone" : "NULL"}) LIKE ?`);
       keywordParams.push(keywordLike);
+      if (hasColumn(orderItemColumns, "color")) {
+        keywordConditions.push(`
+          EXISTS (
+            SELECT 1
+            FROM order_items oi_color_search
+            WHERE oi_color_search.order_id = o.id
+              AND oi_color_search.store_id = o.store_id
+              AND oi_color_search.color LIKE ?
+          )
+        `);
+        keywordParams.push(keywordLike);
+      }
     }
+    const itemColorsSql = hasColumn(orderItemColumns, "color")
+      ? `
+          (
+            SELECT GROUP_CONCAT(DISTINCT oi_color.color ORDER BY oi_color.color SEPARATOR '、')
+            FROM order_items oi_color
+            WHERE oi_color.order_id = o.id
+              AND oi_color.store_id = o.store_id
+              AND COALESCE(oi_color.color, '') <> ''
+          )
+        `
+      : "NULL";
     const keywordWhereSql = keywordConditions.length > 0 ? `AND (${keywordConditions.join(" OR ")})` : "";
     const listRowLimit = searchKeyword ? 300 : 100;
 
@@ -833,6 +864,7 @@ router.get("/", requireOrderManagementFeature, async (req, res, next) => {
               AND UPPER(COALESCE(oi_accessory.product_category_snapshot, '')) = 'ACCESSORY'
             LIMIT 1
           ) AS hasAccessoryItems,
+          ${itemColorsSql} AS itemColors,
           ${repairExistsSql} AS isRepairOrder
         FROM orders o
         LEFT JOIN customers c ON c.id = o.customer_id
@@ -1223,21 +1255,28 @@ router.get("/:id", requireOrderManagementFeature, async (req, res, next) => {
       return res.status(404).json({ message: "找不到訂單" });
     }
 
+    const detailItemColumns = await getTableColumns(pool, "order_items");
+    const detailProductColumns = await getTableColumns(pool, "products");
+    const hasItemColor = hasColumn(detailItemColumns, "color");
+    const hasProductColorOptions = hasColumn(detailProductColumns, "color");
     const [items] = await pool.query(
       `
         SELECT
-          id,
-          product_id AS productId,
-          sku_snapshot AS sku,
-          product_name_snapshot AS productName,
-          product_category_snapshot AS productCategory,
-          quantity,
-          unit_price AS unitPrice,
-          line_total AS lineTotal
-        FROM order_items
-        WHERE order_id = ?
-          AND store_id = ?
-        ORDER BY id ASC
+          oi.id,
+          oi.product_id AS productId,
+          oi.sku_snapshot AS sku,
+          oi.product_name_snapshot AS productName,
+          oi.product_category_snapshot AS productCategory,
+          ${hasItemColor ? "oi.color" : "NULL"} AS color,
+          ${hasProductColorOptions ? "p_color.color" : "NULL"} AS productColorOptions,
+          oi.quantity,
+          oi.unit_price AS unitPrice,
+          oi.line_total AS lineTotal
+        FROM order_items oi
+        ${hasProductColorOptions ? "LEFT JOIN products p_color ON p_color.id = oi.product_id AND p_color.store_id = oi.store_id" : ""}
+        WHERE oi.order_id = ?
+          AND oi.store_id = ?
+        ORDER BY oi.id ASC
       `,
       [orderId, storeId]
     );
@@ -2313,9 +2352,12 @@ router.put("/:id/items", requireOrderManagementFeature, async (req, res, next) =
           category,
           quantity,
           unitPrice,
-          lineTotal
+          lineTotal,
+          color: normalizeOrderItemColor(item.color)
         });
       }
+
+      const hasOrderItemColor = hasColumn(await getTableColumns(connection, "order_items"), "color");
 
       await connection.query(
         `DELETE FROM order_items WHERE order_id = ? AND store_id = ?`,
@@ -2326,8 +2368,8 @@ router.put("/:id/items", requireOrderManagementFeature, async (req, res, next) =
         await connection.query(
           `INSERT INTO order_items
            (store_id, order_id, product_id, sku_snapshot, product_name_snapshot,
-            product_category_snapshot, quantity, unit_price, line_total)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            product_category_snapshot, quantity, unit_price, line_total${hasOrderItemColor ? ", color" : ""})
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${hasOrderItemColor ? ", ?" : ""})`,
           [
             storeId,
             orderId,
@@ -2337,7 +2379,8 @@ router.put("/:id/items", requireOrderManagementFeature, async (req, res, next) =
             item.category,
             item.quantity,
             item.unitPrice,
-            item.lineTotal
+            item.lineTotal,
+            ...(hasOrderItemColor ? [item.color] : [])
           ]
         );
       }
@@ -2391,6 +2434,42 @@ router.put("/:id/items", requireOrderManagementFeature, async (req, res, next) =
   }
 });
 
+
+// 只更新品項顏色，不重存品項（不影響庫存、金額與獎金計算）
+router.patch("/:id/item-colors", requireOrderManagementFeature, async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    const storeId = req.storeId;
+    const entries = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (!orderId) {
+      throw createError("訂單 ID 錯誤", 400);
+    }
+    if (!hasColumn(await getTableColumns(pool, "order_items"), "color")) {
+      throw createError("order_items.color 欄位不存在，請先更新資料表結構", 500);
+    }
+
+    let updated = 0;
+    for (const entry of entries) {
+      const itemId = Number(entry?.id);
+      if (!Number.isSafeInteger(itemId) || itemId <= 0) {
+        continue;
+      }
+      const [result] = await pool.query(
+        `UPDATE order_items
+         SET color = ?
+         WHERE id = ?
+           AND order_id = ?
+           AND store_id = ?`,
+        [normalizeOrderItemColor(entry.color), itemId, orderId, storeId]
+      );
+      updated += Number(result.affectedRows || 0);
+    }
+
+    return res.json({ ok: true, updated });
+  } catch (error) {
+    return next(error);
+  }
+});
 
 router.post("/:id/purchase-confirmation", requireOrderManagementFeature, async (req, res, next) => {
   try {

@@ -160,7 +160,8 @@ function formatWarrantyDisplay(detail) {
 }
 
 function getOrderCardDescription(row) {
-  return `${row.customerName || row.customerNameSnapshot || "-"} / ${row.customerPhone || row.customerPhoneSnapshot || "未留電話"}`;
+  const base = `${row.customerName || row.customerNameSnapshot || "-"} / ${row.customerPhone || row.customerPhoneSnapshot || "未留電話"}`;
+  return row.itemColors ? `${base} / 車色：${row.itemColors}` : base;
 }
 
 function normalizeCustomerType(value) {
@@ -206,6 +207,7 @@ function normalizeOrderDetailItems(detail) {
     sku: item.sku || item.sku_snapshot || "-",
     productName: item.productName || item.product_name || item.product_name_snapshot || item.name || "商品",
     productCategory: item.productCategory || item.product_category || item.product_category_snapshot || "",
+    color: item.color || "",
     quantity: Number(item.quantity || item.qty || 0),
     unitPrice: Number(item.unitPrice ?? item.unit_price ?? item.price ?? 0),
     lineTotal: Number(item.lineTotal ?? item.line_total ?? item.total ?? 0)
@@ -393,7 +395,7 @@ function OrdersPage() {
     () =>
       rows.filter((row) => {
         const text = keyword.trim().toLowerCase();
-        if (text && !`${row.orderNo} ${row.customerName || row.customerNameSnapshot || ""} ${row.customerPhone || row.customerPhoneSnapshot || ""}`.toLowerCase().includes(text)) {
+        if (text && !`${row.orderNo} ${row.customerName || row.customerNameSnapshot || ""} ${row.customerPhone || row.customerPhoneSnapshot || ""} ${row.itemColors || ""}`.toLowerCase().includes(text)) {
           return false;
         }
         if (
@@ -1312,6 +1314,7 @@ if (!window.confirm(
               <>
                 {name ? <span>{name}</span> : null}
                 {phone ? <span style={{ fontSize: 12, color: "#64748b" }}>{phone}</span> : null}
+                {row.itemColors ? <span style={{ fontSize: 12, color: "#0f766e" }}>車色：{row.itemColors}</span> : null}
                 {!name && !phone ? <span>-</span> : null}
               </>
             );
@@ -1473,7 +1476,7 @@ if (!window.confirm(
           <FilterBar compact>
             <label className="form-field">
               <span>搜尋</span>
-              <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="訂單 / 客戶 / 電話" />
+              <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="訂單 / 客戶 / 電話 / 車色" />
             </label>
           </FilterBar>
           <FilterChips
@@ -1501,7 +1504,7 @@ if (!window.confirm(
               if (searchScope === "PHONE") {
                 return phone.includes(text);
               }
-              return `${orderNo} ${customer} ${phone}`.includes(text);
+              return `${orderNo} ${customer} ${phone} ${`${row.itemColors || ""}`.toLowerCase()}`.includes(text);
             })}
             emptyText="目前沒有符合條件的訂單。"
             cardTitle={(row) => row.orderNo}
@@ -1574,7 +1577,7 @@ if (!window.confirm(
             <FilterBar>
               <label className="form-field">
                 <span>關鍵字搜尋</span>
-                <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="訂單編號 / 客戶 / 電話" />
+                <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="訂單編號 / 客戶 / 電話 / 車色" />
               </label>
               <label className="form-field">
                 <span>類型</span>
@@ -1693,6 +1696,7 @@ if (!window.confirm(
                       <tr>
                         <th>商品名稱</th>
                         <th>SKU</th>
+                        <th>車身顏色</th>
                         <th>數量</th>
                         <th>單價</th>
                         <th>金額</th>
@@ -1703,6 +1707,7 @@ if (!window.confirm(
                         <tr key={item.id}>
                           <td>{item.productName}</td>
                           <td>{item.sku || "-"}</td>
+                          <td>{item.color || "-"}</td>
                           <td>{item.quantity}</td>
                           <td>{formatAmount(item.unitPrice)}</td>
                           <td>{formatAmount(item.lineTotal || item.unitPrice * item.quantity)}</td>
