@@ -105,6 +105,17 @@ function createCartDraft(index = 1, overrides = {}) {
   };
 }
 
+function parseColorOptions(value) {
+  return Array.from(
+    new Set(
+      String(value || "")
+        .split(/[,，、\/／\n]+/)
+        .map((text) => text.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
 function normalizeCartDraft(cart, index) {
   const draft = createCartDraft(index, cart || {});
   return {
@@ -443,6 +454,13 @@ function POSPage() {
     }));
   }
 
+  function setCartItemColor(productId, bodyColor) {
+    updateActiveCart((cart) => ({
+      ...cart,
+      items: cart.items.map((item) => (item.id === productId ? { ...item, bodyColor } : item))
+    }));
+  }
+
   function removeFromCart(productId) {
     updateActiveCart((cart) => ({
       ...cart,
@@ -607,7 +625,8 @@ function POSPage() {
             salesSupportStaffId: effectiveSalesSupportStaffId ? Number(effectiveSalesSupportStaffId) : undefined,
             items: activeCart.items.map((item) => ({
               product_id: item.id,
-              qty: item.qty
+              qty: item.qty,
+              ...(item.category === "EB" && String(item.bodyColor || "").trim() ? { color: String(item.bodyColor).trim() } : {})
             }))
           })
         });
@@ -768,6 +787,38 @@ function POSPage() {
                     <div className="cart-row-copy">
                       <div className="identity-title">{item.name}</div>
                       <div className="identity-subtitle">{item.sku}</div>
+                      {item.category === "EB" ? (
+                        <div style={{ marginTop: 6 }}>
+                          <input
+                            list={`pos-cart-color-options-${item.id}`}
+                            value={item.bodyColor || ""}
+                            maxLength={80}
+                            placeholder="車身顏色（選填）"
+                            onChange={(event) => setCartItemColor(item.id, event.target.value)}
+                            style={{ width: "100%", maxWidth: 220 }}
+                          />
+                          <datalist id={`pos-cart-color-options-${item.id}`}>
+                            {parseColorOptions(item.color).map((color) => (
+                              <option key={color} value={color} />
+                            ))}
+                          </datalist>
+                          {parseColorOptions(item.color).length ? (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                              {parseColorOptions(item.color).map((color) => (
+                                <button
+                                  key={color}
+                                  type="button"
+                                  className={item.bodyColor === color ? "primary-button" : "secondary-button"}
+                                  style={{ padding: "4px 10px", minHeight: 0, width: "auto", flex: "0 0 auto" }}
+                                  onClick={() => setCartItemColor(item.id, color)}
+                                >
+                                  {color}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="cart-row-actions">
                       <div className="cart-row-price">

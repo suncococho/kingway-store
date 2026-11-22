@@ -1752,16 +1752,21 @@ router.post("/", requirePosFeature, async (req, res, next) => {
         }
 
         const existing = mergedItems.get(productId);
+        const itemColor = normalizeOrderItemColor(item.color);
         if (existing) {
           existing.quantity += quantity;
           if (item.unitPrice !== undefined) {
             existing.unitPrice = Number(item.unitPrice);
           }
+          if (!existing.color && itemColor) {
+            existing.color = itemColor;
+          }
         } else {
           mergedItems.set(productId, {
             productId,
             quantity,
-            unitPrice: item.unitPrice !== undefined ? Number(item.unitPrice) : undefined
+            unitPrice: item.unitPrice !== undefined ? Number(item.unitPrice) : undefined,
+            color: itemColor
           });
         }
       }
@@ -1828,6 +1833,7 @@ router.post("/", requirePosFeature, async (req, res, next) => {
           category: product.category,
           quantity,
           unitPrice,
+          color: item.color || null,
           lineTotal
         });
       }
@@ -1895,6 +1901,7 @@ router.post("/", requirePosFeature, async (req, res, next) => {
         );
       }
 
+      const hasOrderItemColor = hasColumn(await getTableColumns(connection, "order_items"), "color");
       for (const item of normalizedItems) {
         await connection.query(
           `
@@ -1907,9 +1914,9 @@ router.post("/", requirePosFeature, async (req, res, next) => {
               product_category_snapshot,
               quantity,
               unit_price,
-              line_total
+              line_total${hasOrderItemColor ? ",\n              color" : ""}
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${hasOrderItemColor ? ", ?" : ""})
           `,
           [
             storeId,
@@ -1920,7 +1927,8 @@ router.post("/", requirePosFeature, async (req, res, next) => {
             item.category,
             item.quantity,
             item.unitPrice,
-            item.lineTotal
+            item.lineTotal,
+            ...(hasOrderItemColor ? [item.color] : [])
           ]
         );
 
