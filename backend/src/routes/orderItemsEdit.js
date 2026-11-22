@@ -3,10 +3,17 @@ const { pool, withTransaction } = require("../db");
 const { authenticate, authorize, requireStoreScope } = require("../middleware/auth");
 const { requireStoreFeature } = require("../middleware/storeFeature");
 const { createError } = require("../utils/errors");
+const { getTableColumns, hasColumn } = require("../utils/schema");
 const { reconcileOrderSaleIncentivesSafely } = require("../services/staffIncentiveEarningService");
 
 const router = express.Router();
 router.use(authenticate, requireStoreScope(), authorize(["ADMIN", "MANAGER", "CASHIER"]));
+
+function normalizeOrderItemColor(value) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim().slice(0, 80);
+  return text || null;
+}
 
 function mapCategory(category) {
   if (category === "EB") return "EBIKE";
@@ -64,10 +71,11 @@ router.put("/:id/items", requireStoreFeature("orders_enabled"), async (req, res,
       const oldSubtotal = Number(oldSumRows[0]?.subtotal || 0);
       const oldTotal = Number(order.totalAmount || 0);
       const keepDiscount = Math.max(oldSubtotal - oldTotal, 0);
+      const hasItemColor = hasColumn(await getTableColumns(tx, "order_items"), "color");
       const [oldItemRows] = await tx.query(
         `SELECT product_id AS productId, unit_price AS unitPrice,
                 sku_snapshot AS sku, product_name_snapshot AS name,
-                product_category_snapshot AS category
+                product_category_snapshot AS category${hasItemColor ? ", color" : ""}
          FROM order_items
          WHERE order_id = ? AND store_id = ?`,
         [orderId, storeId]
@@ -113,7 +121,9 @@ router.put("/:id/items", requireStoreFeature("orders_enabled"), async (req, res,
           category: product.category ? mapCategory(product.category) : product.snapshotCategory,
           quantity,
           unitPrice,
-          lineTotal
+          lineTotal,
+          // 未傳入顏色時沿用原品項顏色，避免重存品項時遺失車身顏色
+          color: item.color !== undefined ? normalizeOrderItemColor(item.color) : normalizeOrderItemColor(oldItem?.color)
         });
       }
 
@@ -122,9 +132,9 @@ router.put("/:id/items", requireStoreFeature("orders_enabled"), async (req, res,
       for (const item of normalized) {
         await tx.query(
           `INSERT INTO order_items
-           (store_id, order_id, product_id, sku_snapshot, product_name_snapshot, product_category_snapshot, quantity, unit_price, line_total)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [storeId, orderId, item.productId, item.sku, item.name, item.category, item.quantity, item.unitPrice, item.lineTotal]
+           (store_id, order_id, product_id, sku_snapshot, product_name_snapshot, product_category_snapshot, quantity, unit_price, line_total${hasItemColor ? ", color" : ""})
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${hasItemColor ? ", ?" : ""})`,
+          [storeId, orderId, item.productId, item.sku, item.name, item.category, item.quantity, item.unitPrice, item.lineTotal, ...(hasItemColor ? [item.color] : [])]
         );
       }
 

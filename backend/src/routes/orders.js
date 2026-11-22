@@ -2352,12 +2352,9 @@ router.put("/:id/items", requireOrderManagementFeature, async (req, res, next) =
           category,
           quantity,
           unitPrice,
-          lineTotal,
-          color: normalizeOrderItemColor(item.color)
+          lineTotal
         });
       }
-
-      const hasOrderItemColor = hasColumn(await getTableColumns(connection, "order_items"), "color");
 
       await connection.query(
         `DELETE FROM order_items WHERE order_id = ? AND store_id = ?`,
@@ -2368,8 +2365,8 @@ router.put("/:id/items", requireOrderManagementFeature, async (req, res, next) =
         await connection.query(
           `INSERT INTO order_items
            (store_id, order_id, product_id, sku_snapshot, product_name_snapshot,
-            product_category_snapshot, quantity, unit_price, line_total${hasOrderItemColor ? ", color" : ""})
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${hasOrderItemColor ? ", ?" : ""})`,
+            product_category_snapshot, quantity, unit_price, line_total)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             storeId,
             orderId,
@@ -2379,8 +2376,7 @@ router.put("/:id/items", requireOrderManagementFeature, async (req, res, next) =
             item.category,
             item.quantity,
             item.unitPrice,
-            item.lineTotal,
-            ...(hasOrderItemColor ? [item.color] : [])
+            item.lineTotal
           ]
         );
       }
