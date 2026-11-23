@@ -87,8 +87,10 @@ function buildItemColorsKey(list) {
 }
 
 function buildItemsKey(list) {
+  // 包含訂單品項 ID：刪除後重新加入同一商品（例如商品改名後）也視為變更，才會重存並更新商品名稱
   return JSON.stringify(
     (Array.isArray(list) ? list : []).map((item) => [
+      Number(item.id || 0),
       Number(item.productId || 0),
       Number(item.quantity || 0),
       Number(item.unitPrice || 0)
